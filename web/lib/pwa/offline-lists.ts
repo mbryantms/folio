@@ -1,7 +1,8 @@
 /**
  * Offline reading lists — pure helpers over the stored `OfflineList`
  * manifests and `DownloadRecord`s (no network, no React), shared by the
- * offline library, the offline reader's Up Next and their tests.
+ * offline library, the offline reader's Up Next (list and series
+ * fallback) and their tests.
  */
 
 import type { IssueSummaryView, NextUpView } from "@/lib/api/types";
@@ -107,7 +108,7 @@ export function summaryFromRecord(record: DownloadRecord): IssueSummaryView {
     series_name: record.seriesName ?? undefined,
     title: record.title,
     number: record.number,
-    sort_number: null,
+    sort_number: record.sortNumber ?? null,
     year: null,
     page_count: record.pageCount || record.pages.length || null,
     state: "active",
@@ -119,20 +120,34 @@ export function summaryFromRecord(record: DownloadRecord): IssueSummaryView {
 }
 
 /**
- * The offline reader's Up Next for an issue opened from a list: the
- * same `NextUpView` the server would answer, resolved from the device.
- * `source: "none"` when nothing downloaded is left in the list.
+ * The entry before `before` in the list that is stored completely —
+ * sequential back-navigation with no finished filter, the server's
+ * prev-up rule. `null` at the top of the list, or when `before` is not
+ * in it.
  */
-export function offlineNextUp(
+export function prevInOfflineList(
   list: OfflineList,
   records: readonly DownloadRecord[] | ReadonlyMap<string, DownloadRecord>,
-  currentIssueId: string,
+  before: string,
+): (OfflineListRow & { record: DownloadRecord }) | null {
+  const rows = offlineListRows(list, records);
+  const idx = rows.findIndex((r) => r.issueId === before);
+  for (const row of rows.slice(0, Math.max(idx, 0)).reverse()) {
+    const r = row.record;
+    if (r && r.status === "complete") return { ...row, record: r };
+  }
+  return null;
+}
+
+/** The `NextUpView` for one list row: the server's CBL / collection
+ *  shape with the list-relative position and total. */
+function listView(
+  list: OfflineList,
+  row: OfflineListRow & { record: DownloadRecord },
 ): NextUpView {
-  const next = nextInOfflineList(list, records, currentIssueId);
-  if (!next) return { source: "none" };
-  const position = next.position + 1;
+  const position = row.position + 1;
   const total = list.totalInList ?? list.entries.length;
-  const target = summaryFromRecord(next.record);
+  const target = summaryFromRecord(row.record);
   return list.kind === "cbl"
     ? {
         source: "cbl",
@@ -150,4 +165,98 @@ export function offlineNextUp(
         collection_position: position,
         collection_total: total,
       };
+}
+
+/**
+ * The offline reader's Up Next for an issue opened from a list: the
+ * same `NextUpView` the server would answer, resolved from the device.
+ * `source: "none"` when nothing downloaded is left in the list.
+ */
+export function offlineNextUp(
+  list: OfflineList,
+  records: readonly DownloadRecord[] | ReadonlyMap<string, DownloadRecord>,
+  currentIssueId: string,
+): NextUpView {
+  const next = nextInOfflineList(list, records, currentIssueId);
+  return next ? listView(list, next) : { source: "none" };
+}
+
+/** The offline reader's previous issue in a list (`Shift+P`), resolved
+ *  from the device like `offlineNextUp`; `source: "none"` at the top. */
+export function offlinePrevUp(
+  list: OfflineList,
+  records: readonly DownloadRecord[] | ReadonlyMap<string, DownloadRecord>,
+  currentIssueId: string,
+): NextUpView {
+  const prev = prevInOfflineList(list, records, currentIssueId);
+  return prev ? listView(list, prev) : { source: "none" };
+}
+
+/** Numeric key for series order: `sort_number` when the record carries
+ *  it, else a numeric reading of `number`; `null` sorts last. */
+function seriesOrderKey(r: DownloadRecord): number | null {
+  if (typeof r.sortNumber === "number") return r.sortNumber;
+  const n = r.number ? Number.parseFloat(r.number) : Number.NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The series-page order the server walks (`sort_number` ascending,
+ *  nulls last, then issue id), applied to download records. */
+function compareSeriesOrder(a: DownloadRecord, b: DownloadRecord): number {
+  const ka = seriesOrderKey(a);
+  const kb = seriesOrderKey(b);
+  if (ka !== null && kb !== null && ka !== kb) return ka - kb;
+  if ((ka === null) !== (kb === null)) return ka === null ? 1 : -1;
+  return a.issueId < b.issueId ? -1 : a.issueId > b.issueId ? 1 : 0;
+}
+
+/**
+ * The offline reader's Up Next for an issue opened on its own, not from
+ * a list: the server's series rule applied to what is on the device —
+ * the first downloaded, unfinished sibling strictly after the current
+ * issue in series order (audit N-R8). `source: "none"` when nothing
+ * downloaded is left, so the end card says caught up rather than
+ * failing on the network.
+ */
+export function offlineSeriesNextUp(
+  current: DownloadRecord,
+  records: readonly DownloadRecord[] | ReadonlyMap<string, DownloadRecord>,
+): NextUpView {
+  const { ordered, idx } = seriesOrdered(current, records);
+  for (const r of ordered.slice(idx + 1))
+    if (r.status === "complete" && !r.progress?.finished)
+      return { source: "series", target: summaryFromRecord(r) };
+  return { source: "none" };
+}
+
+/** The previous downloaded sibling in series order — sequential, no
+ *  finished filter, the server's prev-up rule — or `source: "none"` at
+ *  the first downloaded issue. */
+export function offlineSeriesPrevUp(
+  current: DownloadRecord,
+  records: readonly DownloadRecord[] | ReadonlyMap<string, DownloadRecord>,
+): NextUpView {
+  const { ordered, idx } = seriesOrdered(current, records);
+  for (const r of ordered.slice(0, idx).reverse())
+    if (r.status === "complete")
+      return { source: "series", target: summaryFromRecord(r) };
+  return { source: "none" };
+}
+
+/** The current issue with its downloaded siblings in series order, and
+ *  its index among them. */
+function seriesOrdered(
+  current: DownloadRecord,
+  records: readonly DownloadRecord[] | ReadonlyMap<string, DownloadRecord>,
+): { ordered: DownloadRecord[]; idx: number } {
+  const ordered = [
+    ...[...byIssue(records).values()].filter(
+      (r) => r.seriesId === current.seriesId && r.issueId !== current.issueId,
+    ),
+    current,
+  ].sort(compareSeriesOrder);
+  return {
+    ordered,
+    idx: ordered.findIndex((r) => r.issueId === current.issueId),
+  };
 }

@@ -10,7 +10,8 @@
  *   - `downloads` (keyPath `key` = `${account}\u0000${issueId}`): one
  *     `DownloadRecord` per downloaded (or queued) issue — ordered page
  *     metadata, the chosen variant tier, integrity/completeness state and
- *     the reader context captured at download time.
+ *     the reader context captured at download time (progress seed, the
+ *     account's spread overrides, series order).
  *   - `meta` (keyPath `name`): `account` — the account that owns the
  *     downloads on this device (set by a signed-in page load; survives
  *     session expiry so a plane ride that outlives the session still
@@ -30,7 +31,7 @@
  *   so the offline reader shell boots without the network.
  */
 
-import type { PageInfo } from "@/lib/api/types";
+import type { PageInfo, PageOverridesView } from "@/lib/api/types";
 
 export const OFFLINE_DB = "folio-offline";
 export const DOWNLOADS_STORE = "downloads";
@@ -115,6 +116,17 @@ export type DownloadRecord = {
    *  issues unless they were also downloaded directly or belong to
    *  another list. Records from before this field count as direct. */
   direct?: boolean;
+  /** The account's manual spread controls for the issue
+   *  (`PageOverridesView`) as of download time, refreshed whenever the
+   *  user changes them online (`DownloadManager.noteOverrides`), so an
+   *  offline open pairs the pages as it did online. Absent until fetched
+   *  (a fetch that failed is retried when the download resumes) and on
+   *  records from before this field: automatic pairing. */
+  overrides?: PageOverridesView;
+  /** `issue.sort_number` — the series-page order the offline Up Next
+   *  fallback walks downloaded siblings in. Absent on records from
+   *  before this field (they order by a numeric reading of `number`). */
+  sortNumber?: number | null;
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;

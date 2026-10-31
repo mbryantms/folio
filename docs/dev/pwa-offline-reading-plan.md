@@ -191,7 +191,18 @@ Code: `downloadList` in `downloads.ts`, the pure helpers in
   and hands the `Reader` a `nextUpOverride` shaped like the server's
   `NextUpView` (`source: "cbl" | "collection"`, position/total from the
   list) plus `onNextIssue`, which navigates with `pushState` inside the
-  shell document. The next-up / prev-up queries do not run.
+  shell document. An issue opened on its own gets the same treatment
+  from `offlineSeriesNextUp`: the first downloaded, unfinished sibling
+  strictly after it in series order (`sortNumber`, else `number`), or
+  `source: "none"`. The previous issue (`Shift+P`) is resolved the same
+  way (`offlinePrevUp` / `offlineSeriesPrevUp`, sequential, no finished
+  filter). The next-up / prev-up queries never run in the shell.
+- **Spread overrides offline**: the download stores the account's
+  `PageOverridesView` (`DownloadRecord.overrides`, fetched when the
+  download runs and written through by the page-override mutations); the
+  shell hands it to the reader as `storedPageOverrides`, which stands in
+  while the live fetch is pending or failed. `useIssuePageOverrides`
+  fires once with no retry when `navigator.onLine` is false.
 
 ### Offline reader shell
 
@@ -244,8 +255,7 @@ Code: `downloadList` in `downloads.ts`, the pure helpers in
 - The shell is stored after the first completed download and refreshed on
   each completion; a deploy between downloads leaves the previous (self-
   consistent) shell until the next download completes.
-- Markers/bookmarks, OCR, Up Next and the end-of-issue card need the network
-  and degrade to empty offline.
+- Markers/bookmarks and OCR need the network and degrade to empty offline.
 - Step 6 (real-device matrix) is not done; the Playwright reader-flow spec
   covers download → offline → read → reconnect → progress replay on
   desktop Chromium only.
