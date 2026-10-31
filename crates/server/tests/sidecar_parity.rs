@@ -27,13 +27,14 @@ mod common;
 use archive::ArchiveLimits;
 use common::TestApp;
 use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
-use entity::issue;
+use entity::{external_id, issue, series};
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob;
 use server::library::scanner;
 use server::library::scanner::metadata_rollup;
+use server::metadata::identifier::Identifier;
 use server::metadata::identifier::Source;
 use server::metadata::manual_writeback::{self, Actor, IssueEnqueue};
 use server::metadata::writers::{self, CsvRebuildBatch, SetBy};
@@ -383,6 +384,168 @@ fn assert_metron_credit_shape(xml: &str) -> usize {
     credits
 }
 
+// ───────── MetronInfo XSD validation ─────────
+
+/// The MetronInfo v1.2 XSD, vendored verbatim from
+/// Metron-Project/metroninfo `schema/v1.2/MetronInfo.xsd`.
+fn metroninfo_xsd() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/metroninfo/MetronInfo-v1.2.xsd")
+}
+
+/// The pre-schema MetronInfo Folio wrote until audit 2026-11 WP A4 (the
+/// ComicTagger-parity golden as it was before the schema change).
+fn legacy_shape_metroninfo() -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/metroninfo/folio-legacy-shape.MetronInfo.xml"),
+    )
+    .unwrap()
+}
+
+/// Validate `xml` against the vendored MetronInfo v1.2 XSD with
+/// `xmllint --schema`. libxml2 is an XSD 1.0 validator, so the schema's
+/// XSD 1.1 `<xs:assert>`s (at most one primary id / URL, EndYear after
+/// StartYear, no EndYear on an Ongoing series) are stripped from a temp
+/// copy; `parsers::metroninfo::serialize` honours those rules itself.
+/// Without `xmllint` the check is skipped locally and fails under CI
+/// (`CI` set), where the workflow installs `libxml2-utils`.
+#[allow(
+    clippy::print_stderr,
+    reason = "the skip must be visible in the test log"
+)]
+fn assert_valid_metroninfo(xml: &str) {
+    let Ok(xmllint) = which_xmllint() else {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "xmllint missing in CI; the Rust test job installs libxml2-utils"
+        );
+        eprintln!("xmllint not found; skipping MetronInfo XSD validation");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let xsd = dir.path().join("MetronInfo.xsd");
+    let doc = dir.path().join("MetronInfo.xml");
+    std::fs::write(
+        &xsd,
+        strip_xsd_asserts(&std::fs::read_to_string(metroninfo_xsd()).unwrap()),
+    )
+    .unwrap();
+    std::fs::write(&doc, xml).unwrap();
+    let out = std::process::Command::new(xmllint)
+        .arg("--noout")
+        .arg("--schema")
+        .arg(&xsd)
+        .arg(&doc)
+        .output()
+        .expect("run xmllint");
+    assert!(
+        out.status.success(),
+        "MetronInfo.xml does not validate against the v1.2 XSD:\n{}\n{}\n--- document ---\n{xml}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn which_xmllint() -> Result<PathBuf, ()> {
+    let path = std::env::var_os("PATH").ok_or(())?;
+    std::env::split_paths(&path)
+        .map(|d| d.join("xmllint"))
+        .find(|p| p.is_file())
+        .ok_or(())
+}
+
+/// Remove every `<xs:assert … />` (they span lines) from an XSD.
+fn strip_xsd_asserts(xsd: &str) -> String {
+    let mut out = String::with_capacity(xsd.len());
+    let mut rest = xsd;
+    while let Some(start) = rest.find("<xs:assert") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let end = after.find("/>").expect("xs:assert is an empty element") + 2;
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn xsd_assert_stripping_leaves_the_schema_intact() {
+    let xsd = std::fs::read_to_string(metroninfo_xsd()).unwrap();
+    assert!(
+        xsd.contains("<xs:assert"),
+        "vendored XSD is the 1.1-flavoured one"
+    );
+    let stripped = strip_xsd_asserts(&xsd);
+    assert!(!stripped.contains("xs:assert"));
+    assert!(stripped.contains("<xs:element name=\"MetronInfo\" type=\"metroninfoType\" />"));
+    assert!(
+        stripped.contains("<xs:simpleType name=\"seriesStatusType\">"),
+        "v1.2"
+    );
+}
+
+/// Issue-metadata columns a rescan must reproduce from the rewritten
+/// archive (the ComicInfo / MetronInfo-fed scalars and read-cache lists)
+/// plus the issue's external ids.
+#[derive(Debug, PartialEq)]
+struct Ingested {
+    columns: Vec<(&'static str, Option<String>)>,
+    external_ids: BTreeMap<String, String>,
+}
+
+async fn ingested(app: &TestApp, lib_id: uuid::Uuid) -> (issue::Model, Ingested) {
+    let db = &app.state().db;
+    let row = issue::Entity::find()
+        .filter(issue::Column::LibraryId.eq(lib_id))
+        .one(db)
+        .await
+        .unwrap()
+        .expect("one issue");
+    let ids = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq("issue"))
+        .filter(external_id::Column::EntityId.eq(row.id.clone()))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.source, r.external_id))
+        .collect();
+    let num = |v: Option<i32>| v.map(|n| n.to_string());
+    let columns = vec![
+        ("title", row.title.clone()),
+        ("number_raw", row.number_raw.clone()),
+        ("year", num(row.year)),
+        ("month", num(row.month)),
+        ("day", num(row.day)),
+        ("summary", row.summary.clone()),
+        ("notes", row.notes.clone()),
+        ("age_rating", row.age_rating.clone()),
+        ("language_code", row.language_code.clone()),
+        ("manga", row.manga.clone()),
+        ("publisher", row.publisher.clone()),
+        ("imprint", row.imprint.clone()),
+        ("story_arc", row.story_arc.clone()),
+        ("characters", row.characters.clone()),
+        ("teams", row.teams.clone()),
+        ("locations", row.locations.clone()),
+        ("genre", row.genre.clone()),
+        ("writer", row.writer.clone()),
+        ("penciller", row.penciller.clone()),
+        ("inker", row.inker.clone()),
+        ("colorist", row.colorist.clone()),
+        ("letterer", row.letterer.clone()),
+        ("cover_artist", row.cover_artist.clone()),
+        ("editor", row.editor.clone()),
+    ];
+    (
+        row,
+        Ingested {
+            columns,
+            external_ids: ids,
+        },
+    )
+}
+
 // ───────── the test ─────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -506,11 +669,24 @@ async fn folio_rewrite_of_a_comictagger_file_agrees_on_every_shared_field() {
         Some(f["CoverArtist"].as_str())
     );
     assert_eq!(mi.editor().as_deref(), Some(f["Editor"].as_str()));
-    // …in the MetronInfo schema's credit shape (WP-8.1).
+    // …in the MetronInfo schema's credit shape (WP-8.1), and the whole
+    // document validates against the v1.2 XSD (audit 2026-11 WP A4).
     assert!(
         assert_metron_credit_shape(&metron_xml) >= 7,
         "every ComicTagger credit is present\n{metron_xml}"
     );
+    assert_valid_metroninfo(&metron_xml);
+    assert!(metron_xml.contains("<IDS>"), "{metron_xml}");
+    assert!(
+        metron_xml.contains("<ID source=\"Comic Vine\" primary=\"true\">123456</ID>"),
+        "{metron_xml}"
+    );
+    assert!(
+        metron_xml.contains("<CoverDate>2021-07-14</CoverDate>"),
+        "{metron_xml}"
+    );
+    assert!(!metron_xml.contains("<Title>"), "{metron_xml}");
+    assert!(!metron_xml.contains("<Year>"), "{metron_xml}");
 
     // 5. Golden pin of Folio's rewrite (reviewable diff on any composer /
     //    serializer change; input to `make-fixture.py verify`).
@@ -750,4 +926,351 @@ async fn junction_rows_win_over_a_stale_csv_column() {
     assert_eq!(mi.characters, ["Alana", "Marko"]);
     assert_eq!(mi.genres, ["Science Fiction", "Romance"]);
     assert!(!mi_xml.contains("Stale"), "{mi_xml}");
+}
+
+// ───────── MetronInfo v1.2 schema (audit 2026-11 WP A4) ─────────
+
+/// A rich issue — every block the composer can emit — rewrites to a
+/// MetronInfo.xml that validates against the v1.2 XSD, carries the
+/// schema shapes other tools read, and reads back onto the same struct.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rich_metroninfo_validates_against_the_v1_2_schema() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (issue_id, path) = seed_writeback_issue(&app, dir.path()).await;
+    let db = &app.state().db;
+
+    // Series: publisher / imprint / years / status / count / sort name.
+    let row = issue::Entity::find_by_id(issue_id.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut sam: series::ActiveModel = series::Entity::find_by_id(row.series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    sam.publisher = Set(Some("Image Comics".into()));
+    sam.imprint = Set(Some("Skybound".into()));
+    sam.year = Set(Some(2012));
+    sam.year_end = Set(Some(2018));
+    sam.status = Set("ended".into());
+    sam.total_issues = Set(Some(54));
+    sam.sort_name = Set(Some("Saga".into()));
+    sam.series_type = Set(Some("Ongoing Series".into()));
+    sam.summary = Set(Some("Two soldiers from opposite sides of a war.".into()));
+    sam.update(db).await.unwrap();
+    // Issue scalars.
+    let mut am: issue::ActiveModel = row.into();
+    am.title = Set(Some("Chapter One".into()));
+    am.number_raw = Set(Some("1".into()));
+    am.year = Set(Some(2012));
+    am.month = Set(Some(3));
+    am.day = Set(Some(14));
+    am.store_date = Set(chrono::NaiveDate::from_ymd_opt(2012, 3, 14));
+    am.summary = Set(Some("Hazel is born. \"Quoted\" & <escaped>.".into()));
+    am.notes = Set(Some("Fixture notes.".into()));
+    am.age_rating = Set(Some("Mature 17+".into()));
+    am.language_code = Set(Some("en".into()));
+    am.web_url = Set(Some("https://metron.cloud/issue/saga-2012-1/".into()));
+    am.additional_links = Set(serde_json::json!([
+        {"label": "ComicVine", "url": "https://comicvine.gamespot.com/saga-1/4000-12345/"},
+        {"url": "https://metron.cloud/issue/saga-2012-1/"}
+    ]));
+    am.page_count = Set(Some(44));
+    am.update(db).await.unwrap();
+
+    // External ids: three enumerated sources, two barcodes, one with no
+    // schema slot (asin), and the series' Metron id.
+    let set_by = SetBy::Provider(Source::Metron);
+    for (src, id) in [
+        (Source::Metron, "290431"),
+        (Source::ComicVine, "4000-12345"),
+        (Source::Gcd, "543"),
+        (Source::Upc, "70985300470200111"),
+        (Source::Isbn, "9781607066019"),
+        (Source::Asin, "B00ABCDEF0"),
+    ] {
+        writers::set_external_id(db, "issue", &issue_id, &Identifier::new(src, id), set_by)
+            .await
+            .unwrap();
+    }
+    let series_id = issue::Entity::find_by_id(issue_id.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .series_id;
+    writers::set_external_id(
+        db,
+        "series",
+        &series_id.to_string(),
+        &Identifier::new(Source::Metron, "65478"),
+        set_by,
+    )
+    .await
+    .unwrap();
+
+    // Junctions: credits, cast, arcs with a position, genres, tags,
+    // universes, reprints.
+    let batch = CsvRebuildBatch::new();
+    let writer = writers::upsert_person(db, "Brian K. Vaughan", &[], set_by)
+        .await
+        .unwrap();
+    let artist = writers::upsert_person(db, "Fiona Staples", &[], set_by)
+        .await
+        .unwrap();
+    writers::set_issue_credits(
+        db,
+        &issue_id,
+        vec![
+            (writer, "Writer".into(), 0),
+            (artist, "Penciller".into(), 0),
+            (artist, "CoverArtist".into(), 0),
+        ],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    let alana = writers::upsert_character(db, "Alana", &[], set_by)
+        .await
+        .unwrap();
+    writers::set_issue_characters(
+        db,
+        &issue_id,
+        vec![(alana, true, false)],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    let arc = writers::upsert_story_arc(db, "Volume One", &[], set_by)
+        .await
+        .unwrap();
+    writers::set_issue_story_arcs(db, &issue_id, vec![(arc, Some(1))], set_by, None, &batch)
+        .await
+        .unwrap();
+    writers::set_issue_genres(
+        db,
+        &issue_id,
+        vec!["Science Fiction".into(), "Fantasy".into()],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    writers::set_issue_tags(
+        db,
+        &issue_id,
+        vec!["Image 20th".into()],
+        set_by,
+        None,
+        &batch,
+    )
+    .await
+    .unwrap();
+    let universe = writers::upsert_universe(db, "Saga Universe", &[], set_by)
+        .await
+        .unwrap();
+    writers::set_issue_universes(db, &issue_id, vec![universe], set_by, None)
+        .await
+        .unwrap();
+    writers::set_issue_reprints(
+        db,
+        &issue_id,
+        vec![writers::ReprintSpec {
+            reprinted_issue_id: None,
+            reprinted_label: Some("Saga: Compendium One".into()),
+            reprinted_source: None,
+            reprinted_external_id: None,
+        }],
+        set_by,
+        None,
+    )
+    .await
+    .unwrap();
+    batch.flush(db).await.unwrap();
+
+    let (_ci_xml, mi_xml) = rewrite_from_db(&app, &issue_id, &path).await;
+
+    assert_valid_metroninfo(&mi_xml);
+    // The schema shapes, in XSD order.
+    let blocks = [
+        "  <IDS>\n    <ID source=\"Comic Vine\">4000-12345</ID>\n    \
+         <ID source=\"Grand Comics Database\">543</ID>\n    \
+         <ID source=\"Metron\" primary=\"true\">290431</ID>\n  </IDS>\n",
+        "  <Publisher>\n    <Name>Image Comics</Name>\n    <Imprint>Skybound</Imprint>\n  </Publisher>\n",
+        "  <Series id=\"65478\" lang=\"en\">\n    <Name>Saga</Name>\n    <SortName>Saga</SortName>\n    \
+         <Format>Single Issue</Format>\n    <StartYear>2012</StartYear>\n    <EndYear>2018</EndYear>\n    \
+         <Status>Completed</Status>\n    <IssueCount>54</IssueCount>\n    \
+         <Summary>Two soldiers from opposite sides of a war.</Summary>\n  </Series>\n",
+        "  <Number>1</Number>\n",
+        "  <Stories>\n    <Story>Chapter One</Story>\n  </Stories>\n",
+        "  <Summary>Hazel is born. \"Quoted\" &amp; &lt;escaped&gt;.</Summary>\n",
+        "  <CoverDate>2012-03-14</CoverDate>\n",
+        "  <StoreDate>2012-03-14</StoreDate>\n",
+        "  <PageCount>44</PageCount>\n",
+        "  <Notes>Fixture notes.</Notes>\n",
+        "  <Genres>\n    <Genre>Science Fiction</Genre>\n    <Genre>Fantasy</Genre>\n  </Genres>\n",
+        "  <Tags>\n    <Tag>Image 20th</Tag>\n  </Tags>\n",
+        "  <Arcs>\n    <Arc>\n      <Name>Volume One</Name>\n      <Number>1</Number>\n    </Arc>\n  </Arcs>\n",
+        "  <Characters>\n    <Character>Alana</Character>\n  </Characters>\n",
+        "  <Universes>\n    <Universe>\n      <Name>Saga Universe</Name>\n    </Universe>\n  </Universes>\n",
+        "  <Reprints>\n    <Reprint>Saga: Compendium One</Reprint>\n  </Reprints>\n",
+        "  <GTIN>\n    <ISBN>9781607066019</ISBN>\n    <UPC>70985300470200111</UPC>\n  </GTIN>\n",
+        "  <AgeRating>Mature</AgeRating>\n",
+        "  <URLs>\n    <URL primary=\"true\">https://metron.cloud/issue/saga-2012-1/</URL>\n    \
+         <URL>https://comicvine.gamespot.com/saga-1/4000-12345/</URL>\n  </URLs>\n",
+    ];
+    let mut cursor = 0;
+    for block in blocks {
+        let at = mi_xml[cursor..]
+            .find(block)
+            .unwrap_or_else(|| panic!("missing or out of order:\n{block}\n--- in ---\n{mi_xml}"));
+        cursor += at + block.len();
+    }
+    assert_eq!(assert_metron_credit_shape(&mi_xml), 2, "{mi_xml}");
+    assert!(
+        mi_xml.contains("<Creator>Fiona Staples</Creator>\n      <Roles>\n        <Role>Cover</Role>\n        <Role>Penciller</Role>"),
+        "{mi_xml}"
+    );
+    assert!(
+        !mi_xml.contains("B00ABCDEF0"),
+        "asin has no schema slot\n{mi_xml}"
+    );
+    for old in [
+        "<Title>",
+        "<Year>",
+        "<Month>",
+        "<Day>",
+        "<Language>",
+        "<StoryArcs>",
+        "\n  <ID ",
+    ] {
+        assert!(!mi_xml.contains(old), "pre-schema {old} written\n{mi_xml}");
+    }
+    // It reads back, and the DB-only compose is a fixed point.
+    let mi = parsers::metroninfo::parse(mi_xml.as_bytes()).expect("parses");
+    assert_eq!(mi.primary_id_source.as_deref(), Some("metron"));
+    assert_eq!(mi.series_id.as_deref(), Some("65478"));
+    assert_eq!(mi.arc_numbers.get("Volume One"), Some(&1));
+    assert_eq!(mi.universes, ["Saga Universe"]);
+    assert_eq!(mi.reprints, ["Saga: Compendium One"]);
+    assert_eq!(
+        mi.ids.get("upc").map(String::as_str),
+        Some("70985300470200111")
+    );
+    assert_eq!(
+        mi.ids.get("isbn").map(String::as_str),
+        Some("9781607066019")
+    );
+    assert_eq!(
+        parsers::metroninfo::serialize(&mi),
+        mi_xml,
+        "serialize ∘ parse is stable"
+    );
+}
+
+/// An archive Folio wrote in the pre-schema shape (every production
+/// archive until it is rewritten): the rescan ingests it as before, the
+/// rewrite upgrades it to the v1.2 shape, and a rescan of the upgraded
+/// archive reproduces every column and external id. The parsed structs
+/// of both shapes agree too, modulo the two documented conventions
+/// (`<Manga>` has no schema slot; `<AgeRating>` is the schema value).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_shape_archive_rescans_without_loss_after_the_schema_rewrite() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("The Parity Patrol (2021)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("The Parity Patrol 003 (2021).cbz");
+    let legacy = legacy_shape_metroninfo();
+    assert!(
+        legacy.contains("<Title>") && legacy.contains("<StoryArcs>"),
+        "fixture is pre-schema"
+    );
+    {
+        let f = std::fs::File::create(&path).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        zw.write_all(b"\x89PNG\r\n\x1a\nlegacy-shape-fixture")
+            .unwrap();
+        zw.start_file("MetronInfo.xml", opts).unwrap();
+        zw.write_all(legacy.as_bytes()).unwrap();
+        zw.finish().unwrap();
+    }
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let state = app.state();
+
+    // 1. Ingest of the pre-schema archive.
+    scanner::scan_library(&state, lib_id).await.expect("scan");
+    let (row, before) = ingested(&app, lib_id).await;
+    assert_eq!(
+        row.title.as_deref(),
+        Some("Who's Afraid of <Diffs> & Drift?")
+    );
+    assert_eq!(
+        (row.year, row.month, row.day),
+        (Some(2021), Some(7), Some(14))
+    );
+    assert_eq!(row.imprint.as_deref(), Some("Fixture Press"));
+    assert_eq!(
+        before.external_ids.get("comicvine").map(String::as_str),
+        Some("123456")
+    );
+    assert_eq!(row.story_arc.as_deref(), Some("The Round Trip"));
+    assert_eq!(row.writer.as_deref(), Some("Wanda Writer, Second Scribe"));
+
+    // 2. The rewrite upgrades the file to the schema shape.
+    let (_ci, mi_xml) = rewrite_from_db(&app, &row.id, &path).await;
+    assert_valid_metroninfo(&mi_xml);
+    assert!(
+        mi_xml.contains("<ID source=\"Comic Vine\" primary=\"true\">123456</ID>"),
+        "{mi_xml}"
+    );
+    assert!(
+        mi_xml.contains("<CoverDate>2021-07-14</CoverDate>"),
+        "{mi_xml}"
+    );
+    assert!(
+        mi_xml.contains("<Imprint>Fixture Press</Imprint>"),
+        "{mi_xml}"
+    );
+    assert!(!mi_xml.contains("<Title>"), "{mi_xml}");
+
+    // 3. A rescan of the upgraded archive changes nothing.
+    scanner::scan_library(&state, lib_id).await.expect("rescan");
+    let (_row, after) = ingested(&app, lib_id).await;
+    assert_eq!(after, before);
+
+    // 4. Both shapes parse onto the same struct.
+    let old = parsers::metroninfo::parse(legacy.as_bytes()).unwrap();
+    let new = parsers::metroninfo::parse(mi_xml.as_bytes()).unwrap();
+    let strip = |mut i: parsers::metroninfo::MetronInfo| {
+        i.manga = None;
+        i.raw.clear();
+        i.age_rating = i
+            .age_rating
+            .as_deref()
+            .and_then(parsers::metroninfo::metron_age_rating)
+            .map(str::to_owned);
+        // The composer adds what the DB knows and the old file lacked.
+        i.primary_id_source = None;
+        i.series_start_year = None;
+        i.series_status = None;
+        i.page_count = None;
+        i
+    };
+    assert_eq!(strip(new), strip(old), "{mi_xml}");
 }

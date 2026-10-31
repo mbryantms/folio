@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MetronInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Title>Who's Afraid of &lt;Diffs&gt; &amp; Drift?</Title>
+  <Series>The Parity Patrol</Series>
+  <Publisher>Folio Test Comics</Publisher>
+  <Imprint>Fixture Press</Imprint>
+  <Number>3</Number>
+  <Year>2021</Year>
+  <Month>7</Month>
+  <Day>14</Day>
+  <Summary>The patrol rides again. "Quoted" text, an ampersand &amp; angle &lt;brackets&gt;; café, naïve, 日本語.</Summary>
+  <Notes>Fixture tagged offline by ComicTagger for Folio WP-6.4.</Notes>
+  <AgeRating>Teen</AgeRating>
+  <Language>en</Language>
+  <Manga>No</Manga>
+  <ID source="comicvine">123456</ID>
+  <StoryArcs>
+    <StoryArc>The Round Trip</StoryArc>
+  </StoryArcs>
+  <Characters>
+    <Character>Captain Parity</Character>
+    <Character>Diff Kid</Character>
+    <Character>The Rewriter</Character>
+  </Characters>
+  <Teams>
+    <Team>Parity Patrol</Team>
+    <Team>Legion of Lint</Team>
+  </Teams>
+  <Locations>
+    <Location>Fixture City</Location>
+    <Location>The Archive</Location>
+  </Locations>
+  <Genres>
+    <Genre>Superhero</Genre>
+    <Genre>Comedy</Genre>
+  </Genres>
+  <Credits>
+    <Credit>
+      <Creator>Cora Colorist</Creator>
+      <Roles>
+        <Role>Colorist</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>Cass Cover</Creator>
+      <Roles>
+        <Role>Cover</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>Eddie Editor</Creator>
+      <Roles>
+        <Role>Editor</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>Ian Inker</Creator>
+      <Roles>
+        <Role>Inker</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>Lee Letterer</Creator>
+      <Roles>
+        <Role>Letterer</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>Pat Penciller</Creator>
+      <Roles>
+        <Role>Penciller</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>Wanda Writer</Creator>
+      <Roles>
+        <Role>Writer</Role>
+      </Roles>
+    </Credit>
+    <Credit>
+      <Creator>Second Scribe</Creator>
+      <Roles>
+        <Role>Writer</Role>
+      </Roles>
+    </Credit>
+  </Credits>
+</MetronInfo>

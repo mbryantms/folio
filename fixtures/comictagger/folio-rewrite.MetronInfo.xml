@@ -1,22 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
-<MetronInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-  <Title>Who's Afraid of &lt;Diffs&gt; &amp; Drift?</Title>
-  <Series>The Parity Patrol</Series>
-  <Publisher>Folio Test Comics</Publisher>
-  <Imprint>Fixture Press</Imprint>
+<MetronInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/Metron-Project/metroninfo/master/schema/v1.2/MetronInfo.xsd">
+  <IDS>
+    <ID source="Comic Vine" primary="true">123456</ID>
+  </IDS>
+  <Publisher>
+    <Name>Folio Test Comics</Name>
+    <Imprint>Fixture Press</Imprint>
+  </Publisher>
+  <Series lang="en">
+    <Name>The Parity Patrol</Name>
+    <Format>Single Issue</Format>
+    <StartYear>2021</StartYear>
+    <Status>Completed</Status>
+    <IssueCount>12</IssueCount>
+  </Series>
   <Number>3</Number>
-  <Year>2021</Year>
-  <Month>7</Month>
-  <Day>14</Day>
+  <Stories>
+    <Story>Who's Afraid of &lt;Diffs&gt; &amp; Drift?</Story>
+  </Stories>
   <Summary>The patrol rides again. "Quoted" text, an ampersand &amp; angle &lt;brackets&gt;; café, naïve, 日本語.</Summary>
+  <CoverDate>2021-07-14</CoverDate>
+  <PageCount>4</PageCount>
   <Notes>Fixture tagged offline by ComicTagger for Folio WP-6.4.</Notes>
-  <AgeRating>Teen</AgeRating>
-  <Language>en</Language>
-  <Manga>No</Manga>
-  <ID source="comicvine">123456</ID>
-  <StoryArcs>
-    <StoryArc>The Round Trip</StoryArc>
-  </StoryArcs>
+  <Genres>
+    <Genre>Superhero</Genre>
+    <Genre>Comedy</Genre>
+  </Genres>
+  <Arcs>
+    <Arc>
+      <Name>The Round Trip</Name>
+    </Arc>
+  </Arcs>
   <Characters>
     <Character>Captain Parity</Character>
     <Character>Diff Kid</Character>
@@ -30,10 +44,10 @@
     <Location>Fixture City</Location>
     <Location>The Archive</Location>
   </Locations>
-  <Genres>
-    <Genre>Superhero</Genre>
-    <Genre>Comedy</Genre>
-  </Genres>
+  <AgeRating>Teen</AgeRating>
+  <URLs>
+    <URL primary="true">https://comicvine.gamespot.com/the-parity-patrol-3/4000-123456/</URL>
+  </URLs>
   <Credits>
     <Credit>
       <Creator>Cora Colorist</Creator>

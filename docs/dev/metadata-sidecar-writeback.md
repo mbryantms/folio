@@ -114,12 +114,98 @@ For each field the composer picks one of three sources:
 
 The composer emits both formats every time — ComicInfo for tooling
 compatibility, MetronInfo for the richer structured fields (per-credit
-roles, `<ID source>` map, structured cast lists). That doubles the
+roles, `<IDS>` map, structured cast lists). That doubles the
 write but the archive rewrite is the cheap step; what matters is that
 the file stays in sync for whichever consumer reads it next.
 
+### MetronInfo schema (v1.2, audit 2026-11 WP A4)
+
+`parsers::metroninfo::serialize` writes the **MetronInfo v1.2** schema
+([Metron-Project/metroninfo](https://github.com/Metron-Project/metroninfo/tree/master/schema),
+`schema/v1.2/MetronInfo.xsd`, vendored verbatim at
+`fixtures/metroninfo/MetronInfo-v1.2.xsd`) — the version Codex 2.5.x and
+Metron-Tagger (darkseid) read and write. The root carries
+`xsi:noNamespaceSchemaLocation` pointing at that file. Elements follow the
+XSD's listing order (`metroninfoType` is an `xs:all`, so order is not
+validated; a stable order keeps rewrites diff-clean).
+
+| Folio value | MetronInfo v1.2 element | Notes |
+| --- | --- | --- |
+| `external_ids` (issue) | `<IDS><ID source="…" primary="true">` | `source` is the schema's `informationSource` name (`Comic Vine`, `Metron`, `Grand Comics Database`, `Marvel`, `League of Comic Geeks`, `MyAnimeList`, `AniList`, `MangaUpdates`; `parsers::metroninfo::metron_id_source`). `primary` marks the provider the apply came from, else the first of Metron / ComicVine / GCD present. |
+| `series.publisher` / `imprint` | `<Publisher><Name/><Imprint/></Publisher>` | Written only with a publisher name (the schema requires `<Name>`). |
+| series name, `sort_name`, `volume`, `series_type` / `format`, `year` / `year_end`, `status`, `total_issues`, `summary`; `language_code`; the primary source's series id | `<Series id lang><Name/><SortName/><Volume/><Format/><StartYear/><EndYear/><Status/><IssueCount/><Summary/>` | `Format` and `Status` are written only when they map onto `formatType` / `seriesStatusType` (`metron_series_format`: `Ongoing Series` → `Single Issue`, `TPB` → `Trade Paperback`, …; `metron_series_status`: `continuing` → `Ongoing`, `ended` → `Completed`). The serializer honours the schema's asserts: an end year before the start year is dropped, `Ongoing` gives way to a written `EndYear`. `lang` is written when it is a BCP 47 tag. |
+| `number_raw` | `<Number>` | |
+| `title` | `<Stories><Story>` | One `<Story>`; several read back joined with `; `. |
+| `summary`, `notes` | `<Summary>`, `<Notes>` | |
+| `year` / `month` / `day` | `<CoverDate>YYYY-MM-DD</CoverDate>` | `xs:date` needs a full date: a missing month / day is written as `01` (Metron and ComicVine date every issue on the 1st). |
+| `store_date` | `<StoreDate>` | |
+| `page_count` | `<PageCount>` | |
+| junctions: genres, tags, arcs (+ `position_in_arc`), characters, teams, universes, locations, reprints | `<Genres>`, `<Tags>`, `<Arcs><Arc><Name/><Number/></Arc>`, `<Characters>`, `<Teams>`, `<Universes><Universe><Name/>`, `<Locations>`, `<Reprints>` | Junctions are the truth (N-M2); `IssueJunctions` now loads `arc_numbers`, `universes` and `reprints` (a reprint linked to a local issue is spelled `Series #N`). |
+| `isbn` / `upc` ids (and a pre-schema `gtin`, classified by shape) | `<GTIN><ISBN/><UPC/></GTIN>` | |
+| `age_rating` | `<AgeRating>` | `ageRatingType` only (`metron_age_rating`): a Metron value passes through, ComicInfo's vocabulary maps as Metron-Tagger maps it (`Mature 17+` → `Mature`, `MA15+` → `Teen Plus`, `Everyone 10+` → `Everyone`, `X18+` → `Explicit`, …); anything else is omitted (the schema default is `Unknown`). |
+| `web_url` (or the provider's `source_url`), `additional_links` | `<URLs><URL primary="true"/><URL/>` | |
+| credits | `<Credits>` | Unchanged since WP-8.1 (below). |
+| `provider.fetched_at`, else `last_metadata_sync_at` | `<LastModified>` | Omitted for a DB-only compose of a never-synced issue, so the parity fixed point holds. |
+| `issue.metron_info_raw` top-level unknowns | passthrough after `<LastModified>` | `<MangaVolume>`, vendor `<X-…>`; a pre-schema typed name (`<Title>`, `<Year>`) in `raw` is never re-emitted. |
+
+**Dropped from MetronInfo** (no slot in the schema; ComicInfo still
+carries them where it has one): `<Manga>` (`Yes` / `YesAndRightToLeft` /
+`No`); external ids with source `asin` / `doi` or outside the enumeration;
+an age rating that maps onto no `ageRatingType` value; a series format or
+status outside the enumerations; an imprint without a publisher name; a
+cover date with no year.
+
+**Known limitations** (accepted in WP A4): `raw` passthrough covers
+top-level leaves only, so schema containers Folio has no slot for in a
+file another tool wrote (`<Prices>`, `<CommunityRating>`,
+`<Series><AlternativeNames>` / `<VolumeCount>`, `<Universe><Designation>`,
+per-element `id` attributes) do not survive a Folio rewrite — unchanged
+from before, when the same elements were dropped. Several `<Story>`
+elements read back as one title joined with `; ` and are rewritten as one
+`<Story>`. A `gtin`-source id rewritten into `<GTIN><UPC>` / `<ISBN>`
+gains one `upc` / `isbn` row of the same value on the next rescan (the
+schema has no generic barcode source). `<Series>` is required by the
+schema; the composer always has a series name, but `serialize` on a
+struct without one writes no `<Series>`.
+
+**Parser tolerance.** `parsers::metroninfo::parse` reads three shapes
+onto one struct: the v1.2 shape; the pre-schema Folio shape (`<Title>`,
+`<Year>/<Month>/<Day>`, flat `<Series>` / `<Publisher>` / `<Imprint>` /
+`<Language>` / `<Manga>` text, a bare `<GTIN>`, top-level
+`<ID source="metron">`, `<StoryArcs><StoryArc>`, `<Credit role="…">`);
+and the bare top-level `<ID>` other tools wrote. `source` names are
+accepted in the schema spelling, the Folio key and the usual aliases;
+an unknown source is kept (lower-cased) and the scanner skips it as
+before. Every production archive carries the pre-schema shape until it is
+rewritten (WP A7 bulk re-emit), so this is what keeps a rescan lossless.
+
+**Scanner merge.** MetronInfo still wins over ComicInfo on overlap
+(`merge_metron_into_comicinfo`), with two agreements the schema's coarser
+types force: a `<CoverDate>` on the 1st beside a ComicInfo
+`<Year>/<Month>` of the same month with no `<Day>` keeps the day
+undeclared, and an `<AgeRating>` that ComicInfo's value maps onto keeps
+ComicInfo's finer spelling — so a rescan of a Folio-rewritten archive
+changes nothing. New slots: `<URLs>` sets `web_url`; `<Series><Format>`
+fills an issue with no `<Format>` of its own (except `Single Issue`);
+`<GTIN><ISBN/><UPC/>` ride the ids map into `external_ids` as `isbn` /
+`upc`. `<Universes>`, `<Reprints>`, `<StoreDate>`, `<PageCount>`,
+`<LastModified>` and the `<Series>` scalars are parsed but not ingested
+(the apply path writes universes / reprints / store date directly, the
+archive's real page count is the truth, series identity is folder-pinned).
+
+**Validation.** `sidecar_parity.rs` validates Folio's MetronInfo.xml
+against the vendored XSD with `xmllint --noout --schema` (libxml2 is XSD
+1.0, so the 1.1 `<xs:assert>`s are stripped from a temp copy; the
+serializer honours them itself): the ComicTagger-parity golden, a rich
+seeded issue exercising every block
+(`rich_metroninfo_validates_against_the_v1_2_schema`), and the legacy-shape
+round trip (`legacy_shape_archive_rescans_without_loss_after_the_schema_rewrite`,
+fixture `fixtures/metroninfo/folio-legacy-shape.MetronInfo.xml`). The
+check skips without `xmllint` locally and fails under `CI`, where the Rust
+test job installs `libxml2-utils`.
+
 **MetronInfo credits (WP-8.1).** `<Credits>` follows the MetronInfo XSD
-(v1.0 / v1.1 `creditType`, [Metron-Project/metroninfo](https://github.com/Metron-Project/metroninfo/tree/master/schema)):
+`creditType` ([Metron-Project/metroninfo](https://github.com/Metron-Project/metroninfo/tree/master/schema)):
 one `<Credit>` per creator, the name as `<Creator>` text, every role it
 holds under `<Roles>`:
 
@@ -142,12 +228,8 @@ outside the enumeration (`journalist`, `unknown`) becomes the schema's
 (role, creator) pair; the parser reads **both** shapes (and maps `Cover`
 back to `CoverArtist`), so archives Folio already rewrote still ingest
 unchanged, and the next rewrite upgrades them. `sidecar_parity.rs`
-asserts the credit grammar structurally (no Rust XSD validator is a
-dependency); the golden's `<Credits>` block also validates against both
-XSD versions with `xmllint` (the 1.1 `xs:assert`s stripped). The rest of
-Folio's MetronInfo document still uses its pre-schema element names
-(`<Title>`, `<Year>/<Month>/<Day>`, flat `<Series>` / `<Publisher>`,
-`<ID>` without `<IDS>`, `<StoryArcs>`) — tracked separately.
+asserts the credit grammar structurally and validates the whole document
+against the v1.2 XSD with `xmllint` (see "MetronInfo schema" above).
 
 **`<Page DoublePage>` (WP-8.1).** `DoublePage="false"` is omitted (the
 ComicInfo default): ComicTagger 1.5.5's page editor ticked "double page"
@@ -652,7 +734,8 @@ runs `RewriteIssueSidecarsJob`, and then:
 2. compares every `<Page>` attribute (DoublePage as a boolean, see below);
 3. checks the page bytes were stream-copied, not re-encoded;
 4. checks `MetronInfo.xml` carries the same values for the fields both
-   schemas share;
+   schemas share, in the v1.2 schema shape, and validates it against the
+   vendored XSD with `xmllint`;
 5. pins Folio's two rewritten sidecars as golden files
    (`fixtures/comictagger/folio-rewrite.{ComicInfo,MetronInfo}.xml`;
    re-bless with `FOLIO_PARITY_BLESS=1 cargo test -p server --test sidecar_parity`);
@@ -686,8 +769,8 @@ What this does **not** cover: the provider-apply path (it replaces
 `<Notes>` with the Folio audit line by design, and its values come from
 the provider, not the file) and a ComicTagger 1.6.x fixture. ComicTagger
 1.5.5 doesn't read MetronInfo; the test checks Folio's MetronInfo
-against the ComicInfo values and asserts its `<Credits>` follow the
-MetronInfo schema shape (WP-8.1, see above).
+against the ComicInfo values and validates the document against the
+MetronInfo v1.2 XSD (see "MetronInfo schema" above).
 
 ## Migration recipe
 
