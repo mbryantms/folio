@@ -28,7 +28,7 @@ describe("notes export + permalink URLs (WP-5.1)", () => {
 describe("NotesExportMenu", () => {
   it("offers Markdown and JSON as same-origin download links", () => {
     render(<NotesExportMenu />);
-    const trigger = screen.getByRole("button", { name: /export notes/i });
+    const trigger = screen.getByRole("button", { name: /more actions/i });
     fireEvent.keyDown(trigger, { key: "Enter" });
     const md = screen.getByRole("menuitem", { name: /markdown/i });
     const json = screen.getByRole("menuitem", { name: /json/i });

@@ -43,6 +43,7 @@ export function PhoneControlsBar({
   filters,
   primary,
   menu,
+  more,
   menuTitle = "View options",
   menuIcon,
   sticky = true,
@@ -69,9 +70,15 @@ export function PhoneControlsBar({
     disabled?: boolean;
   };
   filters?: { count: number; onOpen: () => void };
-  /** Extra inline icon button(s) that must stay one tap away (CBL's
-   *  "Up Next"). Keep it to one. */
+  /** The page's primary action as an inline icon button, one tap away
+   *  (CBL's "Up Next", a collection's Continue). Keep it to one; a `⋯`
+   *  menu goes in `more`. */
   primary?: React.ReactNode;
+  /** The page's `⋯` More-actions dropdown (`ViewActionsMenu`,
+   *  `PageActionsMenu`, the notes export menu). Rendered last, after
+   *  View options, so `⋯` is the rightmost control at every width
+   *  (docs/dev/phone-layout.md, rule 11). */
+  more?: React.ReactNode;
   /** Body of the View options sheet. Receives `close` so actions that leave the
    *  sheet (entering Select mode, opening a dialog) can dismiss it. */
   menu?: (close: () => void) => React.ReactNode;
@@ -214,6 +221,7 @@ export function PhoneControlsBar({
                 {menuIcon ?? <LayoutGrid className="size-4" />}
               </IconButton>
             ) : null}
+            {more}
           </div>
         </div>
       )}

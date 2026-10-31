@@ -566,34 +566,34 @@ function CblViewDetailInner({
               label: "Search entries in this list",
             }}
             primary={
-              <>
-                {upNextPosition != null ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={scrollToUpNext}
-                    className="h-9 w-9 shrink-0"
-                    disabled={jumpTarget != null}
-                    aria-label="Scroll to Up Next entry"
-                    title="Up Next"
-                  >
-                    {jumpTarget != null ? (
-                      <Loader2
-                        className="size-4 animate-spin"
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <BookOpen className="size-4" aria-hidden="true" />
-                    )}
-                  </Button>
-                ) : null}
-                <ViewActionsMenu
-                  view={savedView}
-                  onEdit={() => setEditOpen(true)}
-                  extraMenuItems={viewMenuItems}
-                />
-              </>
+              upNextPosition != null ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={scrollToUpNext}
+                  className="h-9 w-9 shrink-0"
+                  disabled={jumpTarget != null}
+                  aria-label="Scroll to Up Next entry"
+                  title="Up Next"
+                >
+                  {jumpTarget != null ? (
+                    <Loader2
+                      className="size-4 animate-spin"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <BookOpen className="size-4" aria-hidden="true" />
+                  )}
+                </Button>
+              ) : null
+            }
+            more={
+              <ViewActionsMenu
+                view={savedView}
+                onEdit={() => setEditOpen(true)}
+                extraMenuItems={viewMenuItems}
+              />
             }
             menu={(close) => (
               <>
@@ -622,33 +622,14 @@ function CblViewDetailInner({
           />
         }
       />
-      {/* `sm` and up: one control row under the title — Up Next, search,
-       *  card size, Select, then the stats pills and `⋯` on the right —
+      {/* `sm` and up: one control row under the title — stats pills and search on the left;
+       *  Up Next, Select, card size and `⋯` on the right (rule 11) —
        *  pinned under the topbar while it fits one line (phone-layout
        *  rule 3). The search flexes between 10rem and 14rem so the row
        *  still fits an iPad-landscape column with the sidebar open. */}
       <StickyToolbarRow enabled={!selection.selectMode}>
-        {upNextPosition != null && (
-          <Button
-            type="button"
-            variant="outline"
-
-            onClick={scrollToUpNext}
-            disabled={jumpTarget != null}
-            aria-label="Scroll to Up Next entry"
-            title="Scroll to Up Next entry"
-          >
-            {jumpTarget != null ? (
-              <Loader2
-                className="mr-1.5 size-4 animate-spin"
-                aria-hidden="true"
-              />
-            ) : (
-              <BookOpen className="mr-1.5 size-4" aria-hidden="true" />
-            )}
-            Up Next
-          </Button>
-        )}
+        {/* `size="header"` matches the h-9 controls beside it. */}
+        <CblStatsPills cblListId={list.id} size="header" />
         {/* Page-local search input. Folded into the header's
          *  actions row alongside card-size + select so the
          *  toolbar reads as one cluster. Search is server-side,
@@ -667,25 +648,45 @@ function CblViewDetailInner({
             className="h-9 pl-8"
           />
         </div>
-        <CardSizeOptions
-          cardSize={cardSize}
-          onCardSize={setCardSize}
-          min={CARD_SIZE_MIN}
-          max={CARD_SIZE_MAX}
-          step={CARD_SIZE_STEP}
-          defaultSize={CARD_SIZE_DEFAULT}
-        />
-        {(loadedEntries.length > 0 || selection.selectMode) && (
-          <SelectModeButton
-            ref={selectButtonRef}
-            active={selection.selectMode}
-            onEnter={() => selection.enter()}
-            onExit={() => selection.exit()}
-          />
-        )}
+        {/* Right cluster, rule 11 order: primary · Select · View options · ⋯. */}
         <div className="ml-auto flex items-center gap-2">
-          {/* `size="header"` matches the h-9 controls beside it. */}
-          <CblStatsPills cblListId={list.id} size="header" />
+          {upNextPosition != null && (
+            <Button
+              type="button"
+              variant="outline"
+
+              onClick={scrollToUpNext}
+              disabled={jumpTarget != null}
+              aria-label="Scroll to Up Next entry"
+              title="Scroll to Up Next entry"
+            >
+              {jumpTarget != null ? (
+                <Loader2
+                  className="mr-1.5 size-4 animate-spin"
+                  aria-hidden="true"
+                />
+              ) : (
+                <BookOpen className="mr-1.5 size-4" aria-hidden="true" />
+              )}
+              Up Next
+            </Button>
+          )}
+          {(loadedEntries.length > 0 || selection.selectMode) && (
+            <SelectModeButton
+              ref={selectButtonRef}
+              active={selection.selectMode}
+              onEnter={() => selection.enter()}
+              onExit={() => selection.exit()}
+            />
+          )}
+          <CardSizeOptions
+            cardSize={cardSize}
+            onCardSize={setCardSize}
+            min={CARD_SIZE_MIN}
+            max={CARD_SIZE_MAX}
+            step={CARD_SIZE_STEP}
+            defaultSize={CARD_SIZE_DEFAULT}
+          />
           <ViewActionsMenu
             view={savedView}
             onEdit={() => setEditOpen(true)}

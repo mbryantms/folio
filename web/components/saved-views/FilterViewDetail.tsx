@@ -232,14 +232,6 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
         }
         extraActions={
           <>
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-            />
             {(items.length > 0 || selection.selectMode) && (
               <SelectModeButton
                 ref={selectButtonRef}
@@ -248,6 +240,14 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
                 onExit={() => selection.exit()}
               />
             )}
+            <CardSizeOptions
+              cardSize={cardSize}
+              onCardSize={setCardSize}
+              min={CARD_SIZE_MIN}
+              max={CARD_SIZE_MAX}
+              step={CARD_SIZE_STEP}
+              defaultSize={CARD_SIZE_DEFAULT}
+            />
           </>
         }
         // Phone (< sm): the desktop cluster above is hidden; card size

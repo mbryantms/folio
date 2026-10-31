@@ -118,7 +118,7 @@ export function PageRails({
             {pageName}
           </h1>
         }
-        primary={pageActions}
+        more={pageActions}
         menu={() => (
           <CardSizeFields
             cardSize={cardSize}

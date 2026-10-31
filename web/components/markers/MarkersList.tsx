@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Bookmark as BookmarkIcon,
-  Download,
   Highlighter,
   ListChecks,
   Search as SearchIcon,
@@ -70,12 +69,7 @@ import {
   downloadMarkerImage,
   markerCropFilename,
 } from "@/lib/marker-crop";
-import {
-  markerPermalink,
-  notesExportHref,
-  pageBytesUrl,
-  readerUrl,
-} from "@/lib/urls";
+import { markerPermalink, pageBytesUrl, readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import {
   useBookmarkCounts,
@@ -344,7 +338,8 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
     );
   }
 
-  const headerActions = (
+  // Left cluster: search · sort · series (the query controls).
+  const queryControls = (
     <>
       {/* `w-full` only below `sm` (the embedded tab stacks it above the
           buttons). From `sm` up the input flexes between 10rem and
@@ -379,6 +374,12 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           options={seriesQuery.data?.items ?? []}
         />
       )}
+    </>
+  );
+
+  // Right cluster, rule 11 order: Select · View options · ⋯ (export).
+  const actionControls = (
+    <>
       {items.length > 0 || selection.selectMode ? (
         <SelectModeButton
           ref={selectButtonRef}
@@ -387,7 +388,6 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           onExit={() => selection.exit()}
         />
       ) : null}
-      {embedded ? null : <NotesExportMenu />}
       <CardSizeOptions
         cardSize={cardSize}
         onCardSize={setCardSize}
@@ -398,6 +398,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
         fieldId="bookmarks-card-size"
         description="Tighten or loosen the bookmarks grid. Saved per browser."
       />
+      {embedded ? null : <NotesExportMenu />}
     </>
   );
 
@@ -407,7 +408,8 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
         // Embedded in a series / issue tab: the tab already names the
         // surface, so only the controls row renders (no second h1).
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {headerActions}
+          {queryControls}
+          {actionControls}
         </div>
       ) : (
         <PageHeader
@@ -428,23 +430,25 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
       )}
 
       {embedded ? null : (
-        // `sm` and up: search / sort / series / Select / Export / card
-        // size in their own row under the header, pinned under the
-        // topbar while it fits one line (the rule in
-        // docs/dev/phone-layout.md: rows that hold search, sort or
-        // filters pin at every width). It used to sit inside the
-        // header's actions and scrolled away with the title.
+        // `sm` and up: search / sort / series on the left, Select / card
+        // size / ⋯ on the right (phone-layout rule 11), in their own row
+        // under the header, pinned under the topbar while it fits one
+        // line (rule 3: rows that hold search, sort or filters pin at
+        // every width). It used to sit inside the header's actions and
+        // scrolled away with the title.
         <StickyToolbarRow enabled={!selection.selectMode}>
-          {headerActions}
+          {queryControls}
+          <div className="ml-auto flex items-center gap-2">
+            {actionControls}
+          </div>
         </StickyToolbarRow>
       )}
 
       {embedded ? null : (
         <>
           {/* Phone (< sm): one sticky row — title · search / filters /
-              View options
-              — in place of the page header, its toolbar, the layout
-              toggle and the Tags row. The selection toolbar takes its
+              View options / ⋯ — in place of the page header, its
+              toolbar, the layout toggle and the Tags row. The selection toolbar takes its
               place while selecting (both are sticky under the topbar). */}
           <PhoneControlsBar
             hidden={selection.selectMode}
@@ -486,22 +490,10 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
                       Select
                     </PhoneMenuAction>
                   ) : null}
-                  {/* Same two `<a download>` links as `NotesExportMenu`. */}
-                  <PhoneMenuAction asChild>
-                    <a href={notesExportHref("md")} download>
-                      <Download className="size-4" aria-hidden="true" />
-                      Export notes as Markdown (.md)
-                    </a>
-                  </PhoneMenuAction>
-                  <PhoneMenuAction asChild>
-                    <a href={notesExportHref("json")} download>
-                      <Download className="size-4" aria-hidden="true" />
-                      Export notes as JSON (.json)
-                    </a>
-                  </PhoneMenuAction>
                 </div>
               </>
             )}
+            more={<NotesExportMenu />}
           />
           <Sheet open={phoneFiltersOpen} onOpenChange={setPhoneFiltersOpen}>
             <SheetContent

@@ -60,7 +60,7 @@ describe("MarkersList scope (WP-5.2)", () => {
     );
     // Embedded in a tab: no page-level h1 and no export menu.
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
-    expect(screen.queryByRole("button", { name: /export notes/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /more actions/i })).toBeNull();
     expect(screen.getByText(/no markers in this series/i)).toBeTruthy();
   });
 
@@ -82,6 +82,8 @@ describe("MarkersList scope (WP-5.2)", () => {
     const headings = screen.getAllByRole("heading", { level: 1 });
     expect(headings.length).toBe(2);
     for (const h of headings) expect(h.textContent).toBe("Bookmarks");
-    expect(screen.getByRole("button", { name: /export notes/i })).toBeTruthy();
+    expect(
+      screen.getAllByRole("button", { name: /more actions/i }).length,
+    ).toBeGreaterThan(0);
   });
 });
