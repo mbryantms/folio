@@ -51,6 +51,7 @@ export function ServerSettingsCards() {
   const panelsMode = asString("compat.opds_panels_mode", "off");
   const zipLru = asUint("cache.zip_lru_capacity", 64);
   const purgeMultiplier = asUint("library.hard_purge_multiplier", 2);
+  const auditRetentionDays = asUint("audit_log.retention_days", 0);
   const thumbsBudgetMb = asUint("cache.thumbs_budget_mb", 0);
   const watcher = {
     debounce: asUint("scanner.watch_debounce_secs", 30),
@@ -74,6 +75,10 @@ export function ServerSettingsCards() {
       </div>
       <CompatibilityCard key={`compat-${panelsMode}`} initial={panelsMode} />
       <PurgeCard key={`purge-${purgeMultiplier}`} initial={purgeMultiplier} />
+      <AuditLogRetentionCard
+        key={`audit-retention-${auditRetentionDays}`}
+        initial={auditRetentionDays}
+      />
       <CachingCard key={`caching-${zipLru}`} initial={zipLru} />
       <ThumbnailBudgetCard
         key={`thumbs-budget-${thumbsBudgetMb}`}
@@ -293,6 +298,75 @@ function PurgeCard({ initial }: { initial: number }) {
             bookmarks, notes, reading progress and ratings. If the file comes
             back later it is imported as a new issue with no read state. Set to{" "}
             <code>0</code> to never purge.
+          </p>
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={onSave} disabled={!dirty || update.isPending || bad}>
+            {update.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export const AUDIT_LOG_RETENTION_MIN_DAYS = 90;
+export const AUDIT_LOG_RETENTION_MAX_DAYS = 36500;
+
+/** Why a typed audit-log retention value cannot be saved, or `null` when
+ *  it can. `0` keeps every row forever; anything else must be a whole
+ *  number of days within [90, 36500] (mirrors `Config::validate`). */
+export function auditLogRetentionProblem(value: string): string | null {
+  if (!/^\d+$/.test(value)) return "Enter a whole number of days.";
+  const n = Number(value);
+  if (n === 0) return null;
+  if (n < AUDIT_LOG_RETENTION_MIN_DAYS || n > AUDIT_LOG_RETENTION_MAX_DAYS) {
+    return `Must be 0 or in [${AUDIT_LOG_RETENTION_MIN_DAYS}, ${AUDIT_LOG_RETENTION_MAX_DAYS}].`;
+  }
+  return null;
+}
+
+/** Audit 2026-11 E1: optional export-and-trim retention for the audit log.
+ *  0 = keep forever (default). When set, the daily 03:45 UTC sweep writes
+ *  rows older than the cutoff to an NDJSON file under the app-data volume
+ *  and only then deletes them. Live — read on every sweep. */
+function AuditLogRetentionCard({ initial }: { initial: number }) {
+  const [days, setDays] = useState(String(initial));
+  const update = useUpdateSettings();
+  const problem = auditLogRetentionProblem(days);
+  const bad = days !== String(initial) && problem !== null;
+  const dirty = Number(days) !== initial;
+
+  async function onSave() {
+    await update.mutateAsync({ "audit_log.retention_days": Number(days) });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-muted-foreground text-sm font-semibold tracking-wide uppercase">
+          Audit log retention
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <Label htmlFor="audit-log-retention-days">
+            Keep audit entries for (days, 0 = forever)
+          </Label>
+          <Input
+            id="audit-log-retention-days"
+            inputMode="numeric"
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+          />
+          {bad && <p className="text-destructive text-xs">{problem}</p>}
+          <p className="text-muted-foreground text-xs">
+            When set (at least {AUDIT_LOG_RETENTION_MIN_DAYS} days), a daily
+            sweep exports admin-action entries older than this to a
+            newline-delimited JSON file under{" "}
+            <code>audit-log-exports/</code> in the app-data volume, then
+            removes them from the database. Nothing is removed unless the
+            export was written. Set to <code>0</code> to keep every entry.
           </p>
         </div>
         <div className="flex justify-end">

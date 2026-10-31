@@ -141,6 +141,28 @@ Off-host (S3 / Backblaze / a NAS) replication is the operator's call;
 add a `rclone` step after the local backup or back up `/var/backups/folio/`
 with your existing host-level tool.
 
+## Audit-log exports
+
+The admin audit trail (`audit_log`) is kept forever unless an operator sets
+**Audit log retention** on `/admin/server` (`audit_log.retention_days`,
+minimum 90). When set, a daily sweep at 03:45 UTC writes every entry older
+than the cutoff to
+
+```
+/data/audit-log-exports/audit-log-<YYYYMMDDTHHMMSSZ>.ndjson
+```
+
+(one JSON object per line, the full row: actor, action, target, payload,
+IP, user agent, timestamp), fsyncs it and renames it into place, and only
+then deletes those rows from Postgres. A run that cannot write the file
+deletes nothing and logs an error. The directory lives in the `comic_data`
+volume, so the weekly tar above already carries the exports; the nightly
+`pg_dump` holds whatever is still in the table. Folio never deletes an
+export file — prune them with your backup tier policy (they are plain text
+and compress well), and keep at least one copy off-host if the audit trail
+matters to you. Nothing else reads the files; they are the durable record
+and can be grepped or loaded into any NDJSON-aware tool.
+
 ## Retention
 
 Folio has no opinion. A common starter policy:
@@ -149,6 +171,7 @@ Folio has no opinion. A common starter policy:
 |---------|------|
 | nightly Postgres dump | 14 days |
 | weekly `comic_data` tar | 8 weeks |
+| `audit-log-exports/*.ndjson` (if retention is on) | as long as you need the audit trail — the DB no longer has those rows |
 | monthly off-host copy | 12 months |
 
 Old enough to ride out a "we noticed last month that…" issue, fresh

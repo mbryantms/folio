@@ -66,6 +66,7 @@ use uuid::Uuid;
 
 pub mod archive_edit;
 pub mod archive_transforms;
+pub mod audit_log_retention;
 pub mod backfill;
 pub mod backup_prune;
 pub mod busy_requeue;

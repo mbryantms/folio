@@ -362,6 +362,9 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     if let Err(e) = crate::settings::bootstrap::seed_operational_from_env(&db, &cfg).await {
         tracing::warn!(error = %e, "operational env bootstrap failed; falling back to env-only");
     }
+    if let Err(e) = crate::settings::bootstrap::seed_audit_log_retention_from_env(&db, &cfg).await {
+        tracing::warn!(error = %e, "audit-log retention env bootstrap failed; falling back to env-only");
+    }
 
     // Apply DB-stored setting overrides on top of the env-loaded config.
     // Failures here fall back to the env-only Config so the server stays

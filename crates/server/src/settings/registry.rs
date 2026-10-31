@@ -361,6 +361,16 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Uint,
         is_secret: false,
     },
+    SettingDef {
+        // Audit-log retention in days (audit 2026-11 N-A7 / OP-5). `0`
+        // (default) keeps every row forever. When set (floor 90), the
+        // daily 03:45 UTC sweep exports rows older than this to NDJSON
+        // under `data_path/audit-log-exports/` and then deletes them.
+        // Live — read on every sweep.
+        key: "audit_log.retention_days",
+        kind: SettingKind::Uint,
+        is_secret: false,
+    },
     // ───────── Match-bucket thresholds (matching-accuracy-1.0 M1) ────
     SettingDef {
         // Score at or above which a candidate is bucketed HIGH. Default

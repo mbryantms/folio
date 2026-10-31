@@ -450,7 +450,9 @@ per-list opt-out to preserve curated orders).
   last-used tracking.
 - A complete admin area: users, libraries, scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every
-  admin action, runtime configuration edited from the UI (SMTP, auth
+  admin action (kept forever by default; an optional retention exports old
+  entries to NDJSON in the data volume before trimming them), runtime
+  configuration edited from the UI (SMTP, auth
   policy, workers — no container restarts), metadata dashboard, duplicates,
   a **relationship-suggestion review queue** (accept / edit kind / reject,
   bulk-accept the high-confidence ones), and stats.

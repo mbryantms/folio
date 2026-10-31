@@ -28,6 +28,7 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_hard_purge(&scheduler, &state).await;
     register_scan_runs_prune(&scheduler, &state).await;
     register_library_events_prune(&scheduler, &state).await;
+    register_audit_log_retention(&scheduler, &state).await;
     register_thumbnail_orphan_sweep(&scheduler, &state).await;
     register_thumbs_budget_sweep(&scheduler, &state).await;
     register_backup_prune(&scheduler, &state).await;
@@ -379,6 +380,43 @@ async fn register_library_events_prune(scheduler: &JobScheduler, state: &AppStat
             }
         }
         Err(e) => tracing::error!(error = %e, "scheduler: build library_events_prune failed"),
+    }
+}
+
+/// Daily audit-log export-and-trim (audit 2026-11 E1). Runs at 03:45 UTC,
+/// between the `library_events` prune (03:30) and the reconcile sweep
+/// (04:00): DB-only, no disk walk, so it doesn't contend with the later
+/// thumbnail / backup sweeps. The retention is read from the live config on
+/// every fire, so `audit_log.retention_days = 0` (the default) keeps it a
+/// no-op without a restart. A failed export logs at `error` and deletes
+/// nothing; see [`crate::jobs::audit_log_retention`].
+async fn register_audit_log_retention(scheduler: &JobScheduler, state: &AppState) {
+    let state = state.clone();
+    let job_result = Job::new_async("0 45 3 * * *", move |_uuid, _l| {
+        let state = state.clone();
+        Box::pin(async move {
+            // A productive run logs its own counts (`run_with`, with the
+            // `folio::audit_log_retention` target); only failures are
+            // reported here.
+            match crate::jobs::audit_log_retention::run(&state).await {
+                Ok(_) => {}
+                Err(e) => tracing::error!(
+                    target: "folio::audit_log_retention",
+                    error = %e,
+                    "audit log retention failed; no rows were deleted"
+                ),
+            }
+        })
+    });
+    match job_result {
+        Ok(job) => {
+            if let Err(e) = scheduler.add(job).await {
+                tracing::error!(error = %e, "scheduler: add audit_log_retention failed");
+            } else {
+                tracing::info!("audit log retention registered (daily at 03:45 UTC)");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "scheduler: build audit_log_retention failed"),
     }
 }
 

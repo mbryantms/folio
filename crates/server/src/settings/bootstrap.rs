@@ -295,3 +295,38 @@ pub async fn seed_operational_from_env(
     tracing::info!("seeded cache.* + workers.* rows from env (one-time bootstrap)");
     Ok(())
 }
+
+/// Seed `audit_log.retention_days` from `COMIC_AUDIT_LOG_RETENTION_DAYS`
+/// when no row exists yet (audit 2026-11 E1). Separate from
+/// [`seed_operational_from_env`] because that seeder is gated on
+/// `workers.scan_count`, which every existing deployment already has — the
+/// row would never be written on upgrade. `0` is the default and the card's
+/// fallback, so an unset / zero env value seeds nothing.
+pub async fn seed_audit_log_retention_from_env(
+    db: &DatabaseConnection,
+    cfg: &Config,
+) -> anyhow::Result<()> {
+    if cfg.audit_log_retention_days == 0 {
+        return Ok(());
+    }
+    let exists = app_setting::Entity::find()
+        .filter(app_setting::Column::Key.eq("audit_log.retention_days"))
+        .one(db)
+        .await?
+        .is_some();
+    if exists {
+        return Ok(());
+    }
+    insert_plain(
+        db,
+        "audit_log.retention_days",
+        serde_json::json!(cfg.audit_log_retention_days),
+        chrono::Utc::now().fixed_offset(),
+    )
+    .await?;
+    tracing::info!(
+        days = cfg.audit_log_retention_days,
+        "seeded audit_log.retention_days from env (one-time bootstrap)"
+    );
+    Ok(())
+}
