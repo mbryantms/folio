@@ -6,7 +6,9 @@ import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./i18n/request";
 // Human-URLs M3: locale moves out of the URL into the `NEXT_LOCALE` cookie
 // + per-user `language` preference. `localePrefix: "never"` tells next-intl
 // to read the locale from the cookie / `Accept-Language` instead of the
-// path segment. Routes live directly under `web/app/...`, no `[locale]/`.
+// path segment. Every page still lives under `web/app/[locale]/`; the
+// middleware rewrites each request onto that segment internally (see
+// `config` below), so it never appears in the URL.
 //
 // CSP nonce note: Next.js's App Router app-render layer auto-extracts
 // the per-request nonce by parsing the `Content-Security-Policy`

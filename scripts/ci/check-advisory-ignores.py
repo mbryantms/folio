@@ -41,6 +41,12 @@ Checks
            Also (same db) an `osv-only:` GHSA that the RustSec db now
            lists as an alias: move it into the `ignore` arrays under its
            RUSTSEC id, or cargo-deny starts failing on it.
+           An advisory GitHub withdraws (`withdrawn_at` on
+           `gh api /advisories/<GHSA>`; braces GHSA-vfj7-8cjw-p6xm,
+           2026-10-23) is stale the same way: nothing reports it any
+           more, so delete its entry from every file and move its
+           SECURITY-EXCEPTIONS.md section to Resolved. The mirror check
+           stays green through that as long as both files drop it.
                                                            exit 2 if stale
 
 Usage

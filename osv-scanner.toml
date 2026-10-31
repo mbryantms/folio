@@ -92,9 +92,5 @@ reason = "`block-buffer 0.10.4` cursor corruption after a caught panic inside a 
 # Rationale for each lives in SECURITY-EXCEPTIONS.md.
 
 [[IgnoredVulns]]
-id = "GHSA-vfj7-8cjw-p6xm"
-reason = "`braces` <=3.0.3 stack-exhaustion DoS — no patched release exists (3.0.3 is the latest). Dev-only lint toolchain path (eslint-config-next / @next/eslint-plugin-next > fast-glob > micromatch > braces); never in the shipped images. Delete when braces ships a fix."
-
-[[IgnoredVulns]]
 id = "GHSA-gcqx-w48m-w2h4"
 reason = "`deepmerge` <=4.3.1 prototype poisoning in mergeObject() (low) — no patched release exists. Dev-only: the shadcn 4.22.1 CLI > @shadcn/registry > deepmerge, run by developers and the weekly shadcn-refresh.yml over the shadcn registry's own JSON; never in the shipped images. Delete when deepmerge ships a fix or shadcn drops it."
