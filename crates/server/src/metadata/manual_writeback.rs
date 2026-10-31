@@ -228,6 +228,8 @@ async fn push_from_db(
         crate::metadata::sidecar_compose::load_external_ids(&state.db, "issue", &row.id).await?;
     let issue_user_pins =
         crate::metadata::sidecar_compose::load_user_pins(&state.db, "issue", &row.id).await?;
+    let issue_junctions =
+        crate::metadata::sidecar_compose::load_issue_junctions(&state.db, &row.id).await?;
     // No provider payload: every field resolves to the database value,
     // which is exactly what a manual edit wants to push into the file.
     let empty_provider = crate::metadata::provider::GenericMetadata::default();
@@ -239,6 +241,7 @@ async fn push_from_db(
         series_external_ids: &series.external_ids,
         issue_user_pins: &issue_user_pins,
         series_user_pins: &series.user_pins,
+        issue_junctions: &issue_junctions,
     };
     let comic_info = crate::metadata::sidecar_compose::compose_comicinfo(&ctx);
     let metron_info = crate::metadata::sidecar_compose::compose_metroninfo(&ctx);

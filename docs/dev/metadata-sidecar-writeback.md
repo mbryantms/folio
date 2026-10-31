@@ -80,7 +80,19 @@ Once every library has been migrated and the
 builds the `ComicInfo` + `MetronInfo` structs from a `ComposeContext`:
 
 - `provider` — the `GenericMetadata` returned by the provider apply.
-- `issue` / `series` — current DB rows (the read-cache).
+- `issue` / `series` — current DB rows (scalar columns; the comma-joined
+  list columns on `issue` are only a fallback, see next item).
+- `issue_junctions` — the issue's junction-table content (credits per
+  role, characters, teams, locations, story arcs, genres, tags) loaded by
+  `sidecar_compose::load_issue_junctions`, the same reader the issue
+  detail endpoint uses for `IssueDetailView.credits` / `cast` / `genres`
+  / `tag_list`. **Every list field in the composed XML comes from the
+  junctions**, never from the CSV read-cache columns: a cached
+  `"Mike Deodato, Jr."` is one `issue_credits` row and stays one
+  `<Creator>` (pre-fix the composer split the column on every comma).
+  The columns are read only for a row whose junctions were never derived
+  (legacy rows), and then through the scanner's own
+  `metadata_rollup::split_csv`, so the two splitters can't disagree.
 - `issue_external_ids` / `series_external_ids` — the typed-ID rows
   from the `external_ids` table.
 - `issue_user_pins` / `series_user_pins` — the set of field keys whose

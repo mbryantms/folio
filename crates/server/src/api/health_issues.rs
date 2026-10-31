@@ -1024,6 +1024,17 @@ async fn enqueue_drift_flush_for_series(app: &AppState, series_ids: &[Uuid]) -> 
                         continue;
                     }
                 };
+            let issue_junctions =
+                match crate::metadata::sidecar_compose::load_issue_junctions(&app.db, issue_id)
+                    .await
+                {
+                    Ok(j) => j,
+                    Err(e) => {
+                        tracing::error!(error = %e, %issue_id, "drift flush: junction load failed");
+                        skipped += 1;
+                        continue;
+                    }
+                };
 
             let cctx = crate::metadata::sidecar_compose::ComposeContext {
                 provider: &empty_provider,
@@ -1033,6 +1044,7 @@ async fn enqueue_drift_flush_for_series(app: &AppState, series_ids: &[Uuid]) -> 
                 series_external_ids: &series_external_ids,
                 issue_user_pins: &issue_user_pins,
                 series_user_pins: &series_user_pins,
+                issue_junctions: &issue_junctions,
             };
             let ci = crate::metadata::sidecar_compose::compose_comicinfo(&cctx);
             let mi = crate::metadata::sidecar_compose::compose_metroninfo(&cctx);

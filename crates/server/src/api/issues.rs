@@ -532,6 +532,7 @@ async fn build_issue_creator_slugs(
 }
 
 /// The issue's junction-table content for the detail view.
+#[derive(Default)]
 struct IssueJunctionLists {
     credits: Vec<crate::api::series::IssueCreditEntry>,
     cast: crate::api::series::IssueCastView,
@@ -541,136 +542,47 @@ struct IssueJunctionLists {
 
 /// Read the junction tables (the source of truth) for one issue: credits
 /// in stored order with the person's slug, cast / setting entities with
-/// their landing-page slugs, genres and tags. Every query is best-effort:
-/// a failure logs and yields an empty list rather than failing the page.
+/// their landing-page slugs, genres and tags — through the same loader the
+/// sidecar composer reads, so the page and the written XML can't disagree.
+/// Best-effort: a failure logs and yields empty lists rather than failing
+/// the page.
 async fn build_issue_junction_lists(app: &AppState, issue_id: &str) -> IssueJunctionLists {
     use crate::api::series::{EntityRefView, IssueCastView, IssueCreditEntry};
-    use sea_orm::{FromQueryResult, Statement};
-    let backend = app.db.get_database_backend();
+    use crate::metadata::sidecar_compose::{JunctionRef, load_issue_junctions};
 
-    #[derive(Debug, FromQueryResult)]
-    struct CreditRow {
-        role: String,
-        person: String,
-        slug: Option<String>,
-    }
-    #[derive(Debug, FromQueryResult)]
-    struct RefRow {
-        name: String,
-        slug: Option<String>,
-    }
-    #[derive(Debug, FromQueryResult)]
-    struct ValueRow {
-        value: String,
-    }
-
-    async fn refs(
-        app: &AppState,
-        backend: sea_orm::DatabaseBackend,
-        sql: &str,
-        issue_id: &str,
-        what: &str,
-    ) -> Vec<EntityRefView> {
-        match RefRow::find_by_statement(Statement::from_sql_and_values(
-            backend,
-            sql,
-            [issue_id.into()],
-        ))
-        .all(&app.db)
-        .await
-        {
-            Ok(rows) => rows
-                .into_iter()
-                .map(|r| EntityRefView {
-                    name: r.name,
-                    slug: r.slug,
-                })
-                .collect(),
-            Err(e) => {
-                tracing::warn!(error = %e, issue_id, what, "issue detail: junction read failed");
-                Vec::new()
-            }
+    let j = match load_issue_junctions(&app.db, issue_id).await {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::warn!(error = %e, issue_id, "issue detail: junction read failed");
+            return IssueJunctionLists::default();
         }
-    }
-
-    let credits = match CreditRow::find_by_statement(Statement::from_sql_and_values(
-        backend,
-        "SELECT ic.role AS role, COALESCE(p.name, ic.person) AS person, p.slug AS slug          FROM issue_credits ic LEFT JOIN person p ON p.id = ic.person_id          WHERE ic.issue_id = $1          ORDER BY ic.role, ic.ordinal, COALESCE(p.name, ic.person)",
-        [issue_id.into()],
-    ))
-    .all(&app.db)
-    .await
-    {
-        Ok(rows) => rows
-            .into_iter()
-            .map(|r| IssueCreditEntry {
-                role: r.role,
-                person: r.person,
+    };
+    let refs = |rows: Vec<JunctionRef>| -> Vec<EntityRefView> {
+        rows.into_iter()
+            .map(|r| EntityRefView {
+                name: r.name,
                 slug: r.slug,
             })
-            .collect(),
-        Err(e) => {
-            tracing::warn!(error = %e, issue_id, "issue detail: credits read failed");
-            Vec::new()
-        }
+            .collect()
     };
-    let cast = IssueCastView {
-        characters: refs(
-            app,
-            backend,
-            "SELECT COALESCE(c.name, ic.\"character\") AS name, c.slug AS slug              FROM issue_characters ic LEFT JOIN character c ON c.id = ic.character_id              WHERE ic.issue_id = $1 ORDER BY ic.ordinal, 1",
-            issue_id,
-            "characters",
-        )
-        .await,
-        teams: refs(
-            app,
-            backend,
-            "SELECT COALESCE(t.name, it.team) AS name, t.slug AS slug              FROM issue_teams it LEFT JOIN team t ON t.id = it.team_id              WHERE it.issue_id = $1 ORDER BY it.ordinal, 1",
-            issue_id,
-            "teams",
-        )
-        .await,
-        locations: refs(
-            app,
-            backend,
-            "SELECT COALESCE(l.name, il.location) AS name, l.slug AS slug              FROM issue_locations il LEFT JOIN location l ON l.id = il.location_id              WHERE il.issue_id = $1 ORDER BY il.ordinal, 1",
-            issue_id,
-            "locations",
-        )
-        .await,
-        story_arcs: refs(
-            app,
-            backend,
-            "SELECT sa.name AS name, sa.slug AS slug              FROM issue_arcs ia JOIN story_arc sa ON sa.id = ia.arc_id              WHERE ia.issue_id = $1 ORDER BY ia.position_in_arc NULLS LAST, sa.name",
-            issue_id,
-            "story_arcs",
-        )
-        .await,
-    };
-    let values = |sql: &'static str| async move {
-        ValueRow::find_by_statement(Statement::from_sql_and_values(
-            backend,
-            sql,
-            [issue_id.into()],
-        ))
-        .all(&app.db)
-        .await
-        .map(|rows| rows.into_iter().map(|r| r.value).collect::<Vec<_>>())
-        .unwrap_or_default()
-    };
-    let genres = values(
-        "SELECT genre AS value FROM issue_genres WHERE issue_id = $1 ORDER BY ordinal, genre",
-    )
-    .await;
-    let tags =
-        values("SELECT tag AS value FROM issue_tags WHERE issue_id = $1 ORDER BY ordinal, tag")
-            .await;
     IssueJunctionLists {
-        credits,
-        cast,
-        genres,
-        tags,
+        credits: j
+            .credits
+            .into_iter()
+            .map(|c| IssueCreditEntry {
+                role: c.role,
+                person: c.person,
+                slug: c.slug,
+            })
+            .collect(),
+        cast: IssueCastView {
+            characters: refs(j.characters),
+            teams: refs(j.teams),
+            locations: refs(j.locations),
+            story_arcs: refs(j.story_arcs),
+        },
+        genres: j.genres,
+        tags: j.tags,
     }
 }
 
@@ -3094,8 +3006,171 @@ async fn update_issue_with_user_pins(
     let txn = db.begin().await?;
     let updated = am.update(&txn).await?;
     crate::metadata::writers::write_issue_user_pins(&txn, &updated.id, touched_keys).await?;
+    let updated = write_edited_junctions(&txn, updated, touched_keys).await?;
     txn.commit().await?;
     Ok(updated)
+}
+
+/// Junctions are the truth for every write path (CLAUDE.md). The request
+/// carries list fields as the ComicInfo-shaped strings the columns hold, so
+/// each edited string is parsed with the scanner's `split_csv` (`"Mike
+/// Deodato, Jr."` is one person) and written through the audited
+/// `writers::set_issue_*` surface as `SetBy::User`; the read-cache columns
+/// are then rebuilt from the junctions, so the row returned — and the file
+/// the composer writes from the junctions (audit 2026-11 N-M2) — carries
+/// the normalised names. Only the sets an edited column rolls up into are
+/// written: a credit edit replaces the edited roles and keeps every other
+/// role's rows (ids, ordinals, roles ComicInfo has no column for), a cast
+/// edit keeps the flags of the entities that stay. Returns the row as it
+/// stands after the rebuild.
+async fn write_edited_junctions<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    row: entity::issue::Model,
+    touched_keys: &[&str],
+) -> Result<entity::issue::Model, sea_orm::DbErr> {
+    use crate::library::scanner::metadata_rollup::split_csv;
+    use crate::metadata::writers::{self as writers, CsvRebuildBatch, SetBy};
+    use entity::{issue_character, issue_credit, issue_location, issue_team};
+    use std::collections::HashSet;
+
+    const CREDIT_COLUMNS: [&str; 8] = [
+        "writer",
+        "penciller",
+        "inker",
+        "colorist",
+        "letterer",
+        "cover_artist",
+        "editor",
+        "translator",
+    ];
+    let touched: HashSet<&str> = touched_keys.iter().copied().collect();
+    let names = |column: Option<&str>| -> Vec<String> { column.map(split_csv).unwrap_or_default() };
+    let batch = CsvRebuildBatch::new();
+    let id = row.id.as_str();
+
+    let edited_roles: Vec<&str> = CREDIT_COLUMNS
+        .iter()
+        .copied()
+        .filter(|c| touched.contains(c))
+        .collect();
+    if !edited_roles.is_empty() {
+        let mut specs: Vec<writers::CreditSpec> = Vec::new();
+        for r in issue_credit::Entity::find()
+            .filter(issue_credit::Column::IssueId.eq(id))
+            .all(db)
+            .await?
+        {
+            if edited_roles.contains(&r.role.as_str()) {
+                continue;
+            }
+            let person_id = match r.person_id {
+                Some(p) => p,
+                None => writers::upsert_person(db, &r.person, &[], SetBy::User).await?,
+            };
+            specs.push((person_id, r.role, r.ordinal));
+        }
+        for role in edited_roles {
+            let column = match role {
+                "writer" => row.writer.as_deref(),
+                "penciller" => row.penciller.as_deref(),
+                "inker" => row.inker.as_deref(),
+                "colorist" => row.colorist.as_deref(),
+                "letterer" => row.letterer.as_deref(),
+                "cover_artist" => row.cover_artist.as_deref(),
+                "editor" => row.editor.as_deref(),
+                _ => row.translator.as_deref(),
+            };
+            for (ordinal, name) in names(column).into_iter().enumerate() {
+                let person_id = writers::upsert_person(db, &name, &[], SetBy::User).await?;
+                specs.push((person_id, role.to_owned(), ordinal as i32));
+            }
+        }
+        writers::set_issue_credits(db, id, specs, SetBy::User, None, &batch).await?;
+    }
+    if touched.contains("characters") {
+        let flags: HashMap<Uuid, (bool, bool)> = issue_character::Entity::find()
+            .filter(issue_character::Column::IssueId.eq(id))
+            .all(db)
+            .await?
+            .into_iter()
+            .filter_map(|r| {
+                r.character_id
+                    .map(|cid| (cid, (r.is_first_appearance, r.died_in_issue)))
+            })
+            .collect();
+        let mut specs: Vec<writers::CharacterSpec> = Vec::new();
+        for name in names(row.characters.as_deref()) {
+            let cid = writers::upsert_character(db, &name, &[], SetBy::User).await?;
+            let (first, died) = flags.get(&cid).copied().unwrap_or_default();
+            specs.push((cid, first, died));
+        }
+        writers::set_issue_characters(db, id, specs, SetBy::User, None, &batch).await?;
+    }
+    if touched.contains("teams") {
+        let flags: HashMap<Uuid, (bool, bool)> = issue_team::Entity::find()
+            .filter(issue_team::Column::IssueId.eq(id))
+            .all(db)
+            .await?
+            .into_iter()
+            .filter_map(|r| {
+                r.team_id
+                    .map(|tid| (tid, (r.is_first_appearance, r.disbanded_in_issue)))
+            })
+            .collect();
+        let mut specs: Vec<writers::TeamSpec> = Vec::new();
+        for name in names(row.teams.as_deref()) {
+            let tid = writers::upsert_team(db, &name, &[], SetBy::User).await?;
+            let (first, disbanded) = flags.get(&tid).copied().unwrap_or_default();
+            specs.push((tid, first, disbanded));
+        }
+        writers::set_issue_teams(db, id, specs, SetBy::User, None, &batch).await?;
+    }
+    if touched.contains("locations") {
+        let flags: HashMap<Uuid, bool> = issue_location::Entity::find()
+            .filter(issue_location::Column::IssueId.eq(id))
+            .all(db)
+            .await?
+            .into_iter()
+            .filter_map(|r| r.location_id.map(|lid| (lid, r.is_first_appearance)))
+            .collect();
+        let mut specs: Vec<writers::LocationSpec> = Vec::new();
+        for name in names(row.locations.as_deref()) {
+            let lid = writers::upsert_location(db, &name, &[], SetBy::User).await?;
+            specs.push((lid, flags.get(&lid).copied().unwrap_or_default()));
+        }
+        writers::set_issue_locations(db, id, specs, SetBy::User, None, &batch).await?;
+    }
+    if touched.contains("genre") {
+        let genres = names(row.genre.as_deref());
+        writers::set_issue_genres(db, id, genres, SetBy::User, None, &batch).await?;
+    }
+    if touched.contains("tags") {
+        let tags = names(row.tags.as_deref());
+        writers::set_issue_tags(db, id, tags, SetBy::User, None, &batch).await?;
+    }
+    if touched.contains("story_arc") || touched.contains("story_arc_number") {
+        let arcs = names(row.story_arc.as_deref());
+        // A numeric `<StoryArcNumber>` positions the issue only when it
+        // names a single arc — the series rollup's rule for file-owned
+        // issues.
+        let position = (arcs.len() == 1)
+            .then(|| row.story_arc_number.as_deref()?.trim().parse::<i32>().ok())
+            .flatten();
+        let mut specs: Vec<writers::ArcSpec> = Vec::new();
+        for name in arcs {
+            let aid = writers::upsert_story_arc(db, &name, &[], SetBy::User).await?;
+            specs.push((aid, position));
+        }
+        writers::set_issue_story_arcs(db, id, specs, SetBy::User, None, &batch).await?;
+    }
+    if batch.is_empty() {
+        return Ok(row);
+    }
+    batch.flush(db).await?;
+    issue::Entity::find_by_id(row.id.clone())
+        .one(db)
+        .await?
+        .ok_or_else(|| sea_orm::DbErr::RecordNotFound(format!("issue {} after edit", row.id)))
 }
 
 /// WP-2.10: push a just-committed issue edit into the archive's sidecars

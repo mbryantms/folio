@@ -865,8 +865,14 @@ pub(crate) async fn apply_series_via_sidecar(
         // issue's XML: a series description / notes / URL composed as
         // issue values overwrote every issue's own `<Summary>` (and, via
         // the rescan, `issues.summary`). See `series_payload_for_issue`.
-        let mut provider_for_issue =
-            crate::metadata::sidecar_compose::series_payload_for_issue(&series_detail, issue_row);
+        let issue_junctions =
+            crate::metadata::sidecar_compose::load_issue_junctions(&state.db, &issue_row.id)
+                .await?;
+        let mut provider_for_issue = crate::metadata::sidecar_compose::series_payload_for_issue(
+            &series_detail,
+            issue_row,
+            &issue_junctions,
+        );
         // No range covers this issue and its archive names a materially
         // different series (`Firestorm: The Nuclear Man` inside
         // `Firestorm (2004)`, before coverage has filed it): the main
@@ -921,6 +927,7 @@ pub(crate) async fn apply_series_via_sidecar(
             series_external_ids: &series_ids_for_issue,
             issue_user_pins: &issue_user_pins,
             series_user_pins: &series_user_pins,
+            issue_junctions: &issue_junctions,
         };
 
         let pins = crate::metadata::sidecar_compose::enumerate_suppressed_pins(&ctx);
@@ -1113,6 +1120,9 @@ pub(crate) async fn apply_issue_via_sidecar(
         .await?
     };
 
+    let issue_junctions =
+        crate::metadata::sidecar_compose::load_issue_junctions(&state.db, &row.id).await?;
+
     let ctx = crate::metadata::sidecar_compose::ComposeContext {
         provider: &detail,
         issue: row,
@@ -1121,6 +1131,7 @@ pub(crate) async fn apply_issue_via_sidecar(
         series_external_ids: &series_external_ids,
         issue_user_pins: &issue_user_pins,
         series_user_pins: &series_user_pins,
+        issue_junctions: &issue_junctions,
     };
 
     let comic_info = crate::metadata::sidecar_compose::compose_comicinfo(&ctx);
