@@ -68,7 +68,6 @@ import type {
   PageOverridesView,
 } from "@/lib/api/types";
 
-const NO_NEXT_UP: NextUpView = { source: "none" };
 import {
   computeWebtoonWindow,
   placeholderAspectRatio,
@@ -94,7 +93,7 @@ import {
   WebtoonEndFooter,
 } from "./lazy";
 import { ReaderSkipLinks } from "./ReaderSkipLinks";
-import { usePageTextPanel } from "@/lib/reader/page-text";
+import { usePageAltText, usePageTextPanel } from "@/lib/reader/page-text";
 import { useMarkerDrawer } from "@/lib/reader/marker-drawer";
 import {
   flushSeriesPrefs,
@@ -103,6 +102,16 @@ import {
 import { apiMutate } from "@/lib/api/mutations/_core";
 import type { SeriesReaderPrefsView } from "@/lib/api/types";
 import { PageImage } from "./PageImage";
+
+const NO_NEXT_UP: NextUpView = { source: "none" };
+/** Pan offset + origin of a re-centred page — the identity zoom minus
+ *  its scale, so a zoom step lands centred. Module-level: the zoom
+ *  callbacks that spread it carry no render-scoped dependency
+ *  (audit N-R12). */
+const RECENTER = {
+  offset: ZOOM_IDENTITY.offset,
+  origin: ZOOM_IDENTITY.origin,
+};
 
 export function Reader({
   issueId,
@@ -242,6 +251,14 @@ export function Reader({
    *  pending or failed, so an offline open pairs as online did. */
   storedPageOverrides?: PageOverridesView | null;
 }) {
+  // Not compiled by the React Compiler. Until audit N-R12 the four
+  // `exhaustive-deps` suppressions below made the compiler skip this
+  // component silently; compiling it adds ~4.3 KB gzip of memo-cache code
+  // to the reader's first-load chunk (141.5 → 145.9 KB, over the 145 KB
+  // ceiling in `scripts/check-bundle-size.mjs`) for a component whose
+  // hot paths are already memoized by hand. The page views below stay
+  // compiled.
+  "use no memo";
   const router = useRouter();
   const init = useReaderStore((s) => s.init);
   const currentPage = useReaderStore((s) => s.currentPage);
@@ -282,7 +299,16 @@ export function Reader({
   if (pageTextOpen && !pageTextMounted) {
     setPageTextMounted(true);
   }
-  useEffect(() => () => usePageTextPanel.getState().setOpen(false), []);
+  useEffect(
+    () => () => {
+      const panel = usePageTextPanel.getState();
+      panel.setOpen(false);
+      // The per-page first lines behind the image alts are issue-scoped;
+      // drop them so the map does not grow across issues.
+      panel.clearFirstText();
+    },
+    [],
+  );
   // Same recipe for the marker drawer (WP-5.2).
   const markerDrawerOpen = useMarkerDrawer((s) => s.open);
   const toggleMarkerDrawer = useMarkerDrawer((s) => s.toggle);
@@ -880,29 +906,22 @@ export function Reader({
   }>({ content: { w: 0, h: 0 }, container: { w: 0, h: 0 } });
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  const RECENTER = { offset: { x: 0, y: 0 }, origin: { x: 50, y: 50 } };
   const zoomIn = useCallback(
     () => setZoom((z) => ({ scale: nextZoomStep(z.scale, "in"), ...RECENTER })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
   const zoomOut = useCallback(
     () =>
       setZoom((z) => ({ scale: nextZoomStep(z.scale, "out"), ...RECENTER })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
-  const zoomReset = useCallback(
-    () => setZoom({ scale: 1, ...RECENTER }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+  const zoomReset = useCallback(() => setZoom(ZOOM_IDENTITY), []);
   // Double-tap / double-click toggles 1× ↔ 2× at the tapped point.
   const zoomToggleAt = useCallback(
     (rectX: number, rectY: number, rect: { w: number; h: number }) => {
       setZoom((z) =>
         z.scale > 1
-          ? { scale: 1, ...RECENTER }
+          ? ZOOM_IDENTITY
           : {
               scale: DOUBLE_TAP_ZOOM,
               offset: { x: 0, y: 0 },
@@ -910,7 +929,6 @@ export function Reader({
             },
       );
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -1504,6 +1522,9 @@ function SinglePageView({
   // FEP-1: fit mode gates the variant srcSet (original-fit -> full-res).
   const singleFitMode = useReaderStore((s) => s.fitMode);
   const markerMode = useReaderStore((s) => s.markerMode);
+  // "Page N", or "Page N: <first OCR line>" once the page-text panel has
+  // read the page (audit N-R4 / AC-3).
+  const pageAlt = usePageAltText(issueId, currentPage);
   const panActive = (zoom.scale > 1 || overflowing) && markerMode === "idle";
   // The wrapper is a block-level <div> rather than the previous
   // `inline-block` <span> so it has no inline-baseline descender that
@@ -1645,7 +1666,8 @@ function SinglePageView({
               `/issues/${issueId}/pages/${currentPage}/thumb?variant=strip`,
               pageUrlVersion,
             )}
-            alt={`Page ${currentPage + 1}`}
+            alt={pageAlt.alt}
+            lang={pageAlt.lang}
             fitClass={fitClass}
             fetchPriority="high"
             onNaturalSize={onNaturalSize(currentPage)}
@@ -1860,6 +1882,7 @@ function DoublePagePane({
   // FEP-1: original-fit and a transform-zoomed spread opt out of
   // variants (full-res is the point). Each pane occupies ~half the row.
   const paneFitMode = useReaderStore((s) => s.fitMode);
+  const pageAlt = usePageAltText(issueId, page);
   return (
     <div className={`relative align-top ${paneClass}`}>
       <PageImage
@@ -1883,7 +1906,8 @@ function DoublePagePane({
           `/issues/${issueId}/pages/${page}/thumb?variant=strip`,
           pageUrlVersion,
         )}
-        alt={`Page ${page + 1}`}
+        alt={pageAlt.alt}
+        lang={pageAlt.lang}
         fitClass={fitClass}
         fetchPriority="high"
         onNaturalSize={onNaturalSize}
@@ -2140,6 +2164,7 @@ const WebtoonPage = memo(function WebtoonPage({
   // and no distortion risk). Pages without server-known dims keep
   // today's behavior; the scanner records dims for the common case.
   const dimensions = pageDimensions(pageInfo);
+  const pageAlt = usePageAltText(issueId, pageIndex);
   // No own wrapper: the parent `WebtoonView` renders the stable
   // `data-page-idx` `relative` slot (so the observer never loses it
   // across the windowing swap), which also serves as `<MarkerOverlay>`'s
@@ -2164,7 +2189,8 @@ const WebtoonPage = memo(function WebtoonPage({
           `/issues/${issueId}/pages/${pageIndex}/thumb?variant=strip`,
           pageUrlVersion,
         )}
-        alt={`Page ${pageIndex + 1}`}
+        alt={pageAlt.alt}
+        lang={pageAlt.lang}
         fitClass={fitClass}
         loading={eager ? "eager" : "lazy"}
         imgRef={imgRef}

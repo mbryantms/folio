@@ -108,6 +108,12 @@ WP-4.8 (audit AC-2..AC-5) — what a keyboard or screen-reader user gets:
   keymap keeps working with focus inside it: `←` / `→` turn the page and
   the text follows; `Esc` closes the panel without leaving the reader.
   Manga-recognizer text carries `lang="ja"` so screen readers switch voice.
+  Once the panel has read a page, that page's image `alt` becomes
+  `Page N: <first line of the first block>` (trimmed to 120 characters,
+  `usePageAltText` in `lib/reader/page-text.ts`) and the `<img>` carries
+  the same `lang` as the panel row the line came from; until then, and
+  on pages with no readable text, it stays `Page N` (audit N-R4). The
+  stored lines are dropped when the reader unmounts.
 - **Text-capture proxies.** In text-capture mode (`x`) each detected bubble
   gets a transparent, focusable button in reading order ("Capture text
   region 3 of 7"); Enter runs the same tap-to-OCR capture a pointer tap
@@ -212,7 +218,9 @@ aspect)` using a `--page-ar` custom property PageImage sets from the
 server-known page dimensions (or the decoded size), rather than
 `object-fit` — the img box stays the rendered art, so marker overlays
 still align. In double view each page of a pair is capped at half the
-viewport width; webtoon treats `contain` as `width`. It is selectable
+viewport width; webtoon treats `contain` as `width`, and the reader
+settings popover greys the **Screen** option out in webtoon with a hint
+saying so (audit N-R10). It is selectable
 per series (reader settings, `f`) and as the account default fit
 (`Settings → Reading`, stored as `default_fit_mode = "contain"`).
 
@@ -271,7 +279,7 @@ correct the pairing per issue (WP-4.3). Overrides **win over** the
 
 | Control | Where | Effect |
 |---|---|---|
-| Per-page mode pill (`Auto` → `Spread` → `Single`) | Page strip, double view only; always shown on overridden and on-screen pages, on hover elsewhere | `Spread`: the page always renders alone. `Single`: the page pairs like an ordinary page even when flagged or landscape. |
+| Per-page mode pill (`Auto` → `Spread` → `Single`) | Page strip, double view only; always shown on overridden and on-screen pages and on every page on a touch (coarse-pointer) device, on hover or focus elsewhere | `Spread`: the page always renders alone. `Single`: the page pairs like an ordinary page even when flagged or landscape. |
 | "Shift pairing by one" | Settings popover → Spreads | The first page that would start a pair renders solo instead, so every later pair moves by one page (fixes an offset scan). A page that is solo anyway (next to a spread) doesn't consume the shift. |
 | "Reset spread overrides for this issue" | Settings popover → Spreads | Back to automatic pairing. |
 
@@ -285,8 +293,14 @@ cap (an invisible issue is a 404). The read page prefetches the row
 during SSR so the first paint already pairs with it; the page strip,
 reader and settings popover share one TanStack query
 (`queryKeys.issuePageOverrides`) and the mutations update it
-optimistically. There is no keyboard shortcut yet; the strip pill for
-the on-screen page(s) is a tab stop.
+optimistically. There is no keyboard shortcut; from the keyboard, the
+pills of the on-screen page(s) and of every overridden page are tab
+stops, and any other thumb's pill sits right after that thumb in the tab
+order while the thumb (or the pill) has focus — focus a thumb, press
+`Tab`, press `Enter` to cycle its pairing. The pill's label reads the
+current pairing and the one a press would set. On touch the pill carries
+the standard invisible 44px tap area (`folio-tap`,
+[`phone-layout.md`](phone-layout.md) rule 9) without growing.
 
 ## Direction auto-detect
 

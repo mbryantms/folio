@@ -33,6 +33,7 @@ export function PageImage({
   srcSet,
   sizes,
   alt,
+  lang,
   fitClass,
   loading,
   fetchPriority,
@@ -47,6 +48,9 @@ export function PageImage({
   srcSet?: string;
   sizes?: string;
   alt: string;
+  /** Language of the `alt` text when it quotes OCR'd page text
+   *  (`usePageAltText`), so a screen reader voices it correctly. */
+  lang?: string;
   fitClass: string;
   loading?: "eager" | "lazy";
   /** Browser fetch priority. The visible page passes `"high"` so it never
@@ -208,6 +212,7 @@ export function PageImage({
         srcSet={retry > 0 ? undefined : srcSet}
         sizes={srcSet && retry === 0 ? sizes : undefined}
         alt={alt}
+        lang={lang}
         loading={loading}
         fetchPriority={fetchPriority}
         decoding="async"
