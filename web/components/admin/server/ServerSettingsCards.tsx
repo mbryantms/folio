@@ -363,10 +363,10 @@ function AuditLogRetentionCard({ initial }: { initial: number }) {
           <p className="text-muted-foreground text-xs">
             When set (at least {AUDIT_LOG_RETENTION_MIN_DAYS} days), a daily
             sweep exports admin-action entries older than this to a
-            newline-delimited JSON file under{" "}
-            <code>audit-log-exports/</code> in the app-data volume, then
-            removes them from the database. Nothing is removed unless the
-            export was written. Set to <code>0</code> to keep every entry.
+            newline-delimited JSON file under <code>audit-log-exports/</code> in
+            the app-data volume, then removes them from the database. Nothing is
+            removed unless the export was written. Set to <code>0</code> to keep
+            every entry.
           </p>
         </div>
         <div className="flex justify-end">
