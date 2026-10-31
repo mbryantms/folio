@@ -25,7 +25,7 @@
 # reverse proxy. See `docs/install/` for the wiring.
 
 # ───── Stage 1a: cargo-chef recipe ─────
-FROM rust:1-slim-bookworm@sha256:86234e857a413004348b471d11a4ebe1aa92d2eae2b6b143cac68fd1ac3c48be AS planner
+FROM rust:1-slim-bookworm@sha256:24707e70a4f1e23d9a7b25202ec43126d28a52294b96aad5c670df1fd1f1d400 AS planner
 WORKDIR /work
 COPY rust-toolchain.toml ./
 RUN cargo install cargo-chef --locked
@@ -36,7 +36,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ───── Stage 1b: cargo-chef cook (cached deps) ─────
 # Its own target so CI can build + cache just this layer (`--target deps`)
 # without exporting the per-commit final build.
-FROM rust:1-slim-bookworm@sha256:86234e857a413004348b471d11a4ebe1aa92d2eae2b6b143cac68fd1ac3c48be AS deps
+FROM rust:1-slim-bookworm@sha256:24707e70a4f1e23d9a7b25202ec43126d28a52294b96aad5c670df1fd1f1d400 AS deps
 WORKDIR /work
 COPY rust-toolchain.toml ./
 # build-essential / g++ pulled in for cc-rs crates (zstd-sys, image, webp,
