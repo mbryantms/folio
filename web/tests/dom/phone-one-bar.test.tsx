@@ -8,13 +8,17 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const nav = vi.hoisted(() => ({ pathname: "/", search: "" }));
 vi.mock("next/navigation", () => ({
   usePathname: () => nav.pathname,
   useSearchParams: () => new URLSearchParams(nav.search),
+}));
+const searchModal = vi.hoisted(() => ({ open: false, setOpen: vi.fn() }));
+vi.mock("@/lib/search/use-search-modal", () => ({
+  useSearchModal: () => searchModal,
 }));
 
 import { BottomTabBar } from "@/components/library/BottomTabBar";
@@ -59,21 +63,70 @@ describe("phone one-bar shell", () => {
     );
   });
 
-  it("the bottom tab bar carries global search and marks it active", () => {
-    nav.pathname = "/search";
+  it("the bottom tab bar's Search tab opens the search sheet", () => {
+    nav.pathname = "/";
+    searchModal.open = false;
     render(<BottomTabBar onMore={() => {}} />);
-    const tabs = screen.getAllByRole("link");
-    expect(tabs.map((t) => t.textContent)).toEqual([
+    expect(screen.getAllByRole("link").map((t) => t.textContent)).toEqual([
       "Home",
       "Library",
-      "Search",
       "Bookmarks",
     ]);
-    const search = screen.getByRole("link", { name: "Search" });
-    expect(search.getAttribute("href")).toBe("/search");
+    const search = screen.getByRole("button", { name: "Search" });
+    expect(search.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(search.getAttribute("aria-expanded")).toBe("false");
+    expect(search.className).toMatch(/\btext-muted-foreground\b/);
+    fireEvent.click(search);
+    expect(searchModal.setOpen).toHaveBeenCalledWith(true);
+  });
+
+  it("the Search tab reads active while the sheet is open and on /search", () => {
+    searchModal.open = true;
+    const { unmount } = render(<BottomTabBar onMore={() => {}} />);
+    let search = screen.getByRole("button", { name: "Search" });
+    expect(search.getAttribute("aria-expanded")).toBe("true");
+    expect(search.className).toMatch(/\btext-foreground\b/);
+    unmount();
+    searchModal.open = false;
+    nav.pathname = "/search";
+    render(<BottomTabBar onMore={() => {}} />);
+    search = screen.getByRole("button", { name: "Search" });
     expect(search.getAttribute("aria-current")).toBe("page");
     expect(
       screen.getByRole("link", { name: "Home" }).getAttribute("aria-current"),
     ).toBeNull();
+  });
+
+  it("the search modal is a top sheet on phones with no corner close button", () => {
+    const src = read("components/SearchModal.tsx");
+    // The dialog's absolute corner X overlaid the input's right end at
+    // every width; the phone closes from a Cancel beside the input.
+    expect(src).toMatch(/<DialogContent\s+showCloseButton=\{false\}/);
+    // globals.css makes every dialog a bottom sheet on phones (doubled
+    // `data-slot` selector); the search sheet opts into the top edge
+    // with the same specificity, so the input never moves with the
+    // result count and the keyboard has the bottom of the screen.
+    expect(src).toMatch(/data-search-sheet=""/);
+    const css = read("styles/globals.css");
+    const rule = css.slice(
+      css.indexOf('[data-slot="dialog-content"][data-search-sheet]'),
+    );
+    expect(rule).toMatch(/^[^}]*inset: 0 0 auto 0;/);
+    expect(rule).toMatch(/^[^}]*max-height: var\(--visual-height, 100dvh\);/);
+    expect(rule).toMatch(/^[^}]*padding-top: var\(--safe-top\);/);
+    expect(rule).toMatch(/^[^}]*--tw-enter-translate-y: -100%;/);
+    expect(
+      css.indexOf('[data-slot="dialog-content"][data-search-sheet]'),
+    ).toBeGreaterThan(
+      css.indexOf('[data-slot="dialog-content"][data-slot="dialog-content"]'),
+    );
+    const cancel = src.slice(src.indexOf("<DialogClose asChild>"));
+    expect(cancel).toMatch(
+      /className="[^"]*\bsm:hidden\b[^"]*"[\s\S]{0,40}Cancel/,
+    );
+    // The bottom bar warms the chunk so the first tap opens in-gesture.
+    expect(read("components/library/BottomTabBar.tsx")).toMatch(
+      /void import\("@\/components\/SearchModal"\)/,
+    );
   });
 });

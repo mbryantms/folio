@@ -23,7 +23,9 @@ indexes.
    `data-phone-topbar="hidden"`). The page's own control row is the top
    bar, and the bottom tab bar (Home · Library · Search · Bookmarks ·
    More) is the app frame: no "Folio" wordmark on a phone, the home-screen
-   icon and the tab bar carry the identity, as in a native app. Inside the
+   icon and the tab bar carry the identity, as in a native app. The
+   Search tab opens the global `SearchModal` as a sheet from the top
+   edge (rule 4), not a page. Inside the
    shell `globals.css` collapses `--topbar-h` to `--safe-top` under `48rem`,
    so a row that pins with `top-(--topbar-h)` pins at the status bar with
    no change of its own, and `SidebarInset` pads `--safe-top` so the first
@@ -91,9 +93,18 @@ indexes.
    Continue or `⋯` stay in the title row at every width.
 
 4. **No second search box.** Global search is the bottom tab bar's
-   **Search** tab (the `/search` page); the shell topbar, which holds the
-   global search field from `md` up, does not render below `md` (rule
-   0). On phones a page-local search is the bar's 🔍 icon, which expands
+   **Search** tab, which opens the same `SearchModal` as desktop's ⌘K
+   and topbar field: below `sm` the dialog is a sheet pinned to the top
+   edge under the status bar, full width, input focused, with a Cancel
+   beside the input (no Escape key on a phone; the backdrop is under
+   the keyboard) and no corner close button at any width (it overlaid
+   the input). Live results and recent searches are one tap away; the
+   sheet's footer leads to the `/search` page, which is the full-results
+   destination and, with nothing typed, shows recent searches rather
+   than a rail of "Awaiting query" placeholders. The bottom bar warms
+   the modal's lazy chunk on phones so the first tap opens it inside
+   the gesture. The shell topbar, which holds the global search field
+   from `md` up, does not render below `md` (rule 0). On phones a page-local search is the bar's 🔍 icon, which expands
    to an input in place with a Cancel button. The bar keeps keystrokes
    local, so pass the caller's debounced value.
 5. **A–Z is a vertical scrubber.** `AtoZScrubber` pins `#` + A–Z to the

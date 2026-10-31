@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, ChevronRight, Clock, X } from "lucide-react";
+import { ArrowRight, BookOpen, ChevronRight } from "lucide-react";
 import { Kbd } from "@/components/folio/kbd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -14,8 +14,11 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { RecentSearches } from "@/components/search/RecentSearches";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogTitle,
@@ -48,6 +51,12 @@ const QUERY_DEBOUNCE_MS = 200;
  *
  * A `>` prefix flips into command mode (action registry only). The footer
  * links to the dedicated `/search` page; `Mod+Enter` jumps there.
+ *
+ * Below `sm` it is the phone's search surface (the bottom tab bar's
+ * Search tab opens it): a sheet from the top edge, full width, with a
+ * Cancel beside the input because a phone has no Escape key and the
+ * backdrop sits under the keyboard. The dialog's own corner close button
+ * is off at every width — it overlaid the input's right end.
  */
 export function SearchModal({
   open,
@@ -147,7 +156,14 @@ export function SearchModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex max-h-[80vh] flex-col gap-0 overflow-hidden p-0 sm:top-[10%] sm:max-w-xl sm:translate-y-0">
+      <DialogContent
+        showCloseButton={false}
+        // Phones: globals.css turns every dialog into a bottom sheet; this
+        // attribute picks the top-sheet geometry there instead (the input
+        // stays put while the keyboard owns the bottom of the screen).
+        data-search-sheet=""
+        className="flex max-h-[80vh] flex-col gap-0 overflow-hidden p-0 sm:top-[10%] sm:max-w-xl sm:translate-y-0"
+      >
         <DialogTitle className="sr-only">Search</DialogTitle>
         <DialogDescription className="sr-only">
           Quick search across your library. Press Enter to open the highlighted
@@ -160,22 +176,35 @@ export function SearchModal({
           loop
           className="flex min-h-0 flex-1 flex-col gap-0 bg-transparent"
         >
-          <CommandInput
-            autoFocus
-            value={raw}
-            onValueChange={setRaw}
-            onKeyDown={onInputKeyDown}
-            placeholder={
-              commandMode
-                ? "Jump to settings, admin pages, sections…"
-                : "Search series, issues, people, characters…  Type > for commands"
-            }
-            aria-label="Search the library"
-          />
+          <div className="flex items-start [&>[data-slot=command-input-wrapper]]:min-w-0 [&>[data-slot=command-input-wrapper]]:flex-1">
+            <CommandInput
+              autoFocus
+              value={raw}
+              onValueChange={setRaw}
+              onKeyDown={onInputKeyDown}
+              placeholder={
+                commandMode
+                  ? "Jump to settings, admin pages, sections…"
+                  : "Search series, issues, people, characters…  Type > for commands"
+              }
+              aria-label="Search the library"
+            />
+            {/* Phones: no Escape key, and the backdrop is under the
+                keyboard, so the sheet closes from here. */}
+            <DialogClose asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-1 mr-1 h-8 shrink-0 sm:hidden"
+              >
+                Cancel
+              </Button>
+            </DialogClose>
+          </div>
           {showHint ? (
             <SearchHints />
           ) : showRecents ? (
-            <RecentsSection
+            <RecentSearches
               recents={recents.recents}
               onPick={(q) => {
                 setRaw(q);
@@ -185,7 +214,7 @@ export function SearchModal({
               onClear={recents.clear}
             />
           ) : (
-            <CommandList className="min-h-0 flex-1">
+            <CommandList className="min-h-0 flex-1 max-sm:max-h-none">
               {isLoading && !hasItems ? (
                 <p
                   role="status"
@@ -291,68 +320,11 @@ function SearchHints() {
   return (
     <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
       <p>Type at least 2 characters to search.</p>
-      <p>
+      <p className="max-sm:hidden">
         <KbdGlyph>↵</KbdGlyph> opens the highlighted hit ·{" "}
         <KbdGlyph>⌘</KbdGlyph>
         <KbdGlyph>↵</KbdGlyph> shows full results
       </p>
-    </div>
-  );
-}
-
-/** Recent-search chips (empty-input state). Compact pills — the remove
- *  control is sized to the chip rather than a 44px touch box that
- *  ballooned the whole row. */
-function RecentsSection({
-  recents,
-  onPick,
-  onRemove,
-  onClear,
-}: {
-  recents: readonly string[];
-  onPick: (q: string) => void;
-  onRemove: (q: string) => void;
-  onClear: () => void;
-}) {
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto py-2">
-      <div className="flex items-center justify-between px-3 pb-1">
-        <h3 className="text-muted-foreground inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-wide uppercase">
-          <Clock className="size-3" aria-hidden="true" />
-          Recent searches
-        </h3>
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-muted-foreground hover:text-foreground text-[11px] font-medium"
-        >
-          Clear all
-        </button>
-      </div>
-      <ul className="flex flex-wrap gap-1.5 px-3 pb-3">
-        {recents.map((q) => (
-          <li key={q}>
-            <span className="bg-muted/60 hover:bg-muted text-foreground border-border inline-flex items-center rounded-full border py-0.5 pr-0.5 pl-3 text-xs transition-colors">
-              <button
-                type="button"
-                onClick={() => onPick(q)}
-                className="py-1 focus-visible:outline-none"
-                aria-label={`Search again for ${q}`}
-              >
-                {q}
-              </button>
-              <button
-                type="button"
-                onClick={() => onRemove(q)}
-                aria-label={`Remove ${q} from recents`}
-                className="text-muted-foreground hover:text-foreground hover:bg-background/70 ml-1 inline-flex size-6 items-center justify-center rounded-full transition-colors"
-              >
-                <X className="size-3" aria-hidden="true" />
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
