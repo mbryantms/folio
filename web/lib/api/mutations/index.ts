@@ -1485,12 +1485,18 @@ export function useUpdateLibraryAccess(id: string) {
  * place so the new prefs are immediately visible to every consumer of
  * `useMe()` without an extra round-trip.
  */
-export function useUpdatePreferences(opts?: { silent?: boolean }) {
+export function useUpdatePreferences(opts?: {
+  silent?: boolean;
+  /** Collapse repeated error toasts into one (autosave-like callers such
+   *  as the reader's coalesced display-pref sync). */
+  toastId?: string;
+}) {
   const qc = useQueryClient();
   return useApiMutation<MeView, PreferencesReq>(
     (body) => ({ path: "/me/preferences", method: "PATCH", body }),
     {
       ...(opts?.silent ? {} : { successMessage: "Preferences saved" }),
+      ...(opts?.toastId ? { toastId: opts.toastId } : {}),
       onSuccess: (data) => {
         if (data) qc.setQueryData(queryKeys.me, data);
       },

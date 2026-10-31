@@ -8,6 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { Loader2, RotateCw } from "lucide-react";
+import { READER_FILTER_VAR } from "@/lib/reader/filters";
 
 /** Show the "still loading…" hint after this long in flight (audit C3). */
 const SLOW_HINT_MS = 8000;
@@ -198,9 +199,14 @@ export function PageImage({
           alt=""
           aria-hidden="true"
           decoding="async"
-          className={`block ${fitClass} scale-105 blur-xl transition-opacity duration-300 ease-out motion-reduce:transition-none ${
+          className={`block ${fitClass} scale-105 transition-opacity duration-300 ease-out motion-reduce:transition-none ${
             loaded ? "opacity-0" : "opacity-100"
           }`}
+          // The reader's colour filters ride on the page images, not on a
+          // wrapper, so marker overlays and the webtoon footer keep their
+          // own colours (night mode would invert them). `blur-xl` moved
+          // here because Tailwind's `filter` would otherwise clobber it.
+          style={{ filter: `${READER_FILTER_VAR} blur(24px)` }}
         />
       ) : null}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -238,6 +244,7 @@ export function PageImage({
         className={`block ${fitClass} transition-opacity duration-150 ease-out motion-reduce:transition-none ${
           loaded ? "opacity-100" : "opacity-0"
         }`}
+        style={{ filter: READER_FILTER_VAR }}
       />
     </span>
   );

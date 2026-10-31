@@ -11187,6 +11187,38 @@ export interface components {
             /** @description True when `/me/account` accepts local password changes for this user. */
             password_editable: boolean;
             /**
+             * Format: double
+             * @description Reader display preferences that follow the account (audit 2026-11
+             *     F6/F7). Each is `null` until the account has set it; while `null`
+             *     the reader keeps the browser's own stored value and adopts it on
+             *     the first change. CSS `brightness()` multiplier, 0.5..=1.5.
+             */
+            reader_brightness?: number | null;
+            /**
+             * Format: int32
+             * @description CSS `contrast()` percent, 50..=150.
+             */
+            reader_contrast?: number | null;
+            /**
+             * Format: int32
+             * @description CSS `grayscale()` percent, 0..=100.
+             */
+            reader_grayscale?: number | null;
+            /** @description Night mode: the page surface is colour-inverted. */
+            reader_invert?: boolean | null;
+            /**
+             * Format: double
+             * @description CSS `sepia()` amount, 0..=1.
+             */
+            reader_sepia?: number | null;
+            /**
+             * Format: int32
+             * @description Colour temperature, -50 (cool) ..= 50 (warm); 0 is neutral.
+             */
+            reader_warmth?: number | null;
+            /** @description "Keep zoom between pages" in the reader. */
+            reader_zoom_persist?: boolean | null;
+            /**
              * Format: int32
              * @description M6a: idle threshold (ms) after which the client ends the session.
              */
@@ -11971,6 +12003,35 @@ export interface components {
              */
             max_rails_per_page?: number | null;
             motion?: components["schemas"]["Motion"] | null;
+            /**
+             * Format: double
+             * @description Reader display preferences (audit 2026-11 F6/F7). Absent leaves the
+             *     stored value; `null` clears it so the reader falls back to its
+             *     browser value / built-in default. Ranges: brightness 0.5..=1.5.
+             */
+            reader_brightness?: number | null;
+            /**
+             * Format: int32
+             * @description 50..=150.
+             */
+            reader_contrast?: number | null;
+            /**
+             * Format: int32
+             * @description 0..=100.
+             */
+            reader_grayscale?: number | null;
+            reader_invert?: boolean | null;
+            /**
+             * Format: double
+             * @description 0..=1.
+             */
+            reader_sepia?: number | null;
+            /**
+             * Format: int32
+             * @description -50..=50.
+             */
+            reader_warmth?: number | null;
+            reader_zoom_persist?: boolean | null;
             /**
              * Format: int32
              * @description M6a: idle threshold ms (30_000..=1_800_000).

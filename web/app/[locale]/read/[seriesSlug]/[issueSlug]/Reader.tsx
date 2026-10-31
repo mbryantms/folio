@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type CSSProperties,
   memo,
   useCallback,
   useEffect,
@@ -59,7 +60,21 @@ import {
   type ZoomState,
 } from "@/lib/reader/zoom";
 import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
-import { useSetIssueNote, useSetIssueRating } from "@/lib/api/mutations";
+import {
+  type AccountReaderPrefs,
+  flushAccountPrefs,
+  setAccountPrefTransport,
+} from "@/lib/reader/account-prefs-sync";
+import {
+  READER_FILTER_PROPERTY,
+  READER_FILTER_VAR,
+  composeFilter,
+} from "@/lib/reader/filters";
+import {
+  useSetIssueNote,
+  useSetIssueRating,
+  useUpdatePreferences,
+} from "@/lib/api/mutations";
 import { summarizeMarkers, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { readerUrl } from "@/lib/urls";
 import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
@@ -137,6 +152,7 @@ export function Reader({
   userDefaultPageStrip,
   userDefaultPageAnimation,
   userDefaultCoverSolo,
+  userReaderPrefs = null,
   userKeybinds,
   activityTrackingEnabled,
   incognito = false,
@@ -227,6 +243,10 @@ export function Reader({
    *  users start here). */
   userDefaultPageAnimation: "off" | "slide" | "fade" | null;
   userDefaultCoverSolo: boolean;
+  /** The account's global display prefs (brightness, sepia, filters, zoom
+   *  persist; F7), or `null` when `/auth/me` could not be fetched. See
+   *  `store.init`. */
+  userReaderPrefs?: AccountReaderPrefs | null;
   userKeybinds: Record<string, string>;
   activityTrackingEnabled: boolean;
   /** When true, suppress per-page progress writes and the reading-session
@@ -269,6 +289,10 @@ export function Reader({
   const direction = useReaderStore((s) => s.direction);
   const brightness = useReaderStore((s) => s.brightness);
   const sepia = useReaderStore((s) => s.sepia);
+  const grayscale = useReaderStore((s) => s.grayscale);
+  const invert = useReaderStore((s) => s.invert);
+  const warmth = useReaderStore((s) => s.warmth);
+  const contrast = useReaderStore((s) => s.contrast);
   const coverSolo = useReaderStore((s) => s.coverSolo);
   const setPage = useReaderStore((s) => s.setPage);
   const nextPage = useReaderStore((s) => s.nextPage);
@@ -669,6 +693,26 @@ export function Reader({
     };
   }, []);
 
+  // The global display prefs follow the account the same way (F7): one
+  // coalesced PATCH `/me/preferences` per burst of slider changes, sent
+  // through the account mutation so the cached `me` refreshes for every
+  // `useMe()` consumer and a failure surfaces as the usual error toast
+  // (one toast per burst via `toastId`, not one per slider tick). The
+  // local cache already holds the change; the sync module re-queues a
+  // failed patch for the next push.
+  const updatePreferences = useUpdatePreferences({
+    silent: true,
+    toastId: "reader-account-prefs",
+  });
+  const pushPreferences = updatePreferences.mutateAsync;
+  useEffect(() => {
+    setAccountPrefTransport((patch) => pushPreferences(patch));
+    return () => {
+      flushAccountPrefs();
+      setAccountPrefTransport(null);
+    };
+  }, [pushPreferences]);
+
   // Initial mount: hydrate the store from props. The store is a module
   // singleton and this runs in an effect, so the first render of a new
   // issue — a fresh mount after reading another issue in the same app
@@ -699,6 +743,7 @@ export function Reader({
       initialPageStripVisible: userDefaultPageStrip,
       initialCoverSolo: userDefaultCoverSolo,
       serverSeriesPrefs,
+      serverAccountPrefs: userReaderPrefs,
     });
   }, [
     init,
@@ -712,6 +757,7 @@ export function Reader({
     userDefaultPageStrip,
     userDefaultCoverSolo,
     serverSeriesPrefs,
+    userReaderPrefs,
   ]);
 
   // Resolve user → defaults at mount; pinned in a ref so the listener below
@@ -1360,12 +1406,22 @@ export function Reader({
       </div>
 
       <div
-        style={{
-          filter:
-            brightness !== 1 || sepia !== 0
-              ? `brightness(${brightness}) sepia(${sepia})`
-              : undefined,
-        }}
+        style={
+          {
+            // One composed filter for every colour adjustment (F6),
+            // published as a custom property the page `<img>`s read
+            // (`PageImage`, the exit frame below) so overlays keep their
+            // colours; absent at the defaults.
+            [READER_FILTER_PROPERTY]: composeFilter({
+              brightness,
+              sepia,
+              grayscale,
+              invert,
+              warmth,
+              contrast,
+            }),
+          } as CSSProperties
+        }
       >
         {viewMode === "webtoon" ? (
           <WebtoonView
@@ -1635,6 +1691,7 @@ function SinglePageView({
               )}
               alt=""
               className={`block ${fitClass}`}
+              style={{ filter: READER_FILTER_VAR }}
               decoding="async"
             />
           </div>

@@ -1,7 +1,9 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
+// `PartialEq` only (no `Eq`): `reader_brightness` / `reader_sepia` are
+// `f64`, like `issue::Model`'s numeric columns.
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "users")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
@@ -162,6 +164,35 @@ pub struct Model {
     /// surface lazy-mounts off-screen rails so a higher value does
     /// not load every rail at hydration.
     pub max_rails_per_page: i32,
+
+    /// Reader display preferences that follow the account (audit 2026-11
+    /// F6/F7). Account-wide like `markersHidden` in the web store: they are
+    /// about the viewer's screen, not a series. NULL means the account has
+    /// never set the value, so a browser's existing localStorage value
+    /// stands (and is adopted on the first change). Ranges are pinned by
+    /// DB CHECK constraints and the PATCH handler.
+    ///
+    /// CSS `brightness()` multiplier, 0.5..=1.5.
+    #[sea_orm(nullable)]
+    pub reader_brightness: Option<f64>,
+    /// CSS `sepia()` amount, 0..=1.
+    #[sea_orm(nullable)]
+    pub reader_sepia: Option<f64>,
+    /// CSS `grayscale()` percent, 0..=100.
+    #[sea_orm(nullable)]
+    pub reader_grayscale: Option<i32>,
+    /// Night mode: `invert(1)` over the page surface.
+    #[sea_orm(nullable)]
+    pub reader_invert: Option<bool>,
+    /// Colour temperature, -50 (cool) ..= 50 (warm); 0 = neutral.
+    #[sea_orm(nullable)]
+    pub reader_warmth: Option<i32>,
+    /// CSS `contrast()` percent, 50..=150.
+    #[sea_orm(nullable)]
+    pub reader_contrast: Option<i32>,
+    /// "Keep zoom between pages" (WP-4.2).
+    #[sea_orm(nullable)]
+    pub reader_zoom_persist: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
