@@ -9,7 +9,12 @@
  *  - `AppSidebar`: icon-collapsible, positioned under Folio's full-width
  *    sticky topbar (the upstream "sidebar below the header" pattern:
  *    `top-(--topbar-h)` + a height that subtracts it), and the mobile
- *    sheet closes when a link inside it is followed.
+ *    sheet closes when a link inside it is followed. The rail is
+ *    `sticky`, not upstream's `fixed`: iOS pins a fixed box to the
+ *    viewport during the rubber-band bounce, so the rail stood still
+ *    while the sticky topbar and the page slid down over it (iPad,
+ *    2026-10-30). A sticky rail is part of the scrolling document and
+ *    bounces with them, as the pre-#1346 `<aside>` did.
  * App code imports from here, never from components/ui (ESLint enforces
  * it). */
 import * as React from "react";
@@ -82,7 +87,10 @@ export function AppSidebar({
     <UiSidebar
       collapsible="icon"
       className={cn(
-        "top-(--topbar-h) h-[calc(100svh-var(--topbar-h))]",
+        // `sticky` outranks upstream's `fixed` through tailwind-merge; the
+        // gap div before the container has no height, so the rail sits at
+        // the wrapper's top and the row's stretched height is its track.
+        "sticky top-(--topbar-h) h-[calc(100svh-var(--topbar-h))]",
         className,
       )}
       {...props}
