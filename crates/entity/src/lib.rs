@@ -40,6 +40,7 @@ pub mod issue_tag;
 pub mod issue_team;
 pub mod issue_universe;
 pub mod library;
+pub mod library_backup_stats;
 pub mod library_event;
 pub mod library_health_issue;
 pub mod library_user_access;

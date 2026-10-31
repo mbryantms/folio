@@ -43,6 +43,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
 /// Rolled-up `.bak` backup-file footprint for a library (archive-rewrite M7).
 /// Surfaced as a storage card on the library health page so operators can see
 /// how much disk the edit/restore safety backups consume.
+///
+/// Served from the stored `library_backup_stats` row (audit 2026-11,
+/// N-L4), not from a walk of the library root per request — see
+/// [`crate::library::backup_stats`] for when the row is (re)counted.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BackupStorageView {
     pub file_count: u64,
@@ -50,40 +54,22 @@ pub struct BackupStorageView {
     /// RFC 3339; `None` when there are no backup files.
     pub oldest_modified_at: Option<String>,
     pub newest_modified_at: Option<String>,
+    /// RFC 3339 — when the filesystem was last counted. The daily backup
+    /// sweep and the first request for a library count; a scan that changed
+    /// the library schedules a recount on the next request after ten
+    /// minutes.
+    pub computed_at: String,
 }
 
-fn scan_backup_files(root: &std::path::Path) -> BackupStorageView {
-    use std::time::SystemTime;
-    let mut file_count = 0u64;
-    let mut total_bytes = 0u64;
-    let mut oldest: Option<SystemTime> = None;
-    let mut newest: Option<SystemTime> = None;
-
-    for entry in walkdir::WalkDir::new(root)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
+impl From<entity::library_backup_stats::Model> for BackupStorageView {
+    fn from(m: entity::library_backup_stats::Model) -> Self {
+        Self {
+            file_count: u64::try_from(m.file_count).unwrap_or(0),
+            total_bytes: u64::try_from(m.total_bytes).unwrap_or(0),
+            oldest_modified_at: m.oldest_modified_at.map(|t| t.to_rfc3339()),
+            newest_modified_at: m.newest_modified_at.map(|t| t.to_rfc3339()),
+            computed_at: m.computed_at.to_rfc3339(),
         }
-        if !crate::archive_rewrite::is_backup_name(&entry.file_name().to_string_lossy()) {
-            continue;
-        }
-        let Ok(meta) = entry.metadata() else { continue };
-        file_count += 1;
-        total_bytes += meta.len();
-        if let Ok(modified) = meta.modified() {
-            oldest = Some(oldest.map_or(modified, |o| o.min(modified)));
-            newest = Some(newest.map_or(modified, |n| n.max(modified)));
-        }
-    }
-
-    let to_rfc3339 = |t: SystemTime| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339();
-    BackupStorageView {
-        file_count,
-        total_bytes,
-        oldest_modified_at: oldest.map(to_rfc3339),
-        newest_modified_at: newest.map(to_rfc3339),
     }
 }
 
@@ -107,13 +93,13 @@ pub async fn backup_storage(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    let root = std::path::PathBuf::from(&lib.root_path);
-    // Walk off-thread — large libraries have many files; this is an on-demand
-    // admin card, not a polled endpoint.
-    match tokio::task::spawn_blocking(move || scan_backup_files(&root)).await {
-        Ok(view) => Json(view).into_response(),
+    // One-row read. The library root is only walked when there is no stored
+    // tally yet, or a scan flagged it stale more than ten minutes ago.
+    let root = std::path::Path::new(&lib.root_path);
+    match crate::library::backup_stats::current(&app.db, lib.id, root).await {
+        Ok(row) => Json(BackupStorageView::from(row)).into_response(),
         Err(e) => {
-            tracing::error!(error = %e, "backup_storage: walk join failed");
+            tracing::error!(error = %e, library_id = %lib.id, "backup_storage: load failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }

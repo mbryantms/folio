@@ -1001,9 +1001,25 @@ picker). Backed by [`api/duplicates.rs`](../../crates/server/src/api/duplicates.
   With `kind=all` a group whose members are a subset of a stronger
   group's (`hash` > `number` > `cover`) is suppressed. A group whose live
   members are all marked *keep* drops off; a new undecided copy brings
-  it back. Groups are computed per request, then keyset-paginated over a
-  stable sort key, so acting on a group between page fetches never skips
-  another.
+  it back. Groups are keyset-paginated over a stable sort key, so acting
+  on a group between page fetches never skips another.
+
+  **Memoised per library** (audit 2026-11, N-L3): grouping is three
+  whole-library statements plus the cover clustering, so the result —
+  every kind's sorted list, the suppressed all-kinds list and the
+  per-kind counts — is kept in `AppState::duplicates`
+  (`api::duplicates::DuplicateGroupsCache`, 16 libraries, 10-minute
+  TTL). The first page fills it; every later page is a binary search for
+  the cursor plus the hydrate of one page, so page 2 of a 50k-issue
+  library costs the same four statements as page 2 of a 50-issue one
+  (`tests/perf_duplicates_health.rs`). The memo is dropped by a scan
+  that changed the library (`scanner::finalize_run`, which every archive
+  rewrite's scoped rescan goes through), by a duplicate decision, by a
+  Removed-tab issue or series restore, and by the cover-pHash backfill
+  drain; the TTL backstops the writers that don't invalidate (the
+  first-import lazy hash backfill, a cover pHash persisted by the
+  thumbnail worker, a DB-direct provider apply in a non-writeback
+  library).
 - `PUT /series/{s}/issues/{i}/duplicate-decision` `{decision: keep|remove}`
   — audited `admin.issue.duplicate.keep` / `.remove`. `remove` sets
   `removed_at` (soft-remove; the file is not touched) and pins it.
