@@ -3,6 +3,7 @@
 
 pub mod access;
 pub mod age_rating;
+pub mod backup_stats;
 pub mod deep_validate;
 pub mod event_log;
 pub mod events;

@@ -488,11 +488,16 @@ async fn cover_groups_by_phash_within_series() {
     want.sort();
     assert_eq!(ids, want);
 
-    // Exactly at the threshold (8 bits) still groups; 9 does not.
+    // Exactly at the threshold (8 bits) still groups; 9 does not. The
+    // direct `issue_cover` writes above stand in for the cover-pHash
+    // backfill, which drops the per-library memo when it finishes; this
+    // test writes the rows itself, so it drops the memo itself.
     set_primary_phash(&app, &e3.id, 0xFF).await;
+    app.state().duplicates.invalidate(lib);
     let body = list(&app, &auth, lib, "?kind=cover").await;
     assert_eq!(group_sizes(&body), vec![("cover".to_owned(), 3)], "{body}");
     set_primary_phash(&app, &e3.id, 0x1FF << 8).await;
+    app.state().duplicates.invalidate(lib);
     let body = list(&app, &auth, lib, "?kind=cover").await;
     assert_eq!(group_sizes(&body), vec![("cover".to_owned(), 2)], "{body}");
 }
@@ -749,4 +754,82 @@ async fn duplicates_list_is_admin_only() {
         .await
         .unwrap();
     assert!(resp.status().is_client_error(), "{}", resp.status());
+}
+
+/// Audit 2026-11 N-L3: the groups are memoised per library, and the memo
+/// must go away when the library changes — a scan that ingests a new copy
+/// brings its group in, a `keep` decision retires a reviewed group — so
+/// the page never shows a stale list after either.
+#[tokio::test]
+async fn duplicates_memo_is_dropped_by_scans_and_decisions() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Kappa (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(
+        &folder.join("Kappa 001.cbz"),
+        90,
+        Some(&comic_info("1", None)),
+    );
+    write_cbz(
+        &folder.join("Kappa 001 (alt).cbz"),
+        91,
+        Some(&comic_info("1", None)),
+    );
+    write_cbz(
+        &folder.join("Kappa 002.cbz"),
+        92,
+        Some(&comic_info("2", None)),
+    );
+    let lib = create_library(&app, tmp.path(), true).await;
+    scanner::scan_library(&app.state(), lib).await.unwrap();
+    let cache = app.state().duplicates.clone();
+
+    let body = list(&app, &auth, lib, "?kind=number").await;
+    assert_eq!(body["total"], 1, "{body}");
+    assert!(cache.is_cached(lib), "the first page fills the memo");
+    let generation = cache.generation(lib);
+
+    // A second copy of #2 arrives; the scan that ingests it drops the memo
+    // and the next page shows both groups.
+    write_cbz(
+        &folder.join("Kappa 002 (alt).cbz"),
+        93,
+        Some(&comic_info("2", None)),
+    );
+    let stats = scanner::scan_library(&app.state(), lib).await.unwrap();
+    assert_eq!(stats.files_added, 1, "{stats:?}");
+    assert!(!cache.is_cached(lib), "a mutating scan drops the memo");
+    assert!(cache.generation(lib) > generation);
+    let body = list(&app, &auth, lib, "?kind=number").await;
+    assert_eq!(body["total"], 2, "{body}");
+    assert!(cache.is_cached(lib));
+
+    // Marking both #1 copies `keep` retires that group — through the memo.
+    for name in ["Kappa 001.cbz", "Kappa 001 (alt).cbz"] {
+        let row = issue_by_path(&app, &folder.join(name)).await;
+        let (s, i) = slugs(&app, &row).await;
+        let (st, _) = send(
+            &app,
+            &auth,
+            Method::PUT,
+            &format!("/api/series/{s}/issues/{i}/duplicate-decision"),
+            Some(serde_json::json!({"decision": "keep"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+        assert!(!cache.is_cached(lib), "a decision drops the memo");
+    }
+    let body = list(&app, &auth, lib, "?kind=number").await;
+    assert_eq!(body["total"], 1, "{body}");
+    assert_eq!(
+        body["items"][0]["issues"][0]["number_raw"], "2",
+        "the fully-kept #1 group is gone: {body}"
+    );
+
+    // A scan that changes nothing keeps the memo.
+    let stats = scanner::scan_library(&app.state(), lib).await.unwrap();
+    assert!(!stats.mutated(), "{stats:?}");
+    assert!(cache.is_cached(lib), "an idle scan keeps the memo");
 }

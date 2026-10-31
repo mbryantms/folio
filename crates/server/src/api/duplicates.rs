@@ -34,12 +34,26 @@
 //! (`library::reconcile::not_duplicate_removed`). Restore it from the
 //! Removed tab or by clearing the decision.
 //!
-//! Groups are computed per request (window functions for `number`/`hash`,
-//! a per-series self-join for `cover`), then keyset-paginated over a stable
-//! sort key so acting on a group between page fetches never skips another.
+//! Groups are computed for the whole library (window functions for
+//! `number`/`hash`, a per-series self-join for `cover`) and **memoised per
+//! library** in [`DuplicateGroupsCache`] on `AppState` (audit 2026-11,
+//! N-L3): the first page fills the memo, every later page is a binary
+//! search over the sorted groups plus the hydrate of one page — O(1) SQL,
+//! no re-grouping. `total` and `counts` are read off the memo, so they are
+//! not recomputed for pages that don't serialize them. The memo is dropped
+//! by a catalogue-changing scan ([`crate::library::scanner`]'s finalize),
+//! by a duplicate decision, and by a Removed-tab restore; a ten-minute TTL
+//! backstops the write paths that don't invalidate (hash and cover-pHash
+//! backfills). Pages are keyset-paginated over a stable sort key so acting
+//! on a group between page fetches never skips another.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use lru::LruCache;
 
 use axum::{
     Extension, Json,
@@ -114,17 +128,6 @@ pub enum DuplicateKindFilter {
     Cover,
 }
 
-impl DuplicateKindFilter {
-    fn single(self) -> Option<DuplicateKind> {
-        match self {
-            Self::All => None,
-            Self::Hash => Some(DuplicateKind::Hash),
-            Self::Number => Some(DuplicateKind::Number),
-            Self::Cover => Some(DuplicateKind::Cover),
-        }
-    }
-}
-
 /// Admin verdict on one duplicate-group member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -161,7 +164,7 @@ pub struct DuplicateListQuery {
 
 /// Per-kind group counts (first page only) for the filter chips. Counts are
 /// unsuppressed — each matches what `?kind=<k>` lists.
-#[derive(Debug, Default, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Clone, Copy, Serialize, utoipa::ToSchema)]
 pub struct DuplicateCounts {
     pub hash: u64,
     pub number: u64,
@@ -443,13 +446,182 @@ impl Dsu {
     }
 }
 
-/// Compute every duplicate group for `library_id`, filtered + sorted.
-/// Returns `(groups, per-kind counts)`.
+// ───────────────────────────── memo ─────────────────────────────
+
+/// Every list the endpoint can serve for one library, sorted by
+/// [`SortKey`]: the all-kinds listing with subset suppression applied and
+/// the three unsuppressed per-kind listings. Built once per memo fill by
+/// [`compute_groups`]; a page request only slices it.
+pub struct ComputedGroups {
+    /// Every group, sorted by [`SortKey`]. The four listings below are
+    /// ascending indexes into it, so each group is stored once.
+    groups: Vec<Group>,
+    suppressed: Vec<u32>,
+    hash: Vec<u32>,
+    number: Vec<u32>,
+    cover: Vec<u32>,
+    counts: DuplicateCounts,
+}
+
+impl ComputedGroups {
+    fn list(&self, filter: DuplicateKindFilter) -> &[u32] {
+        match filter {
+            DuplicateKindFilter::All => &self.suppressed,
+            DuplicateKindFilter::Hash => &self.hash,
+            DuplicateKindFilter::Number => &self.number,
+            DuplicateKindFilter::Cover => &self.cover,
+        }
+    }
+
+    fn group(&self, index: u32) -> &Group {
+        &self.groups[index as usize]
+    }
+}
+
+/// Libraries whose groups stay memoised at once. A library's memo is a few
+/// strings per duplicate group, so even a 50k-issue library is small; the
+/// bound is there so an instance with hundreds of libraries can't grow
+/// without limit.
+const CACHE_LIBRARIES: usize = 16;
+
+/// Backstop for write paths that don't invalidate explicitly (the
+/// first-import lazy hash backfill, a cover pHash persisted by the
+/// thumbnail worker, a DB-direct provider apply in a non-writeback
+/// library): a memo older than this is recomputed.
+pub const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+
+struct CacheEntry {
+    generation: u64,
+    at: Instant,
+    computed: Arc<ComputedGroups>,
+}
+
+struct CacheInner {
+    /// Per-library invalidation counter. Bumped by [`invalidate`]; a memo
+    /// built under an older generation is never served or stored.
+    generations: HashMap<Uuid, u64>,
+    lru: LruCache<Uuid, CacheEntry>,
+}
+
+/// Process-local memo of [`ComputedGroups`] per library (see the module
+/// docs). Lives on `AppState::duplicates`.
+pub struct DuplicateGroupsCache {
+    inner: Mutex<CacheInner>,
+}
+
+impl Default for DuplicateGroupsCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DuplicateGroupsCache {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(CacheInner {
+                generations: HashMap::new(),
+                lru: LruCache::new(NonZeroUsize::new(CACHE_LIBRARIES).expect("nonzero")),
+            }),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, CacheInner> {
+        // Cache data only: recover from a poisoned lock instead of failing
+        // every later request.
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Drop the memo for one library. Called when a scan changed the
+    /// library, when a duplicate decision is recorded or cleared, and when
+    /// a removed issue or series is restored.
+    pub fn invalidate(&self, library_id: Uuid) {
+        let mut g = self.lock();
+        *g.generations.entry(library_id).or_insert(0) += 1;
+        g.lru.pop(&library_id);
+    }
+
+    /// Drop every library's memo. For writers that touch grouping inputs
+    /// across libraries at once (the cover-pHash backfill drain).
+    pub fn invalidate_all(&self) {
+        let mut g = self.lock();
+        // Bumping every counter retires computes already in flight; the
+        // clear covers libraries that have no counter yet.
+        for generation in g.generations.values_mut() {
+            *generation += 1;
+        }
+        g.lru.clear();
+    }
+
+    /// Current generation for `library_id` (bumped by every invalidation).
+    pub fn generation(&self, library_id: Uuid) -> u64 {
+        // Materialise the counter so an `invalidate_all` that lands while
+        // this library's first compute is in flight retires that compute.
+        *self.lock().generations.entry(library_id).or_insert(0)
+    }
+
+    /// Whether a live memo exists for `library_id` (tests / diagnostics).
+    pub fn is_cached(&self, library_id: Uuid) -> bool {
+        self.lock()
+            .lru
+            .peek(&library_id)
+            .is_some_and(|e| e.at.elapsed() < CACHE_TTL)
+    }
+
+    fn get(&self, library_id: Uuid) -> Option<Arc<ComputedGroups>> {
+        let mut g = self.lock();
+        let generation = g.generations.get(&library_id).copied().unwrap_or(0);
+        let hit = g
+            .lru
+            .get(&library_id)
+            .filter(|e| e.generation == generation && e.at.elapsed() < CACHE_TTL)
+            .map(|e| e.computed.clone());
+        if hit.is_none() {
+            g.lru.pop(&library_id);
+        }
+        hit
+    }
+
+    /// Store a memo computed under `generation`; dropped when an
+    /// invalidation landed mid-compute so a stale memo can't outlive it.
+    fn put(&self, library_id: Uuid, generation: u64, computed: Arc<ComputedGroups>) {
+        let mut g = self.lock();
+        if g.generations.get(&library_id).copied().unwrap_or(0) != generation {
+            return;
+        }
+        g.lru.put(
+            library_id,
+            CacheEntry {
+                generation,
+                at: Instant::now(),
+                computed,
+            },
+        );
+    }
+}
+
+/// Memo hit, or compute + store. Concurrent misses each compute; the
+/// generation check in `put` keeps a stale result from winning.
+async fn memoised_groups(
+    app: &AppState,
+    library_id: Uuid,
+) -> Result<Arc<ComputedGroups>, sea_orm::DbErr> {
+    if let Some(hit) = app.duplicates.get(library_id) {
+        return Ok(hit);
+    }
+    let generation = app.duplicates.generation(library_id);
+    let computed = Arc::new(compute_groups(&app.db, library_id).await?);
+    app.duplicates.put(library_id, generation, computed.clone());
+    Ok(computed)
+}
+
+/// Compute every duplicate group for `library_id`, sorted, as the memo
+/// shape [`ComputedGroups`]. Three whole-library statements (candidates,
+/// cover pairs, decisions) plus the cover members' meta — O(library),
+/// which is why the result is memoised.
 async fn compute_groups(
     db: &DatabaseConnection,
     library_id: Uuid,
-    filter: DuplicateKindFilter,
-) -> Result<(Vec<Group>, DuplicateCounts), sea_orm::DbErr> {
+) -> Result<ComputedGroups, sea_orm::DbErr> {
     let candidates = load_candidates(db, library_id).await?;
     let pairs = load_cover_pairs(db, library_id).await?;
     let decisions = load_decisions(db, library_id).await?;
@@ -579,28 +751,47 @@ async fn compute_groups(
     }
 
     groups.sort_by(|a, b| a.sort.cmp(&b.sort));
-    match filter.single() {
-        Some(kind) => groups.retain(|g| g.kind == kind),
-        None => groups = suppress_subsets(groups),
-    }
-    Ok((groups, counts))
+    let by_kind = |kind: DuplicateKind| -> Vec<u32> {
+        groups
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.kind == kind)
+            .map(|(i, _)| i as u32)
+            .collect()
+    };
+    Ok(ComputedGroups {
+        hash: by_kind(DuplicateKind::Hash),
+        number: by_kind(DuplicateKind::Number),
+        cover: by_kind(DuplicateKind::Cover),
+        suppressed: suppress_subsets(&groups),
+        counts,
+        groups,
+    })
 }
 
-/// All-kinds listing: drop a group whose members are a subset of a
-/// stronger-kind group's members (`hash` > `number` > `cover`).
-fn suppress_subsets(groups: Vec<Group>) -> Vec<Group> {
-    let mut stronger: Vec<(u8, HashSet<String>)> = Vec::new();
-    for g in &groups {
-        stronger.push((g.kind.rank(), g.members.iter().cloned().collect()));
-    }
+/// All-kinds listing: the indexes of the groups that survive once a group
+/// whose members are a subset of a stronger-kind group's members
+/// (`hash` > `number` > `cover`) is dropped.
+fn suppress_subsets(groups: &[Group]) -> Vec<u32> {
+    let stronger: Vec<(u8, HashSet<&str>)> = groups
+        .iter()
+        .map(|g| {
+            (
+                g.kind.rank(),
+                g.members.iter().map(String::as_str).collect(),
+            )
+        })
+        .collect();
     groups
-        .into_iter()
-        .filter(|g| {
+        .iter()
+        .enumerate()
+        .filter(|(_, g)| {
             let rank = g.kind.rank();
             !stronger
                 .iter()
-                .any(|(r, set)| *r < rank && g.members.iter().all(|m| set.contains(m)))
+                .any(|(r, set)| *r < rank && g.members.iter().all(|m| set.contains(m.as_str())))
         })
+        .map(|(i, _)| i as u32)
         .collect()
 }
 
@@ -780,20 +971,24 @@ pub async fn list(
     };
     let first_page = cursor.is_none();
 
-    let (groups, counts) = match compute_groups(&app.db, lib.id, q.kind).await {
+    let computed = match memoised_groups(&app, lib.id).await {
         Ok(v) => v,
         Err(e) => return internal(&e, "duplicates: grouping failed"),
     };
-    let total = groups.len() as u64;
-    let after: Vec<Group> = match &cursor {
-        Some(c) => groups
-            .into_iter()
-            .filter(|g| g.sort.cmp(c) == Ordering::Greater)
-            .collect(),
-        None => groups,
+    let listing = computed.list(q.kind);
+    // Keyset: the listing is sorted by `SortKey`, so the page starts at
+    // the first group strictly after the cursor.
+    let start = match &cursor {
+        Some(c) => listing.partition_point(|&i| computed.group(i).sort.cmp(c) != Ordering::Greater),
+        None => 0,
     };
+    let after = &listing[start..];
     let has_more = after.len() > limit;
-    let page: Vec<Group> = after.into_iter().take(limit).collect();
+    let page: Vec<Group> = after
+        .iter()
+        .take(limit)
+        .map(|&i| computed.group(i).clone())
+        .collect();
     let next_cursor = if has_more {
         page.last().and_then(|g| encode_cursor(&g.sort).ok())
     } else {
@@ -806,8 +1001,8 @@ pub async fn list(
     Json(DuplicateListView {
         items,
         next_cursor,
-        total: first_page.then_some(total),
-        counts: first_page.then_some(counts),
+        total: first_page.then_some(listing.len() as u64),
+        counts: first_page.then_some(computed.counts),
     })
     .into_response()
 }
@@ -860,6 +1055,7 @@ pub async fn set_decision(
     }
 
     let issue_id = row.id.clone();
+    let library_id = row.library_id;
     let series_id = row.series_id;
     let was_removed = row.removed_at.is_some();
     match req.decision {
@@ -868,12 +1064,19 @@ pub async fn set_decision(
             am.removed_at = Set(Some(now));
             am.removal_confirmed_at = Set(None);
             if let Err(e) = am.update(&app.db).await {
+                // The decision row landed, so the memo is stale even now.
+                app.duplicates.invalidate(library_id);
                 return internal(&e, "duplicates: soft-remove failed");
             }
             recompute_series_status(&app.db, series_id).await;
         }
         _ => {}
     }
+    // A `keep` can retire a fully-reviewed group and a `remove` takes a
+    // member out of every group it was in — the memo is stale either way.
+    // After the last write, so a list that recomputed mid-handler can't
+    // store the pre-write state.
+    app.duplicates.invalidate(library_id);
 
     record_admin_action!(
         db = &app.db,
@@ -932,6 +1135,7 @@ pub async fn clear_decision(
         return internal(&e, "duplicates: decision delete failed");
     }
     let issue_id = row.id.clone();
+    let library_id = row.library_id;
     let series_id = row.series_id;
     // Undo a Duplicates-page soft-remove. Only when the file is still on
     // disk — a missing file stays removed (the reconcile pass would
@@ -944,10 +1148,13 @@ pub async fn clear_decision(
         am.removed_at = Set(None);
         am.removal_confirmed_at = Set(None);
         if let Err(e) = am.update(&app.db).await {
+            app.duplicates.invalidate(library_id);
             return internal(&e, "duplicates: undo soft-remove failed");
         }
         recompute_series_status(&app.db, series_id).await;
     }
+    // After the last write (see `set_decision`).
+    app.duplicates.invalidate(library_id);
 
     record_admin_action!(
         db = &app.db,
@@ -996,13 +1203,17 @@ mod tests {
 
     #[test]
     fn subset_of_stronger_kind_is_suppressed() {
-        let out = suppress_subsets(vec![
+        let groups = vec![
             group(DuplicateKind::Hash, &["a", "b"]),
             group(DuplicateKind::Number, &["a", "b"]),
             group(DuplicateKind::Number, &["a", "b", "c"]),
             group(DuplicateKind::Cover, &["b", "c"]),
             group(DuplicateKind::Cover, &["d", "e"]),
-        ]);
+        ];
+        let out: Vec<&Group> = suppress_subsets(&groups)
+            .into_iter()
+            .map(|i| &groups[i as usize])
+            .collect();
         let kinds: Vec<(DuplicateKind, usize)> =
             out.iter().map(|g| (g.kind, g.members.len())).collect();
         assert_eq!(

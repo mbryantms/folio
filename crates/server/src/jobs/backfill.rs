@@ -113,6 +113,10 @@ async fn drain_phash(state: &AppState) -> (u64, u64) {
             }
         }
     }
+    if hashed > 0 {
+        // New cover hashes can form or split `cover` duplicate groups.
+        state.duplicates.invalidate_all();
+    }
     (hashed, skipped)
 }
 

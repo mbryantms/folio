@@ -1,6 +1,8 @@
-# label | path — driven in order by scripts/perf/perf-explain.sh.
+# label | path [| cold] — driven in order by scripts/perf/perf-explain.sh.
 # Placeholders: {series_slug} {issue_id} {view_id} {cbl_id} {collection_id}
-# {library_id}; {cursor:<label>} = next_cursor from that label's response.
+# {library_id} {library_slug}; {cursor:<label>} = next_cursor from that
+# label's response. A third column `cold` skips the warm-up request, so
+# the measured request is an in-process cache miss.
 #
 # The first ten are the "top ten" list/filter/sort surfaces tracked in
 # docs/dev/load-testing.md; the rest are secondary list paths recorded
@@ -39,3 +41,18 @@ recent-issues-rail      | /api/me/recent-issues
 collection-entries      | /api/me/collections/{collection_id}/entries?limit=50
 issue-next-up           | /api/issues/{issue_id}/next-up
 series-resume           | /api/series/{series_slug}/resume
+
+# ── admin per-library pages (audit 2026-11, N-L3 / N-L4) ────────────────
+# Duplicates: the memo miss groups the whole library (three statements over
+# every live issue — the reviewed exceptions in expected_seqscans.txt);
+# the warm first page and every deeper page must hydrate one page only.
+duplicates-cold         | /api/libraries/{library_slug}/duplicates?limit=50 | cold
+duplicates-warm         | /api/libraries/{library_slug}/duplicates?limit=50
+duplicates-page2        | /api/libraries/{library_slug}/duplicates?limit=50&cursor={cursor:duplicates-warm}
+duplicates-number       | /api/libraries/{library_slug}/duplicates?kind=number&limit=50
+# Health page: the issue table plus the `.bak` storage card. The card's
+# first request for a library counts the files on disk and stores the
+# tally; the second is a one-row read.
+health-issues           | /api/libraries/{library_slug}/health-issues?limit=50
+backup-storage-cold     | /api/libraries/{library_slug}/backup-storage | cold
+backup-storage-warm     | /api/libraries/{library_slug}/backup-storage

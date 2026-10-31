@@ -136,3 +136,64 @@ async fn libraries_without_archive_writeback_are_skipped() {
         "a .bak under a non-writeback library isn't Folio's to delete"
     );
 }
+
+/// Audit 2026-11 N-L4: the sweep is what keeps the health page's backup
+/// card current. Every library gets a stored tally of the backups that
+/// survive — the writeback library after its prune, and the non-writeback
+/// one from a read-only walk that deletes nothing.
+#[tokio::test]
+async fn sweep_stores_a_backup_tally_for_every_library() {
+    use entity::library_backup_stats::Entity as Stats;
+
+    let app = TestApp::spawn().await;
+    let wb_dir = tempdir().unwrap();
+    let wb_lib = LibrarySeed::new(wb_dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    touch_aged(&wb_dir.path().join("old.cbz.bak"), 45 * DAY);
+    touch_aged(&wb_dir.path().join("young.cbz.bak"), 2 * DAY);
+    touch_aged(&wb_dir.path().join("young.cbz.bak.1"), DAY);
+
+    let ro_dir = tempdir().unwrap();
+    let ro_lib = LibrarySeed::new(ro_dir.path())
+        .insert(&app.state().db)
+        .await;
+    touch_aged(&ro_dir.path().join("stray.cbz.bak"), 400 * DAY);
+
+    // Pretend both cards were flagged stale by a scan; the sweep clears it.
+    for lib in [wb_lib, ro_lib] {
+        server::library::backup_stats::store(
+            &app.state().db,
+            lib,
+            &server::library::backup_stats::Tally::default(),
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        server::library::backup_stats::mark_stale(&app.state().db, lib).await;
+    }
+
+    let stats = run(&app.state()).await.unwrap();
+    assert_eq!(stats.removed, 1, "{stats:?}");
+    assert_eq!(stats.libraries, 1, "only the writeback library is pruned");
+
+    let wb = Stats::find_by_id(wb_lib)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(wb.file_count, 2, "the two young backups survive");
+    assert_eq!(wb.total_bytes, 2 * "backup bytes".len() as i64);
+    assert!(!wb.stale);
+    assert!(wb.oldest_modified_at.unwrap() < wb.newest_modified_at.unwrap());
+
+    let ro = Stats::find_by_id(ro_lib)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ro.file_count, 1, "counted, never deleted");
+    assert!(!ro.stale);
+    assert!(ro_dir.path().join("stray.cbz.bak").exists());
+}
