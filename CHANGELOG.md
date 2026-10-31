@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.69.1](https://github.com/mbryantms/folio/compare/v0.69.0...v0.69.1) (2026-10-31)
+
+
+### Fixed
+
+* **web:** phone bar that is the page's first element sits at the status bar ([#1383](https://github.com/mbryantms/folio/issues/1383)) ([fc22986](https://github.com/mbryantms/folio/commit/fc22986a40e4c8ac3684a5ca86e3640bd50efaa0))
+
+
+### Dependencies
+
+* update dependency @hookform/resolvers to v6.0.2 ([#1381](https://github.com/mbryantms/folio/issues/1381)) ([e1a45a8](https://github.com/mbryantms/folio/commit/e1a45a862deaa76f5e95adc8625a5d716ec08a6b))
+* update dependency lucide-react to v1.63.0 ([#1379](https://github.com/mbryantms/folio/issues/1379)) ([2f8eaae](https://github.com/mbryantms/folio/commit/2f8eaae292a37ce086cbdbb74ad573e7f2f81802))
+* update rust:1-slim-bookworm docker digest to 24707e7 ([#1382](https://github.com/mbryantms/folio/issues/1382)) ([2cf4b87](https://github.com/mbryantms/folio/commit/2cf4b875dd9e57f2501efe989fa2a21dcfbba7df))
+
 ## [0.69.0](https://github.com/mbryantms/folio/compare/v0.68.0...v0.69.0) (2026-10-31)
 
 
