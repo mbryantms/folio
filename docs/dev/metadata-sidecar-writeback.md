@@ -804,7 +804,8 @@ CI**. The `sidecar-interop` job in `ci.yml` does that in two steps:
    characters, teams, locations, arcs (with numbers on the MetronInfo
    side), genres, tags, universes, reprints, ids + primary, GTIN, age
    rating, URLs. darkseid also validates MetronInfo.xml against its
-   bundled XSD **1.1** (the `<xs:assert>`s xmllint skips) and the script
+   bundled MetronInfo v1.1 and v1.2 schemas with an XSD 1.1 validator
+   (the `<xs:assert>`s xmllint skips; v1.1 is tried first) and the script
    requires `Metron Info V1.2`. Any difference not covered by a *named*
    normalisation below fails the job with a readable diff; the archive,
    both sidecars, `expected.json` and the report are uploaded as the

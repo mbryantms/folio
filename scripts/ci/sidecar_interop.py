@@ -8,7 +8,8 @@ MetronInfo.xml *and* ComicInfo.xml reader) — and diffs what each tool reads
 against `expected.json`, the values Folio meant to write. Three readings
 are compared: comicapi on ComicInfo.xml, darkseid on ComicInfo.xml and
 darkseid on MetronInfo.xml. darkseid also validates MetronInfo.xml against
-its bundled MetronInfo XSD 1.1 (the `<xs:assert>`s xmllint cannot check).
+its bundled MetronInfo v1.1 / v1.2 schemas with an XSD 1.1 validator (the
+`<xs:assert>`s xmllint cannot check) and must report v1.2.
 
 Every place a tool's reading legitimately differs from Folio's intent is a
 *named* normalisation (`TOLERATED`, applied by `tolerate()`), printed when it
@@ -392,7 +393,7 @@ def read_darkseid_metroninfo(cbz: Path, expected: dict[str, Any], report: Report
 
     view = "darkseid/MetronInfo"
     schema = str(Comic(cbz).validate_metadata(MetadataFormat.METRON_INFO))
-    report.check(view, "schema (darkseid XSD 1.1 validation)", "Metron Info V1.2", schema)
+    report.check(view, "schema (darkseid MetronInfo XSD validation)", "Metron Info V1.2", schema)
     md = darkseid_view(cbz, MetadataFormat.METRON_INFO)
     if md.is_empty:
         report.mismatches.append(f"{view}: darkseid read no MetronInfo.xml")
