@@ -24,6 +24,7 @@ import {
   useSetDuplicateDecision,
 } from "@/lib/api/mutations";
 import { useDuplicatesInfinite } from "@/lib/api/queries";
+import { issueStateLabel } from "@/lib/library/issue-state";
 import type {
   DuplicateGroupView,
   DuplicateIssueView,
@@ -246,7 +247,7 @@ function DuplicateIssueRow({
         <p className="text-muted-foreground text-xs">
           {formatBytes(issue.file_size)}
           {issue.page_count != null ? ` · ${issue.page_count} pages` : ""}
-          {issue.state !== "active" ? ` · ${issue.state}` : ""}
+          {issue.state !== "active" ? ` · ${issueStateLabel(issue.state)}` : ""}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">

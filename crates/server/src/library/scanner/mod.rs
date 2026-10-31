@@ -835,6 +835,12 @@ async fn finalize_run(
     .increment(stats.files_malformed);
     metrics::counter!(
         "folio_scan_files_total",
+        "library_id" => lib_label.clone(),
+        "action" => "encrypted",
+    )
+    .increment(stats.files_encrypted);
+    metrics::counter!(
+        "folio_scan_files_total",
         "library_id" => lib_label,
         "action" => "duplicate",
     )

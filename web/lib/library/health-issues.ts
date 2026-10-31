@@ -57,6 +57,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     label: "Corrupt or unrecognized archive",
     hint: "The file isn't a readable ZIP, TAR, RAR or 7z. Replace it from a good copy.",
   },
+  EncryptedArchive: {
+    label: "Password-protected archive",
+    hint: "Folio can't read encrypted archives, so the issue has no pages or cover. Repack it without a password, or replace it from an unencrypted copy, then rescan.",
+  },
   FolderNameMismatch: {
     label: "Folder name ≠ ComicInfo series",
     hint: "ComicInfo wins for the series name. Rename the folder, or re-tag the archives if the folder is right.",

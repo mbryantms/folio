@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { useUserProgress } from "@/lib/api/queries";
 import { formatIssueHeading } from "@/lib/format";
+import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
 import { cn } from "@/lib/utils";
 import type { IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
@@ -232,8 +233,9 @@ function IssueCardImpl({
           <Badge
             variant="destructive"
             className="bg-background/80 absolute top-2 right-2 backdrop-blur"
+            title={issueStateHint(issue.state)}
           >
-            {issue.state}
+            {issueStateLabel(issue.state)}
           </Badge>
         )}
         {issue.state === "active" && finished && (

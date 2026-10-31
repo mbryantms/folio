@@ -44,6 +44,20 @@ describe("archive-container kinds", () => {
       }),
     ).toBe("/lib/X 001.cbz — Could not find EOCD");
   });
+
+  it("names a password-protected archive and says Folio cannot read it", () => {
+    expect(healthKindLabel("EncryptedArchive")).toBe(
+      "Password-protected archive",
+    );
+    expect(healthKindHint("EncryptedArchive")).toMatch(/can't read encrypted/);
+    expect(healthKindHint("EncryptedArchive")).toMatch(/rescan/);
+    expect(
+      healthPayloadSummary("EncryptedArchive", {
+        kind: "encrypted_archive",
+        data: { path: "/lib/Locked (2025)/Locked 001.cbz" },
+      }),
+    ).toBe("/lib/Locked (2025)/Locked 001.cbz");
+  });
 });
 
 describe("health-issue presentation (WP-3.4 kinds)", () => {

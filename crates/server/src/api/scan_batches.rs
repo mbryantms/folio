@@ -108,6 +108,10 @@ pub struct BatchTotals {
     pub issues_restored: u64,
     pub series_created: u64,
     pub files_malformed: u64,
+    /// Password-protected archives met this batch. Each one ingests as a
+    /// page-less `encrypted` issue and raises an `EncryptedArchive` health
+    /// finding (audit 2026-11 N-L1).
+    pub files_encrypted: u64,
     pub files_duplicate: u64,
 }
 
@@ -120,6 +124,7 @@ impl BatchTotals {
         self.issues_restored += s.issues_restored;
         self.series_created += s.series_created;
         self.files_malformed += s.files_malformed;
+        self.files_encrypted += s.files_encrypted;
         self.files_duplicate += s.files_duplicate;
     }
 }

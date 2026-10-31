@@ -6760,6 +6760,13 @@ export interface components {
             files_added: number;
             /** Format: int64 */
             files_duplicate: number;
+            /**
+             * Format: int64
+             * @description Password-protected archives met this batch. Each one ingests as a
+             *     page-less `encrypted` issue and raises an `EncryptedArchive` health
+             *     finding (audit 2026-11 N-L1).
+             */
+            files_encrypted: number;
             /** Format: int64 */
             files_malformed: number;
             /** Format: int64 */

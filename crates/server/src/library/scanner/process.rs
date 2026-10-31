@@ -414,7 +414,15 @@ async fn parse_archive_for_ingest(
             (info, None, actual_pages, "active")
         }
         ArchiveOutcome::Encrypted => {
+            // Audit 2026-11 N-L1: the issue row alone left a coverless card
+            // with no explanation. Surface the file the same way the other
+            // unreadable-container outcomes do; the row resolves through the
+            // normal lifecycle once the file is replaced or removed.
+            tracing::warn!(path = %path.display(), "password-protected archive");
             stats.files_encrypted += 1;
+            health.emit(IssueKind::EncryptedArchive {
+                path: path.to_path_buf(),
+            });
             (ComicInfo::default(), None, 0, "encrypted")
         }
         ArchiveOutcome::Malformed(e) => {
