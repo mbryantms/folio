@@ -39,8 +39,9 @@ import {
 } from "@/components/admin/library/HealthIssueExtras";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { useDismissHealthIssue } from "@/lib/api/mutations";
+import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import {
-  useAdminHealthIssuesInfinite,
+  useAdminHealthIssues,
   useAdminScanRunsInfinite,
   useLibraryList,
 } from "@/lib/api/queries";
@@ -267,14 +268,8 @@ function HealthIssuesRail({
     library_id: libraryId === "all" ? undefined : libraryId,
     limit: 50,
   };
-  const {
-    data,
-    isLoading,
-    error,
-    hasNextPage,
-    isFetchingNextPage,
-    fetchNextPage,
-  } = useAdminHealthIssuesInfinite(filters);
+  const query = useAdminHealthIssues(filters);
+  const { data, isLoading, error } = query;
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
@@ -295,29 +290,7 @@ function HealthIssuesRail({
       {items.map((row) => (
         <HealthIssueRow key={row.id} row={row} />
       ))}
-      {hasNextPage ? (
-        <div className="flex flex-col items-center gap-2 pt-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void fetchNextPage()}
-            disabled={isFetchingNextPage}
-          >
-            {isFetchingNextPage ? (
-              <>
-                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Loading more…
-              </>
-            ) : (
-              "Load more"
-            )}
-          </Button>
-          <p className="text-muted-foreground text-center text-xs">
-            Refine the filters to narrow this list.
-          </p>
-        </div>
-      ) : null}
+      <InfiniteSentinel query={query} />
     </div>
   );
 }
@@ -407,14 +380,8 @@ function ScanRunsRail({
     library_id: libraryId === "all" ? undefined : libraryId,
     limit: 50,
   };
-  const {
-    data,
-    isLoading,
-    error,
-    hasNextPage,
-    isFetchingNextPage,
-    fetchNextPage,
-  } = useAdminScanRunsInfinite(filters);
+  const query = useAdminScanRunsInfinite(filters);
+  const { data, isLoading, error } = query;
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
@@ -497,29 +464,7 @@ function ScanRunsRail({
           </Table>
         </CardContent>
       </Card>
-      {hasNextPage ? (
-        <div className="flex flex-col items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void fetchNextPage()}
-            disabled={isFetchingNextPage}
-          >
-            {isFetchingNextPage ? (
-              <>
-                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Loading more…
-              </>
-            ) : (
-              "Load more"
-            )}
-          </Button>
-          <p className="text-muted-foreground text-center text-xs">
-            Refine the filters to narrow this list.
-          </p>
-        </div>
-      ) : null}
+      <InfiniteSentinel query={query} />
     </div>
   );
 }

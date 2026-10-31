@@ -9,7 +9,7 @@ import {
   useLibrary,
   useQueueDepth,
   useScanPreview,
-  useScanRuns,
+  useLatestScanRun,
 } from "@/lib/api/queries";
 import { useTriggerScan } from "@/lib/api/mutations";
 import { validateCron } from "@/lib/api/cron";
@@ -29,7 +29,7 @@ function nextScheduledScan(cron: string | null | undefined): string {
 
 export function LibraryOverview({ id }: { id: string }) {
   const lib = useLibrary(id);
-  const runs = useScanRuns(id);
+  const lastRun = useLatestScanRun(id);
   const issues = useHealthIssues(id);
   const preview = useScanPreview(id);
   const queue = useQueueDepth({ intervalMs: 10_000 });
@@ -41,7 +41,7 @@ export function LibraryOverview({ id }: { id: string }) {
   if (lib.error || !lib.data) {
     return <p className="text-destructive text-sm">Library not found.</p>;
   }
-  const last = runs.data?.[0];
+  const last = lastRun.data ?? undefined;
   const scanPreview = preview.data;
   // Open count from the server-computed summary — the items array is a
   // paginated sample, so its length would undercount.

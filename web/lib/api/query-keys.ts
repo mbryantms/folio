@@ -62,7 +62,11 @@ export const queryKeys = {
     ["libraries", libraryId, "backup-storage"] as const,
   archivePageCount: (issueId: string) =>
     ["issues", issueId, "archive", "page-count"] as const,
-  /** Cross-library findings — admin findings page + dashboard cards. */
+  /** Prefix for every cross-library findings query (any filter set) —
+   *  the WS scan-event reducer invalidates it on `scan.health_issue`. */
+  adminHealthIssuesAll: ["admin", "health-issues"] as const,
+  /** Cross-library findings — admin findings page (infinite query; the
+   *  filter object is a server query-param set). */
   adminHealthIssues: (filters: {
     library_id?: string;
     kind?: string;
@@ -71,14 +75,10 @@ export const queryKeys = {
     include_dismissed?: boolean;
     limit?: number;
   }) => ["admin", "health-issues", filters] as const,
-  adminHealthIssuesInfinite: (filters: {
-    library_id?: string;
-    kind?: string;
-    severity?: string;
-    include_resolved?: boolean;
-    include_dismissed?: boolean;
-    limit?: number;
-  }) => ["admin", "health-issues-infinite", filters] as const,
+  /** Prefix for every cross-library scan-run query (dashboard failures
+   *  card, latest-per-library card, findings scan-runs rail) — invalidated
+   *  when a scan starts or ends. */
+  adminScanRunsAll: ["admin", "scan-runs"] as const,
   adminScanRuns: (filters: {
     library_id?: string;
     kind?: string;
@@ -92,13 +92,17 @@ export const queryKeys = {
     state?: string;
     since?: string;
     limit?: number;
-  }) => ["admin", "scan-runs-infinite", filters] as const,
+  }) => ["admin", "scan-runs", "infinite", filters] as const,
   adminLatestScanPerLibrary: [
     "admin",
     "scan-runs",
     "latest-per-library",
   ] as const,
-  /** Scan-all batches — observability-split M9 dashboard. */
+  /** Prefix for every scan-all batch query (list under any `state` filter
+   *  plus the per-batch detail) — invalidated when a scan starts or ends. */
+  adminScanBatchesAll: ["admin", "scan-batches"] as const,
+  /** Scan-all batches — observability-split M9 dashboard (infinite query;
+   *  `state` is a server query param). */
   adminScanBatches: (state?: string) =>
     ["admin", "scan-batches", state ?? "all"] as const,
   adminScanBatch: (id: string) => ["admin", "scan-batches", id] as const,
@@ -117,11 +121,13 @@ export const queryKeys = {
     ["issues", seriesSlug, issueSlug, "metadata-overview"] as const,
   issueAppearances: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "appearances"] as const,
+  /** Cursor-paginated scan history (infinite query); `kind` is a server
+   *  query param, so each filter is its own walk. */
   scanRuns: (libraryId: string, kind?: string) =>
     ["libraries", libraryId, "scan-runs", kind ?? "all"] as const,
-  /** Cursor-paginated variant (load-more history table). */
-  scanRunsInfinite: (libraryId: string, kind?: string) =>
-    ["libraries", libraryId, "scan-runs", "infinite", kind ?? "all"] as const,
+  /** `limit=1` probe for the newest run (overview card, live-scan hydrate). */
+  latestScanRun: (libraryId: string) =>
+    ["libraries", libraryId, "scan-runs", "latest"] as const,
   /** Prefix that matches every `scanRuns(libraryId, *)` variant — used by
    *  cache invalidations that don't care which kind filter is active. */
   scanRunsAll: (libraryId: string) =>

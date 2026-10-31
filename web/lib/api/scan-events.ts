@@ -39,18 +39,33 @@ export function invalidationsForEvent(
   switch (evt.type) {
     case "scan.started":
     case "scan.failed":
-      return [queryKeys.scanRunsAll(evt.library_id), queryKeys.backgroundWork];
+      // `scanRunsAll` prefixes every page of the per-library infinite
+      // history plus the newest-run probe; `adminScanRunsAll` the
+      // cross-library cards and the findings scan-runs rail;
+      // `adminScanBatchesAll` the scan-all batch picker (any `state`
+      // filter) and the open batch detail.
+      return [
+        queryKeys.scanRunsAll(evt.library_id),
+        queryKeys.backgroundWork,
+        queryKeys.adminScanRunsAll,
+        queryKeys.adminScanBatchesAll,
+      ];
     case "scan.completed":
       return [
         queryKeys.scanRunsAll(evt.library_id),
         queryKeys.backgroundWork,
+        queryKeys.adminScanRunsAll,
+        queryKeys.adminScanBatchesAll,
         queryKeys.library(evt.library_id),
         queryKeys.health(evt.library_id),
+        queryKeys.adminHealthIssuesAll,
         queryKeys.removed(evt.library_id),
         ["series"],
       ];
     case "scan.health_issue":
-      return [queryKeys.health(evt.library_id)];
+      // Per-library health table + the cross-library findings page (every
+      // filter combination is one infinite query under this prefix).
+      return [queryKeys.health(evt.library_id), queryKeys.adminHealthIssuesAll];
     case "scan.series_updated":
       // Previously unhandled — a per-series scan change never refreshed
       // its row. Series caches are slug-keyed, so invalidate broadly.

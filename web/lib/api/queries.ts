@@ -612,66 +612,70 @@ export function useSeriesAppearances(
 }
 
 /**
- * Library scan history. `kind` filters by trigger: `'library' | 'series' |
- * 'issue'`, or omitted for all. Server caps at 500 rows; default is 50.
- */
-/**
- * First page of a library's scan runs as a flat array — for summary
+ * Cursor-paginated scan history for a single library. `kind` filters by
+ * trigger (`'library' | 'series' | 'issue'`, or omitted for all) and is a
+ * server query param. Backs the `ScanRunsTable` (an IntersectionObserver
+ * sentinel walks every page — no silent truncation) and the summary
  * consumers (overview card, live-scan progress) that only read the most
- * recent run (`data[0]`). The endpoint is now cursor-paginated; the full
- * scrollable history uses {@link useScanRunsInfinite}.
+ * recent run, `data.pages[0]?.items[0]`. The key sits under
+ * `queryKeys.scanRunsAll(libraryId)`, which the WS scan-event reducer and
+ * the scan mutations invalidate.
  */
 export function useScanRuns(
   libraryId: string,
   opts?: { kind?: "library" | "series" | "issue" | "all" },
 ) {
   const kind = opts?.kind && opts.kind !== "all" ? opts.kind : undefined;
-  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : "";
-  return useQuery({
-    queryKey: queryKeys.scanRuns(libraryId, kind ?? "all"),
-    queryFn: () =>
-      jsonFetch<{ items: ScanRunView[]; next_cursor: string | null }>(
-        `/libraries/${libraryId}/scan-runs${qs}`,
-      ).then((p) => p.items),
-    enabled: !!libraryId,
-  });
-}
-
-/**
- * Cursor-paginated scan history for a single library — backs the
- * `ScanRunsTable` with a Load-more button (audit D5). Mirrors the
- * cross-library `useAdminScanRunsInfinite` shape.
- */
-export function useScanRunsInfinite(
-  libraryId: string,
-  opts?: { kind?: "library" | "series" | "issue" | "all"; limit?: number },
-) {
-  const kind = opts?.kind && opts.kind !== "all" ? opts.kind : undefined;
   return useInfiniteQuery({
-    queryKey: queryKeys.scanRunsInfinite(libraryId, kind ?? "all"),
+    queryKey: queryKeys.scanRuns(libraryId, kind ?? "all"),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams();
       if (kind) params.set("kind", kind);
-      if (opts?.limit) params.set("limit", String(opts.limit));
       if (pageParam) params.set("cursor", pageParam);
       const qs = params.toString();
       return jsonFetch<{ items: ScanRunView[]; next_cursor: string | null }>(
         `/libraries/${libraryId}/scan-runs${qs ? `?${qs}` : ""}`,
       );
     },
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    getNextPageParam: cursorNextPage,
     enabled: !!libraryId,
   });
 }
 
 /**
- * Cross-library health-issue feed. Backs both the dashboard "Open
- * health issues" card (limit:5 truncated view) and the /admin/findings
- * page (paginated table with filters).
- *
- * Cursor pagination is the caller's responsibility — pass `cursor` for
- * subsequent pages.
+ * The library's newest scan run (or `null`), for the overview card and the
+ * live-scan progress hydrate. A `limit=1` probe on its own key so those
+ * summaries don't re-walk every page the History table has loaded on each
+ * refetch; still under the `scanRunsAll(libraryId)` prefix, so the WS
+ * reducer and the scan mutations refresh it with the table.
+ */
+export function useLatestScanRun(libraryId: string) {
+  return useQuery({
+    queryKey: queryKeys.latestScanRun(libraryId),
+    queryFn: () =>
+      jsonFetch<{ items: ScanRunView[]; next_cursor: string | null }>(
+        `/libraries/${libraryId}/scan-runs?limit=1`,
+      ).then((p) => p.items[0] ?? null),
+    enabled: !!libraryId,
+  });
+}
+
+/** Pure `getNextPageParam` shared by {@link useScanRuns},
+ *  {@link useScanBatches} and {@link useAdminHealthIssues}. Exported +
+ *  contracted by `web/tests/api/admin-hooks-next-page.test.ts` so a refactor
+ *  can't swallow `next_cursor` and re-truncate those tables. */
+export function cursorNextPage(page: {
+  next_cursor?: string | null;
+}): string | undefined {
+  return page.next_cursor ?? undefined;
+}
+
+/**
+ * Cross-library health-issue feed behind the /admin/findings page. Every
+ * filter is a server query param and the page walks `next_cursor` with an
+ * IntersectionObserver sentinel, so each filter combination is its own
+ * infinite query (never a client `.filter()` over a truncated page).
  */
 export function useAdminHealthIssues(filters: {
   library_id?: string;
@@ -680,41 +684,9 @@ export function useAdminHealthIssues(filters: {
   include_resolved?: boolean;
   include_dismissed?: boolean;
   limit?: number;
-  cursor?: string;
-}) {
-  const params = new URLSearchParams();
-  if (filters.library_id) params.set("library_id", filters.library_id);
-  if (filters.kind) params.set("kind", filters.kind);
-  if (filters.severity) params.set("severity", filters.severity);
-  if (filters.include_resolved) params.set("include_resolved", "true");
-  if (filters.include_dismissed) params.set("include_dismissed", "true");
-  if (filters.limit != null) params.set("limit", String(filters.limit));
-  if (filters.cursor) params.set("cursor", filters.cursor);
-  const qs = params.toString();
-  // Strip cursor from the cache key so successive pages share a cache
-  // bucket and `useInfiniteQuery` can stitch them together if we later
-  // migrate to that pattern.
-  const { cursor: _drop, ...keyFilters } = filters;
-  return useQuery({
-    queryKey: queryKeys.adminHealthIssues(keyFilters),
-    queryFn: () =>
-      jsonFetch<{
-        items: CrossLibHealthIssueView[];
-        next_cursor: string | null;
-      }>(`/admin/health-issues${qs ? `?${qs}` : ""}`),
-  });
-}
-
-export function useAdminHealthIssuesInfinite(filters: {
-  library_id?: string;
-  kind?: string;
-  severity?: string;
-  include_resolved?: boolean;
-  include_dismissed?: boolean;
-  limit?: number;
 }) {
   return useInfiniteQuery({
-    queryKey: queryKeys.adminHealthIssuesInfinite(filters),
+    queryKey: queryKeys.adminHealthIssues(filters),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams();
@@ -733,7 +705,7 @@ export function useAdminHealthIssuesInfinite(filters: {
         next_cursor: string | null;
       }>(`/admin/health-issues${qs ? `?${qs}` : ""}`);
     },
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    getNextPageParam: cursorNextPage,
   });
 }
 
@@ -811,21 +783,33 @@ export function useAdminLatestScanPerLibrary() {
 }
 
 /**
- * Recent "Scan all" batches for the dashboard's batch rail
- * (observability-split M9). Polls while any batch is still running so the
- * list reflects newly-finished batches without a WS round-trip.
+ * "Scan all" batches for the dashboard's batch picker (observability-split
+ * M9), newest first. Cursor-paginated: the picker walks `next_cursor` with
+ * an IntersectionObserver sentinel so older batches stay reachable; `state`
+ * is a server query param. Polls while any loaded batch is still running
+ * so the list reflects newly-finished batches without a WS round-trip.
  */
 export function useScanBatches(state?: string) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: queryKeys.adminScanBatches(state),
-    queryFn: () => {
-      const qs = state ? `?state=${encodeURIComponent(state)}` : "";
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams();
+      if (state) params.set("state", state);
+      if (pageParam) params.set("cursor", pageParam);
+      const qs = params.toString();
       return jsonFetch<{ items: ScanBatchView[]; next_cursor: string | null }>(
-        `/admin/scan-batches${qs}`,
+        `/admin/scan-batches${qs ? `?${qs}` : ""}`,
       );
     },
+    getNextPageParam: cursorNextPage,
+    // Newest first, so a running batch is always on the first page; a
+    // refetch of an infinite query re-walks every loaded page, so only poll
+    // while that page shows one. The WS reducer covers start / finish.
     refetchInterval: (q) =>
-      q.state.data?.items.some((b) => b.state === "running") ? 5_000 : false,
+      q.state.data?.pages[0]?.items.some((b) => b.state === "running")
+        ? 5_000
+        : false,
   });
 }
 
