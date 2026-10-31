@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Bookmark, House, Library, Menu, type LucideIcon } from "lucide-react";
+import {
+  Bookmark,
+  House,
+  Library,
+  Menu,
+  Search,
+  type LucideIcon,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
@@ -13,8 +20,10 @@ const TAB_CLASS =
 /**
  * Mobile-only bottom tab bar (`md:hidden`). Thumb-reachable shortcuts to the
  * core library destinations; the **More** tab opens the shell's existing nav
- * sheet (the full sidebar). Desktop keeps the left sidebar — this bar never
- * renders at `md+`. Rendered only inside `MainShell` (the library/reader-app
+ * sheet (the full sidebar). **Search** is global search: below `md` the
+ * library shell has no topbar (phone-chrome-1.0), so the search page is
+ * reached from here, where a native app keeps it. Desktop keeps the left
+ * sidebar and the topbar search — this bar never renders at `md+`. Rendered only inside `MainShell` (the library/reader-app
  * shell), so it doesn't appear in admin/settings or the reader.
  *
  * Reads `?library=all` to distinguish the Home and Library tabs, which share
@@ -26,6 +35,7 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
   const libraryAll = searchParams.get("library") === "all";
   const onBookmarks =
     pathname === "/bookmarks" || pathname.startsWith("/bookmarks/");
+  const onSearch = pathname === "/search" || pathname.startsWith("/search/");
 
   return (
     <nav
@@ -50,6 +60,7 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
         label="Library"
         active={libraryAll}
       />
+      <TabLink href="/search" icon={Search} label="Search" active={onSearch} />
       <TabLink
         href="/bookmarks"
         icon={Bookmark}

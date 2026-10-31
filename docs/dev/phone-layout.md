@@ -18,6 +18,19 @@ indexes.
 
 ## Rules
 
+0. **One top bar.** Below `md` the library shell renders no topbar
+   (`MainShell`'s `<header>` is `hidden md:flex`; the shell root carries
+   `data-phone-topbar="hidden"`). The page's own control row is the top
+   bar, and the bottom tab bar (Home · Library · Search · Bookmarks ·
+   More) is the app frame: no "Folio" wordmark on a phone, the home-screen
+   icon and the tab bar carry the identity, as in a native app. Inside the
+   shell `globals.css` collapses `--topbar-h` to `--safe-top` under `48rem`,
+   so a row that pins with `top-(--topbar-h)` pins at the status bar with
+   no change of its own, and `SidebarInset` pads `--safe-top` so the first
+   row clears the notch in the installed app. The admin / settings shell
+   keeps its topbar (hamburger + search) because it has no bottom bar.
+   Before this (phone-chrome-1.0, 2026-10-30) every page stacked the
+   16px "Folio" bar over a 20px page title with a magnifier in each.
 1. **Two compositions, not one that wraps.** Desktop markup stays as
    is and gets `max-sm:hidden`; the phone composition is added next to
    it with `sm:hidden`. They never both render, and the desktop output
@@ -72,10 +85,12 @@ indexes.
    it would scroll away with the title. Rows that only hold card size,
    Continue or `⋯` stay in the title row at every width.
 
-4. **No second search box.** The topbar already has one. On phones a
-   page-local search is the bar's 🔍 icon, which expands to an input in
-   place with a Cancel button. The bar keeps keystrokes local, so pass
-   the caller's debounced value.
+4. **No second search box.** Global search is the bottom tab bar's
+   **Search** tab (the `/search` page); the shell topbar, which holds the
+   global search field from `md` up, does not render below `md` (rule
+   0). On phones a page-local search is the bar's 🔍 icon, which expands
+   to an input in place with a Cancel button. The bar keeps keystrokes
+   local, so pass the caller's debounced value.
 5. **A–Z is a vertical scrubber.** `AtoZScrubber` pins `#` + A–Z to the
    right edge between the topbar and the bottom tab bar (tap to jump,
    drag to scrub with a preview bubble, commit on release, tap the
@@ -202,8 +217,8 @@ height (36px); the horizontal +4px each side still applies.
   `StickyToolbarRow`. `SeriesTabs`' `scroll-mt` clears the pinned row.
 - **Bookmarks**: no separate header — the title rides in the sticky
   bar's leading slot beside search, a Filters sheet (layout toggle,
-  tags, match mode) and View options (card size, Select, export); kind
-  pills scroll horizontally. From `sm` up the header keeps the title and
+  tags, match mode) and View options (card size, Select, export); the
+  bar is the page's top bar (rule 0); kind pills scroll horizontally. From `sm` up the header keeps the title and
   description and the toolbar is a `StickyToolbarRow` beneath it.
 - **Search**, **Browse**, **entity / creator indexes**: description
   hidden, tab strip scrolls, indexes use the scrubber. Search keeps
