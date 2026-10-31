@@ -506,6 +506,95 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
     // via ComicInfo's typed `<ComicVineSeriesID>` / `<MetronSeriesID>`
     // extension fields (which ComicTagger does recognise).
     let ids: BTreeMap<String, String> = ctx.issue_external_ids.clone();
+    // `<ID primary="true">`: the provider this apply came from when it
+    // supplied an issue id; else, for a DB-only compose, the first of
+    // Metron / ComicVine / GCD present — Metron-Tagger re-fetches from
+    // the primary source, so the pick is deterministic.
+    let primary_id_source = ctx
+        .source()
+        .map(Source::as_str)
+        .filter(|k| ids.contains_key(*k))
+        .or_else(|| {
+            ["metron", "comicvine", "gcd"]
+                .into_iter()
+                .find(|k| ids.contains_key(*k))
+        })
+        .map(str::to_owned);
+    // `<Series id>` is the primary source's id for the series.
+    let series_id = primary_id_source
+        .as_deref()
+        .and_then(|k| ctx.series_external_ids.get(k))
+        .cloned();
+    // `<Series><Format>`: the first label that maps onto the schema's
+    // `formatType` — the provider's series type, the series row's, the
+    // provider's format label, the issue's own `<Format>`.
+    let series_format = [
+        ctx.provider.series_type.as_deref(),
+        ctx.series.series_type.as_deref(),
+        ctx.provider.format.as_deref(),
+        ctx.issue.format.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(parsers::metroninfo::metron_series_format)
+    .map(str::to_owned);
+    let story_arcs = compose_list(
+        ctx.is_issue_pinned("story_arcs"),
+        &junctions.story_arcs(),
+        ctx.issue.story_arc.as_deref(),
+        ctx.provider
+            .story_arcs
+            .iter()
+            .map(|a| a.name.clone())
+            .collect(),
+    );
+    // `<Arc><Number>` for whichever arc list won: the junction's
+    // `position_in_arc`, else the provider's.
+    let arc_numbers: BTreeMap<String, u32> = story_arcs
+        .iter()
+        .filter_map(|name| {
+            let n = junctions.arc_numbers.get(name).copied().or_else(|| {
+                ctx.provider
+                    .story_arcs
+                    .iter()
+                    .find(|a| &a.name == name)
+                    .and_then(|a| a.position_in_arc)
+            })?;
+            u32::try_from(n).ok().map(|n| (name.clone(), n))
+        })
+        .collect();
+    let store_date = if ctx.is_issue_pinned("store_date") {
+        ctx.issue.store_date
+    } else {
+        ctx.provider.store_date.or(ctx.issue.store_date)
+    }
+    .map(|d| d.format("%Y-%m-%d").to_string());
+    let primary_url = prefer_user_opt_str(
+        ctx.is_issue_pinned("web_url"),
+        ctx.issue.web_url.as_deref(),
+        ctx.provider.source_url.as_deref(),
+    );
+    let urls: Vec<String> = ctx
+        .issue
+        .additional_links
+        .as_array()
+        .map(|links| {
+            links
+                .iter()
+                .filter_map(|l| l.get("url").and_then(|u| u.as_str()))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let last_modified = ctx
+        .provider
+        .fetched_at
+        .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .or_else(|| {
+            ctx.issue
+                .last_metadata_sync_at
+                .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        });
 
     let mut info = MetronInfo {
         title: prefer_user_opt_str(
@@ -571,16 +660,7 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
             ctx.issue_external_ids,
             "gtin",
         ),
-        story_arcs: compose_list(
-            ctx.is_issue_pinned("story_arcs"),
-            &junctions.story_arcs(),
-            ctx.issue.story_arc.as_deref(),
-            ctx.provider
-                .story_arcs
-                .iter()
-                .map(|a| a.name.clone())
-                .collect(),
-        ),
+        story_arcs,
         characters: compose_list(
             ctx.is_issue_pinned("characters"),
             &junctions.characters(),
@@ -621,6 +701,51 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
         ),
         ids,
         credits,
+        // ───── v1.2 schema fields (audit 2026-11 WP A4) ─────
+        primary_id_source,
+        series_id,
+        series_sort_name: ctx
+            .provider
+            .series_sort_name
+            .clone()
+            .or_else(|| ctx.series.sort_name.clone())
+            .filter(|s| !s.trim().is_empty()),
+        series_format,
+        series_start_year: ctx.provider.year_began.or(ctx.series.year),
+        series_end_year: ctx.provider.year_end.or(ctx.series.year_end),
+        series_status: Some(ctx.series.status.clone()).filter(|s| !s.trim().is_empty()),
+        series_issue_count: ctx.series.total_issues,
+        series_summary: ctx.series.summary.clone().filter(|s| !s.trim().is_empty()),
+        store_date,
+        page_count: prefer_user_int(
+            ctx.is_issue_pinned("page_count"),
+            ctx.issue.page_count,
+            ctx.provider.page_count,
+        ),
+        arc_numbers,
+        universes: compose_list(
+            ctx.is_issue_pinned("universes"),
+            &junctions.universes(),
+            None,
+            ctx.provider
+                .universes
+                .iter()
+                .map(|u| u.name.clone())
+                .collect(),
+        ),
+        reprints: compose_list(
+            ctx.is_issue_pinned("reprints"),
+            &junctions.reprints(),
+            None,
+            ctx.provider
+                .reprints
+                .iter()
+                .map(|r| r.label.clone())
+                .collect(),
+        ),
+        primary_url,
+        urls,
+        last_modified,
         // Raw passthrough, symmetrical to ComicInfo's: the scanner stores
         // the parsed MetronInfo (with its `raw` map of top-level elements
         // Folio doesn't model) in `issue.metron_info_raw`; forwarding it
@@ -1155,6 +1280,14 @@ pub struct IssueJunctions {
     pub story_arcs: Vec<JunctionRef>,
     pub genres: Vec<String>,
     pub tags: Vec<String>,
+    /// `issue_arcs.position_in_arc` by arc name — MetronInfo's
+    /// `<Arc><Number>` (audit 2026-11 WP A4).
+    pub arc_numbers: BTreeMap<String, i32>,
+    /// `issue_universes` names, in name order.
+    pub universes: Vec<String>,
+    /// `issue_reprints` as display labels (the stored label, else
+    /// `Series #N` of the linked local issue), in label order.
+    pub reprints: Vec<String>,
 }
 
 impl IssueJunctions {
@@ -1184,6 +1317,14 @@ impl IssueJunctions {
 
     pub fn tags(&self) -> Vec<&str> {
         self.tags.iter().map(String::as_str).collect()
+    }
+
+    pub fn universes(&self) -> Vec<&str> {
+        self.universes.iter().map(String::as_str).collect()
+    }
+
+    pub fn reprints(&self) -> Vec<&str> {
+        self.reprints.iter().map(String::as_str).collect()
     }
 
     /// The creators credited under one role, in stored order. `role` may be
@@ -1287,34 +1428,69 @@ pub async fn load_issue_junctions(
             .collect::<Vec<_>>(),
         )
     };
-    // Seven independent reads; the series fan-out runs this per issue.
-    let (credits, characters, teams, locations, story_arcs, genres, tags) = tokio::try_join!(
+    #[derive(Debug, FromQueryResult)]
+    struct ArcRow {
+        name: String,
+        slug: Option<String>,
+        position_in_arc: Option<i32>,
+    }
+    let arcs = ArcRow::find_by_statement(stmt(
+        "SELECT sa.name AS name, sa.slug AS slug, ia.position_in_arc AS position_in_arc \
+           FROM issue_arcs ia JOIN story_arc sa ON sa.id = ia.arc_id \
+          WHERE ia.issue_id = $1 ORDER BY ia.position_in_arc NULLS LAST, sa.name",
+    ))
+    .all(db);
+    // Nine independent reads; the series fan-out runs this per issue.
+    let (credits, characters, teams, locations, arcs, genres, tags, universes, reprints) = tokio::try_join!(
         credits,
         refs(
             "SELECT COALESCE(c.name, ic.\"character\") AS name, c.slug AS slug \
-               FROM issue_characters ic LEFT JOIN character c ON c.id = ic.character_id \
-              WHERE ic.issue_id = $1 ORDER BY ic.ordinal, 1",
+                   FROM issue_characters ic LEFT JOIN character c ON c.id = ic.character_id \
+                  WHERE ic.issue_id = $1 ORDER BY ic.ordinal, 1",
         ),
         refs(
             "SELECT COALESCE(t.name, it.team) AS name, t.slug AS slug \
-               FROM issue_teams it LEFT JOIN team t ON t.id = it.team_id \
-              WHERE it.issue_id = $1 ORDER BY it.ordinal, 1",
+                   FROM issue_teams it LEFT JOIN team t ON t.id = it.team_id \
+                  WHERE it.issue_id = $1 ORDER BY it.ordinal, 1",
         ),
         refs(
             "SELECT COALESCE(l.name, il.location) AS name, l.slug AS slug \
-               FROM issue_locations il LEFT JOIN location l ON l.id = il.location_id \
-              WHERE il.issue_id = $1 ORDER BY il.ordinal, 1",
+                   FROM issue_locations il LEFT JOIN location l ON l.id = il.location_id \
+                  WHERE il.issue_id = $1 ORDER BY il.ordinal, 1",
         ),
-        refs(
-            "SELECT sa.name AS name, sa.slug AS slug \
-               FROM issue_arcs ia JOIN story_arc sa ON sa.id = ia.arc_id \
-              WHERE ia.issue_id = $1 ORDER BY ia.position_in_arc NULLS LAST, sa.name",
-        ),
+        arcs,
         values(
             "SELECT genre AS value FROM issue_genres WHERE issue_id = $1 ORDER BY ordinal, genre",
         ),
         values("SELECT tag AS value FROM issue_tags WHERE issue_id = $1 ORDER BY ordinal, tag"),
+        values(
+            "SELECT u.name AS value FROM issue_universes iu JOIN universe u ON u.id = iu.universe_id \
+                  WHERE iu.issue_id = $1 ORDER BY u.name",
+        ),
+        // A label-only row keeps its label; a row linked to a local issue
+        // is spelled `Series #N` from that issue (the label when both).
+        values(
+            "SELECT COALESCE(NULLIF(ir.reprinted_label, ''), \
+                                s.name || ' #' || COALESCE(i.number_raw, '')) AS value \
+                   FROM issue_reprints ir \
+                   LEFT JOIN issues i ON i.id = ir.reprinted_issue_id \
+                   LEFT JOIN series s ON s.id = i.series_id \
+                  WHERE ir.issue_id = $1 \
+                    AND (NULLIF(ir.reprinted_label, '') IS NOT NULL OR s.name IS NOT NULL) \
+                  ORDER BY 1",
+        ),
     )?;
+    let arc_numbers = arcs
+        .iter()
+        .filter_map(|a| a.position_in_arc.map(|n| (a.name.clone(), n)))
+        .collect();
+    let story_arcs = arcs
+        .into_iter()
+        .map(|a| JunctionRef {
+            name: a.name,
+            slug: a.slug,
+        })
+        .collect();
     Ok(IssueJunctions {
         credits,
         characters,
@@ -1323,6 +1499,9 @@ pub async fn load_issue_junctions(
         story_arcs,
         genres,
         tags,
+        arc_numbers,
+        universes,
+        reprints,
     })
 }
 
@@ -2067,8 +2246,10 @@ mod tests {
             xml.contains("<X-Vendor-Custom>keep me</X-Vendor-Custom>"),
             "{xml}"
         );
-        // The typed `<Title>` comes from the composer, not the stale raw copy.
-        assert_eq!(xml.matches("<Title>").count(), 1, "{xml}");
+        // The typed title comes from the composer (as the schema's
+        // `<Stories><Story>`), not the stale pre-schema `<Title>` in raw.
+        assert_eq!(xml.matches("<Story>").count(), 1, "{xml}");
+        assert!(!xml.contains("<Title>"), "{xml}");
         assert!(!xml.contains("Old title"), "{xml}");
 
         // NULL column → no passthrough, no panic.
