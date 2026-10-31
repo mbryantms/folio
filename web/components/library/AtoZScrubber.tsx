@@ -24,7 +24,8 @@ export const AZ_BUCKETS: ReadonlyArray<{ value: string; label: string }> = [
  * committed on release so the grid refetches once, not 26 times), tap
  * the active letter to clear.
  *
- * Callers add `max-sm:pr-5` to the grid so cards don't sit under it.
+ * Callers add `max-sm:pr-6` to the grid (the rail is 24px wide, the
+ * minimum target size) so cards don't sit under it.
  */
 export function AtoZScrubber({
   value,
@@ -95,7 +96,7 @@ export function AtoZScrubber({
           // the art. The grids keep two
           // columns regardless via the half-width floor in
           // `computeColumnsPerRow` / the CSS `minmax(min(...))` rule.
-          "fixed top-(--topbar-h) right-0 bottom-[calc(var(--bottom-tab-h)+var(--safe-bottom))] z-20 flex w-5 touch-none flex-col items-stretch justify-center py-2 select-none sm:hidden",
+          "fixed top-(--topbar-h) right-0 bottom-[calc(var(--bottom-tab-h)+var(--safe-bottom))] z-20 flex w-6 touch-none flex-col items-stretch justify-center py-2 select-none sm:hidden",
           className,
         )}
       >

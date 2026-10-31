@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -213,6 +213,7 @@ function CompatibilityCard({ initial }: { initial: string }) {
 
 function HardeningCard({ initial }: { initial: boolean }) {
   const [enabled, setEnabled] = useState(initial);
+  const switchId = useId();
   const update = useUpdateSettings();
   const dirty = enabled !== initial;
 
@@ -230,13 +231,19 @@ function HardeningCard({ initial }: { initial: boolean }) {
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <Label className="text-sm">Rate limiting</Label>
+            <Label htmlFor={switchId} className="text-sm">
+              Rate limiting
+            </Label>
             <p className="text-muted-foreground text-xs">
               Toggles the failed-auth Redis lockout (10 fails/min/IP → 15-min
               lockout). Per-route governor buckets stay installed regardless.
             </p>
           </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
+          <Switch
+            id={switchId}
+            checked={enabled}
+            onCheckedChange={setEnabled}
+          />
         </div>
         <div className="flex justify-end">
           <Button onClick={onSave} disabled={!dirty || update.isPending}>

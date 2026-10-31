@@ -234,7 +234,11 @@ export function LibraryGridToolbar({
               value={seriesSort}
               onValueChange={(v) => onSeriesSort(v as SeriesSort)}
             >
-              <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
+              <SelectTrigger
+                className="h-9 w-44"
+                disabled={!!trimmedQ}
+                aria-label="Sort by"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -254,7 +258,11 @@ export function LibraryGridToolbar({
               value={issueSort}
               onValueChange={(v) => onIssueSort(v as IssueSort)}
             >
-              <SelectTrigger className="h-9 w-44" disabled={!!trimmedQ}>
+              <SelectTrigger
+                className="h-9 w-44"
+                disabled={!!trimmedQ}
+                aria-label="Sort by"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

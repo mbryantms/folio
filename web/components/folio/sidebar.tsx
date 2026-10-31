@@ -95,7 +95,11 @@ export function AppSidebar({
       )}
       {...props}
     >
+      {/* Catches bubbled clicks on the nav links so the phone sheet
+          closes after navigation; the links are the interactive
+          elements, hence `role="presentation"`. */}
       <div
+        role="presentation"
         className="flex h-full min-h-0 flex-col"
         onClick={(e) => {
           if (isMobile && (e.target as HTMLElement).closest("a")) {

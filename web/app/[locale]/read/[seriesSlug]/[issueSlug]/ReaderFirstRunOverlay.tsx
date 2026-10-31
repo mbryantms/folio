@@ -65,17 +65,20 @@ export function ReaderFirstRunOverlay({
   const next = direction === "rtl" ? "Back" : "Next";
 
   return (
+    // The scrim is presentational: a tap on it (and only on it — clicks
+    // inside the card bubble up with a different target) dismisses the
+    // overlay, mirroring the explicit button and the key listener above.
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="reader-first-run-title"
-      onClick={onDismiss}
+      role="presentation"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onDismiss();
+      }}
       className="motion-safe:animate-in motion-safe:fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
     >
       <div
-        // Clicks inside the card shouldn't dismiss — only the scrim and
-        // the explicit button do. The button calls onDismiss itself.
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reader-first-run-title"
         className="border-border bg-background text-foreground w-full max-w-md rounded-2xl border p-6 shadow-2xl"
       >
         <h2

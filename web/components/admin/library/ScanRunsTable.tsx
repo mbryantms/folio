@@ -12,7 +12,12 @@ import {
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/folio/tabs";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/folio/tabs";
 import { useScanRuns } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { ScanRunKind, ScanRunView } from "@/lib/api/types";
@@ -133,31 +138,34 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
 
   return (
-    <div className="space-y-4">
-      <Tabs
-        value={filter}
-        onValueChange={(v) => setFilter(v as Filter)}
-        className="w-fit"
-      >
-        {/* A status filter, so the segmented variant. */}
-        <TabsList variant="default">
-          {FILTERS.map((f) => (
-            <TabsTrigger key={f.value} value={f.value}>
-              {f.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-      <DataTable
-        columns={columns}
-        data={items}
-        emptyMessage={
-          filter === "all" ? "No scans yet." : `No ${filter} scans yet.`
-        }
-        renderExpanded={(row) => <ScanRunDetails run={row.original} />}
-      />
-      <InfiniteSentinel query={query} label="Loading older scans…" />
-    </div>
+    <Tabs
+      value={filter}
+      onValueChange={(v) => setFilter(v as Filter)}
+      className="gap-4"
+    >
+      {/* A status filter, so the segmented variant. */}
+      <TabsList variant="default" className="w-fit">
+        {FILTERS.map((f) => (
+          <TabsTrigger key={f.value} value={f.value}>
+            {f.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {/* One panel keyed to the active filter, so the selected trigger's
+          `aria-controls` resolves (axe `aria-valid-attr-value`). The panel
+          holds focusable rows, so it is not a tab stop of its own. */}
+      <TabsContent value={filter} tabIndex={-1} className="space-y-4">
+        <DataTable
+          columns={columns}
+          data={items}
+          emptyMessage={
+            filter === "all" ? "No scans yet." : `No ${filter} scans yet.`
+          }
+          renderExpanded={(row) => <ScanRunDetails run={row.original} />}
+        />
+        <InfiniteSentinel query={query} label="Loading older scans…" />
+      </TabsContent>
+    </Tabs>
   );
 }
 

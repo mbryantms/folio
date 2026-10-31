@@ -24,7 +24,8 @@ image-rich feature showcase (a suggested shot list is at the end).
   diff before anything is applied, and full provenance tracking ("this field
   was set by Metron on May 3rd").
 - **Your archives stay canonical** — optional writeback composes both
-  ComicInfo.xml *and* MetronInfo.xml into the archive itself, so
+  ComicInfo.xml *and* MetronInfo.xml (the MetronInfo v1.2 schema that
+  Codex and Metron-Tagger read) into the archive itself, so
   ComicTagger, Komga, Mylar3, and KOReader all see the same metadata Folio
   does. Your library remains portable; Folio's database is just a cache.
 - **CBL reading lists as a first-class citizen** — import from a file, a

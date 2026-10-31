@@ -17,7 +17,6 @@
 
 use entity::{
     issue, issue_character, issue_credit, issue_genre, issue_location, issue_tag, issue_team,
-    series_character, series_credit, series_genre, series_location, series_tag, series_team,
 };
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, FromQueryResult, QueryFilter,
@@ -565,62 +564,97 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
     Ok(())
 }
 
-/// Recompute `series_genres / series_tags / series_credits` as the distinct
-/// union of the series's active (non-removed) issues' junctions.
-///
-/// Idempotent. Best-effort: the rollup is cosmetic for the GET /series/{slug}
-/// view (which reads from the issue-level junctions) and a denormalization
-/// for filter views (which read from `series_*` to avoid joining through
-/// every issue). A failure here doesn't fail the scan — log and continue.
-pub async fn rollup_series_metadata<C: ConnectionTrait>(
+/// A series-level union table the rollup rebuilds from the active issues'
+/// junctions: `(table, INSERT … SELECT DISTINCT)`. The DELETE is derived
+/// from the table name; `$1` is the series id in both statements.
+type SeriesUnion = (&'static str, &'static str);
+
+const SERIES_GENRES: SeriesUnion = (
+    "series_genres",
+    r"INSERT INTO series_genres (series_id, genre)
+        SELECT DISTINCT $1, ig.genre
+        FROM issue_genres ig
+        JOIN issues i ON i.id = ig.issue_id
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+        ON CONFLICT DO NOTHING",
+);
+const SERIES_TAGS: SeriesUnion = (
+    "series_tags",
+    r"INSERT INTO series_tags (series_id, tag)
+        SELECT DISTINCT $1, it.tag
+        FROM issue_tags it
+        JOIN issues i ON i.id = it.issue_id
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+        ON CONFLICT DO NOTHING",
+);
+const SERIES_CREDITS: SeriesUnion = (
+    "series_credits",
+    r"INSERT INTO series_credits (series_id, role, person, person_id)
+        SELECT DISTINCT $1, ic.role, ic.person, ic.person_id
+        FROM issue_credits ic
+        JOIN issues i ON i.id = ic.issue_id
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+        ON CONFLICT DO NOTHING",
+);
+const SERIES_CHARACTERS: SeriesUnion = (
+    "series_characters",
+    r#"INSERT INTO series_characters (series_id, "character", character_id)
+        SELECT DISTINCT $1, ic."character", ic.character_id
+        FROM issue_characters ic
+        JOIN issues i ON i.id = ic.issue_id
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+        ON CONFLICT DO NOTHING"#,
+);
+const SERIES_TEAMS: SeriesUnion = (
+    "series_teams",
+    r"INSERT INTO series_teams (series_id, team, team_id)
+        SELECT DISTINCT $1, it.team, it.team_id
+        FROM issue_teams it
+        JOIN issues i ON i.id = it.issue_id
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+        ON CONFLICT DO NOTHING",
+);
+const SERIES_LOCATIONS: SeriesUnion = (
+    "series_locations",
+    r#"INSERT INTO series_locations (series_id, "location")
+        SELECT DISTINCT $1, il."location"
+        FROM issue_locations il
+        JOIN issues i ON i.id = il.issue_id
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+        ON CONFLICT DO NOTHING"#,
+);
+
+/// Rebuild one series-level union table: delete the series' rows, then
+/// re-insert the distinct union from the issue junctions.
+async fn replace_series_union<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+    (table, insert_sql): SeriesUnion,
+) -> Result<(), sea_orm::DbErr> {
+    let backend = db.get_database_backend();
+    db.execute_raw(Statement::from_sql_and_values(
+        backend,
+        // `table` is a literal from a `SeriesUnion` const, never user input.
+        format!("DELETE FROM {table} WHERE series_id = $1"),
+        [series_id.into()],
+    ))
+    .await?;
+    db.execute_raw(Statement::from_sql_and_values(
+        backend,
+        insert_sql,
+        [series_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Fill `issue_credits.person_id` for this series from the `person` rows
+/// that own each credit's normalized name, so the `series_credits`
+/// rebuild carries the FK along.
+async fn link_credit_person_ids<C: ConnectionTrait>(
     db: &C,
     series_id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
-    series_genre::Entity::delete_many()
-        .filter(series_genre::Column::SeriesId.eq(series_id))
-        .exec(db)
-        .await?;
-    db.execute_raw(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        r"INSERT INTO series_genres (series_id, genre)
-            SELECT DISTINCT $1, ig.genre
-            FROM issue_genres ig
-            JOIN issues i ON i.id = ig.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-            ON CONFLICT DO NOTHING",
-        [series_id.into()],
-    ))
-    .await?;
-
-    series_tag::Entity::delete_many()
-        .filter(series_tag::Column::SeriesId.eq(series_id))
-        .exec(db)
-        .await?;
-    db.execute_raw(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        r"INSERT INTO series_tags (series_id, tag)
-            SELECT DISTINCT $1, it.tag
-            FROM issue_tags it
-            JOIN issues i ON i.id = it.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-            ON CONFLICT DO NOTHING",
-        [series_id.into()],
-    ))
-    .await?;
-
-    // Person upsert: ensure a `person` row exists for every distinct
-    // creator name in this series's credits, then propagate
-    // `person_id` onto the `issue_credits` rows so the about-to-rebuild
-    // `series_credits` carries the FK along. The cost is bounded by
-    // distinct-creators-in-this-series (typically <50); freshly-scanned
-    // issues are the only path that introduces unknown names, so most
-    // calls do zero inserts and just refresh the issue_credits join.
-    ensure_persons_for_series(db, series_id).await?;
-    // WP-5.5: same for the character / team / story-arc / publisher
-    // names, so every chip on the series + issue pages has a slug for
-    // its entity landing page. Entity rows only — no junction writes.
-    crate::metadata::writers::ensure_series_entity_rows(db, series_id).await?;
-    link_series_entity_ids(db, series_id).await?;
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE issue_credits ic \
@@ -635,72 +669,168 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
         [series_id.into()],
     ))
     .await?;
+    Ok(())
+}
 
-    series_credit::Entity::delete_many()
-        .filter(series_credit::Column::SeriesId.eq(series_id))
-        .exec(db)
-        .await?;
-    db.execute_raw(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        r"INSERT INTO series_credits (series_id, role, person, person_id)
-            SELECT DISTINCT $1, ic.role, ic.person, ic.person_id
-            FROM issue_credits ic
-            JOIN issues i ON i.id = ic.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-            ON CONFLICT DO NOTHING",
-        [series_id.into()],
-    ))
-    .await?;
+/// Postgres SQLSTATE of a sea-orm error, when the driver reported one.
+fn sqlstate(err: &sea_orm::DbErr) -> Option<String> {
+    use sea_orm::{DbErr, RuntimeErr};
+    match err {
+        DbErr::Exec(RuntimeErr::SqlxError(e)) | DbErr::Query(RuntimeErr::SqlxError(e)) => e
+            .as_database_error()
+            .and_then(|d| d.code())
+            .map(|c| c.into_owned()),
+        _ => None,
+    }
+}
 
-    series_character::Entity::delete_many()
-        .filter(series_character::Column::SeriesId.eq(series_id))
-        .exec(db)
-        .await?;
-    db.execute_raw(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        r#"INSERT INTO series_characters (series_id, "character", character_id)
-            SELECT DISTINCT $1, ic."character", ic.character_id
-            FROM issue_characters ic
-            JOIN issues i ON i.id = ic.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-            ON CONFLICT DO NOTHING"#,
-        [series_id.into()],
-    ))
-    .await?;
+/// `25P02 in_failed_sql_transaction`: the connection is a transaction that
+/// an earlier statement aborted, so every further statement on it fails
+/// with the same error until rollback. Continuing the rollup would only
+/// log the same failure once per step.
+fn is_aborted_transaction(err: &sea_orm::DbErr) -> bool {
+    sqlstate(err).as_deref() == Some("25P02")
+}
 
-    series_team::Entity::delete_many()
-        .filter(series_team::Column::SeriesId.eq(series_id))
-        .exec(db)
-        .await?;
-    db.execute_raw(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        r"INSERT INTO series_teams (series_id, team, team_id)
-            SELECT DISTINCT $1, it.team, it.team_id
-            FROM issue_teams it
-            JOIN issues i ON i.id = it.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-            ON CONFLICT DO NOTHING",
-        [series_id.into()],
-    ))
-    .await?;
+/// The connection itself is gone (pool exhausted, server restarted,
+/// acquire timed out): every later statement would pay the same timeout
+/// and log the same failure, so the rollup stops as for an aborted
+/// transaction.
+fn is_connection_error(err: &sea_orm::DbErr) -> bool {
+    matches!(
+        err,
+        sea_orm::DbErr::Conn(_) | sea_orm::DbErr::ConnectionAcquire(_)
+    )
+}
 
-    series_location::Entity::delete_many()
-        .filter(series_location::Column::SeriesId.eq(series_id))
-        .exec(db)
-        .await?;
-    db.execute_raw(Statement::from_sql_and_values(
-        db.get_database_backend(),
-        r#"INSERT INTO series_locations (series_id, "location")
-            SELECT DISTINCT $1, il."location"
-            FROM issue_locations il
-            JOIN issues i ON i.id = il.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
-            ON CONFLICT DO NOTHING"#,
-        [series_id.into()],
-    ))
-    .await?;
+/// Log a failed rollup step and keep the first error for the caller.
+/// Returns `None` to carry on with the next step, or `Some(error)` — the
+/// one the rollup should return now — when the connection is an aborted
+/// transaction or is gone, so the remaining steps are pointless.
+fn note_step_failure(
+    series_id: Uuid,
+    step: &'static str,
+    err: sea_orm::DbErr,
+    first_err: &mut Option<sea_orm::DbErr>,
+) -> Option<sea_orm::DbErr> {
+    let stop = is_aborted_transaction(&err) || is_connection_error(&err);
+    if stop {
+        tracing::warn!(
+            series_id = %series_id,
+            step,
+            error = %err,
+            "metadata_rollup: step failed on an aborted transaction or dead connection; \
+             skipping the remaining steps",
+        );
+        return Some(first_err.take().unwrap_or(err));
+    }
+    tracing::warn!(
+        series_id = %series_id,
+        step,
+        error = %err,
+        "metadata_rollup: step failed; continuing with the remaining steps",
+    );
+    if first_err.is_none() {
+        *first_err = Some(err);
+    }
+    None
+}
 
-    auto_set_reading_direction(db, series_id).await?;
+/// Recompute the series-level union tables (`series_genres / series_tags /
+/// series_credits / series_characters / series_teams / series_locations`)
+/// from the active (non-removed) issues' junctions, mint the `person` and
+/// entity rows the junctions name, link their ids, apply the manga
+/// reading-direction heuristic, and rebuild the issues' CSV read-cache.
+///
+/// Idempotent. Best-effort: the rollup is cosmetic for the GET /series/{slug}
+/// view (which reads from the issue-level junctions) and a denormalization
+/// for filter views (which read from `series_*` to avoid joining through
+/// every issue). A failure here doesn't fail the scan — log and continue.
+///
+/// **Step isolation (audit 2026-11, N-L2).** The steps are independent:
+/// each one reads the issue junctions' names (which this function never
+/// changes) and rewrites its own table or column set, so a failure in one
+/// leaves the others just as valid as before. A step that fails is therefore
+/// logged with the series id and the remaining steps still run; the
+/// first error is returned once they have, so a caller that propagates
+/// errors (the name-suffix backfill) still sees the failure while the
+/// scanner's best-effort wrapper keeps the series' credits, entity rows
+/// and CSV cache current for the pass. The ordering still matters for
+/// *quality*, not validity — `ensure_persons_for_series` before
+/// `link_credit_person_ids` before the `series_credits` union, so a
+/// freshly minted creator's id rides along — and a step that misses out
+/// because an earlier one failed is picked up by the next rollup. Carrying
+/// on is pointless in two cases, and the loop stops there: a
+/// caller-supplied transaction that the failed statement aborted (SQLSTATE
+/// 25P02), and a connection that is gone (`DbErr::Conn` /
+/// `ConnectionAcquire`) — every later statement would fail the same way
+/// and, for a saturated pool, pay the acquire timeout each time.
+pub async fn rollup_series_metadata<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+) -> Result<(), sea_orm::DbErr> {
+    let mut first_err: Option<sea_orm::DbErr> = None;
+    macro_rules! step {
+        ($name:expr, $fut:expr) => {
+            if let Err(e) = $fut.await
+                && let Some(stop) = note_step_failure(series_id, $name, e, &mut first_err)
+            {
+                return Err(stop);
+            }
+        };
+    }
+
+    step!(
+        "series_genres",
+        replace_series_union(db, series_id, SERIES_GENRES)
+    );
+    step!(
+        "series_tags",
+        replace_series_union(db, series_id, SERIES_TAGS)
+    );
+
+    // Person upsert: ensure a `person` row exists for every distinct
+    // creator name in this series's credits, then propagate
+    // `person_id` onto the `issue_credits` rows so the about-to-rebuild
+    // `series_credits` carries the FK along. The cost is bounded by
+    // distinct-creators-in-this-series (typically <50); freshly-scanned
+    // issues are the only path that introduces unknown names, so most
+    // calls do zero inserts and just refresh the issue_credits join.
+    step!("ensure_persons", ensure_persons_for_series(db, series_id));
+    // WP-5.5: same for the character / team / story-arc / publisher
+    // names, so every chip on the series + issue pages has a slug for
+    // its entity landing page. Entity rows only — no junction writes.
+    step!(
+        "ensure_entity_rows",
+        crate::metadata::writers::ensure_series_entity_rows(db, series_id)
+    );
+    step!("link_entity_ids", link_series_entity_ids(db, series_id));
+    step!(
+        "link_credit_person_ids",
+        link_credit_person_ids(db, series_id)
+    );
+
+    step!(
+        "series_credits",
+        replace_series_union(db, series_id, SERIES_CREDITS)
+    );
+    step!(
+        "series_characters",
+        replace_series_union(db, series_id, SERIES_CHARACTERS)
+    );
+    step!(
+        "series_teams",
+        replace_series_union(db, series_id, SERIES_TEAMS)
+    );
+    step!(
+        "series_locations",
+        replace_series_union(db, series_id, SERIES_LOCATIONS)
+    );
+
+    step!(
+        "reading_direction",
+        auto_set_reading_direction(db, series_id)
+    );
 
     // Junctions are the truth for every write path; the CSV read-cache
     // columns are derived from them. Now that every junction row has its
@@ -708,8 +838,15 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     // carry the same normalized names ("Mike Deodato Jr.") a provider
     // apply would — the issue page, OPDS, search and filters all read the
     // columns and never need their own parsing rules.
-    crate::metadata::writers::rebuild_series_issue_csv_cache(db, series_id).await?;
-    Ok(())
+    step!(
+        "csv_cache",
+        crate::metadata::writers::rebuild_series_issue_csv_cache(db, series_id)
+    );
+
+    match first_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 /// `manga-and-bulk-metadata-1.0` M3 — when ≥80% of a series's active
@@ -772,11 +909,68 @@ async fn auto_set_reading_direction<C: ConnectionTrait>(
     Ok(())
 }
 
+/// Insert a `person` row for `display_name`, allocating its slug first.
+/// Returns whether a row was inserted.
+///
+/// `ON CONFLICT DO NOTHING` names **no arbiter** on purpose: `person` has
+/// two unique indexes (`normalized_name` and `slug`) and concurrent
+/// rollups race on both. Two series minting the same new creator at once
+/// both see the slug free, both allocate `"jim-lee"`, and the second
+/// insert collides on `person_slug_key` — with the old
+/// `ON CONFLICT (normalized_name)` arbiter that was a 23505 that aborted
+/// the rest of the rollup (18 times in the 50k load run, N-L2). Without
+/// an arbiter either index swallows the race. `writers::ensure_series_entity_rows`
+/// does the same for the other entity tables.
+async fn insert_person<C: ConnectionTrait>(
+    db: &C,
+    display_name: &str,
+    normalized: &str,
+) -> Result<bool, sea_orm::DbErr> {
+    let slug = allocate_person_slug(db, display_name).await?;
+    let res = db
+        .execute_raw(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "INSERT INTO person (slug, name, normalized_name) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT DO NOTHING",
+            [
+                slug.into(),
+                display_name.to_owned().into(),
+                normalized.to_owned().into(),
+            ],
+        ))
+        .await?;
+    Ok(res.rows_affected() == 1)
+}
+
+async fn person_exists<C: ConnectionTrait>(
+    db: &C,
+    normalized: &str,
+) -> Result<bool, sea_orm::DbErr> {
+    Ok(db
+        .query_one_raw(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "SELECT 1 AS one FROM person WHERE normalized_name = $1",
+            [normalized.to_owned().into()],
+        ))
+        .await?
+        .is_some())
+}
+
 /// Ensure a `person` row exists for every distinct creator name in
 /// this series's issue credits. New names get a slug allocated via
 /// [`allocate_person_slug`] (same scheme the M8 backfill migration
-/// used) and inserted with `ON CONFLICT (normalized_name) DO NOTHING`
-/// so concurrent rollups racing on the same name don't error.
+/// used) and are inserted conflict-tolerantly ([`insert_person`]) so
+/// concurrent rollups racing on the same name — or the same slug —
+/// don't error. The credit linking that follows
+/// ([`link_credit_person_ids`]) joins on `normalized_name`, so credits
+/// always attach to whichever row survived the race.
+///
+/// When the insert was a no-op *and* no row owns the normalized name,
+/// the slug collided with a **different** name (a sibling rollup took
+/// `"jim-lee"` for `"Jim  Lee"` a moment ago): the slug is re-allocated
+/// once — the allocator now sees it taken and picks `-2` — and the insert
+/// retried. Losing twice is left to the next rollup.
 ///
 /// Cheap when every name is already present (one SELECT, zero
 /// INSERTs); pays the slug-allocation cost only for fresh creators.
@@ -825,18 +1019,37 @@ async fn ensure_persons_for_series<C: ConnectionTrait>(
         if !seen.insert(normalized.clone()) {
             continue;
         }
-        let slug = allocate_person_slug(db, &display_name).await?;
-        db.execute_raw(Statement::from_sql_and_values(
-            db.get_database_backend(),
-            "INSERT INTO person (slug, name, normalized_name) \
-             VALUES ($1, $2, $3) \
-             ON CONFLICT (normalized_name) DO NOTHING",
-            [slug.into(), display_name.into(), normalized.into()],
-        ))
-        .await?;
+        // Each attempt re-allocates the slug, so a collision with a
+        // *different* name (the allocator now sees the slug taken and
+        // picks the next suffix) is retried; a no-op insert whose
+        // normalized name exists is a sibling that won the same name.
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            if insert_person(db, &display_name, &normalized).await?
+                || person_exists(db, &normalized).await?
+            {
+                break;
+            }
+            if attempts >= PERSON_INSERT_ATTEMPTS {
+                tracing::warn!(
+                    series_id = %series_id,
+                    name = %display_name,
+                    attempts,
+                    "metadata_rollup: person insert kept losing the slug race; \
+                     the next rollup of this series retries",
+                );
+                break;
+            }
+        }
     }
     Ok(())
 }
+
+/// Upper bound on slug re-allocations per creator in one rollup. Each
+/// lost attempt means a sibling rollup took that exact slug a moment ago
+/// for a different name; more than a few in a row is not a race any more.
+const PERSON_INSERT_ATTEMPTS: u32 = 4;
 
 /// Protection predicate on `issues i`: true when the issue's story arcs
 /// are *not* owned by a provider apply or a user edit (no

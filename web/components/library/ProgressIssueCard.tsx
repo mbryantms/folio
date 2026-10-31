@@ -122,15 +122,16 @@ export function ProgressIssueCard({
     <div className={cn("flex flex-col", className)}>
       <Link
         href={resumesOnTap ? resumeHref : detailsHref}
-        aria-label={
-          resumesOnTap
-            ? `Continue reading ${headerTitle}`
-            : `${headerTitle} details`
-        }
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
         )}
       >
+        {/* Named from its content, like every other card link, so the
+            visible title is part of the name (WCAG 2.5.3); the rail's
+            resume action is announced by a hidden prefix. */}
+        {resumesOnTap ? (
+          <span className="sr-only">Continue reading </span>
+        ) : null}
         <div className="relative" {...longPress.wrapperProps}>
           <Cover
             src={issue.cover_url}
@@ -179,7 +180,8 @@ export function ProgressIssueCard({
       {resumesOnTap ? (
         <Link
           href={detailsHref}
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mx-1 w-fit rounded-sm px-1 text-[11px] underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+          // `min-h-6`: a 24px target under the card (WCAG 2.5.8).
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mx-1 inline-flex min-h-6 w-fit items-center rounded-sm px-1 text-[11px] underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
         >
           Details
         </Link>

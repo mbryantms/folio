@@ -61,8 +61,11 @@ const card: ContinueReadingCard = {
 describe("<ProgressIssueCard>", () => {
   it("resumes in the reader on the rail and links Details separately", () => {
     render(<ProgressIssueCard card={card} primaryAction="reader" />);
+    // Named from content behind a hidden "Continue reading" prefix, so
+    // the visible title is part of the name (axe
+    // `label-content-name-mismatch`).
     const primary = screen.getByRole("link", {
-      name: /Continue reading Eight Is Enough/,
+      name: /^Continue reading Eight Is Enough/,
     });
     expect(primary.getAttribute("href")).toBe("/read/invincible/issue-2");
     const details = screen.getByRole("link", { name: "Details" });
@@ -76,7 +79,7 @@ describe("<ProgressIssueCard>", () => {
   it("keeps the detail page as the primary target by default", () => {
     render(<ProgressIssueCard card={card} />);
     const primary = screen.getByRole("link", {
-      name: /Eight Is Enough details/,
+      name: /^Eight Is Enough/,
     });
     expect(primary.getAttribute("href")).toBe(
       "/series/invincible/issues/issue-2",

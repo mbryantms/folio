@@ -634,7 +634,7 @@ async fn issue_external_id_add_and_unlink_land_in_the_archive() {
     );
     assert!(
         job.metron_info_xml
-            .contains(r#"<ID source="comicvine">12345</ID>"#),
+            .contains(r#"<ID source="Comic Vine" primary="true">12345</ID>"#),
         "{}",
         job.metron_info_xml
     );
@@ -646,7 +646,8 @@ async fn issue_external_id_add_and_unlink_land_in_the_archive() {
         read_comicinfo(&path)
     );
     assert!(
-        read_entry(&path, "MetronInfo.xml").contains(r#"<ID source="comicvine">12345</ID>"#),
+        read_entry(&path, "MetronInfo.xml")
+            .contains(r#"<ID source="Comic Vine" primary="true">12345</ID>"#),
         "{}",
         read_entry(&path, "MetronInfo.xml")
     );
@@ -676,7 +677,7 @@ async fn issue_external_id_add_and_unlink_land_in_the_archive() {
     let xml = read_comicinfo(&path);
     assert!(!xml.contains("<ComicVineID>"), "{xml}");
     let metron = read_entry(&path, "MetronInfo.xml");
-    assert!(!metron.contains(r#"source="comicvine""#), "{metron}");
+    assert!(!metron.contains(r#"source="Comic Vine""#), "{metron}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

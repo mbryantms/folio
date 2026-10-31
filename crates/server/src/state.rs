@@ -107,6 +107,9 @@ pub struct Inner {
     /// right now (same keys), so status surfaces can tell "running" from
     /// "queued". Held by a [`ThumbRunningGuard`] for the job's duration.
     pub thumb_job_running: Arc<std::sync::Mutex<HashSet<String>>>,
+    /// Successful cover-job stamps waiting to be written as one batched
+    /// UPDATE (scanner-perf F-4); see [`crate::jobs::post_scan::ThumbStampBuffer`].
+    pub thumb_stamps: Arc<crate::jobs::post_scan::ThumbStampBuffer>,
     /// When recent thumbnail jobs finished executing — the sliding window
     /// behind [`AppState::thumbs_per_min`]. Process-local, like the marks.
     pub thumb_throughput: Arc<std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>>,
@@ -187,6 +190,7 @@ impl AppState {
         let archive_work_semaphore = Arc::new(Semaphore::new(archive_work_parallel));
         let thumb_job_inflight = Arc::new(Mutex::new(HashSet::new()));
         let thumb_job_running = Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let thumb_stamps = Arc::new(crate::jobs::post_scan::ThumbStampBuffer::default());
         let thumb_throughput = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         let background_tasks = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let thumb_path_cache = Arc::new(std::sync::Mutex::new(LruCache::new(
@@ -227,6 +231,7 @@ impl AppState {
             thumb_inline_semaphore,
             thumb_job_inflight,
             thumb_job_running,
+            thumb_stamps,
             thumb_throughput,
             background_tasks,
             thumb_path_cache,
@@ -317,8 +322,13 @@ impl AppState {
         self.thumb_job_inflight.lock().await.insert(key)
     }
 
-    pub async fn unmark_thumb_job_queued(&self, key: &str) {
-        self.thumb_job_inflight.lock().await.remove(key);
+    /// Drop a job's inflight mark. Returns `true` when no job is left
+    /// queued or running — the caller that gets `true` is the last one
+    /// out and flushes the batched thumbnail stamps.
+    pub async fn unmark_thumb_job_queued(&self, key: &str) -> bool {
+        let mut set = self.thumb_job_inflight.lock().await;
+        set.remove(key);
+        set.is_empty()
     }
 
     pub async fn clear_thumb_job_marks(&self) {

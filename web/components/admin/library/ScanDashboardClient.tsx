@@ -214,7 +214,11 @@ function BatchView({ batchId }: { batchId: string }) {
           </span>
         </CardHeader>
         <CardContent>
-          <Progress value={overall} className="h-2" />
+          <Progress
+            value={overall}
+            className="h-2"
+            aria-label="Overall scan progress"
+          />
         </CardContent>
       </Card>
 

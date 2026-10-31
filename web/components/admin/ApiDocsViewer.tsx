@@ -16,7 +16,12 @@ import "@scalar/api-reference-react/style.css";
  */
 export function ApiDocsViewer() {
   return (
-    <div className="border-border bg-card rounded-md border">
+    <div
+      className="border-border bg-card rounded-md border"
+      // The a11y sweep excludes the embedded reference by this hook: its
+      // palette is Scalar's, not Folio's.
+      data-slot="api-reference"
+    >
       <ApiReferenceReact
         configuration={{
           url: "/openapi.json",

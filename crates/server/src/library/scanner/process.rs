@@ -636,30 +636,44 @@ async fn dedupe_by_content_hash<C: ConnectionTrait>(
     stats: &mut ScanStats,
 ) -> anyhow::Result<DedupeOutcome> {
     let path_str = path.to_string_lossy();
+    // Project the two columns this decision needs (scanner-perf F-5): this
+    // runs once per *new* file, and the full `issue::Model` carries
+    // `comic_info_raw` — kilobytes per row that nothing here reads. The
+    // moved-file branch below is the only one that needs the whole row,
+    // and it is rare enough to pay a second, by-primary-key SELECT.
     let prior = IssueEntity::find()
         .filter(issue::Column::LibraryId.eq(lib.id))
         .filter(issue::Column::ContentHash.eq(content_hash))
         .order_by_asc(issue::Column::Id)
+        .select_only()
+        .columns([issue::Column::Id, issue::Column::FilePath])
+        .into_tuple::<(String, String)>()
         .one(db)
         .await?;
-    let Some(prior) = prior else {
+    let Some((prior_id, prior_path)) = prior else {
         return Ok(DedupeOutcome::NotDuplicate);
     };
-    let previous_path = std::path::Path::new(&prior.file_path);
-    if prior.file_path != path_str && !previous_path.exists() {
+    let previous_path = std::path::Path::new(&prior_path);
+    if prior_path != path_str && !previous_path.exists() {
+        // The caller updates the moved row in place, so hand it the full
+        // model. Load it before recording the old path: a row that
+        // vanished in between (hard purge) is simply not a prior.
+        let Some(prior) = IssueEntity::find_by_id(&prior_id).one(db).await? else {
+            return Ok(DedupeOutcome::NotDuplicate);
+        };
         remember_moved_issue_path(db, &prior.id, &prior.file_path, &path_str).await?;
         Ok(DedupeOutcome::Moved(Box::new(prior)))
     } else if !lib.dedupe_by_content {
         Ok(DedupeOutcome::NotDuplicate)
     } else {
         health.emit(IssueKind::DuplicateContent {
-            path_a: std::path::PathBuf::from(&prior.file_path),
+            path_a: std::path::PathBuf::from(&prior_path),
             path_b: path.to_path_buf(),
         });
         stats.files_duplicate += 1;
         tracing::info!(
             series_id = %series_id,
-            kept = %prior.file_path,
+            kept = %prior_path,
             duplicate = %path.display(),
             "scanner: skipping duplicate (same content hash as existing issue)",
         );
@@ -2280,15 +2294,30 @@ fn merge_metron_into_comicinfo(
         info.volume = Some(v);
         won.insert(F::Volume.key());
     }
+    // Cover date. The schema's `<CoverDate>` is a full `xs:date`, so a
+    // month-granular date (the norm: ComicInfo `<Year>/<Month>` with no
+    // `<Day>`, Metron and ComicVine dating every issue on the 1st) is
+    // written as the 1st. When both files name the same month and
+    // ComicInfo has no day, a MetronInfo day of `1` is that convention,
+    // not a correction, so ComicInfo's undeclared day stands and a rescan
+    // of a Folio-rewritten archive changes nothing.
+    let same_year = m.year.is_some() && info.year == m.year;
+    // A year-only ComicInfo beside `YYYY-01-01`: the month is the
+    // convention too, so both stay undeclared.
+    let month_is_convention =
+        same_year && info.month.is_none() && m.month == Some(1) && m.day.is_none_or(|d| d == 1);
+    let same_month = same_year && info.month == m.month;
     if m.year.is_some() {
         info.year = m.year;
         won.insert(F::CoverDate.key());
     }
-    if m.month.is_some() {
+    if m.month.is_some() && !month_is_convention {
         info.month = m.month;
         won.insert(F::CoverDate.key());
     }
-    if m.day.is_some() {
+    if m.day.is_some()
+        && !((same_month || month_is_convention) && m.day == Some(1) && info.day.is_none())
+    {
         info.day = m.day;
         won.insert(F::CoverDate.key());
     }
@@ -2300,9 +2329,22 @@ fn merge_metron_into_comicinfo(
         info.notes = m.notes.clone();
         won.insert(F::Notes.key());
     }
-    if m.age_rating.is_some() {
-        info.age_rating = m.age_rating.clone();
-        won.insert(F::AgeRating.key());
+    // Age rating. MetronInfo's `ageRatingType` is coarser than ComicInfo's
+    // vocabulary (`Mature 17+` is written as `Mature`); when ComicInfo's
+    // value maps onto the same schema rating the two agree and the finer
+    // ComicInfo spelling stands. A different rating still wins.
+    if let Some(mr) = m.age_rating.as_deref() {
+        let agrees = info
+            .age_rating
+            .as_deref()
+            .and_then(parsers::metroninfo::metron_age_rating)
+            .is_some_and(|ci| {
+                parsers::metroninfo::metron_age_rating(mr).is_some_and(|mi| mi == ci)
+            });
+        if !agrees {
+            info.age_rating = m.age_rating.clone();
+            won.insert(F::AgeRating.key());
+        }
     }
     if m.language.is_some() {
         info.language_iso = m.language.clone();
@@ -2314,6 +2356,20 @@ fn merge_metron_into_comicinfo(
     }
     if m.gtin.is_some() {
         info.gtin = m.gtin.clone();
+    }
+    // Schema v1.2 slots ComicInfo also has (audit 2026-11 WP A4). The
+    // ISBN / UPC of `<GTIN>` ride `m.ids` into `external_ids`.
+    if let Some(url) = m.web_url().filter(|u| !u.trim().is_empty()) {
+        info.web = Some(url.to_owned());
+    }
+    // `<Series><Format>` describes the run; it fills an issue with no
+    // `<Format>` of its own, except `Single Issue` — the default shape of
+    // a periodical, which `metron_series_type_format` also leaves blank.
+    if info.format.as_deref().is_none_or(|f| f.trim().is_empty())
+        && let Some(f) = m.series_format.as_deref().filter(|f| *f != "Single Issue")
+    {
+        info.format = Some(f.to_owned());
+        won.insert(F::Format.key());
     }
 
     // MetronInfo carries structured list fields (`<Team>`, `<Character>`,
@@ -2987,6 +3043,125 @@ async fn write_metroninfo_external_ids<C: ConnectionTrait>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Folio-rewritten archive carries ComicInfo `<Year>/<Month>` (no
+    /// day) beside MetronInfo `<CoverDate>YYYY-MM-01</CoverDate>` and
+    /// `<AgeRating>Mature</AgeRating>` beside `Mature 17+`. Both files say
+    /// the same thing, so the merge keeps ComicInfo's finer values and a
+    /// rescan changes nothing (audit 2026-11 WP A4).
+    #[test]
+    fn metron_merge_treats_the_schema_spellings_as_agreement() {
+        let mut info = ComicInfo {
+            year: Some(2021),
+            month: Some(7),
+            day: None,
+            age_rating: Some("Mature 17+".into()),
+            format: Some("TPB".into()),
+            ..ComicInfo::default()
+        };
+        let m = parsers::metroninfo::parse(
+            br#"<?xml version="1.0"?>
+<MetronInfo>
+  <Series lang="en"><Name>Saga</Name><Format>Trade Paperback</Format></Series>
+  <CoverDate>2021-07-01</CoverDate>
+  <AgeRating>Mature</AgeRating>
+  <URLs><URL primary="true">https://metron.cloud/issue/saga-1/</URL></URLs>
+</MetronInfo>"#,
+        )
+        .unwrap();
+        let won = merge_metron_into_comicinfo(&mut info, &m);
+        assert_eq!(
+            (info.year, info.month, info.day),
+            (Some(2021), Some(7), None)
+        );
+        assert_eq!(info.age_rating.as_deref(), Some("Mature 17+"));
+        assert!(!won.contains(&crate::metadata::MetadataField::AgeRating.key()));
+        // The issue's own <Format> stands; the series format only fills a gap.
+        assert_eq!(info.format.as_deref(), Some("TPB"));
+        assert!(!won.contains(&crate::metadata::MetadataField::Format.key()));
+        assert_eq!(info.language_iso.as_deref(), Some("en"));
+        assert_eq!(
+            info.web.as_deref(),
+            Some("https://metron.cloud/issue/saga-1/")
+        );
+    }
+
+    /// A MetronInfo that disagrees still wins: a different month, a real
+    /// day, a different rating, a format where ComicInfo has none.
+    #[test]
+    fn metron_merge_still_wins_on_disagreement() {
+        let mut info = ComicInfo {
+            year: Some(2021),
+            month: Some(6),
+            day: None,
+            age_rating: Some("Teen".into()),
+            ..ComicInfo::default()
+        };
+        let m = parsers::metroninfo::parse(
+            br#"<?xml version="1.0"?>
+<MetronInfo>
+  <Series><Name>Saga</Name><Format>Limited Series</Format></Series>
+  <CoverDate>2021-07-01</CoverDate>
+  <AgeRating>Mature</AgeRating>
+</MetronInfo>"#,
+        )
+        .unwrap();
+        let won = merge_metron_into_comicinfo(&mut info, &m);
+        assert_eq!(
+            (info.year, info.month, info.day),
+            (Some(2021), Some(7), Some(1))
+        );
+        assert_eq!(info.age_rating.as_deref(), Some("Mature"));
+        assert!(won.contains(&crate::metadata::MetadataField::AgeRating.key()));
+        assert_eq!(info.format.as_deref(), Some("Limited Series"));
+        assert!(won.contains(&crate::metadata::MetadataField::Format.key()));
+
+        // A year-only ComicInfo beside the `YYYY-01-01` the composer
+        // writes for it stays year-only.
+        let mut info = ComicInfo {
+            year: Some(2021),
+            ..ComicInfo::default()
+        };
+        let m = parsers::metroninfo::parse(
+            br#"<MetronInfo><CoverDate>2021-01-01</CoverDate></MetronInfo>"#,
+        )
+        .unwrap();
+        merge_metron_into_comicinfo(&mut info, &m);
+        assert_eq!((info.year, info.month, info.day), (Some(2021), None, None));
+        // …but a January date against a different year is data.
+        let mut info = ComicInfo {
+            year: Some(2020),
+            ..ComicInfo::default()
+        };
+        merge_metron_into_comicinfo(&mut info, &m);
+        assert_eq!(
+            (info.year, info.month, info.day),
+            (Some(2021), Some(1), Some(1))
+        );
+
+        // A genuine day (not the 1st) replaces an undeclared one.
+        let mut info = ComicInfo {
+            year: Some(2021),
+            month: Some(7),
+            day: None,
+            ..ComicInfo::default()
+        };
+        let m = parsers::metroninfo::parse(
+            br#"<MetronInfo><CoverDate>2021-07-14</CoverDate></MetronInfo>"#,
+        )
+        .unwrap();
+        merge_metron_into_comicinfo(&mut info, &m);
+        assert_eq!(info.day, Some(14));
+
+        // `Single Issue` is the periodical default and fills nothing.
+        let mut info = ComicInfo::default();
+        let m = parsers::metroninfo::parse(
+            br#"<MetronInfo><Series><Name>S</Name><Format>Single Issue</Format></Series></MetronInfo>"#,
+        )
+        .unwrap();
+        merge_metron_into_comicinfo(&mut info, &m);
+        assert_eq!(info.format, None);
+    }
 
     #[test]
     fn sort_number_parses_numerics() {

@@ -1358,17 +1358,19 @@ function IssueRow({
             return (
               <Tooltip key={s.key}>
                 <TooltipTrigger asChild>
-                  <span
-                    tabIndex={0}
+                  {/* A button, not a focusable span: tooltip triggers need a
+                      real interactive element for keyboard and AT users. */}
+                  <button
+                    type="button"
                     className={cn(
                       "inline-flex h-4.5 min-w-6.5 items-center justify-center rounded border px-1 text-[10px] font-semibold tracking-wide",
                       id
                         ? "border-success/40 bg-success/10 text-success"
-                        : "border-border/60 text-muted-foreground/60",
+                        : "border-border/60 text-muted-foreground",
                     )}
                   >
                     {s.short}
-                  </span>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent>
                   {id ? `${s.label} ${id}` : `No ${s.label} id`}
