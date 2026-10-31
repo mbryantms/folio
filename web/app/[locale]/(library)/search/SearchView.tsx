@@ -35,6 +35,7 @@ import {
 } from "@/components/library/BulkMarkReadDialog";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
+import { RecentSearches } from "@/components/search/RecentSearches";
 import { IssueCard } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
@@ -71,6 +72,7 @@ import {
   type SeriesListFilters,
 } from "@/lib/api/queries";
 import { renderSearchSnippet } from "@/lib/search/render-snippet";
+import { useRecentSearches } from "@/lib/search/use-recent-searches";
 import {
   useGlobalSearch,
   type GlobalSearchPayloads,
@@ -364,6 +366,13 @@ export function SearchView({
                 : undefined
           }
         />
+      ) : debounced.length === 0 ? (
+        <SearchEmptyState
+          onPick={(q) => {
+            setRaw(q);
+            setDebounced(q);
+          }}
+        />
       ) : (
         <div className="space-y-8">
           {SEARCH_CATEGORIES.map((def) => (
@@ -394,6 +403,33 @@ export function SearchView({
         </div>
       )}
     </div>
+  );
+}
+
+/** `/search` with nothing typed: recent searches to tap again, or one
+ *  line on what the page covers, instead of eight "Awaiting query" rails.
+ *  The phone's Search tab used to land here; it opens the search sheet
+ *  now, so this is the deep-link and "Open search page" state. The
+ *  per-rail placeholders stay for a 1-character query, so the page does
+ *  not collapse and regrow on every keystroke. */
+function SearchEmptyState({ onPick }: { onPick: (q: string) => void }) {
+  const recents = useRecentSearches();
+  if (recents.recents.length === 0) {
+    return (
+      <p className="text-muted-foreground text-sm">
+        Results appear here as you type: series, issues, bookmarks, people,
+        characters, teams, locations and story arcs.
+      </p>
+    );
+  }
+  return (
+    <RecentSearches
+      recents={recents.recents}
+      onPick={onPick}
+      onRemove={recents.remove}
+      onClear={recents.clear}
+      className="-mx-3 flex-none"
+    />
   );
 }
 

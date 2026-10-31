@@ -696,6 +696,23 @@ body {
       --tw-enter-translate-y: 100%;
       --tw-exit-translate-y: 100%;
     }
+    /* The search sheet (`SearchModal`, `data-search-sheet`) hangs from the
+     * top edge instead, like every native search: its input must not
+     * move as the result count changes, and the keyboard owns the bottom
+     * of the screen. The height follows the visual viewport so the list
+     * ends above the keyboard; the status-bar inset is padding inside the
+     * sheet, so it paints under the status bar (the root layout's
+     * #top-edge stays the element at the edge). Same specificity as the
+     * bottom-sheet rule above and later in the file, so it wins. */
+    [data-slot="dialog-content"][data-search-sheet] {
+      inset: 0 0 auto 0;
+      max-height: var(--visual-height, 100dvh);
+      padding-top: var(--safe-top);
+      padding-bottom: 0;
+      border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+      --tw-enter-translate-y: -100%;
+      --tw-exit-translate-y: -100%;
+    }
   }
   @media (width >= 40rem) {
     /* A modal taller than a short window (iPad landscape, a small laptop)
