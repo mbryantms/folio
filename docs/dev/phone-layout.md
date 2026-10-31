@@ -27,7 +27,12 @@ indexes.
    shell `globals.css` collapses `--topbar-h` to `--safe-top` under `48rem`,
    so a row that pins with `top-(--topbar-h)` pins at the status bar with
    no change of its own, and `SidebarInset` pads `--safe-top` so the first
-   row clears the notch in the installed app. The admin / settings shell
+   row clears the notch in the installed app. A page whose bar is its
+   first element (Home, Bookmarks: the title rides in `leading`) passes
+   `pageTop`, which pulls the bar up over the column's 1.5rem page
+   padding so it sits at the status bar with no dead band above it;
+   pages with a title block or hero above the bar leave the padding.
+   The admin / settings shell
    keeps its topbar (hamburger + search) because it has no bottom bar.
    Before this (phone-chrome-1.0, 2026-10-30) every page stacked the
    16px "Folio" bar over a 20px page title with a magnifier in each.
@@ -212,7 +217,8 @@ height (36px); the horizontal +4px each side still applies.
   (title + description) is in flow and a `StickyToolbarRow` beneath it
   carries card size + `⋯`, right aligned; below `sm` the title rides in
   the sticky bar's leading slot beside View options (card size as a
-  sheet) and `⋯`, with the description following in flow. Inline
+  sheet) and `⋯`, with the description following in flow. The bar is
+  the first element, so it is `pageTop` (flush with the status bar). Inline
   title editing is `sm`-and-up; phones rename through `⋯`.
 - **Library grid** (`LibraryGridView`): title (`text-xl`) + count, sticky
   bar `[Series|Issues] … [🔍][⇅][⚲][▦]`, chips row, grid with the
@@ -241,8 +247,8 @@ height (36px); the horizontal +4px each side still applies.
 - **Bookmarks**: no separate header — the title rides in the sticky
   bar's leading slot beside search, a Filters sheet (layout toggle,
   sort, series, tags, match mode), View options (card size, Select)
-  and `⋯` (export); the bar is the page's top bar (rule 0); kind pills
-  scroll horizontally. From `sm` up: search · sort · series on the
+  and `⋯` (export); the bar is the page's top bar (rule 0, `pageTop`);
+  kind pills scroll horizontally. From `sm` up: search · sort · series on the
   left, Select · ▦ · `⋯` on the right. From `sm` up the header keeps the title and
   description and the toolbar is a `StickyToolbarRow` beneath it.
 - **Search**, **Browse**, **entity / creator indexes**: description

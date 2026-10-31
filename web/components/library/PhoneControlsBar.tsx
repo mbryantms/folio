@@ -47,6 +47,7 @@ export function PhoneControlsBar({
   menuTitle = "View options",
   menuIcon,
   sticky = true,
+  pageTop = false,
   hidden = false,
   className,
 }: {
@@ -90,6 +91,12 @@ export function PhoneControlsBar({
    *  (`⋯` is reserved for action lists, which are dropdowns). */
   menuIcon?: React.ReactNode;
   sticky?: boolean;
+  /** The bar is the first thing on the page below `sm` (Home, Bookmarks:
+   *  the title rides in `leading`). It pulls itself up over the shell's
+   *  1.5rem page padding so it sits at the status bar, like the topbar
+   *  it replaces (rule 0); the status-bar inset itself stays above it.
+   *  Leave it off when a title block or hero precedes the bar. */
+  pageTop?: boolean;
   /** Hide the row entirely — the selection toolbar takes its place. */
   hidden?: boolean;
   className?: string;
@@ -125,6 +132,9 @@ export function PhoneControlsBar({
           cn(
             CHROME_BAND_CLASS,
             "sticky top-(--topbar-h) z-20 -mx-4 border-b px-4 py-2",
+            // Cancels `SidebarInset`'s `pt-[calc(var(--safe-top)+1.5rem)]`
+            // down to the inset, so the row starts exactly where it pins.
+            pageTop && "-mt-6",
           ),
         className,
       )}

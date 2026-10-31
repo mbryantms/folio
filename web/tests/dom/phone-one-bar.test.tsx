@@ -34,6 +34,24 @@ describe("phone one-bar shell", () => {
     );
   });
 
+  it("a bar that is the page's first element sits at the status bar", () => {
+    // `pageTop` cancels the column's 1.5rem page padding, not the
+    // status-bar inset: the bar starts exactly where it pins.
+    const bar = read("components/library/PhoneControlsBar.tsx");
+    expect(bar).toMatch(/pageTop && "-mt-6"/);
+    expect(bar).not.toMatch(/-mt-\[calc\(var\(--safe-top\)/);
+    for (const page of [
+      "components/saved-views/PageRails.tsx",
+      "components/markers/MarkersList.tsx",
+    ]) {
+      expect(read(page), page).toMatch(/<PhoneControlsBar\s+pageTop\b/);
+    }
+    // A bar below a title block keeps the padding above the title.
+    expect(read("components/library/LibraryGridView.tsx")).not.toMatch(
+      /<PhoneControlsBar[\s\S]{0,200}?pageTop/,
+    );
+  });
+
   it("globals.css collapses --topbar-h to the status-bar inset inside the shell", () => {
     const css = read("styles/globals.css");
     expect(css).toMatch(

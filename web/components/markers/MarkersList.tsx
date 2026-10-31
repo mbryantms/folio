@@ -451,6 +451,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
               toolbar, the layout toggle and the Tags row. The selection toolbar takes its
               place while selecting (both are sticky under the topbar). */}
           <PhoneControlsBar
+            pageTop
             hidden={selection.selectMode}
             leading={
               <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">

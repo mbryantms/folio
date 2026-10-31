@@ -109,9 +109,10 @@ export function PageRails({
         />
         {pageActions}
       </StickyToolbarRow>
-      {/* Phone (< sm): title · View options · ⋯ in one sticky band; the
-          description, when set, follows in flow. */}
+      {/* Phone (< sm): title · View options · ⋯ in one sticky band at the
+          top of the page; the description, when set, follows in flow. */}
       <PhoneControlsBar
+        pageTop
         className={pageDescription ? "mb-3" : "mb-(--density-page-pad-y)"}
         leading={
           <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">
