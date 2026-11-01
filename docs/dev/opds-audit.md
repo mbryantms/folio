@@ -30,7 +30,7 @@ Routes mounted at [app.rs:458](../../crates/server/src/app.rs#L458) (after CSRF;
 | Issue metadata (creators / dates / DC) | full | only `title`+`summary`+`updated` | **Partial** |
 | Search | tsvector | `LIKE '%q%'` ([opds.rs:252](../../crates/server/src/api/opds.rs#L252)) | **Partial** |
 | OpenSearch description doc | n/a | only inline `rel="search"` | **Missing** |
-| Recently added | rails | `/opds/v1/recent` | **Complete** |
+| Recently added | rails | `/opds/v1/recent`, page-size 50 with `first` / `previous` / `next` / `last` rels (audit 2026-11 N-L6; was a hard `LIMIT 50`), entries from the `OpdsIssueRow` projection; `/opds/v2/recent` and both `new-this-month` feeds page the same way | **Complete** |
 | Saved views (filter) | yes | none | **Missing** |
 | CBL / reading lists | yes | none | **Missing** |
 | Pinned rails / home | yes | none | **Missing** |
@@ -93,7 +93,7 @@ UI advertises Chunky, KyBook, Panels, Kavita-mobile ([AppPasswordsCard.tsx:148](
 | Root nav | none |
 | Series list / pagination | none |
 | Series detail | none |
-| Recent | none |
+| Recent | `opds.rs::recent_feed_paginates_at_50`, `opds_v2.rs::recent_paginates_in_json`, `recent_feed_entries_render_full_metadata_from_the_projection`, `recent_feed_hides_removed_and_inactive_issues`; projection guard `perf_regressions.rs::opds_recent_feed_is_projected_and_paged` |
 | Search | none |
 | Download | none |
 | ACL gate | none |

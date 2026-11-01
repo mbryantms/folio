@@ -340,7 +340,9 @@ cover dates) and proposes the mappings for you to accept.
   you've annotated at either level. Views are pinnable as rails.
 - **Custom pages** — build up to 20 of your own pages out of rails (saved
   views, On Deck, lists), each with its own sidebar entry; the sidebar
-  itself is fully reorderable with custom headers and spacers.
+  itself is fully reorderable with custom headers and spacers; anything
+  you hid from a home rail is listed under Settings → Pages, where one
+  click restores it.
 - **Multi-select everywhere** — bulk mark-read, bulk metadata edit, bulk
   add-to-collection across the major list surfaces.
 - **Markers** — four kinds, all page-anchored: bookmarks, Markdown notes,
@@ -537,6 +539,15 @@ coalesce into one run.
 - Cold-cache thumbnail requests are generated inline behind a semaphore
   sized to browser connection bursts, so a fresh page of 40 covers
   backfills gracefully instead of stampeding the server.
+- Covers are served `Cache-Control: private, max-age=300` with a strong
+  content-digest `ETag`: in a plain browser tab a second browse within
+  five minutes paints every cover from the HTTP cache without a request;
+  the installed PWA's service worker paints its cached copy and refetches
+  in the background, getting a bodiless `304` when the bytes are
+  unchanged. A regenerated cover (cover pick, force-recreate) shows within
+  five minutes in a plain tab and on the next paint in the PWA; the reader
+  page strip and the page-map editor version their thumbnail URLs, so an
+  archive edit shows there at once.
 - A daily sweep garbage-collects orphaned artifacts.
 
 ### Everything else

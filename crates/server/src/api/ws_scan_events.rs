@@ -34,10 +34,26 @@ use uuid::Uuid;
 use crate::auth::extractor::AuthRejection;
 use crate::auth::{CurrentUser, ws_ticket};
 use crate::state::AppState;
+use server_macros::handler;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/ws/scan-events", get(handler))
+    Router::new().route("/ws/scan-events", get(scan_events))
 }
+
+/// Largest client→server message accepted on `/ws/scan-events` (N-A2).
+/// The socket is server→client only: clients send nothing but control
+/// frames (ping / pong / close, ≤125-byte payloads by RFC 6455), and the
+/// read loop in [`run`] ignores any data frame. tungstenite applies these
+/// limits to *incoming* data only, so the scan-event stream the server
+/// writes (a few hundred bytes per event, a few KiB for a large health
+/// summary) is not affected. 64 KiB leaves room for a small JSON command
+/// should one ever be added; anything larger fails the read and the
+/// socket is closed. tungstenite's defaults were 64 MiB / 16 MiB.
+pub const WS_MAX_MESSAGE_BYTES: usize = 64 * 1024;
+
+/// Largest single incoming frame on `/ws/scan-events`; see
+/// [`WS_MAX_MESSAGE_BYTES`].
+pub const WS_MAX_FRAME_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct AuthQuery {
@@ -46,7 +62,8 @@ pub struct AuthQuery {
     pub ticket: Option<String>,
 }
 
-pub async fn handler(
+#[handler]
+pub async fn scan_events(
     Query(q): Query<AuthQuery>,
     State(app): State<AppState>,
     cookie_user: Result<CurrentUser, AuthRejection>,
@@ -105,6 +122,8 @@ pub async fn handler(
     let (mut parts, _body) = req.into_parts();
     match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
         Ok(ws) => ws
+            .max_message_size(WS_MAX_MESSAGE_BYTES)
+            .max_frame_size(WS_MAX_FRAME_BYTES)
             .on_upgrade(move |socket| run(socket, app))
             .into_response(),
         Err(e) => e.into_response(),

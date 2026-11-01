@@ -588,6 +588,47 @@ async fn series_list_paginates_in_json() {
     );
 }
 
+/// Audit N-L6: `/opds/v2/recent` mirrors the paged v1 feed instead of a
+/// hard `LIMIT 50` — 50 publications, the full total, and `next` / `last`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recent_paginates_in_json() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-recent-page@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Recent JSON").await;
+    for i in 0..55 {
+        seed_issue_with_file(
+            &db,
+            lib_id,
+            series_id,
+            &tmp.path().join(format!("rj-{i:03}.cbz")),
+            format!("rj-{i:03}").as_bytes(),
+        )
+        .await;
+    }
+    let (s, body) = get_json(&app, &auth, "/opds/v2/recent").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["publications"].as_array().unwrap().len(), 50);
+    assert_eq!(body["metadata"]["numberOfItems"], 55);
+    let links = body["links"].as_array().unwrap();
+    assert_eq!(
+        link_with_rel(links, "next").unwrap()["href"],
+        "/opds/v2/recent?page=2"
+    );
+    assert!(link_with_rel(links, "last").is_some());
+    assert!(link_with_rel(links, "previous").is_none());
+
+    let (s, body) = get_json(&app, &auth, "/opds/v2/recent?page=2").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["publications"].as_array().unwrap().len(), 5);
+    let links = body["links"].as_array().unwrap();
+    assert!(link_with_rel(links, "previous").is_some());
+    assert!(link_with_rel(links, "next").is_none());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publication_shape_includes_pse_template() {
     let app = TestApp::spawn().await;

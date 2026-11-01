@@ -314,7 +314,7 @@ Items noticed during the audit that are real but small, to be picked up opportun
 
 - `docs/features.md` is untracked; commit it once WP-1.5 corrects it.
 - `types.ts` inline-debt guard: a vitest that fails if the inline block grows (AR-1 of audit §4.3).
-- Thumbs `Cache-Control: private, max-age=300` + ETag instead of `no-cache` (OP-7).
+- ~~Thumbs `Cache-Control: private, max-age=300` + ETag instead of `no-cache` (OP-7).~~ **Resolved (audit 2026-11 WP B5):** `/issues/{id}/pages/{n}/thumb` answers `private, max-age=300` with a strong blake3-digest `ETag` and a bodiless 304 on `If-None-Match`; the five-minute staleness window after a regeneration is documented on `THUMB_CACHE_CONTROL` in `api/thumbnails.rs` (the reader strip carries `?v=<last_rewrite_at>` and the page-map editor `?sw=bypass&t=`, so only unversioned cover URLs see the window; the PWA service worker skips `max-age` when it refetches).
 - Variant-backfill drain stall (`backfill.rs:109`) and deactivated primary-cover file cleanup (DI-15): fold into WP-2.9 or WP-3.8.
 - Stringly enums (AR-7): `user.role` / `user.state` are typed (`DeriveActiveEnum`, B8); `issue.state`, `marker.kind` and the rest of the E4 backlog in `docs/dev/schema-restructure.md` convert opportunistically when a WP touches the entity.
 - Rail-icon picker fix: PR #876 (open).

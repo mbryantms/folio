@@ -460,13 +460,120 @@ async fn thumb_serves_conditional_etag_304() {
     assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
 }
 
+/// Audit OP-7: a 200 carries `Cache-Control: private, max-age=300` and a
+/// strong ETag that is the quoted blake3 digest of the body; a matching
+/// `If-None-Match` answers 304 with the same validator headers and no body.
+#[tokio::test]
+async fn thumb_200_is_private_five_minute_cached_with_digest_etag_and_304_has_no_body() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("digest.cbz");
+    build_cbz(&cbz, 2);
+    let id = seed_issue(&app, &cbz).await;
+
+    let first = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let cache_control = first
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .expect("cache-control")
+        .to_owned();
+    assert_eq!(
+        cache_control, "private, max-age=300",
+        "thumbs are reusable for five minutes, per user, never by a shared cache"
+    );
+    assert_eq!(
+        first
+            .headers()
+            .get(header::VARY)
+            .and_then(|v| v.to_str().ok()),
+        Some("Cookie, Authorization"),
+        "one browser profile or OPDS client, two accounts in turn: the cache keys on the credentials"
+    );
+    let etag = first
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("etag")
+        .to_owned();
+    let content_length = first
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok())
+        .expect("content-length");
+    let body = axum::body::to_bytes(first.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(body.len(), content_length);
+    assert!(!body.is_empty(), "a 200 carries the image bytes");
+    assert_eq!(
+        etag,
+        format!("\"{}\"", blake3::hash(&body).to_hex()),
+        "ETag is the strong digest of the served bytes, not an mtime stamp"
+    );
+
+    let second = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), Some(&etag)).await;
+    assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        second
+            .headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok()),
+        Some(etag.as_str()),
+        "304 repeats the validator"
+    );
+    assert_eq!(
+        second
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("private, max-age=300"),
+        "304 refreshes the freshness lifetime"
+    );
+    assert!(
+        second.headers().get(header::CONTENT_TYPE).is_none(),
+        "304 carries no representation headers"
+    );
+    let body = axum::body::to_bytes(second.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(body.is_empty(), "304 has no body");
+
+    // A list of validators with the current one anywhere in it still matches.
+    let third = fetch_thumb_response(
+        &app,
+        &session,
+        &id,
+        0,
+        Some("cover"),
+        Some(&format!("\"stale\", {etag}")),
+    )
+    .await;
+    assert_eq!(third.status(), StatusCode::NOT_MODIFIED);
+
+    // `If-None-Match` compares weakly: a proxy-weakened `W/` validator hits.
+    let fourth = fetch_thumb_response(
+        &app,
+        &session,
+        &id,
+        0,
+        Some("cover"),
+        Some(&format!("W/{etag}")),
+    )
+    .await;
+    assert_eq!(fourth.status(), StatusCode::NOT_MODIFIED);
+}
+
 #[tokio::test]
 async fn thumb_etag_changes_when_artifact_regenerates() {
     // Regression for the archive-edit staleness bug: the thumb URL is
-    // stable across rewrites, so the response must (a) force revalidation
-    // (`no-cache`, never `immutable`) and (b) carry an ETag derived from
-    // the on-disk artifact, so a regenerated thumbnail stops matching the
-    // old validator.
+    // stable across rewrites, so the response must (a) stay revalidatable
+    // (a bounded `max-age`, never `immutable`) and (b) carry an ETag
+    // derived from the on-disk bytes, so a regenerated thumbnail stops
+    // matching the old validator once the five-minute window closes.
     let app = TestApp::spawn().await;
     let session = register_admin(&app).await;
     let dir = tempfile::tempdir().unwrap();
@@ -483,8 +590,11 @@ async fn thumb_etag_changes_when_artifact_regenerates() {
         .expect("cache-control")
         .to_owned();
     assert!(
-        cache_control.contains("no-cache") && !cache_control.contains("immutable"),
-        "thumb responses must revalidate (got {cache_control:?})"
+        cache_control.contains("max-age=300")
+            && cache_control.contains("private")
+            && !cache_control.contains("immutable")
+            && !cache_control.contains("public"),
+        "thumb responses must stay revalidatable and per-user (got {cache_control:?})"
     );
     let etag = first
         .headers()
@@ -515,6 +625,54 @@ async fn thumb_etag_changes_when_artifact_regenerates() {
         .and_then(|v| v.to_str().ok())
         .expect("etag 2");
     assert_ne!(etag, etag2, "ETag must change with the artifact bytes");
+}
+
+/// The validator is the bytes' digest, never the file stamp: a restore that
+/// keeps the length AND the mtime (`cp -p`, a backup replay) but swaps the
+/// pixels must still miss the old ETag.
+#[tokio::test]
+async fn thumb_etag_ignores_mtime_and_length_when_bytes_change() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("restore.cbz");
+    build_cbz(&cbz, 2);
+    let id = seed_issue(&app, &cbz).await;
+
+    let first = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag = first
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("etag")
+        .to_owned();
+
+    let cover = app
+        ._data_dir
+        .path()
+        .join("thumbs")
+        .join(format!("{id}.webp"));
+    let mtime =
+        filetime::FileTime::from_last_modification_time(&std::fs::metadata(&cover).unwrap());
+    let mut bytes = std::fs::read(&cover).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xFF;
+    std::fs::write(&cover, &bytes).unwrap();
+    filetime::set_file_mtime(&cover, mtime).unwrap();
+
+    let second = fetch_thumb_response(&app, &session, &id, 0, Some("cover"), Some(&etag)).await;
+    assert_eq!(
+        second.status(),
+        StatusCode::OK,
+        "same length + same mtime, different bytes: must not 304"
+    );
+    let etag2 = second
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("etag 2");
+    assert_ne!(etag, etag2);
 }
 
 /// Inline (cold-path) cover generation applies the same wraparound crop as

@@ -8202,6 +8202,46 @@
       }
     },
     "/api/me/rail-dismissals": {
+      "get": {
+        "summary": "The caller's hidden rail items, newest dismissal first, each with its\ntarget hydrated for display. Only the caller's own rows, and only those\nwhose target the caller can currently see (the same live + grant + cap\nselects collections use); the rest are counted in `unavailable`.",
+        "operationId": "rails_list_dismissals",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size; default 50, max 200.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RailDismissalListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid cursor"
+          }
+        }
+      },
       "post": {
         "operationId": "rails_create_dismissal",
         "requestBody": {
@@ -20848,6 +20888,18 @@
           }
         }
       },
+      "DismissalRail": {
+        "type": "string",
+        "description": "A surface that honours dismissals: the home rails, the series page's\nSimilar series rail, and the OPDS Continue reading feeds.",
+        "enum": [
+          "continue_reading",
+          "recent_history",
+          "on_deck",
+          "random_picks",
+          "similar_series",
+          "opds_continue_reading"
+        ]
+      },
       "DowHourCell": {
         "type": "object",
         "required": [
@@ -29338,6 +29390,140 @@
             ],
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "RailDismissalKind": {
+        "type": "string",
+        "description": "Kind of a hidden rail target.",
+        "enum": [
+          "issue",
+          "series",
+          "cbl"
+        ]
+      },
+      "RailDismissalListView": {
+        "type": "object",
+        "description": "`GET /me/rail-dismissals` page. The `CursorPage` shape plus one\nfirst-page count: dismissals whose target the caller can no longer\nsee (soft-removed, outside the library grant, over the age cap, or\ndeleted) are never listed, and `unavailable` says how many there are.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RailDismissalView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Listed dismissals in total; first page only.",
+            "minimum": 0
+          },
+          "unavailable": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Dismissals withheld because their target is not visible; first\npage only.",
+            "minimum": 0
+          }
+        }
+      },
+      "RailDismissalTargetView": {
+        "type": "object",
+        "description": "The hydrated target of a dismissal. Which link fields are set depends\non the kind: `slug` + `series_slug` for an issue, `slug` for a series,\n`saved_view_id` for a CBL reading list (absent when no saved view\nwraps the list).",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover thumbnail URL; `None` for reading lists and coverless series."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name: `\"<series> #<number>\"` for an issue, the series name,\nor the reading-list name."
+          },
+          "saved_view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Saved-view id (kind `cbl`) wrapping the list (cbl only)."
+          },
+          "series_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parent series slug (issue only)."
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Issue slug (issue) or series slug (series)."
+          },
+          "subtitle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Secondary line: the issue title, or the series start year."
+          }
+        }
+      },
+      "RailDismissalView": {
+        "type": "object",
+        "description": "One hidden rail item.",
+        "required": [
+          "id",
+          "target_kind",
+          "target_id",
+          "hidden_from",
+          "dismissed_at",
+          "target"
+        ],
+        "properties": {
+          "dismissed_at": {
+            "type": "string",
+            "description": "RFC 3339 timestamp of the (latest) dismissal."
+          },
+          "hidden_from": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DismissalRail"
+            },
+            "description": "The rails this dismissal hides the target from."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id of the dismissal, `\"<kind>:<target_id>\"`."
+          },
+          "target": {
+            "$ref": "#/components/schemas/RailDismissalTargetView"
+          },
+          "target_id": {
+            "type": "string"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/RailDismissalKind"
           }
         }
       },

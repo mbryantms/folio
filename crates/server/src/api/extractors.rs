@@ -125,11 +125,19 @@ where
         let bytes = axum::body::Bytes::from_request(req, state)
             .await
             .map_err(|e| {
-                respond(
-                    StatusCode::BAD_REQUEST,
-                    ApiErrorCode::Validation,
-                    e.to_string(),
-                )
+                if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                    respond(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        ApiErrorCode::TooLarge,
+                        e.body_text(),
+                    )
+                } else {
+                    respond(
+                        StatusCode::BAD_REQUEST,
+                        ApiErrorCode::Validation,
+                        e.to_string(),
+                    )
+                }
             })?;
         if bytes.iter().all(u8::is_ascii_whitespace) {
             return Ok(OptionalValidated(T::default()));
@@ -150,6 +158,15 @@ where
 }
 
 fn json_rejection_to_response(rej: JsonRejection) -> Response {
+    // Body over the route's `DefaultBodyLimit` (N-A2): same 413 `too_large`
+    // the plain-`Json<T>` routes get from `app::envelope_payload_too_large`.
+    if rej.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        return respond(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            ApiErrorCode::TooLarge,
+            rej.body_text(),
+        );
+    }
     let (status, message) = match &rej {
         JsonRejection::JsonDataError(e) => (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()),
         JsonRejection::JsonSyntaxError(e) => (StatusCode::BAD_REQUEST, e.to_string()),

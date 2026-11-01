@@ -31,6 +31,7 @@ export function invalidateRails(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: queryKeys.onDeck });
   qc.invalidateQueries({ queryKey: queryKeys.recentHistory });
   qc.invalidateQueries({ queryKey: queryKeys.randomPicks });
+  qc.invalidateQueries({ queryKey: queryKeys.railDismissals });
   qc.invalidateQueries({ queryKey: ["saved-views"], exact: false });
   qc.invalidateQueries({ queryKey: ["cbl-lists"], exact: false });
   qc.invalidateQueries({ queryKey: ["collections"], exact: false });

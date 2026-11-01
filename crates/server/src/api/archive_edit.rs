@@ -13,7 +13,7 @@
 
 use axum::{
     Extension, Json,
-    extract::{Multipart, Path as AxPath, State},
+    extract::{DefaultBodyLimit, Multipart, Path as AxPath, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -40,7 +40,16 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(page_count))
         .routes(routes!(restore))
         .routes(routes!(backups))
-        .routes(routes!(upload))
+        // The staged-image upload is the one body in this module bigger
+        // than the `api` group's 2 MiB default (`app::DEFAULT_BODY_LIMIT`), so
+        // it raises the limit on its own sub-router. The handler still caps
+        // the `file` field at `MAX_UPLOAD_BYTES`; the slack covers the
+        // multipart framing around it.
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(upload))
+                .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
+        )
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -100,6 +109,10 @@ const MAX_BULK_ISSUES: usize = 500;
 /// Cap on a staged replacement image. Generous — a high-res page scan can
 /// be a few MiB; 32 MiB leaves headroom without inviting abuse.
 const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
+
+/// Request-body limit on `POST /uploads`: the field cap plus 64 KiB for
+/// the multipart boundary and part headers.
+const UPLOAD_BODY_LIMIT: usize = MAX_UPLOAD_BYTES + 64 * 1024;
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct EditRequest {
@@ -635,7 +648,7 @@ pub async fn backups(
     let mut out = Vec::new();
     for slot in 0..=5 {
         let p = archive_rewrite::backup_slot(&target, slot);
-        let Ok(meta) = std::fs::metadata(&p) else {
+        let Ok(meta) = tokio::fs::metadata(&p).await else {
             continue;
         };
         let modified_at = meta
@@ -676,59 +689,49 @@ pub async fn upload(
     _admin: RequireAdmin,
     mut multipart: Multipart,
 ) -> Response {
-    let mut bytes: Option<Vec<u8>> = None;
-    while let Ok(Some(field)) = multipart.next_field().await {
-        if field.name() == Some("file") {
-            match field.bytes().await {
-                Ok(b) => {
-                    if b.len() > MAX_UPLOAD_BYTES {
-                        return error(
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            "too_large",
-                            "image exceeds 32 MiB",
-                        );
-                    }
-                    bytes = Some(b.to_vec());
-                }
-                Err(e) => {
-                    return error(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "validation",
-                        &e.to_string(),
-                    );
-                }
-            }
-        }
-    }
-    let Some(bytes) = bytes else {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation",
-            "missing `file` field",
-        );
-    };
-
-    // Validate it's an image we can decode/re-encode later.
-    let Ok(fmt) = image::guess_format(&bytes) else {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation.not_an_image",
-            "file is not a supported image",
-        );
-    };
-
+    // N-A1: every filesystem touch below goes through `tokio::fs` or
+    // `spawn_blocking` so a 32 MiB upload never stalls a runtime worker.
     let uploads_dir = app.cfg().data_path.join("uploads");
-    sweep_stale_uploads(&uploads_dir);
-    if let Err(e) = std::fs::create_dir_all(&uploads_dir) {
+    {
+        // Best-effort and only touches files older than an hour, so it runs
+        // detached instead of delaying this upload.
+        let dir = uploads_dir.clone();
+        drop(tokio::task::spawn_blocking(move || {
+            sweep_stale_uploads(&dir)
+        }));
+    }
+    if let Err(e) = tokio::fs::create_dir_all(&uploads_dir).await {
         tracing::error!(error = %e, "uploads: mkdir failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
     let id = Uuid::now_v7();
     let dest = uploads_dir.join(id.to_string());
-    if let Err(e) = std::fs::write(&dest, &bytes) {
-        tracing::error!(error = %e, "uploads: write failed");
+    // Stream into a `.part` sibling and rename only once the bytes are
+    // complete and sniffed as an image: the edit job never sees a
+    // half-written or non-image staged file under the final name. An
+    // abandoned `.part` (crash mid-upload) is swept like any stale upload.
+    let part = uploads_dir.join(format!("{id}.part"));
+    // Backstop for a cancelled request (client gone, `JSON_ROUTE_TIMEOUT`):
+    // the future is dropped mid-stream and the explicit cleanup below never
+    // runs, so the guard removes the `.part` (best effort; anything it
+    // misses, such as a create still in flight on the blocking pool, is
+    // left to the hourly sweep).
+    let mut guard = PartFileGuard(Some(part.clone()));
+    let fmt = match stream_upload_field(&mut multipart, &part).await {
+        Ok(fmt) => fmt,
+        Err(resp) => {
+            let _ = tokio::fs::remove_file(&part).await;
+            guard.disarm();
+            return resp;
+        }
+    };
+    if let Err(e) = tokio::fs::rename(&part, &dest).await {
+        tracing::error!(error = %e, "uploads: rename failed");
+        let _ = tokio::fs::remove_file(&part).await;
+        guard.disarm();
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    guard.disarm();
 
     (
         StatusCode::CREATED,
@@ -740,10 +743,126 @@ pub async fn upload(
         .into_response()
 }
 
+/// Removes a staged `.part` file when dropped while still armed; see
+/// [`upload`]. The removal is spawned (a `Drop` can't await) onto the
+/// current runtime.
+struct PartFileGuard(Option<std::path::PathBuf>);
+
+impl PartFileGuard {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for PartFileGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            rt.spawn(async move {
+                let _ = tokio::fs::remove_file(&path).await;
+            });
+        }
+    }
+}
+
+/// Write-buffer size for streaming a staged upload to disk.
+const UPLOAD_WRITE_BUFFER: usize = 1024 * 1024;
+
+/// Bytes kept in memory from the head of the upload for
+/// [`image::guess_format`], which only inspects leading magic numbers.
+const SNIFF_PREFIX_BYTES: usize = 64;
+
+/// Stream the multipart `file` field chunk by chunk into `part`, never
+/// holding more than one chunk (plus the sniff prefix) in memory. Returns
+/// the sniffed image format, or the error response to send. The caller
+/// removes `part` on error.
+///
+/// Error mapping matches the pre-streaming handler: over the cap → 413
+/// `too_large`; a malformed multipart stream → 422 `validation`; no `file`
+/// field → 422 `validation`; not an image → 422 `validation.not_an_image`.
+/// A body that trips the route's `DefaultBodyLimit` surfaces from the
+/// multipart reader with status 413 and maps to `too_large` as well.
+async fn stream_upload_field(
+    multipart: &mut Multipart,
+    part: &std::path::Path,
+) -> Result<image::ImageFormat, Response> {
+    use tokio::io::AsyncWriteExt;
+
+    let multipart_error = |e: axum::extract::multipart::MultipartError| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            too_large()
+        } else {
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                &e.to_string(),
+            )
+        }
+    };
+    let write_failed = |e: std::io::Error| {
+        tracing::error!(error = %e, "uploads: write failed");
+        error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    };
+
+    loop {
+        let mut field = match multipart.next_field().await {
+            Ok(Some(field)) => field,
+            Ok(None) => break,
+            Err(e) => return Err(multipart_error(e)),
+        };
+        if field.name() != Some("file") {
+            continue;
+        }
+        // Buffered so a 32 MiB upload is a few dozen blocking-pool writes,
+        // not one per multipart chunk.
+        let mut file = tokio::io::BufWriter::with_capacity(
+            UPLOAD_WRITE_BUFFER,
+            tokio::fs::File::create(part).await.map_err(write_failed)?,
+        );
+        let mut written: usize = 0;
+        let mut prefix: Vec<u8> = Vec::with_capacity(SNIFF_PREFIX_BYTES);
+        while let Some(chunk) = field.chunk().await.map_err(multipart_error)? {
+            written = written.saturating_add(chunk.len());
+            if written > MAX_UPLOAD_BYTES {
+                return Err(too_large());
+            }
+            if prefix.len() < SNIFF_PREFIX_BYTES {
+                let take = (SNIFF_PREFIX_BYTES - prefix.len()).min(chunk.len());
+                prefix.extend_from_slice(&chunk[..take]);
+            }
+            file.write_all(&chunk).await.map_err(write_failed)?;
+        }
+        file.flush().await.map_err(write_failed)?;
+        // Validate it's an image we can decode/re-encode later.
+        return image::guess_format(&prefix).map_err(|_| {
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.not_an_image",
+                "file is not a supported image",
+            )
+        });
+    }
+    Err(error(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "validation",
+        "missing `file` field",
+    ))
+}
+
+fn too_large() -> Response {
+    super::respond(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        shared::error::ApiErrorCode::TooLarge,
+        "image exceeds 32 MiB",
+    )
+}
+
 /// Best-effort removal of staged uploads older than one hour — they're
 /// consumed by an edit shortly after upload, so anything older is
-/// abandoned. Runs opportunistically on each upload; errors are logged
-/// and swallowed.
+/// abandoned. Runs opportunistically on each upload, on the blocking
+/// pool (it walks the directory with `std::fs`); errors are logged and
+/// swallowed.
 fn sweep_stale_uploads(dir: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;

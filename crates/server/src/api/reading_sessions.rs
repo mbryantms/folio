@@ -798,7 +798,7 @@ pub async fn clear_history(
 /// and `GET /admin/users/{id}/reading-stats` (callee = admin acting on a
 /// target user). Validation + error mapping lives here so both endpoints stay
 /// thin.
-pub async fn compute_stats_for_user(
+pub(crate) async fn compute_stats_for_user(
     app: &AppState,
     user_id: Uuid,
     q: StatsQuery,
