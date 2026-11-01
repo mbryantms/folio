@@ -27849,6 +27849,7 @@
           "contains",
           "not_contains",
           "starts_with",
+          "ends_with",
           "equals",
           "not_equals",
           "is",
@@ -35395,7 +35396,7 @@
       },
       "UpdateIssueReq": {
         "type": "object",
-        "description": "Body for `PATCH /series/{series_slug}/issues/{issue_slug}`.\n\nEvery field is optional. For nullable columns the body distinguishes:\n  - field absent     → leave column untouched\n  - field present, null → clear column, mark as user-edited\n  - field present, set  → write column, mark as user-edited\n\n`additional_links` is replace-all: send the full desired array, or `[]`\nto clear. Empty / whitespace-only `url` entries are rejected.\n\nMirrors the editable subset of ComicInfo.xml — fields the scanner reads\nfrom the file. Every touched column is pinned as a `set_by='user'`\n`field_provenance` row; the scanner skips pinned columns on rescan, so\nDB edits are sticky. (In a writeback library the edit is also pushed\ninto the archive's sidecars — WP-2.10.)",
+        "description": "Body for `PATCH /series/{series_slug}/issues/{issue_slug}`.\n\nEvery field is optional. For nullable columns the body distinguishes:\n  - field absent     → leave column untouched\n  - field present, null → clear column, pin it (`set_by='user'`)\n  - field present, set  → write column, pin it (`set_by='user'`)\n\n`additional_links` is replace-all: send the full desired array, or `[]`\nto clear. Empty / whitespace-only `url` entries are rejected.\n\nMirrors the editable subset of ComicInfo.xml — fields the scanner reads\nfrom the file. Every touched column is pinned as a `set_by='user'`\n`field_provenance` row; the scanner skips pinned columns on rescan, so\nDB edits are sticky. (In a writeback library the edit is also pushed\ninto the archive's sidecars — WP-2.10.)",
         "properties": {
           "additional_links": {
             "type": [

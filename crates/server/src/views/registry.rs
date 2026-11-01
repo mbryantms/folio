@@ -156,6 +156,7 @@ const TEXT_OPS: &[Op] = &[
     Op::Contains,
     Op::NotContains,
     Op::StartsWith,
+    Op::EndsWith,
     Op::Equals,
     Op::NotEquals,
     Op::IsEmpty,
@@ -165,6 +166,7 @@ const TEXT_OPS_REQUIRED: &[Op] = &[
     Op::Contains,
     Op::NotContains,
     Op::StartsWith,
+    Op::EndsWith,
     Op::Equals,
     Op::NotEquals,
 ];

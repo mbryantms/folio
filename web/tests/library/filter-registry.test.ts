@@ -76,6 +76,7 @@ const ALL_OPS: Op[] = [
   "contains",
   "not_contains",
   "starts_with",
+  "ends_with",
   "equals",
   "not_equals",
   "is",
