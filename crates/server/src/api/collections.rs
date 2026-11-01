@@ -966,9 +966,15 @@ pub async fn add_entry(
     };
 
     // Existence check before the insert — gives us a crisp 404 for
-    // bogus ref_ids instead of a generic FK violation.
+    // bogus ref_ids instead of a generic FK violation. The target must also
+    // be one the entries page would list (the visibility selects below): a
+    // removed, revoked or over-cap target answers the same 404 as a missing
+    // one, so the endpoint is no existence oracle and never stores an entry
+    // the caller cannot see.
+    let acl = access::for_user(&app, &user).await;
     if let Some(sid) = series_id {
-        let exists = series::Entity::find_by_id(sid)
+        let exists = visible_series_select(&acl)
+            .filter(series::Column::Id.eq(sid))
             .count(&app.db)
             .await
             .unwrap_or(0);
@@ -977,7 +983,8 @@ pub async fn add_entry(
         }
     }
     if let Some(iid) = issue_id.as_deref() {
-        let exists = issue::Entity::find_by_id(iid.to_owned())
+        let exists = visible_issues_select(&acl)
+            .filter(issue::Column::Id.eq(iid.to_owned()))
             .count(&app.db)
             .await
             .unwrap_or(0);
@@ -1046,7 +1053,6 @@ pub async fn add_entry(
     // The echo goes through the same visibility pass as the list; a
     // target the caller cannot see hydrates to nothing and the bare
     // entry row is returned instead.
-    let acl = access::for_user(&app, &user).await;
     let hydrated = hydrate_entries(&app, vec![entry], &acl, user.id).await;
     let first = hydrated.into_iter().next().unwrap_or(CollectionEntryView {
         id: entry_id.to_string(),
@@ -1168,8 +1174,10 @@ pub async fn bulk_add_members(
 
     // WP-8.3: one set-based statement instead of one INSERT per member
     // (104 queries for 100 members). Semantics match the per-row loop:
-    //   * `found`: the ref resolves to a real series / issue (any state —
-    //     same as the old `find_by_id` probe); the rest are `not_found`.
+    //   * `found`: the ref resolves to a series / issue the caller can see
+    //     (the `add_entry` rule: `access::visible_{series,issues}_sql`, plus
+    //     `state = 'active'` for issues); the rest — missing, removed,
+    //     revoked, over the cap — are `not_found` alike.
     //   * `fresh`: drops refs already in the collection and in-batch
     //     duplicates (first occurrence wins). Both used to surface as a
     //     partial-unique violation → `already_present`.
@@ -1185,7 +1193,19 @@ pub async fn bulk_add_members(
     // The concurrent-bulk-add position caveat in the doc comment stands; a
     // position collision (deferred unique) now fails the whole batch with a
     // 500 instead of counting the one colliding member as `invalid`.
-    const BULK_ADD_SQL: &str = r#"
+    let acl = access::for_user(&app, &user).await;
+    let mut params: Vec<sea_orm::Value> = vec![
+        id.into(),
+        series_refs.into(),
+        series_ords.into(),
+        issue_refs.into(),
+        issue_ords.into(),
+        new_ids.into(),
+    ];
+    let series_visible = access::visible_series_sql(&acl, "s", &mut params);
+    let issue_visible = access::visible_issues_sql(&acl, "i", &mut params);
+    let bulk_add_sql = format!(
+        r#"
         WITH input AS (
             SELECT 'series'::text AS entry_kind, s.ref::uuid AS series_id,
                    NULL::text AS issue_id, s.ord
@@ -1197,9 +1217,11 @@ pub async fn bulk_add_members(
         found AS (
             SELECT inp.* FROM input inp
              WHERE (inp.series_id IS NOT NULL
-                    AND EXISTS (SELECT 1 FROM series s WHERE s.id = inp.series_id))
+                    AND EXISTS (SELECT 1 FROM series s
+                                 WHERE s.id = inp.series_id{series_visible}))
                 OR (inp.issue_id IS NOT NULL
-                    AND EXISTS (SELECT 1 FROM issues i WHERE i.id = inp.issue_id))
+                    AND EXISTS (SELECT 1 FROM issues i
+                                 WHERE i.id = inp.issue_id AND i.state = 'active'{issue_visible}))
         ),
         fresh AS (
             SELECT DISTINCT ON (f.series_id, f.issue_id) f.*
@@ -1236,20 +1258,14 @@ pub async fn bulk_add_members(
         )
         SELECT (SELECT count(*) FROM found) AS found,
                (SELECT count(*) FROM ins_series) + (SELECT count(*) FROM ins_issue) AS added
-    "#;
+    "#
+    );
     let row = app
         .db
         .query_one_raw(Statement::from_sql_and_values(
             app.db.get_database_backend(),
-            BULK_ADD_SQL,
-            [
-                id.into(),
-                series_refs.into(),
-                series_ords.into(),
-                issue_refs.into(),
-                issue_ords.into(),
-                new_ids.into(),
-            ],
+            bulk_add_sql,
+            params,
         ))
         .await;
     let counts = row.and_then(|r| {
@@ -1561,7 +1577,9 @@ pub async fn reorder_entries(
 
 /// Series the caller can currently see as collection targets
 /// (`access::visible_series_select`: live, inside the grant, under the cap).
-fn visible_series_select(acl: &access::VisibleLibraries) -> sea_orm::Select<series::Entity> {
+pub(crate) fn visible_series_select(
+    acl: &access::VisibleLibraries,
+) -> sea_orm::Select<series::Entity> {
     access::visible_series_select(acl)
 }
 
@@ -1570,7 +1588,9 @@ fn visible_series_select(acl: &access::VisibleLibraries) -> sea_orm::Select<seri
 /// inside the grant, under the cap) plus `state = 'active'` — the rule
 /// `collection_sequence` applies to the reading order, so the entries page
 /// and the Continue button agree.
-fn visible_issues_select(acl: &access::VisibleLibraries) -> sea_orm::Select<issue::Entity> {
+pub(crate) fn visible_issues_select(
+    acl: &access::VisibleLibraries,
+) -> sea_orm::Select<issue::Entity> {
     access::visible_issues_select(acl).filter(issue::Column::State.eq("active"))
 }
 

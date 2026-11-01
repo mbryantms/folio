@@ -59,7 +59,6 @@ fn self_href(base: &str, page: u64) -> String {
 }
 
 async fn entity_index(app: &AppState, user: &CurrentUser, kind: EntityKind, page: u64) -> Response {
-    let page = page.max(1);
     let visible = access::for_user(app, user).await;
     let filter = ListFilter {
         starts_with: None,
@@ -152,7 +151,6 @@ async fn entity_issue_feed(
     slug: &str,
     page: u64,
 ) -> Response {
-    let page = page.max(1);
     let (row, visible, _, issue_count) =
         match ep::resolve_visible_for_user(app, user, kind, slug).await {
             Ok(v) => v,
@@ -212,7 +210,6 @@ async fn publisher_series_feed(
     page: u64,
 ) -> Response {
     let kind = EntityKind::Publisher;
-    let page = page.max(1);
     let (row, visible, series_count, _) =
         match ep::resolve_visible_for_user(app, user, kind, slug).await {
             Ok(v) => v,
@@ -261,7 +258,13 @@ pub(super) async fn characters_nav(
     user: CurrentUser,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    entity_index(&app, &user, EntityKind::Character, q.page.unwrap_or(1)).await
+    entity_index(
+        &app,
+        &user,
+        EntityKind::Character,
+        opds::page_number(q.page),
+    )
+    .await
 }
 
 pub(super) async fn teams_nav(
@@ -269,7 +272,7 @@ pub(super) async fn teams_nav(
     user: CurrentUser,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    entity_index(&app, &user, EntityKind::Team, q.page.unwrap_or(1)).await
+    entity_index(&app, &user, EntityKind::Team, opds::page_number(q.page)).await
 }
 
 pub(super) async fn arcs_nav(
@@ -277,7 +280,7 @@ pub(super) async fn arcs_nav(
     user: CurrentUser,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    entity_index(&app, &user, EntityKind::Arc, q.page.unwrap_or(1)).await
+    entity_index(&app, &user, EntityKind::Arc, opds::page_number(q.page)).await
 }
 
 pub(super) async fn publishers_nav(
@@ -285,7 +288,13 @@ pub(super) async fn publishers_nav(
     user: CurrentUser,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    entity_index(&app, &user, EntityKind::Publisher, q.page.unwrap_or(1)).await
+    entity_index(
+        &app,
+        &user,
+        EntityKind::Publisher,
+        opds::page_number(q.page),
+    )
+    .await
 }
 
 pub(super) async fn character_feed(
@@ -299,7 +308,7 @@ pub(super) async fn character_feed(
         &user,
         EntityKind::Character,
         &slug,
-        q.page.unwrap_or(1),
+        opds::page_number(q.page),
     )
     .await
 }
@@ -310,7 +319,14 @@ pub(super) async fn team_feed(
     AxPath(slug): AxPath<String>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    entity_issue_feed(&app, &user, EntityKind::Team, &slug, q.page.unwrap_or(1)).await
+    entity_issue_feed(
+        &app,
+        &user,
+        EntityKind::Team,
+        &slug,
+        opds::page_number(q.page),
+    )
+    .await
 }
 
 pub(super) async fn arc_feed(
@@ -319,7 +335,14 @@ pub(super) async fn arc_feed(
     AxPath(slug): AxPath<String>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    entity_issue_feed(&app, &user, EntityKind::Arc, &slug, q.page.unwrap_or(1)).await
+    entity_issue_feed(
+        &app,
+        &user,
+        EntityKind::Arc,
+        &slug,
+        opds::page_number(q.page),
+    )
+    .await
 }
 
 pub(super) async fn publisher_feed(
@@ -328,5 +351,5 @@ pub(super) async fn publisher_feed(
     AxPath(slug): AxPath<String>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    publisher_series_feed(&app, &user, &slug, q.page.unwrap_or(1)).await
+    publisher_series_feed(&app, &user, &slug, opds::page_number(q.page)).await
 }

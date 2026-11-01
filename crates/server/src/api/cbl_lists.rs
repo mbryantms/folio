@@ -529,6 +529,63 @@ fn entry_to_view(e: &cbl_entry::Model) -> CblEntryView {
     }
 }
 
+/// `EXISTS` a live issue behind `cbl_entries.matched_issue_id`: not
+/// soft-removed and with a live parent series
+/// (`access::visible_issues_select` without a grant filter — CBL stats are
+/// per list, not per caller).
+fn live_match_exists() -> sea_orm::sea_query::SimpleExpr {
+    use sea_orm::sea_query::{Expr, ExprTrait};
+    use sea_orm::{QuerySelect, QueryTrait};
+    let live = crate::library::access::visible_issues_select(
+        &crate::library::access::VisibleLibraries::unrestricted(),
+    )
+    .select_only()
+    .column(issue::Column::Id)
+    .filter(
+        Expr::col((issue::Entity, issue::Column::Id))
+            .equals((cbl_entry::Entity, cbl_entry::Column::MatchedIssueId)),
+    )
+    .into_query();
+    Expr::exists(live)
+}
+
+/// A resolved entry (`matched` / `manual`) whose issue is still live.
+fn live_resolved(status: &str) -> sea_orm::Condition {
+    sea_orm::Condition::all()
+        .add(cbl_entry::Column::MatchStatus.eq(status))
+        .add(cbl_entry::Column::MatchedIssueId.is_not_null())
+        .add(live_match_exists())
+}
+
+/// A resolved entry whose issue was soft-removed (or its series was): it
+/// reads as **missing** everywhere — stats, the status filter, the entry
+/// view — the same way the entries page already paints it without a card.
+/// The row keeps its `matched_issue_id`, so it comes back as matched if
+/// the file does.
+fn dead_match() -> sea_orm::Condition {
+    use sea_orm::sea_query::ExprTrait;
+    sea_orm::Condition::all()
+        .add(cbl_entry::Column::MatchStatus.is_in(["matched", "manual"]))
+        .add(cbl_entry::Column::MatchedIssueId.is_not_null())
+        .add(live_match_exists().not())
+}
+
+/// `?status=` subset as a condition: `matched` / `manual` keep only live
+/// matches, `missing` also takes dead matches ([`dead_match`]).
+fn status_condition(parts: &[&str]) -> sea_orm::Condition {
+    let mut cond = sea_orm::Condition::any();
+    for part in parts {
+        cond = match *part {
+            "matched" | "manual" => cond.add(live_resolved(part)),
+            "missing" => cond
+                .add(cbl_entry::Column::MatchStatus.eq("missing"))
+                .add(dead_match()),
+            other => cond.add(cbl_entry::Column::MatchStatus.eq(other)),
+        };
+    }
+    cond
+}
+
 async fn stats_for(
     db: &sea_orm::DatabaseConnection,
     list_id: Uuid,
@@ -552,17 +609,23 @@ async fn stats_for(
     // worse, `read_count` below already used the matched_issue_id
     // criterion so the read-progress pill could legitimately exceed
     // the Collection number.
+    // A match to a soft-removed issue counts as missing, not matched
+    // ([`dead_match`]), so the pill agrees with the entries page and the
+    // Resolution tab lists the row.
     stats.matched = base
         .clone()
         .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
+        .filter(live_match_exists())
         .count(db)
         .await? as i64;
     // Per-status breakdown for the Resolution tab. `manual` is a
-    // *subset* of `matched` — see CblStatsView::manual.
+    // *subset* of `matched` — see CblStatsView::manual. Each bucket is
+    // the entries endpoint's `?status=` condition, so a count always
+    // equals that filter's first-page `total`.
     for status in ["ambiguous", "missing", "manual"] {
         let n = base
             .clone()
-            .filter(cbl_entry::Column::MatchStatus.eq(status))
+            .filter(status_condition(&[status]))
             .count(db)
             .await? as i64;
         match status {
@@ -593,6 +656,8 @@ async fn stats_for(
               ON p.issue_id = e.matched_issue_id
              AND p.user_id  = $2
              AND p.finished = TRUE
+            JOIN issues i ON i.id = e.matched_issue_id AND i.removed_at IS NULL
+            JOIN series s ON s.id = i.series_id AND s.removed_at IS NULL
             WHERE e.cbl_list_id = $1
               AND e.matched_issue_id IS NOT NULL
         "#,
@@ -837,10 +902,7 @@ pub async fn entries(
                 );
             }
         };
-        sel = sel.filter(
-            cbl_entry::Column::MatchStatus
-                .is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
-        );
+        sel = sel.filter(status_condition(&parts));
     }
 
     if let Some(text) = q_text {
@@ -889,10 +951,7 @@ pub async fn entries(
         if let Some(status_str) = q.status.as_deref() {
             // Already validated above; re-parsing is fine.
             if let Ok(parts) = parse_status_filter(status_str) {
-                count_sel = count_sel.filter(
-                    cbl_entry::Column::MatchStatus
-                        .is_in(parts.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
-                );
+                count_sel = count_sel.filter(status_condition(&parts));
             }
         }
         if let Some(text) = q_text {
@@ -921,12 +980,13 @@ pub async fn entries(
     let issue_by_id: std::collections::HashMap<String, IssueCardRow> = if issue_ids.is_empty() {
         std::collections::HashMap::new()
     } else {
-        match entity::issue::Entity::find()
-            .filter(entity::issue::Column::Id.is_in(issue_ids))
-            .filter(entity::issue::Column::RemovedAt.is_null())
-            .into_partial_model::<IssueCardRow>()
-            .all(&app.db)
-            .await
+        match crate::library::access::visible_issues_select(
+            &crate::library::access::VisibleLibraries::unrestricted(),
+        )
+        .filter(entity::issue::Column::Id.is_in(issue_ids))
+        .into_partial_model::<IssueCardRow>()
+        .all(&app.db)
+        .await
         {
             Ok(rows) => rows.into_iter().map(|i| (i.id.clone(), i)).collect(),
             Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
@@ -976,8 +1036,19 @@ pub async fn entries(
                             .with_series_name(series.name.clone()),
                     )
                 });
+            let mut view = entry_to_view(entry);
+            // A dead match (`dead_match`: the issue or its series was
+            // soft-removed) reads as missing, matching stats and `?status=`.
+            if matches!(view.match_status.as_str(), "matched" | "manual")
+                && entry
+                    .matched_issue_id
+                    .as_ref()
+                    .is_some_and(|iid| !issue_by_id.contains_key(iid))
+            {
+                view.match_status = "missing".to_owned();
+            }
             CblEntryHydratedView {
-                entry: entry_to_view(entry),
+                entry: view,
                 issue: issue_view,
             }
         })
@@ -1403,35 +1474,23 @@ async fn create_list_from_parsed(
         tracing::error!(error = %e, "cbl_lists: insert failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
-    let summary =
-        match import::apply_parsed(&app.db, id, parsed, xml, None, RefreshTrigger::Manual).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "cbl_lists: apply_parsed failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
+    if let Err(e) =
+        import::apply_parsed(&app.db, id, parsed, xml, None, RefreshTrigger::Manual).await
+    {
+        tracing::error!(error = %e, "cbl_lists: apply_parsed failed");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
     // Re-read the freshly-written row + stats so the response shape
     // mirrors the regular GET.
     let row = match cbl_list::Entity::find_by_id(id).one(&app.db).await {
         Ok(Some(r)) => r,
         _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    let stats = CblStatsView {
-        total: i64::from(summary.matched + summary.ambiguous + summary.missing + summary.manual),
-        // `matched` is "resolved to an issue" — auto-match + preserved
-        // user overrides — to match `stats_for` semantics. The strict
-        // auto-only count is `matched - manual` for any caller that
-        // needs it.
-        matched: i64::from(summary.matched + summary.manual),
-        ambiguous: i64::from(summary.ambiguous),
-        missing: i64::from(summary.missing),
-        manual: i64::from(summary.manual),
-        // Freshly-uploaded list — the user can't have progress on
-        // anything yet. Subsequent reads call `stats_for` which
-        // populates this against `progress_records`.
-        read_count: 0,
-    };
+    // `stats_for`, not the import summary, so the create response counts
+    // exactly what every later read counts (live matches only).
+    let stats = stats_for(&app.db, id, owner.unwrap_or_default())
+        .await
+        .unwrap_or_default();
     (StatusCode::CREATED, Json(list_to_view(&row, stats))).into_response()
 }
 
@@ -1796,13 +1855,17 @@ pub async fn manual_match(
         Ok(_) => return error(StatusCode::NOT_FOUND, "not_found", "entry"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    // Validate the issue exists.
-    let issue_exists = entity::issue::Entity::find_by_id(req.issue_id.clone())
-        .one(&app.db)
+    // Validate the issue exists and the caller can open it: a removed issue
+    // (or one of a removed series) would read back as `missing` at once
+    // (`dead_match`), and an issue outside the grant must answer exactly
+    // like an unknown id.
+    use sea_orm::PaginatorTrait;
+    let acl = crate::library::access::for_user(&app, &user).await;
+    let issue_exists = crate::library::access::visible_issues_select(&acl)
+        .filter(entity::issue::Column::Id.eq(req.issue_id.clone()))
+        .count(&app.db)
         .await
-        .ok()
-        .flatten()
-        .is_some();
+        .is_ok_and(|n| n > 0);
     if !issue_exists {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,

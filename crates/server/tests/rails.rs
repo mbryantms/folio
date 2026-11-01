@@ -2426,3 +2426,67 @@ async fn wave2_system_rails_are_seeded_opt_in() {
         assert_eq!(row["pinned"], false, "{key} is opt-in");
     }
 }
+
+/// E7: a removed series never surfaces through its issues on the rails, so
+/// Continue reading drops an in-progress issue whose series was soft-removed
+/// (its dismissal would 404 since the dismiss target check requires a live
+/// parent series) and shows it again once the series is back.
+#[tokio::test]
+async fn continue_reading_hides_issues_of_a_removed_series() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "rail-series-removed@example.com").await;
+    demote_to_user(&app, user.user_id).await;
+    let (lib_id, series_id, issue_id) = seed_one_issue(&app, "srm").await;
+    grant_access(&app, user.user_id, lib_id).await;
+    write_progress(
+        &app,
+        user.user_id,
+        &issue_id,
+        5,
+        false,
+        Utc::now().fixed_offset(),
+    )
+    .await;
+    let listed = |body: &serde_json::Value| body["items"].as_array().unwrap().len();
+
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(listed(&body), 1);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    db.execute_unprepared(&format!(
+        "UPDATE series SET removed_at = now() WHERE id = '{series_id}'"
+    ))
+    .await
+    .unwrap();
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(listed(&body), 0, "{body}");
+
+    db.execute_unprepared(&format!(
+        "UPDATE series SET removed_at = NULL WHERE id = '{series_id}'"
+    ))
+    .await
+    .unwrap();
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/continue-reading",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(listed(&body), 1);
+}

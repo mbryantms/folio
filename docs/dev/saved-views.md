@@ -343,6 +343,35 @@ caller owns or that is global). A dismissal whose target is soft-removed,
 outside the caller's grant, over the age cap, or deleted is **omitted**
 and counted in `unavailable`, so nothing about it reaches the client; it
 reappears in the list if the target becomes visible again.
+Creating a dismissal applies the same selects: a target the list would
+omit (soft-removed, non-active issue, outside the grant, over the cap)
+answers the same 404 as a missing one and stores nothing.
+The rails themselves (Continue reading, Recently read, On this day,
+Recently added, On Deck series) also skip issues of a removed series, so
+nothing a rail shows is undismissable.
+
+## Visibility on the other personal surfaces
+
+- **Collections**: `POST /me/collections/{id}/entries` and
+  `…/members/bulk-add` accept only a target the entries page would list
+  (`collections::visible_{series,issues}_select`); an invisible target is
+  a 404 (single add) or `not_found` (bulk add), exactly like a missing one.
+- **CBL lists**: a match whose issue (or its series) was soft-removed reads
+  as **missing**: `stats.matched` drops it and `stats.missing` gains it,
+  `?status=matched` leaves it out and `?status=missing` (the Resolution
+  tab) lists it, and the entry view says `match_status: "missing"` while
+  keeping `matched_issue_id`, so the match returns with the file.
+  A manual match to such an issue (or one outside the grant) answers
+  like an unknown id, and the create response reads its counts through
+  the same `stats_for`.
+- **Markers**: list, count, search and the tag index use
+  `access::visible_issues_select` / its SQL twin `access::visible_issues_sql`,
+  so a removed parent series hides its issues' markers too.
+- **Reading stats**: `/me/reading-stats` counts only sessions on issues the
+  caller can see (`access::visible_issues_sql`), totals and streaks
+  included, because the page links its rankings to series and issues and
+  the totals must agree with them. The admin's per-user view applies the
+  removed rule only. Session rows are kept, so a restore brings them back.
 
 The web surface is the "Hidden from rails" section under Settings → Pages
 (`web/components/settings/HiddenRailItems.tsx`, `useRailDismissals` +
