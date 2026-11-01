@@ -2624,7 +2624,9 @@ export interface paths {
          *     decoder, and emits `UnreadablePage` health-issues for failures.
          * @description Returns immediately. The job runs in a `tokio::spawn` background
          *     task without apalis-style persistence; a server restart abandons
-         *     the in-flight run and the operator can re-trigger.
+         *     the in-flight run (the next boot marks its row failed) and the
+         *     operator can re-trigger. Cancel it like a scan
+         *     (`POST /libraries/{slug}/scan-runs/{id}/cancel`, the Live scan page).
          *
          *     **Cost.** Image-decoding every page in a 20K-issue library can
          *     take 1-2 hours of single-core CPU. Operator-only; never
@@ -6601,7 +6603,8 @@ export interface components {
             scans_queued: number;
             /**
              * Format: int64
-             * @description Scan runs executing (any kind: library, series, issue).
+             * @description Scan runs executing (library, series or issue; deep validations
+             *     count under `tasks`).
              */
             scans_running: number;
             /**
@@ -6644,7 +6647,7 @@ export interface components {
             sidecar_reemits: components["schemas"]["SidecarReemitWorkView"][];
             /**
              * @description Spawned tasks with no queue (process-local): deep validation,
-             *     reading-list rematch.
+             *     reading-list rematch; plus stalled deep-validation rows.
              */
             tasks: components["schemas"]["TaskWorkView"][];
             totals: components["schemas"]["BackgroundWorkTotals"];
@@ -15067,6 +15070,14 @@ export interface components {
             /** @description `deep_validate` | `cbl_rematch`. */
             kind: string;
             library_id?: string | null;
+            /** @description The `scan_runs` row the task owns (`deep_validate` only). */
+            scan_run_id?: string | null;
+            /**
+             * @description A `deep_validate` run row still `running` with no task in this
+             *     process behind it, so nothing will advance or close it (cancel it
+             *     through `scan_run_id`). Excluded from `busy`.
+             */
+            stalled: boolean;
             started_at: string;
         };
         TestEmailResp: {
@@ -21543,6 +21554,13 @@ export interface operations {
             };
             /** @description library not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description a deep validation of this library is already running */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

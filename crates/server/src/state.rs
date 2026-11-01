@@ -364,6 +364,26 @@ impl AppState {
         kind: &'static str,
         library_id: Option<uuid::Uuid>,
     ) -> BackgroundTaskGuard {
+        self.register_background_task(kind, library_id, None)
+    }
+
+    /// [`Self::track_background_task`] for a task that owns a `scan_runs`
+    /// row, so readers can tell its live row from an abandoned one.
+    pub fn track_background_run(
+        &self,
+        kind: &'static str,
+        library_id: Option<uuid::Uuid>,
+        run_id: uuid::Uuid,
+    ) -> BackgroundTaskGuard {
+        self.register_background_task(kind, library_id, Some(run_id))
+    }
+
+    fn register_background_task(
+        &self,
+        kind: &'static str,
+        library_id: Option<uuid::Uuid>,
+        run_id: Option<uuid::Uuid>,
+    ) -> BackgroundTaskGuard {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.background_tasks
@@ -374,6 +394,7 @@ impl AppState {
                 BackgroundTask {
                     kind,
                     library_id,
+                    run_id,
                     started_at: chrono::Utc::now(),
                 },
             );
@@ -471,6 +492,8 @@ pub struct BackgroundTask {
     /// Stable identifier, e.g. `deep_validate`, `cbl_rematch`.
     pub kind: &'static str,
     pub library_id: Option<uuid::Uuid>,
+    /// The `scan_runs` row the task owns (deep validation), if any.
+    pub run_id: Option<uuid::Uuid>,
     pub started_at: chrono::DateTime<chrono::Utc>,
 }
 

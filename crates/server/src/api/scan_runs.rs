@@ -603,7 +603,11 @@ pub(crate) async fn resolve_joins(
 ///   - Uses a single SQL statement keyed off `ROW_NUMBER() OVER (PARTITION BY
 ///     library_id ORDER BY started_at DESC)` so the per-library "last N"
 ///     behavior is one round-trip rather than one-per-library.
-pub(crate) async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<u64> {
+///   - Only finished rows are counted or deleted: a `queued` / `running` row
+///     belongs to work still in flight (an hours-long deep validation can
+///     see more than `keep` scoped scans land), and deleting it would orphan
+///     that work's run and its health rows' `scan_id`.
+pub async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<u64> {
     // Postgres-only — the workspace already pins sea-orm to sqlx-postgres.
     let stmt = Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -615,6 +619,7 @@ pub(crate) async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<
                         PARTITION BY library_id ORDER BY started_at DESC
                     ) AS rn
                     FROM scan_runs
+                    WHERE state IN ('complete', 'failed', 'cancelled')
                 ) AS sub
                 WHERE sub.rn > $1
             )

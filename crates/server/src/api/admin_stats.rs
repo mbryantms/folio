@@ -205,13 +205,16 @@ pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Resp
         }
     };
 
+    // A deep validation owns a `scan_runs` row but is not a scan job.
     let scans_in_flight = scan_run::Entity::find()
         .filter(scan_run::Column::State.eq(scan_run::ScanRunState::Running))
+        .filter(scan_run::Column::Kind.ne(scan_run::ScanRunKind::DeepValidate))
         .count(&app.db)
         .await
         .unwrap_or(0) as i64;
     let scans_queued = scan_run::Entity::find()
         .filter(scan_run::Column::State.eq(scan_run::ScanRunState::Queued))
+        .filter(scan_run::Column::Kind.ne(scan_run::ScanRunKind::DeepValidate))
         .count(&app.db)
         .await
         .unwrap_or(0) as i64;

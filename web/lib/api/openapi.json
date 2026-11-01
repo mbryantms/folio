@@ -5706,7 +5706,7 @@
     "/api/libraries/{slug}/validate-deeply": {
       "post": {
         "summary": "Tranche C of recovery-visibility — admin-triggered deep page-\ndecode validation. Walks every active issue in the library,\nreads every page entry, runs each through the `image` crate's\ndecoder, and emits `UnreadablePage` health-issues for failures.",
-        "description": "Returns immediately. The job runs in a `tokio::spawn` background\ntask without apalis-style persistence; a server restart abandons\nthe in-flight run and the operator can re-trigger.\n\n**Cost.** Image-decoding every page in a 20K-issue library can\ntake 1-2 hours of single-core CPU. Operator-only; never\nautomatic.",
+        "description": "Returns immediately. The job runs in a `tokio::spawn` background\ntask without apalis-style persistence; a server restart abandons\nthe in-flight run (the next boot marks its row failed) and the\noperator can re-trigger. Cancel it like a scan\n(`POST /libraries/{slug}/scan-runs/{id}/cancel`, the Live scan page).\n\n**Cost.** Image-decoding every page in a 20K-issue library can\ntake 1-2 hours of single-core CPU. Operator-only; never\nautomatic.",
         "operationId": "libraries_validate_deeply",
         "parameters": [
           {
@@ -5733,6 +5733,9 @@
           },
           "404": {
             "description": "library not found"
+          },
+          "409": {
+            "description": "a deep validation of this library is already running"
           }
         }
       }
@@ -15387,7 +15390,7 @@
           "scans_running": {
             "type": "integer",
             "format": "int64",
-            "description": "Scan runs executing (any kind: library, series, issue)."
+            "description": "Scan runs executing (library, series or issue; deep validations\ncount under `tasks`)."
           },
           "scans_stalled": {
             "type": "integer",
@@ -15465,7 +15468,7 @@
             "items": {
               "$ref": "#/components/schemas/TaskWorkView"
             },
-            "description": "Spawned tasks with no queue (process-local): deep validation,\nreading-list rematch."
+            "description": "Spawned tasks with no queue (process-local): deep validation,\nreading-list rematch; plus stalled deep-validation rows."
           },
           "totals": {
             "$ref": "#/components/schemas/BackgroundWorkTotals"
@@ -35401,7 +35404,8 @@
         "description": "A long-running task spawned outside the job queues.",
         "required": [
           "kind",
-          "started_at"
+          "started_at",
+          "stalled"
         ],
         "properties": {
           "kind": {
@@ -35413,6 +35417,17 @@
               "string",
               "null"
             ]
+          },
+          "scan_run_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `scan_runs` row the task owns (`deep_validate` only)."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "A `deep_validate` run row still `running` with no task in this\nprocess behind it, so nothing will advance or close it (cancel it\nthrough `scan_run_id`). Excluded from `busy`."
           },
           "started_at": {
             "type": "string"

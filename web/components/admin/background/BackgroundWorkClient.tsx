@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { useCancelMetadataBatch } from "@/lib/api/mutations";
+import { useCancelMetadataBatch, useCancelScanRun } from "@/lib/api/mutations";
 import { useBackgroundWork } from "@/lib/api/queries";
 import {
   otherWork,
@@ -42,6 +42,7 @@ import type {
   LibraryWorkView,
   MetadataBatchWorkView,
   SidecarReemitWorkView,
+  TaskWorkView,
 } from "@/lib/api/types";
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -423,6 +424,7 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
   const tasks = view.tasks;
   const reemits = view.sidecar_reemits;
   const libraryName = new Map(view.libraries.map((l) => [l.id, l.name]));
+  const librarySlug = new Map(view.libraries.map((l) => [l.id, l.slug]));
   const now = Date.parse(view.generated_at);
   return (
     <Card>
@@ -464,26 +466,20 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
         {tasks.length > 0 ? (
           <ul className="divide-border divide-y">
             {tasks.map((t) => (
-              <li
-                key={`${t.kind}:${t.library_id ?? ""}:${t.started_at}`}
-                className="flex items-center justify-between gap-4 py-2 text-sm"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <Loader2
-                    className="text-muted-foreground size-3.5 shrink-0 animate-spin"
-                    aria-hidden="true"
-                  />
-                  <span className="truncate">
-                    {taskLabel(t.kind)}
-                    {t.library_id && libraryName.has(t.library_id)
-                      ? ` — ${libraryName.get(t.library_id)}`
-                      : ""}
-                  </span>
-                </span>
-                <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                  {startedAgo(t.started_at, now)}
-                </span>
-              </li>
+              <TaskRow
+                key={
+                  t.scan_run_id ??
+                  `${t.kind}:${t.library_id ?? ""}:${t.started_at}`
+                }
+                task={t}
+                libraryName={
+                  t.library_id ? libraryName.get(t.library_id) : undefined
+                }
+                librarySlug={
+                  t.library_id ? librarySlug.get(t.library_id) : undefined
+                }
+                now={now}
+              />
             ))}
           </ul>
         ) : null}
@@ -513,6 +509,102 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/** One spawned task. A deep validation owns a scan run, so it can be
+ *  cancelled from here — the only place a stalled one (its process died,
+ *  nothing will close it) can be, once a newer scan hides it from the
+ *  library's live scan page. */
+function TaskRow({
+  task,
+  libraryName,
+  librarySlug,
+  now,
+}: {
+  task: TaskWorkView;
+  libraryName: string | undefined;
+  librarySlug: string | undefined;
+  now: number;
+}) {
+  const cancel = useCancelScanRun(librarySlug ?? "");
+  const [confirm, setConfirm] = useState(false);
+  const runId = librarySlug ? task.scan_run_id : null;
+  const label = `${taskLabel(task.kind)}${libraryName ? ` — ${libraryName}` : ""}`;
+  return (
+    <li className="flex items-center justify-between gap-4 py-2 text-sm">
+      <span className="flex min-w-0 items-center gap-2">
+        {task.stalled ? (
+          <Clock
+            className={cn("size-3.5 shrink-0", statusToneText("warning"))}
+            aria-hidden="true"
+          />
+        ) : (
+          <Loader2
+            className="text-muted-foreground size-3.5 shrink-0 animate-spin"
+            aria-hidden="true"
+          />
+        )}
+        <span className="truncate">
+          {label}
+          {task.stalled ? (
+            <span className={cn("ml-2 text-xs", statusToneText("warning"))}>
+              stalled — nothing is running it
+            </span>
+          ) : null}
+        </span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1">
+        <span className="text-muted-foreground text-xs tabular-nums">
+          {startedAgo(task.started_at, now)}
+        </span>
+        {runId ? (
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-destructive h-7 w-7"
+              aria-label={`Cancel ${label}`}
+              title="Cancel this run"
+              disabled={cancel.isPending}
+              onClick={() => setConfirm(true)}
+            >
+              <XCircle className="size-4" />
+            </Button>
+            <AlertDialog open={confirm} onOpenChange={setConfirm}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Cancel {label}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {task.stalled
+                      ? "Nothing is running it any more; this closes its run as cancelled."
+                      : "It stops at the next issue. Problems it already found stay on the Health tab."}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={cancel.isPending}>
+                    Keep it
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={cancel.isPending}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={() =>
+                      cancel.mutate(
+                        { scanId: runId },
+                        { onSettled: () => setConfirm(false) },
+                      )
+                    }
+                  >
+                    {cancel.isPending ? "Cancelling…" : "Cancel run"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
+        ) : null}
+      </span>
+    </li>
   );
 }
 

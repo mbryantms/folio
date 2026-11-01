@@ -701,3 +701,373 @@ async fn cancelled_scan_skips_reconcile_and_preserves_series() {
         "cancelled scan skipped reconcile — no series soft-deleted",
     );
 }
+
+// ─────────────────────────────────────────────────────────────
+// E11: deep-validate run lifecycle. A deep validation owns a
+// `scan_runs` row (`kind = deep_validate`) but no queue job: a cancel
+// must stand, an error after the insert must close the row `failed`,
+// and Background work must list a live run as a task, not as a
+// stalled scan.
+// ─────────────────────────────────────────────────────────────
+
+/// `http` against a cloned router, for use inside `'static` hooks.
+async fn http_on(
+    router: axum::Router,
+    method: Method,
+    uri: String,
+    session: String,
+    csrf: String,
+) -> (StatusCode, serde_json::Value) {
+    let req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(
+            header::COOKIE,
+            format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}"),
+        )
+        .header("X-CSRF-Token", csrf)
+        .body(Body::empty())
+        .unwrap();
+    let resp = router.oneshot(req).await.unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+/// Three scanned issues for a deep validation to walk.
+async fn scanned_library(app: &TestApp, tmp: &Path) -> Uuid {
+    for (i, name) in ["Alpha (2025)", "Beta (2025)", "Gamma (2025)"]
+        .into_iter()
+        .enumerate()
+    {
+        let folder = tmp.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        write_cbz(&folder.join(format!("{name} 001.cbz")), i as u32 + 1);
+    }
+    let lib_id = create_on_disk_library(app, tmp).await;
+    let s = server::library::scanner::scan_library(&app.state(), lib_id)
+        .await
+        .unwrap();
+    assert_eq!(s.files_added, 3, "{s:?}");
+    lib_id
+}
+
+async fn deep_validate_row(db: &sea_orm::DatabaseConnection, lib_id: Uuid) -> scan_run::Model {
+    scan_run::Entity::find()
+        .filter(scan_run::Column::LibraryId.eq(lib_id))
+        .filter(scan_run::Column::Kind.eq(scan_run::ScanRunKind::DeepValidate))
+        .one(db)
+        .await
+        .unwrap()
+        .expect("deep-validate run row")
+}
+
+/// A cancel that lands mid-run stops the walk, and the run's closing
+/// write leaves the row `cancelled` (it used to overwrite it with
+/// `complete`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deep_validate_cancelled_mid_run_stays_cancelled() {
+    use server::library::deep_validate::{self, RunOptions};
+
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-dv-cancel@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = scanned_library(&app, tmp.path()).await;
+    let state = app.state();
+
+    let (router, db) = (app.router.clone(), state.db.clone());
+    let (session, csrf) = (auth.session.clone(), auth.csrf.clone());
+    let hook: deep_validate::AfterIssueHook = std::sync::Arc::new(move |walked| {
+        let (router, db) = (router.clone(), db.clone());
+        let (session, csrf) = (session.clone(), csrf.clone());
+        Box::pin(async move {
+            if walked == 1 {
+                let row = deep_validate_row(&db, lib_id).await;
+                assert_eq!(row.state, scan_run::ScanRunState::Running);
+                let uri = format!("/api/libraries/{lib_id}/scan-runs/{}/cancel", row.id);
+                let (status, body) = http_on(router, Method::POST, uri, session, csrf).await;
+                assert_eq!(status, StatusCode::OK, "cancel: {body:#?}");
+            }
+            Ok(())
+        })
+    });
+    let stats = deep_validate::run_with(
+        &state,
+        lib_id,
+        RunOptions {
+            after_issue: Some(hook),
+            cancel_poll_interval: Some(std::time::Duration::ZERO),
+        },
+    )
+    .await
+    .expect("a cancelled run is not an error");
+    assert!(stats.cancelled, "{stats:?}");
+    assert_eq!(
+        stats.issues_probed + stats.issues_unopenable,
+        1,
+        "the walk stops at the next issue: {stats:?}"
+    );
+
+    let row = deep_validate_row(&state.db, lib_id).await;
+    assert_eq!(row.state, scan_run::ScanRunState::Cancelled);
+    assert_eq!(row.error.as_deref(), Some("Cancelled by admin"));
+    assert!(row.ended_at.is_some());
+    assert_eq!(
+        row.stats["issues_probed"].as_u64().unwrap()
+            + row.stats["issues_unopenable"].as_u64().unwrap(),
+        1,
+        "partial stats recorded: {}",
+        row.stats
+    );
+}
+
+/// An error after the row is inserted closes it `failed` with the
+/// message (it used to stay `running` forever), and the run stops
+/// listing as a background task.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deep_validate_error_after_insert_closes_the_row_failed() {
+    use server::library::deep_validate::{self, RunOptions};
+
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-dv-fail@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = scanned_library(&app, tmp.path()).await;
+    let state = app.state();
+
+    let hook: deep_validate::AfterIssueHook = std::sync::Arc::new(|walked| {
+        Box::pin(async move {
+            if walked == 2 {
+                anyhow::bail!("injected failure");
+            }
+            Ok(())
+        })
+    });
+    let err = deep_validate::run_with(
+        &state,
+        lib_id,
+        RunOptions {
+            after_issue: Some(hook),
+            cancel_poll_interval: Some(std::time::Duration::ZERO),
+        },
+    )
+    .await
+    .expect_err("the injected error fails the run");
+    assert!(err.to_string().contains("injected failure"), "{err:#}");
+
+    let row = deep_validate_row(&state.db, lib_id).await;
+    assert_eq!(row.state, scan_run::ScanRunState::Failed);
+    assert!(
+        row.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("injected failure"),
+        "{:?}",
+        row.error
+    );
+    assert!(row.ended_at.is_some());
+    assert_eq!(
+        row.stats["issues_probed"].as_u64().unwrap()
+            + row.stats["issues_unopenable"].as_u64().unwrap(),
+        2,
+        "partial stats recorded: {}",
+        row.stats
+    );
+
+    let (status, body) = http(&app, Method::GET, "/api/admin/background-work", &auth).await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert!(
+        body["tasks"].as_array().unwrap().is_empty(),
+        "a finished run lists no task: {body:#?}"
+    );
+}
+
+/// Background work lists a running deep validation as a task under its
+/// own kind, never as a (stalled) scan. A row no task owns (the process
+/// that ran it died) lists as a stalled task, and the boot sweep closes
+/// it `failed`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn background_work_lists_deep_validate_as_a_task_not_a_stalled_scan() {
+    use server::library::deep_validate::{self, RunOptions};
+
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-dv-bgwork@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = scanned_library(&app, tmp.path()).await;
+    let state = app.state();
+
+    let seen: std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>> = Default::default();
+    let (router, slot) = (app.router.clone(), seen.clone());
+    let (session, csrf) = (auth.session.clone(), auth.csrf.clone());
+    let hook: deep_validate::AfterIssueHook = std::sync::Arc::new(move |walked| {
+        let (router, slot) = (router.clone(), slot.clone());
+        let (session, csrf) = (session.clone(), csrf.clone());
+        Box::pin(async move {
+            if walked == 1 {
+                let uri = "/api/admin/background-work".to_owned();
+                let (status, body) = http_on(router, Method::GET, uri, session, csrf).await;
+                assert_eq!(status, StatusCode::OK, "{body:#?}");
+                *slot.lock().unwrap() = Some(body);
+            }
+            Ok(())
+        })
+    });
+    deep_validate::run_with(
+        &state,
+        lib_id,
+        RunOptions {
+            after_issue: Some(hook),
+            cancel_poll_interval: Some(std::time::Duration::ZERO),
+        },
+    )
+    .await
+    .unwrap();
+    let body = seen.lock().unwrap().take().expect("snapshot taken mid-run");
+    let row = deep_validate_row(&state.db, lib_id).await;
+    assert_eq!(row.state, scan_run::ScanRunState::Complete);
+
+    let totals = &body["totals"];
+    assert_eq!(totals["scans_stalled"], 0, "{body:#?}");
+    assert_eq!(totals["scans_running"], 0, "{body:#?}");
+    assert_eq!(totals["busy"], true, "{body:#?}");
+    let lib = body["libraries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["id"] == lib_id.to_string())
+        .expect("library row");
+    assert!(lib["scan"].is_null(), "not a library scan: {lib:#?}");
+    assert_eq!(lib["scoped_scans"], 0, "not a scoped scan: {lib:#?}");
+    let tasks = body["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1, "{body:#?}");
+    assert_eq!(tasks[0]["kind"], "deep_validate");
+    assert_eq!(tasks[0]["library_id"], lib_id.to_string());
+    assert_eq!(tasks[0]["scan_run_id"], row.id.to_string());
+    assert_eq!(tasks[0]["stalled"], false);
+
+    // A row whose process died: no task owns it.
+    let orphan = Uuid::now_v7();
+    scan_run::ActiveModel {
+        id: Set(orphan),
+        library_id: Set(lib_id),
+        state: Set(scan_run::ScanRunState::Running),
+        started_at: Set(Utc::now().fixed_offset()),
+        ended_at: Set(None),
+        stats: Set(serde_json::json!({})),
+        error: Set(None),
+        kind: Set(scan_run::ScanRunKind::DeepValidate),
+        series_id: Set(None),
+        issue_id: Set(None),
+        batch_id: Set(None),
+    }
+    .insert(&state.db)
+    .await
+    .unwrap();
+    let (_, body) = http(&app, Method::GET, "/api/admin/background-work", &auth).await;
+    assert_eq!(body["totals"]["scans_stalled"], 0, "{body:#?}");
+    let tasks = body["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1, "{body:#?}");
+    assert_eq!(tasks[0]["scan_run_id"], orphan.to_string());
+    assert_eq!(tasks[0]["stalled"], true);
+
+    let closed = deep_validate::close_interrupted_runs(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(closed, 1);
+    let row = scan_run::Entity::find_by_id(orphan)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.state, scan_run::ScanRunState::Failed);
+    assert_eq!(row.error.as_deref(), Some(deep_validate::INTERRUPTED_ERROR));
+    let (_, body) = http(&app, Method::GET, "/api/admin/background-work", &auth).await;
+    assert!(body["tasks"].as_array().unwrap().is_empty(), "{body:#?}");
+}
+
+/// A second deep validation of a library that already has one running is
+/// refused, so a retry or double-click does not double the decode work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn second_deep_validate_of_a_library_is_refused_while_one_runs() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-dv-twice@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = create_on_disk_library(&app, tmp.path()).await;
+    let state = app.state();
+    let uri = format!("/api/libraries/{lib_id}/validate-deeply");
+
+    let live = state.track_background_run(
+        server::library::deep_validate::TASK_KIND,
+        Some(lib_id),
+        Uuid::now_v7(),
+    );
+    let (status, body) = http(&app, Method::POST, &uri, &auth).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body:#?}");
+    assert_eq!(body["error"]["code"], "already_running");
+
+    drop(live);
+    let (status, body) = http(&app, Method::POST, &uri, &auth).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body:#?}");
+    // Let the spawned run (an empty library) finish before teardown.
+    for _ in 0..100 {
+        let done = scan_run::Entity::find()
+            .filter(scan_run::Column::LibraryId.eq(lib_id))
+            .filter(scan_run::Column::Kind.eq(scan_run::ScanRunKind::DeepValidate))
+            .one(&state.db)
+            .await
+            .unwrap()
+            .is_some_and(|r| r.state.is_terminal());
+        if done && !server::library::deep_validate::is_running(&state, lib_id) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the accepted deep validation never finished");
+}
+
+/// The daily history trim keeps unfinished rows and counts only finished
+/// ones: deleting a live run's row (an hours-long deep validation outlives
+/// many scoped scans) would orphan the run and its health rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scan_run_prune_keeps_unfinished_rows() {
+    let app = TestApp::spawn().await;
+    let (lib_id, _slug, running_id) = seed_library_and_scan_run(&app, "running").await;
+    let state = app.state();
+    let mut done = Vec::new();
+    for i in 1..=3 {
+        let id = Uuid::now_v7();
+        scan_run::ActiveModel {
+            id: Set(id),
+            library_id: Set(lib_id),
+            state: Set(scan_run::ScanRunState::Complete),
+            started_at: Set((Utc::now() + chrono::Duration::seconds(i)).fixed_offset()),
+            ended_at: Set(Some(Utc::now().fixed_offset())),
+            stats: Set(serde_json::json!({})),
+            error: Set(None),
+            kind: Set(scan_run::ScanRunKind::Issue),
+            series_id: Set(None),
+            issue_id: Set(None),
+            batch_id: Set(None),
+        }
+        .insert(&state.db)
+        .await
+        .unwrap();
+        done.push(id);
+    }
+
+    let deleted = server::api::scan_runs::prune(&state.db, 1).await.unwrap();
+    assert_eq!(deleted, 2, "two of the three finished rows go");
+    let left: std::collections::HashSet<Uuid> = scan_run::Entity::find()
+        .filter(scan_run::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+    assert!(left.contains(&running_id), "the running row survives");
+    assert!(left.contains(&done[2]), "the newest finished row stays");
+    assert_eq!(left.len(), 2);
+}
