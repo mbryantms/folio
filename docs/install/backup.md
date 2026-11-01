@@ -210,3 +210,10 @@ cd /tmp/folio-restore-test
   number, so it stays readable after a rebuild or on another host. The
   shape is documented in [`docs/dev/export-format.md`](../dev/export-format.md).
   There is no importer; it is a durable copy, not a restore path.
+- **A holdings list.** **Settings → Account → Download holdings**
+  (`GET /api/me/holdings.csv?scope=series|issues&library=<slug>`) saves
+  a CSV of what the account can see: one row per series or per issue,
+  with provider ids and read state. Admins also get each folder / file
+  path, which makes it a handy inventory to keep beside the library
+  backup (insurance, or checking a restore is complete). Format notes in
+  [`docs/dev/export-format.md`](../dev/export-format.md#holdings-csv).

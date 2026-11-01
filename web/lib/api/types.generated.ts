@@ -3330,6 +3330,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/holdings.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["holdings_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/issues/bulk-metadata": {
         parameters: {
             query?: never;
@@ -22254,6 +22270,57 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    holdings_export: {
+        parameters: {
+            query?: {
+                /** @description `series` (default) or `issues`; anything else is a 400 */
+                scope?: string;
+                /** @description Library slug; omit for every library the caller can see */
+                library?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description UTF-8 CSV with a byte-order mark, streamed; `Content-Disposition: attachment; filename="folio-holdings-<scope>-<date>.csv"`. Admins get a trailing folder / file path column. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
+                };
+            };
+            /** @description unknown scope */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library slug unknown or not visible to the caller */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -444,6 +444,10 @@ per-list opt-out to preserve curated orders).
   and incognito mode for one-off private reads.
 - The **Reading Log** unifies finishes, completed sessions, and new
   bookmarks/notes into one reverse-chronological timeline.
+- **Holdings export**: Settings → Account → Download holdings saves a CSV
+  of the series or issues you can see (optionally one library), with
+  owned / read counts, read state and ComicVine / Metron / GCD ids, for a
+  spreadsheet, an insurance record or a want-list comparison.
 - **Series completion** is collector-aware: "Caught up — series ongoing"
   is distinct from "Complete", and annuals/specials don't count toward
   completion of the main run. Planned (remediation WP B9): a per-user
