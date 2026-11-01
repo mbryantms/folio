@@ -2532,8 +2532,8 @@ pub(crate) async fn hydrate_series(
     // Per-viewer read progress for the card hover preview — one grouped
     // query over the page, shared with `get_one` so the numbers match.
     let page_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
-    // Whether specials count toward completion for this viewer (B9) — one
-    // account lookup + one override query for the page, run alongside the
+    // Whether specials count toward completion for this viewer (B9) — a
+    // single account + override query for the page, run alongside the
     // progress rollup.
     let (progress, completion) = tokio::join!(
         fetch_progress_summaries(app, viewer, &page_ids),

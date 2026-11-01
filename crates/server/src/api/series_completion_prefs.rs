@@ -25,8 +25,8 @@ use axum::{
 };
 use chrono::Utc;
 use entity::user::UserRole;
-use entity::{series, user, user_series_completion_prefs as prefs};
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Set};
+use entity::{series, user_series_completion_prefs as prefs};
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, FromQueryResult, Set, Statement};
 use serde::{Deserialize, Serialize};
 use server_macros::handler;
 use utoipa_axum::router::OpenApiRouter;
@@ -73,7 +73,7 @@ impl SpecialsCompletion {
 }
 
 /// The account setting plus the caller's overrides for a batch of series.
-/// One query each, whatever the batch size.
+/// One query, whatever the batch size.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CompletionPrefs {
     account_default: bool,
@@ -89,36 +89,38 @@ impl CompletionPrefs {
         viewer: Uuid,
         series_ids: &[Uuid],
     ) -> Self {
-        let account_default = user::Entity::find_by_id(viewer)
-            .select_only()
-            .column(user::Column::CountSpecialsInCompleteness)
-            .into_tuple::<bool>()
-            .one(db)
+        // One round trip: the caller's `users` row LEFT JOINed to their
+        // overrides for the batch (PK range scan on `(user_id, series_id)`).
+        // Every row carries the account flag; the override columns are NULL
+        // when the caller has none for the page.
+        #[derive(FromQueryResult)]
+        struct Row {
+            account_default: bool,
+            series_id: Option<Uuid>,
+            count_specials: Option<bool>,
+        }
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT u.count_specials_in_completeness AS account_default, \
+                    p.series_id, p.count_specials \
+             FROM users u \
+             LEFT JOIN user_series_completion_prefs p \
+               ON p.user_id = u.id AND p.series_id = ANY($2) \
+             WHERE u.id = $1",
+            [viewer.into(), series_ids.to_vec().into()],
+        );
+        let rows = Row::find_by_statement(stmt)
+            .all(db)
             .await
             .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "completion prefs: account setting lookup failed");
-                None
-            })
-            .unwrap_or(false);
-        let overrides = if series_ids.is_empty() {
-            HashMap::new()
-        } else {
-            prefs::Entity::find()
-                .filter(prefs::Column::UserId.eq(viewer))
-                .filter(prefs::Column::SeriesId.is_in(series_ids.iter().copied()))
-                .select_only()
-                .column(prefs::Column::SeriesId)
-                .column(prefs::Column::CountSpecials)
-                .into_tuple::<(Uuid, bool)>()
-                .all(db)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(error = %e, "completion prefs: override lookup failed");
-                    Vec::new()
-                })
-                .into_iter()
-                .collect()
-        };
+                tracing::warn!(error = %e, "completion prefs: lookup failed");
+                Vec::new()
+            });
+        let account_default = rows.first().is_some_and(|r| r.account_default);
+        let overrides: HashMap<Uuid, bool> = rows
+            .into_iter()
+            .filter_map(|r| Some((r.series_id?, r.count_specials?)))
+            .collect();
         Self {
             account_default,
             overrides,
