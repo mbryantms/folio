@@ -687,15 +687,35 @@ path that genuinely reads the wide or many scalar columns:
   issue fetch.
 - The manual-writeback series fan-out (`metadata/manual_writeback`),
   which composes the sidecar XML from each full row.
-- The OPDS feeds (see the backlog).
+- The single-row OPDS paths: the file download, the PSE page stream
+  (`opds_pse.rs`), OPDS progression / KOReader sync writes and the Komga
+  shim. Each loads one issue by id, so a projection buys nothing.
 
-**Backlog: OPDS acquisition feeds** (`opds.rs` ×4, `opds_v2.rs` ×3). A
-50-entry page hydrates full rows. The entries read about 25 scalar columns
-(credits, summary, dates, size) but never `comic_info_raw` or `pages`. An
-`OpdsEntryRow` projection that drops the two JSON blobs would help, but
-`build_acquisition_feed` takes `&[issue::Model]` from about 20 call sites
-across both OPDS versions, and no top-ten plan involves it, so it is left
-as a follow-up.
+**OPDS acquisition feeds — projected (audit N-L6, 2026-10-31).** Every
+OPDS 1.2 acquisition feed and every OPDS 2.0 publication feed selects
+`opds::OpdsIssueRow` (`.into_partial_model::<OpdsIssueRow>()`): the 18
+columns an Atom `<entry>` or a JSON-LD publication renders — identity / ACL
+(`id`, `series_id`, `library_id`, `age_rating`), `file_path` for the MIME,
+`title` / `number_raw`, the `year` / `month` / `day` triple behind
+`dc:issued` / `published`, `summary`, `language_code`, `publisher`, the
+first `writer`, `genre` + `tags` subjects, `page_count` for the PSE count
+and `updated_at`. `IssueCardRow` alone cannot serve an OPDS entry (it has
+no Dublin Core columns), so this is a second, slightly wider projection;
+both leave `comic_info_raw`, `pages` and the legacy CSV credit columns on
+disk. Converted, in both protocol versions: `recent` (which also gained
+`?page=` paging in place of its hard `LIMIT 50`), `new-this-month` (paged the
+same way; both share `opds::discovery_feed_page`, whose count selects only
+`id`), the
+per-series feed, the id-set hydrate (`fetch_visible_issues_preserving_order`)
+behind `continue`, `on-deck`, `history`, the CBL reading-list feed and the
+issue-filter saved-view feed, the mixed collection / Want to Read feed, and
+the entity feeds (`opds/entities.rs`, `opds_v2/entities.rs`). The renderers
+(`render_issue_acq_entry`, `entry_metadata`, `render_pse_stream_link`,
+`opds_v2::publication_for`) take the row type, so a new column an entry
+needs has to be added to the projection first — the compiler enforces it.
+Guard: `perf_regressions.rs::opds_recent_feed_is_projected_and_paged`
+asserts no statement behind `/opds/v1/recent` or `/opds/v2/recent`,
+the count included, names `comic_info_raw` or `pages`.
 
 ## `oha` recipe (spec §18.3)
 

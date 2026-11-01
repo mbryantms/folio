@@ -33,8 +33,9 @@ use entity::{
     series_credit, series_genre, user as user_entity, user_page, user_view_pin,
 };
 use sea_orm::{
-    ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Statement, sea_query::PostgresQueryBuilder,
+    ColumnTrait, Condition, DerivePartialModel, EntityTrait, FromQueryResult, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Statement, prelude::DateTimeWithTimeZone,
+    sea_query::PostgresQueryBuilder,
 };
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -766,6 +767,7 @@ async fn series_one(
         .order_by_asc(issue::Column::SortNumber)
         .offset(offset)
         .limit(PAGE_SIZE)
+        .into_partial_model::<OpdsIssueRow>()
         .all(&app.db)
         .await
     {
@@ -915,29 +917,63 @@ fn render_related_arc_links(
     out
 }
 
-async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
-    let allowed = match allowed_libraries(&app, &user).await {
+/// `/opds/v1/recent` — every visible issue, newest `created_at` first,
+/// paginated at [`PAGE_SIZE`] with the same `first` / `previous` / `next`
+/// / `last` rels as the other v1 feeds (audit N-L6: this used to be a
+/// hard `LIMIT 50` with no paging). Rows come from
+/// [`discovery_feed_page`].
+async fn recent(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    discovery_feed_v1(
+        &app,
+        &user,
+        q,
+        None,
+        "urn:recent",
+        "Recently added",
+        "/opds/v1/recent",
+    )
+    .await
+}
+
+/// The created-at-ordered discovery feeds (`recent`, `new-this-month`):
+/// one [`discovery_feed_page`] rendered as a paged acquisition feed.
+async fn discovery_feed_v1(
+    app: &AppState,
+    user: &CurrentUser,
+    q: PageQuery,
+    created_since: Option<chrono::DateTime<chrono::FixedOffset>>,
+    feed_id: &str,
+    title: &str,
+    base_href: &str,
+) -> Response {
+    let allowed = match allowed_libraries(app, user).await {
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    let mut sel = issue::Entity::find()
-        .order_by_desc(issue::Column::CreatedAt)
-        .limit(50);
-    if let Some(cond) = allowed.issue_filter() {
-        sel = sel.filter(cond);
-    }
-    let rows = match sel.all(&app.db).await {
-        Ok(r) => r,
+    let page = page_number(q.page);
+    let (rows, total) = match discovery_feed_page(app, &allowed, created_since, page).await {
+        Ok(v) => v,
         Err(e) => return server_error(e.to_string()),
     };
+    let total_pages = total.div_ceil(PAGE_SIZE).max(1);
+    let self_href = if page > 1 {
+        format!("{base_href}?page={page}")
+    } else {
+        base_href.to_owned()
+    };
+    let pagination = paginate_links(base_href, page, total_pages);
     let body = build_acquisition_feed(
-        &app,
+        app,
         AcquisitionFeedArgs {
-            feed_id: "urn:recent",
-            title: "Recently added",
-            self_href: "/opds/v1/recent",
+            feed_id,
+            title,
+            self_href: &self_href,
             issues: &rows,
-            pagination: "",
+            pagination: &pagination,
             user_id: user.id,
             sequential_nav: false,
             up_next_issue_id: None,
@@ -947,6 +983,48 @@ async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
     )
     .await;
     atom(body)
+}
+
+/// `?page=` as a 1-based page number. Clamped before any multiply: a
+/// hostile `?page=` near `u64::MAX` would overflow `(page - 1) * PAGE_SIZE`
+/// or hand Postgres an OFFSET past `i64::MAX`.
+pub(crate) fn page_number(page: Option<u64>) -> u64 {
+    page.unwrap_or(1).clamp(1, u64::from(u32::MAX))
+}
+
+/// One page of a created-at-ordered discovery feed, shared by OPDS 1.2 and
+/// 2.0 `recent` (`created_since = None`) and `new-this-month` (the 30-day
+/// cutoff). Visibility is [`access::visible_issues_select`] — removed issues
+/// and issues of a removed series never appear — plus `state = 'active'`, so
+/// a missing-file issue does not advertise a download that 404s. Rows are
+/// the [`OpdsIssueRow`] projection and the count selects only `id`, so
+/// neither statement touches the wide columns (audit N-L6). Returns the
+/// page's rows and the total row count.
+pub(crate) async fn discovery_feed_page(
+    app: &AppState,
+    allowed: &access::VisibleLibraries,
+    created_since: Option<chrono::DateTime<chrono::FixedOffset>>,
+    page: u64,
+) -> Result<(Vec<OpdsIssueRow>, u64), sea_orm::DbErr> {
+    let mut base = access::visible_issues_select(allowed).filter(issue::Column::State.eq("active"));
+    if let Some(cutoff) = created_since {
+        base = base.filter(issue::Column::CreatedAt.gte(cutoff));
+    }
+    let total = base
+        .clone()
+        .select_only()
+        .column(issue::Column::Id)
+        .count(&app.db)
+        .await?;
+    let rows = base
+        .order_by_desc(issue::Column::CreatedAt)
+        .order_by_desc(issue::Column::Id)
+        .offset((page - 1) * PAGE_SIZE)
+        .limit(PAGE_SIZE)
+        .into_partial_model::<OpdsIssueRow>()
+        .all(&app.db)
+        .await?;
+    Ok((rows, total))
 }
 
 // ──────────── M5 of opds-richer-feeds — aggregation feeds ────────────
@@ -1013,10 +1091,10 @@ async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Res
         .map(|r| r.issue_id)
         .collect();
 
-    // Hydrate full issue::Model rows preserving the
-    // most-recent-progress-first order from the SQL above. Otherwise
-    // `IN (...)` returns whatever ordering Postgres feels like, and
-    // "Continue reading" feeds out of order are confusing.
+    // Hydrate the entry rows preserving the most-recent-progress-first
+    // order from the SQL above. Otherwise `IN (...)` returns whatever
+    // ordering Postgres feels like, and "Continue reading" feeds out of
+    // order are confusing.
     let visible = access::for_user(&app, &user).await;
     let issues = fetch_visible_issues_preserving_order(&app, &filtered_ids, &visible).await;
 
@@ -1181,46 +1259,28 @@ async fn history(
 }
 
 /// `/opds/v1/new-this-month` — issues added in the last 30 days,
-/// newest-`created_at` first. Distinct from `/opds/v1/recent`
-/// (which returns the 50 newest regardless of age): on a stale
+/// newest-`created_at` first, paged at [`PAGE_SIZE`]. Distinct from
+/// `/opds/v1/recent` (every issue regardless of age): on a stale
 /// library "Recently added" still surfaces a year-old set, while
 /// "New this month" goes empty.
-async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Response {
-    let allowed = match allowed_libraries(&app, &user).await {
-        Ok(v) => v,
-        Err(e) => return server_error(e),
-    };
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
-    let mut sel = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
-        .order_by_desc(issue::Column::CreatedAt)
-        .limit(50);
-    if let Some(cond) = allowed.issue_filter() {
-        sel = sel.filter(cond);
-    }
-    let rows = match sel.all(&app.db).await {
-        Ok(r) => r,
-        Err(e) => return server_error(e.to_string()),
-    };
-    let body = build_acquisition_feed(
+async fn new_this_month(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    // Paged like `recent` (audit N-L6): a busy month used to stop at a
+    // silent 50 with no `next` rel.
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).fixed_offset();
+    discovery_feed_v1(
         &app,
-        AcquisitionFeedArgs {
-            feed_id: "urn:opds:new-this-month",
-            title: "New this month",
-            self_href: "/opds/v1/new-this-month",
-            issues: &rows,
-            pagination: "",
-            user_id: user.id,
-            sequential_nav: false,
-            up_next_issue_id: None,
-            feed_last_read_date: None,
-            entry_positions: None,
-        },
+        &user,
+        q,
+        Some(cutoff),
+        "urn:opds:new-this-month",
+        "New this month",
+        "/opds/v1/new-this-month",
     )
-    .await;
-    atom(body)
+    .await
 }
 
 /// `/opds/v1/by-creator/{writer}` — every series where the writer
@@ -1649,6 +1709,54 @@ fn parse_byte_range(header: &str, total: u64) -> Option<Result<(u64, u64), ()>> 
 
 // ────────────── helpers ──────────────
 
+/// The `issues` columns an OPDS 1.2 acquisition `<entry>` reads (audit
+/// N-L6 / AR-1). The entry carries Dublin Core metadata — `summary`,
+/// `publisher`, the first `writer`, `genre` + `tags` categories, the
+/// `language_code`, the partial `dc:issued` date — on top of the card
+/// columns, so [`IssueCardRow`](crate::api::issue_card::IssueCardRow)
+/// alone cannot render it; this projection is the card's identity / ACL
+/// columns plus those scalars (18 of the row's ~60) and leaves the two
+/// wide JSON blobs (`comic_info_raw`, `pages`) and the ~20 legacy CSV
+/// credit columns the entry never reads on the server. Every v1
+/// acquisition feed selects it
+/// (`.into_partial_model::<OpdsIssueRow>()`), and so does every OPDS 2.0
+/// publication feed, so both renderers read the same 18 columns.
+#[derive(Clone, Debug, DerivePartialModel)]
+#[sea_orm(entity = "issue::Entity")]
+pub(crate) struct OpdsIssueRow {
+    pub id: String,
+    pub series_id: Uuid,
+    pub library_id: Uuid,
+    pub file_path: String,
+    pub title: Option<String>,
+    pub number_raw: Option<String>,
+    pub year: Option<i32>,
+    pub month: Option<i32>,
+    pub day: Option<i32>,
+    pub summary: Option<String>,
+    pub language_code: Option<String>,
+    pub publisher: Option<String>,
+    pub writer: Option<String>,
+    pub genre: Option<String>,
+    pub tags: Option<String>,
+    pub page_count: Option<i32>,
+    /// WP-2.7 age-rating cap checks (issue rating, series fallback).
+    pub age_rating: Option<String>,
+    pub updated_at: DateTimeWithTimeZone,
+}
+
+impl access::IssueAclFields for OpdsIssueRow {
+    fn acl_library_id(&self) -> Uuid {
+        self.library_id
+    }
+    fn acl_series_id(&self) -> Uuid {
+        self.series_id
+    }
+    fn acl_age_rating(&self) -> Option<&str> {
+        self.age_rating.as_deref()
+    }
+}
+
 /// Argument bundle for [`build_acquisition_feed`]. Collected into one
 /// struct during code-quality-cleanup M3 to close the
 /// `clippy::too_many_arguments` suppression on the renderer.
@@ -1656,7 +1764,7 @@ pub(crate) struct AcquisitionFeedArgs<'a> {
     pub feed_id: &'a str,
     pub title: &'a str,
     pub self_href: &'a str,
-    pub issues: &'a [issue::Model],
+    pub issues: &'a [OpdsIssueRow],
     pub pagination: &'a str,
     pub user_id: Uuid,
     /// When `true`, emit per-entry `rel="next"` / `rel="previous"`
@@ -1772,12 +1880,12 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
 /// crossed the clippy `too_many_arguments` threshold (8). Mirrors
 /// `PublicationCtx` on the v2 side.
 struct IssueAcqEntryCtx<'a> {
-    issue: &'a issue::Model,
+    issue: &'a OpdsIssueRow,
     series_slug: Option<&'a str>,
     pse_ctx: Option<(Uuid, &'a [u8])>,
     progress: Option<&'a progress_record::Model>,
-    prev: Option<&'a issue::Model>,
-    next: Option<&'a issue::Model>,
+    prev: Option<&'a OpdsIssueRow>,
+    next: Option<&'a OpdsIssueRow>,
     progress_glyphs: bool,
     up_next_issue_id: Option<&'a str>,
     /// 1-indexed position for reading-list feeds (CBL). When `Some`,
@@ -1916,7 +2024,7 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
 /// (series, CBL, WTR, collections) unless the owning entity has
 /// `preserve_canonical_order = true`.
 pub(crate) fn reorder_issues_up_next_first(
-    issues: &mut Vec<issue::Model>,
+    issues: &mut Vec<OpdsIssueRow>,
     up_next_id: Option<&str>,
 ) {
     let Some(target) = up_next_id else { return };
@@ -2061,7 +2169,7 @@ fn render_up_next_feed_link(issue_id: Option<&str>) -> String {
 
 /// Emit `rel="previous"` / `rel="next"` acquisition links for entries
 /// inside a reading-sequence feed. M2 of opds-sync-1.0.
-fn render_sequential_nav_links(prev: Option<&issue::Model>, next: Option<&issue::Model>) -> String {
+fn render_sequential_nav_links(prev: Option<&OpdsIssueRow>, next: Option<&OpdsIssueRow>) -> String {
     let mut out = String::new();
     if let Some(p) = prev {
         let _ = std::fmt::Write::write_fmt(
@@ -2137,7 +2245,7 @@ fn pse_progress_attrs(progress: Option<&progress_record::Model>) -> String {
 /// - M1 of progress-writeback-2.0 dropped the snake_case alias
 ///   entirely; emission is now spec-compliant camelCase only.
 fn render_pse_stream_link(
-    i: &issue::Model,
+    i: &OpdsIssueRow,
     user_id: Uuid,
     key: &[u8],
     progress: Option<&progress_record::Model>,
@@ -2581,7 +2689,7 @@ pub(crate) async fn fetch_series_facets(
 /// Empty inputs short-circuit so the search-empty-state path doesn't query.
 pub(crate) async fn fetch_series_slugs(
     db: &sea_orm::DatabaseConnection,
-    issues: &[issue::Model],
+    issues: &[OpdsIssueRow],
 ) -> HashMap<Uuid, String> {
     if issues.is_empty() {
         return HashMap::new();
@@ -2605,7 +2713,7 @@ pub(crate) async fn fetch_series_slugs(
 /// Emit Dublin Core, author, and category elements for an issue entry.
 /// Each line is indented 4 spaces to match the surrounding `<entry>` body.
 /// Empty / null fields are skipped — never emit a `<dc:foo/>` with no text.
-fn entry_metadata(i: &issue::Model) -> String {
+fn entry_metadata(i: &OpdsIssueRow) -> String {
     let mut out = String::new();
     let _ = std::fmt::Write::write_fmt(
         &mut out,
@@ -3435,11 +3543,12 @@ async fn render_collection_acq(
             .map(|s| (s.id, s))
             .collect()
     };
-    let issue_by_id: HashMap<String, issue::Model> = if issue_ids.is_empty() {
+    let issue_by_id: HashMap<String, OpdsIssueRow> = if issue_ids.is_empty() {
         HashMap::new()
     } else {
         let rows = issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids))
+            .into_partial_model::<OpdsIssueRow>()
             .all(&app.db)
             .await
             .unwrap_or_default();
@@ -3525,21 +3634,23 @@ async fn render_collection_acq(
 
 /// Fetch issues whose ids are in `ids`, drop any in libraries the user
 /// can't see, and return them **in the input order**. The CBL acq feed
-/// preserves reading-list position; sea_orm's `is_in` doesn't.
+/// preserves reading-list position; sea_orm's `is_in` doesn't. Selects the
+/// [`OpdsIssueRow`] projection, never the full row (audit N-L6).
 pub(crate) async fn fetch_visible_issues_preserving_order(
     app: &AppState,
     ids: &[String],
     visible: &access::VisibleLibraries,
-) -> Vec<issue::Model> {
+) -> Vec<OpdsIssueRow> {
     if ids.is_empty() {
         return Vec::new();
     }
     let rows = issue::Entity::find()
         .filter(issue::Column::Id.is_in(ids.to_vec()))
+        .into_partial_model::<OpdsIssueRow>()
         .all(&app.db)
         .await
         .unwrap_or_default();
-    let by_id: HashMap<String, issue::Model> = access::filter_issues(app, visible, rows)
+    let by_id: HashMap<String, OpdsIssueRow> = access::filter_issues(app, visible, rows)
         .await
         .into_iter()
         .map(|i| (i.id.clone(), i))
@@ -3568,13 +3679,14 @@ pub(crate) fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde
 /// WP-8.4: run an issue-level (`filter_issues`) saved view for an OPDS
 /// feed. Same compiler, ACL and age-rating cap as
 /// `/me/saved-views/{id}/issue-results`; capped at the view's
-/// `result_limit` like the series-view feed. Returns full rows (the
-/// acquisition entries render dc:* metadata from them) in result order.
+/// `result_limit` like the series-view feed. Returns the
+/// [`OpdsIssueRow`] projection (the acquisition entries render dc:*
+/// metadata from it) in result order.
 pub(crate) async fn issue_view_issues(
     app: &AppState,
     user: &CurrentUser,
     view: &saved_view::Model,
-) -> Result<Vec<issue::Model>, String> {
+) -> Result<Vec<OpdsIssueRow>, String> {
     #[derive(FromQueryResult)]
     struct IdRow {
         id: String,

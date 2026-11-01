@@ -398,10 +398,12 @@ function PageCard({
         {/* Thumbnail addresses the *original* page index; rotation is a
             client-side preview until the rewrite re-encodes it.
             `sw=bypass` keeps the service worker's serve-stale-first
-            thumb cache out of the path, and the origin serves thumbs
-            `no-cache` — so every dialog open is an ETag revalidation
-            against the archive's current bytes (a 304 when unchanged,
-            fresh pixels right after an edit). Nonce-based busting was
+            thumb cache out of the path, and `t=<open stamp>` gives every
+            dialog open a URL the browser has never cached — the origin
+            serves thumbs `private, max-age=300`, so a bare URL could
+            paint pre-edit pixels for five minutes; with the stamp each
+            open revalidates against the archive's current bytes (fresh
+            pixels right after an edit). Nonce-based busting was
             tried first and failed: any counter/salt scheme eventually
             reuses a URL across SPA navigations, and the SW then paints
             the previous copy first. */}

@@ -26,7 +26,7 @@ use super::{
     paginate_links, series_nav_entry, server_error, url_escape,
 };
 use crate::api::entity_pages::{self as ep, EntityKind, ListFilter, Paging};
-use crate::api::opds::{self, PAGE_SIZE};
+use crate::api::opds::{self, OpdsIssueRow, PAGE_SIZE};
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -167,15 +167,16 @@ async fn entity_issue_feed(
         Ok((keys, _)) => keys.into_iter().map(|(id, _)| id).collect(),
         Err(e) => return server_error(e.to_string()),
     };
-    let mut by_id: HashMap<String, issue::Model> = match issue::Entity::find()
+    let mut by_id: HashMap<String, OpdsIssueRow> = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(ids.clone()))
+        .into_partial_model::<OpdsIssueRow>()
         .all(&app.db)
         .await
     {
         Ok(rows) => rows.into_iter().map(|r| (r.id.clone(), r)).collect(),
         Err(e) => return server_error(e.to_string()),
     };
-    let issues: Vec<issue::Model> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+    let issues: Vec<OpdsIssueRow> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
     // A story arc is a reading order; cast feeds are discovery.
     let publications = if kind == EntityKind::Arc {
         build_publications_sequential(app, user, &issues, None, None).await

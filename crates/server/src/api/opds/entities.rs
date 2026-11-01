@@ -19,9 +19,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::{
-    ACQ_CT, AcquisitionFeedArgs, NAV_CT, PAGE_SIZE, PageQuery, atom, build_acquisition_feed,
-    fetch_cover_issues, fetch_series_facets, paginate_links, render_nav_entry,
-    render_series_subsection_entry, server_error, url_escape, wrap_nav_feed, xml_escape,
+    ACQ_CT, AcquisitionFeedArgs, NAV_CT, OpdsIssueRow, PAGE_SIZE, PageQuery, atom,
+    build_acquisition_feed, fetch_cover_issues, fetch_series_facets, paginate_links,
+    render_nav_entry, render_series_subsection_entry, server_error, url_escape, wrap_nav_feed,
+    xml_escape,
 };
 use crate::api::entity_pages::{self as ep, EntityKind, ListFilter, Paging};
 use crate::auth::CurrentUser;
@@ -125,17 +126,19 @@ async fn entity_issue_feed(
         Ok((keys, _)) => keys.into_iter().map(|(id, _)| id).collect(),
         Err(e) => return server_error(e.to_string()),
     };
-    // OPDS entries render dc:* metadata from the full row (same as every
-    // other acquisition feed); one page is capped at PAGE_SIZE rows.
-    let mut by_id: HashMap<String, issue::Model> = match issue::Entity::find()
+    // OPDS entries render dc:* metadata from the `OpdsIssueRow` projection
+    // (same as every other v1 acquisition feed); one page is capped at
+    // PAGE_SIZE rows.
+    let mut by_id: HashMap<String, OpdsIssueRow> = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(ids.clone()))
+        .into_partial_model::<OpdsIssueRow>()
         .all(&app.db)
         .await
     {
         Ok(rows) => rows.into_iter().map(|r| (r.id.clone(), r)).collect(),
         Err(e) => return server_error(e.to_string()),
     };
-    let issues: Vec<issue::Model> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+    let issues: Vec<OpdsIssueRow> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
     let path = kind.path();
     let base_href = format!("/opds/v1/{path}/{}", url_escape(&row.slug));
     let self_href = if page > 1 {
