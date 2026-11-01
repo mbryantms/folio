@@ -233,6 +233,41 @@ describe("<MetadataPreviewPane>", () => {
     expect(html).toContain("metron");
   });
 
+  // Audit 2026-11 E13: a conflict row is a user-pinned id, and replacing
+  // it is admin-only on the server, so a reader gets no toggle.
+  it("shows a reader the external-ID conflict without Keep mine / Use theirs", () => {
+    const diff = baseDiff({
+      external_id_conflicts: [
+        {
+          source: "comicvine",
+          current_external_id: "1",
+          proposed_external_id: "2",
+        },
+      ],
+      changes_count: 1,
+    });
+    const html = renderToStaticMarkup(
+      createElement(MetadataPreviewPane, {
+        data: diff,
+        isLoading: false,
+        errorMessage: null,
+        selectedFields: new Set<string>(),
+        overrideExternalIdSources: new Set<string>(),
+        onChangeSelected: () => undefined,
+        onChangeOverrideSources: () => undefined,
+        onBack: () => undefined,
+        onApply: () => undefined,
+        isApplying: false,
+        canOverride: false,
+      }),
+    );
+    expect(html).toContain("External-ID conflicts");
+    expect(html).toContain("comicvine");
+    expect(html).toContain("Only an admin can replace it.");
+    expect(html).not.toContain("Keep mine");
+    expect(html).not.toContain("Use theirs");
+  });
+
   it("disables blocked_by_user checkbox when canOverride is false", () => {
     const diff = baseDiff({
       rows: [

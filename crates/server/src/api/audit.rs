@@ -19,6 +19,7 @@ use uuid::Uuid;
 use super::error;
 use crate::auth::RequireAdmin;
 use crate::state::AppState;
+use crate::util::search::{literal_like, prefix_pattern};
 use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -99,8 +100,11 @@ pub async fn list(
         && !action.is_empty()
     {
         // Allow `prefix.*` to match any action starting with `prefix.`.
+        // The prefix is escaped (E9): action names carry `_`
+        // (`library_access`), which a bare `LIKE` reads as "any character".
         if let Some(prefix) = action.strip_suffix(".*") {
-            query = query.filter(audit_log::Column::Action.starts_with(prefix));
+            query =
+                query.filter(audit_log::Column::Action.like(literal_like(prefix_pattern(prefix))));
         } else {
             query = query.filter(audit_log::Column::Action.eq(action));
         }

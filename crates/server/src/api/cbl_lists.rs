@@ -773,18 +773,6 @@ fn parse_status_filter(s: &str) -> Result<Vec<&str>, ()> {
     Ok(parts)
 }
 
-fn cbl_entry_search_pattern(text: &str) -> String {
-    format!("%{}%", text.replace('%', "\\%").replace('_', "\\_"))
-}
-
-/// Table-qualified, case-insensitive `col ILIKE pattern`. Mirrors how
-/// `ColumnTrait::like` qualifies the column (`(entity_name, col)`) so it's
-/// unambiguous across the issue join below.
-fn col_ilike<C: ColumnTrait>(col: C, pattern: &str) -> sea_orm::sea_query::SimpleExpr {
-    use sea_orm::sea_query::{Expr, extension::postgres::PgExpr};
-    Expr::col((col.entity_name(), col)).ilike(pattern)
-}
-
 /// Apply the page-local "Search this list" query.
 ///
 /// Improvements over the original single-term, case-sensitive `LIKE`:
@@ -799,6 +787,7 @@ fn apply_cbl_entry_search(
     sel: sea_orm::Select<cbl_entry::Entity>,
     text: &str,
 ) -> sea_orm::Select<cbl_entry::Entity> {
+    use crate::util::search::{col_ilike, ilike_pattern};
     use sea_orm::QuerySelect;
     // LEFT JOIN the matched issue so its title is searchable. `matched_issue_id`
     // is a unique FK, so the join is 1:0..1 — it never multiplies entry rows
@@ -808,7 +797,9 @@ fn apply_cbl_entry_search(
         cbl_entry::Relation::Issue.def(),
     );
     for token in text.split_whitespace() {
-        let pattern = cbl_entry_search_pattern(token);
+        // Escapes `\` too, so a token ending in `\` can't escape its own
+        // closing `%`.
+        let pattern = ilike_pattern(token);
         sel = sel.filter(
             sea_orm::Condition::any()
                 .add(col_ilike(cbl_entry::Column::SeriesName, &pattern))

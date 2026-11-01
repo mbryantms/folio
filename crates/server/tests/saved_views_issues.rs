@@ -890,6 +890,67 @@ async fn preview_ids(app: &TestApp, auth: &Authed, path: &str, conditions: Value
     res
 }
 
+/// E9 (audit-2026-11): issue-view text ops match `%` / `_` / `\` in the
+/// value literally (here on the issue-only `title` field), case-sensitive
+/// as before.
+#[tokio::test]
+async fn issue_text_ops_match_like_metacharacters_literally() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "like-esc-issues@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = seed_library(&db, tmp.path()).await;
+    let s = seed_series(&db, lib, "Escapes").await;
+    let titles = [
+        "X_Men",
+        "X-Men",
+        "100% Wolverine",
+        "1000 Days",
+        r"Back\",
+        "Back",
+    ];
+    let mut by_title = std::collections::HashMap::new();
+    for (n, title) in titles.iter().enumerate() {
+        let path = tmp.path().join(format!("e{n}.cbz"));
+        let id = seed_issue(&db, lib, s, &path, title.as_bytes(), n as f64 + 1.0).await;
+        db.execute_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "UPDATE issues SET title = $2 WHERE id = $1",
+            [id.clone().into(), (*title).into()],
+        ))
+        .await
+        .unwrap();
+        by_title.insert(id, *title);
+    }
+
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("contains", "X_Men", &["X_Men"]),
+        (
+            "not_contains",
+            "X_Men",
+            &["X-Men", "100% Wolverine", "1000 Days", r"Back\", "Back"],
+        ),
+        ("starts_with", "100%", &["100% Wolverine"]),
+        ("ends_with", r"\", &[r"Back\"]),
+        ("contains", "Men", &["X_Men", "X-Men"]),
+        ("ends_with", "men", &[]),
+    ];
+    for (op, value, want) in cases {
+        let res = preview_ids(
+            &app,
+            &auth,
+            "/api/me/saved-views/preview-issues",
+            json!([{"field": "title", "op": op, "value": value}]),
+        )
+        .await;
+        let mut got: Vec<&str> = ids(&res).iter().map(|id| by_title[id]).collect();
+        got.sort_unstable();
+        let mut want = want.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "{op} {value:?}");
+    }
+}
+
 fn names(v: &Value) -> Vec<String> {
     v["items"]
         .as_array()

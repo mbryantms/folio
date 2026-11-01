@@ -17,6 +17,11 @@
  * — the series Metadata tab's provider-mapping card shows each
  * provider's id in that provider's header — shares one editor with
  * this card instead of a second add/unlink implementation.
+ *
+ * Adding and unlinking an id is admin-only (audit 2026-11 E13: the
+ * server's add / unlink routes take `RequireAdmin`, like the issue and
+ * series `PATCH`). Readers see the ids; the host passes `canEdit` and
+ * the card drops the add and remove controls without it.
  */
 
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -84,6 +89,11 @@ export type ExternalIdsCardProps = ExternalIdsTarget & {
    * etc. — none of which use Cards).
    */
   chrome?: "card" | "bare";
+  /**
+   * Show the add / unlink controls. Pass the viewer's admin role: the
+   * write routes answer 403 to everyone else.
+   */
+  canEdit: boolean;
 };
 
 /**
@@ -283,7 +293,7 @@ export function useExternalIdsEditor(
 }
 
 export function ExternalIdsCard(props: ExternalIdsCardProps) {
-  const { chrome: chromeProp, ...target } = props;
+  const { chrome: chromeProp, canEdit, ...target } = props;
   const editor = useExternalIdsEditor(target);
   const { rows, adding, startAdding, requestRemove } = editor;
 
@@ -293,7 +303,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
     chrome === "card" ? (
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <CardTitle className="text-sm font-medium">External IDs</CardTitle>
-        {!adding && (
+        {canEdit && !adding && (
           <Button
             variant="ghost"
             size="sm"
@@ -308,6 +318,7 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
       // Bare mode: tab label is the title; surface the "+ Add" affordance as
       // a thin right-aligned row rendered *below* the list (see the return
       // block), so it doesn't offset the content from the sibling tabs.
+      canEdit &&
       !adding && (
         <div className="flex justify-end">
           <Button variant="ghost" size="sm" onClick={startAdding}>
@@ -356,14 +367,16 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                     </code>
                   )}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => requestRemove(r)}
-                  aria-label={`Remove ${r.source_label} link`}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
+                {canEdit && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => requestRemove(r)}
+                    aria-label={`Remove ${r.source_label} link`}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -419,15 +432,17 @@ export function ExternalIdsCard(props: ExternalIdsCardProps) {
                       {r.external_id}
                     </Badge>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground/60 hover:text-foreground size-6"
-                    onClick={() => requestRemove(r)}
-                    aria-label={`Remove ${r.source_label} link`}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
+                  {canEdit && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground/60 hover:text-foreground size-6"
+                      onClick={() => requestRemove(r)}
+                      aria-label={`Remove ${r.source_label} link`}
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}

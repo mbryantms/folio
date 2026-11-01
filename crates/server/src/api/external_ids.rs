@@ -14,6 +14,12 @@
 //! library every add / unlink enqueues the same rewrite a `PATCH` does
 //! (`metadata::manual_writeback`, audit 2026-11 N-M5); a series-level id
 //! fans out over the series like a series identity edit.
+//!
+//! The lists take `CurrentUser` + library visibility, so every reader
+//! sees the ids. The add / unlink writes take `RequireAdmin` (audit
+//! 2026-11 E13), the same gate as the series and issue `PATCH`: an id
+//! steers matching, coverage and, in writeback libraries, the composed
+//! sidecars of a shared series, so it is not a per-reader setting.
 
 use axum::{
     Extension, Json,
@@ -22,7 +28,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::{external_id, issue, series};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use utoipa_axum::router::OpenApiRouter;
@@ -32,7 +38,7 @@ use uuid::Uuid;
 use super::error;
 use super::extractors::Validated;
 use crate::audit::{self, AuditEntry};
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequireAdmin};
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::writers::{self, SetBy};
 use crate::middleware::RequestContext;
@@ -153,7 +159,7 @@ pub async fn list_series(
         (status = 201, body = ExternalIdRow),
         (status = 400, description = "malformed JSON body"),
         (status = 422, description = "unknown source or empty external_id (field-level `details`)"),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
         (status = 429, description = "metadata write rate limit"),
     )
@@ -161,7 +167,7 @@ pub async fn list_series(
 #[handler]
 pub async fn add_series(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
     Validated(req): Validated<AddExternalIdReq>,
@@ -170,14 +176,13 @@ pub async fn add_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    match upsert_user_identifier(&app, &user, &ctx, "series", &s.id.to_string(), &req).await {
+        Ok(done) => {
+            audit::record(&app.db, done.audit).await;
+            done.response
+        }
+        Err(resp) => resp,
     }
-    upsert_user_identifier(&app, &user, &ctx, "series", &s.id.to_string(), &req).await
 }
 
 #[utoipa::path(
@@ -187,7 +192,7 @@ pub async fn add_series(
     responses(
         (status = 204, description = "unlinked"),
         (status = 400, description = "invalid source"),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series / link not found"),
         (status = 429, description = "metadata write rate limit"),
     )
@@ -195,7 +200,7 @@ pub async fn add_series(
 #[handler]
 pub async fn delete_series(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, source)): Path<(String, String)>,
 ) -> Response {
@@ -203,14 +208,13 @@ pub async fn delete_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    match delete_identifier(&app, &user, &ctx, "series", &s.id.to_string(), &source).await {
+        Ok(done) => {
+            audit::record(&app.db, done.audit).await;
+            done.response
+        }
+        Err(resp) => resp,
     }
-    delete_identifier(&app, &user, &ctx, "series", &s.id.to_string(), &source).await
 }
 
 // ───────── issue ─────────
@@ -231,7 +235,7 @@ pub async fn list_issue(
     user: CurrentUser,
     Path((slug, issue_slug)): Path<(String, String)>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((s, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !crate::library::access::series_visible(&app, &user, &s).await {
@@ -241,10 +245,10 @@ pub async fn list_issue(
             "library access denied",
         );
     }
-    let rows = fetch_rows(&app, "issue", &i.id).await;
+    let rows = fetch_rows(&app, "issue", &issue_id).await;
     Json(ExternalIdsListResp {
         entity_type: "issue".into(),
-        entity_id: i.id.clone(),
+        entity_id: issue_id,
         rows,
     })
     .into_response()
@@ -259,7 +263,7 @@ pub async fn list_issue(
         (status = 201, body = ExternalIdRow),
         (status = 400, description = "malformed JSON body"),
         (status = 422, description = "unknown source or empty external_id (field-level `details`)"),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
         (status = 429, description = "metadata write rate limit"),
     )
@@ -267,22 +271,21 @@ pub async fn list_issue(
 #[handler]
 pub async fn add_issue(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
     Validated(req): Validated<AddExternalIdReq>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    match upsert_user_identifier(&app, &user, &ctx, "issue", &issue_id, &req).await {
+        Ok(done) => {
+            audit::record(&app.db, done.audit).await;
+            done.response
+        }
+        Err(resp) => resp,
     }
-    upsert_user_identifier(&app, &user, &ctx, "issue", &i.id, &req).await
 }
 
 #[utoipa::path(
@@ -292,7 +295,7 @@ pub async fn add_issue(
     responses(
         (status = 204, description = "unlinked"),
         (status = 400, description = "invalid source"),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "issue / link not found"),
         (status = 429, description = "metadata write rate limit"),
     )
@@ -300,21 +303,20 @@ pub async fn add_issue(
 #[handler]
 pub async fn delete_issue(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug, source)): Path<(String, String, String)>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    match delete_identifier(&app, &user, &ctx, "issue", &issue_id, &source).await {
+        Ok(done) => {
+            audit::record(&app.db, done.audit).await;
+            done.response
+        }
+        Err(resp) => resp,
     }
-    delete_identifier(&app, &user, &ctx, "issue", &i.id, &source).await
 }
 
 // ───────── shared ─────────
@@ -346,6 +348,38 @@ pub(crate) async fn fetch_rows(
         .collect()
 }
 
+/// A committed id edit: the audit row the handler records (in its own
+/// body, so `audit-check` sees every admin write audited) and the
+/// response it returns.
+struct Edited {
+    audit: AuditEntry<'static>,
+    response: Response,
+}
+
+fn edit_audit(
+    user: &CurrentUser,
+    ctx: &RequestContext,
+    entity_type: &str,
+    entity_id: &str,
+    actions: (&'static str, &'static str),
+    payload: serde_json::Value,
+) -> AuditEntry<'static> {
+    let (series_action, issue_action) = actions;
+    let (action, target_type) = match entity_type {
+        "series" => (series_action, "series"),
+        _ => (issue_action, "issue"),
+    };
+    AuditEntry {
+        actor_id: user.id,
+        action,
+        target_type: Some(target_type),
+        target_id: Some(entity_id.to_owned()),
+        payload,
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    }
+}
+
 async fn upsert_user_identifier(
     app: &AppState,
     user: &CurrentUser,
@@ -353,15 +387,15 @@ async fn upsert_user_identifier(
     entity_type: &str,
     entity_id: &str,
     req: &AddExternalIdReq,
-) -> Response {
+) -> Result<Edited, Response> {
     // `Validated<AddExternalIdReq>` already ran `known_source`, so this
     // parse only recovers the typed value; a failure is a server bug.
     let Ok(source) = req.source.parse::<Source>() else {
-        return error(
+        return Err(error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "validated source failed to parse",
-        );
+        ));
     };
     let id_value = req.external_id.trim();
     let url = req
@@ -383,11 +417,11 @@ async fn upsert_user_identifier(
     .await
     {
         Ok((writers::SetExternalIdOutcome::SkippedConflict { .. }, _)) => {
-            return error(
+            return Err(error(
                 StatusCode::CONFLICT,
                 "metadata.external_id_taken",
                 "that identifier is already assigned to another item — remove it there first",
-            );
+            ));
         }
         Ok((_, promoted_pairs)) => {
             // WP-8.2: an external link promoted to a series relationship
@@ -398,47 +432,41 @@ async fn upsert_user_identifier(
         }
         Err(e) => {
             tracing::warn!(error = %e, "external_id set failed");
-            return error(
+            return Err(error(
                 StatusCode::BAD_GATEWAY,
                 "internal",
                 "external_id write failed",
-            );
+            ));
         }
     }
     let sidecar_rewrite = manual_rewrite(app, user, ctx, entity_type, entity_id).await;
-    audit::record(
-        &app.db,
-        AuditEntry {
-            actor_id: user.id,
-            action: match entity_type {
-                "series" => "admin.series.external_id_set",
-                _ => "admin.issue.external_id_set",
-            },
-            target_type: Some(match entity_type {
-                "series" => "series",
-                _ => "issue",
-            }),
-            target_id: Some(entity_id.to_owned()),
-            payload: serde_json::json!({
-                "source": source.as_str(),
-                "external_id": identifier.id,
-                "sidecar_rewrite": sidecar_rewrite,
-            }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
-    )
-    .await;
-    // Read back so we return the row exactly as stored.
+    let audit = edit_audit(
+        user,
+        ctx,
+        entity_type,
+        entity_id,
+        (
+            "admin.series.external_id_set",
+            "admin.issue.external_id_set",
+        ),
+        serde_json::json!({
+            "source": source.as_str(),
+            "external_id": identifier.id,
+            "sidecar_rewrite": sidecar_rewrite,
+        }),
+    );
+    // Read back so we return the row exactly as stored. The write is
+    // committed either way, so a failed readback is still audited.
     let rows = fetch_rows(app, entity_type, entity_id).await;
-    let Some(row) = rows.into_iter().find(|r| r.source == source.as_str()) else {
-        return error(
+    let response = match rows.into_iter().find(|r| r.source == source.as_str()) {
+        Some(row) => (StatusCode::CREATED, Json(row)).into_response(),
+        None => error(
             StatusCode::BAD_GATEWAY,
             "internal",
             "external_id write succeeded but readback failed",
-        );
+        ),
     };
-    (StatusCode::CREATED, Json(row)).into_response()
+    Ok(Edited { audit, response })
 }
 
 async fn delete_identifier(
@@ -448,13 +476,13 @@ async fn delete_identifier(
     entity_type: &str,
     entity_id: &str,
     source_str: &str,
-) -> Response {
+) -> Result<Edited, Response> {
     let Ok(source) = source_str.parse::<Source>() else {
-        return error(
+        return Err(error(
             StatusCode::BAD_REQUEST,
             "metadata.invalid_source",
             "unknown source",
-        );
+        ));
     };
     let existed = external_id::Entity::find()
         .filter(external_id::Column::EntityType.eq(entity_type))
@@ -466,40 +494,35 @@ async fn delete_identifier(
         .flatten()
         .is_some();
     if !existed {
-        return error(
+        return Err(error(
             StatusCode::NOT_FOUND,
             "metadata.link_not_found",
             "no link to remove",
-        );
+        ));
     }
     if let Err(e) = writers::delete_external_id(&app.db, entity_type, entity_id, source).await {
         tracing::warn!(error = %e, "delete_external_id failed");
-        return error(StatusCode::BAD_GATEWAY, "internal", "delete failed");
+        return Err(error(StatusCode::BAD_GATEWAY, "internal", "delete failed"));
     }
     let sidecar_rewrite = manual_rewrite(app, user, ctx, entity_type, entity_id).await;
-    audit::record(
-        &app.db,
-        AuditEntry {
-            actor_id: user.id,
-            action: match entity_type {
-                "series" => "admin.series.external_id_unlink",
-                _ => "admin.issue.external_id_unlink",
-            },
-            target_type: Some(match entity_type {
-                "series" => "series",
-                _ => "issue",
-            }),
-            target_id: Some(entity_id.to_owned()),
-            payload: serde_json::json!({
-                "source": source.as_str(),
-                "sidecar_rewrite": sidecar_rewrite,
-            }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
-    )
-    .await;
-    StatusCode::NO_CONTENT.into_response()
+    let audit = edit_audit(
+        user,
+        ctx,
+        entity_type,
+        entity_id,
+        (
+            "admin.series.external_id_unlink",
+            "admin.issue.external_id_unlink",
+        ),
+        serde_json::json!({
+            "source": source.as_str(),
+            "sidecar_rewrite": sidecar_rewrite,
+        }),
+    );
+    Ok(Edited {
+        audit,
+        response: StatusCode::NO_CONTENT.into_response(),
+    })
 }
 
 /// WP-2.10 for identifier edits (audit 2026-11 N-M5): push the committed
@@ -563,20 +586,25 @@ async fn manual_rewrite(
     }
 }
 
+/// The series and the issue's id. Projects the id only: the full
+/// `issue::Model` carries the large `comic_info_raw`.
 async fn find_series_issue(
     app: &AppState,
     series_slug: &str,
     issue_slug: &str,
-) -> Option<(series::Model, issue::Model)> {
+) -> Option<(series::Model, String)> {
     let s = crate::api::series::find_by_slug(&app.db, series_slug)
         .await
         .ok()?;
-    let i = issue::Entity::find()
+    let issue_id = issue::Entity::find()
+        .select_only()
+        .column(issue::Column::Id)
         .filter(issue::Column::SeriesId.eq(s.id))
         .filter(issue::Column::Slug.eq(issue_slug))
+        .into_tuple::<String>()
         .one(&app.db)
         .await
         .ok()
         .flatten()?;
-    Some((s, i))
+    Some((s, issue_id))
 }

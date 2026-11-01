@@ -423,3 +423,36 @@ async fn oversized_query_rejected() {
     let (status, _json) = http(&app, Method::GET, &uri, Some(&auth)).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// E9 (audit-2026-11): the substring branch matches `_` / `%` literally.
+/// Trigram similarity ignores punctuation, so before the escape a bare
+/// `_` or `%` query was a `LIKE '%_%'` / `'%%%'` that returned every name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn substring_branch_matches_like_metacharacters_literally() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "u@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    let lib = seed_library(&app, "main").await;
+    let s = seed_series(&app, lib, "Saga").await;
+    add_series_credit(&app, s, "writer", "Jim_Lee").await;
+    add_series_credit(&app, s, "penciller", "Gary Frank").await;
+
+    for (q, want) in [("_", vec!["Jim_Lee"]), ("%25", vec![])] {
+        let (status, json) = http(
+            &app,
+            Method::GET,
+            &format!("/api/people?q={q}"),
+            Some(&auth),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "q={q}: {json:#?}");
+        let people: Vec<String> = json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["person"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(people, want, "q={q}");
+    }
+}

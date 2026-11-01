@@ -45,7 +45,9 @@ export type MetadataPreviewPaneProps = {
   isApplying: boolean;
   /** Optional admin-mode signal — when false, the BlockedByUser
    *  rows render their checkbox disabled rather than implying the
-   *  user could opt in. */
+   *  user could opt in, and external-id conflicts show no Keep mine /
+   *  Use theirs toggle (the server 403s `override_external_id_sources`
+   *  from a non-admin: every conflict row is a user-pinned id). */
   canOverride: boolean;
   /** When set, BlockedByUser rows get a "Revert pin" button that
    *  clears the user pin via this callback. Returning a Promise lets
@@ -392,8 +394,9 @@ export function MetadataPreviewPane({
                   External-ID conflicts ({conflictsCount})
                 </h4>
                 <p className="text-muted-foreground text-[11px]">
-                  Your value disagrees with the candidate&rsquo;s. Pick which to
-                  keep per source.
+                  {canOverride
+                    ? "Your value disagrees with the candidate\u2019s. Pick which to keep per source."
+                    : "The linked id disagrees with the candidate\u2019s and is kept. Only an admin can replace it."}
                 </p>
                 <ul className="space-y-2">
                   {data.external_id_conflicts.map((c) => {
@@ -413,28 +416,30 @@ export function MetadataPreviewPane({
                             {c.proposed_external_id}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={useTheirs ? "outline" : "default"}
-                            onClick={() => toggleSource(c.source)}
-                            className="h-7 text-xs"
-                            disabled={isApplying}
-                          >
-                            Keep mine
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={useTheirs ? "default" : "outline"}
-                            onClick={() => toggleSource(c.source)}
-                            className="h-7 text-xs"
-                            disabled={isApplying}
-                          >
-                            Use theirs
-                          </Button>
-                        </div>
+                        {canOverride && (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={useTheirs ? "outline" : "default"}
+                              onClick={() => toggleSource(c.source)}
+                              className="h-7 text-xs"
+                              disabled={isApplying}
+                            >
+                              Keep mine
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={useTheirs ? "default" : "outline"}
+                              onClick={() => toggleSource(c.source)}
+                              className="h-7 text-xs"
+                              disabled={isApplying}
+                            >
+                              Use theirs
+                            </Button>
+                          </div>
+                        )}
                       </li>
                     );
                   })}

@@ -23,6 +23,7 @@ use super::dsl::{Condition, Field, FilterDsl, MatchMode, Op, SortField, SortOrde
 use super::registry::{self, FieldKind, Source};
 use crate::library::access::VisibleLibraries;
 use crate::reading::series_progress;
+use crate::util::search::{contains_pattern, literal_like, prefix_pattern, suffix_pattern};
 use entity::{issue, series};
 use sea_orm::{
     Condition as SeaCondition, Iterable,
@@ -1316,17 +1317,20 @@ fn scalar_predicate(
         }),
         Op::Equals | Op::Is => Ok(lhs.eq(scalar_value(v, kind, &bad)?)),
         Op::NotEquals | Op::IsNot => Ok(lhs.ne(scalar_value(v, kind, &bad)?)),
-        Op::Contains => Ok(lhs.like(format!("%{}%", as_text(v, &bad)?))),
+        // Text ops match the value literally (E9): the `*_pattern` helpers
+        // escape `%` / `_` / `\` in the user's value and `literal_like`
+        // adds `ESCAPE '\'`. Case-sensitive `LIKE`, as they always were.
+        Op::Contains => Ok(lhs.like(literal_like(contains_pattern(&as_text(v, &bad)?)))),
         Op::NotContains => {
             // NULL handling: `column NOT LIKE 'pattern'` returns NULL on
             // NULL inputs, so rows with the text column NULL are
             // excluded. Mirrors `Op::NotEquals` semantics — by design.
             // Documented in docs/dev/saved-views.md (M5 of
             // library-filters-richer-1.0).
-            Ok(lhs.not_like(format!("%{}%", as_text(v, &bad)?)))
+            Ok(lhs.not_like(literal_like(contains_pattern(&as_text(v, &bad)?))))
         }
-        Op::StartsWith => Ok(lhs.like(format!("{}%", as_text(v, &bad)?))),
-        Op::EndsWith => Ok(lhs.like(format!("%{}", as_text(v, &bad)?))),
+        Op::StartsWith => Ok(lhs.like(literal_like(prefix_pattern(&as_text(v, &bad)?)))),
+        Op::EndsWith => Ok(lhs.like(literal_like(suffix_pattern(&as_text(v, &bad)?)))),
         Op::Gt | Op::After => Ok(lhs.gt(scalar_value(v, kind, &bad)?)),
         Op::Gte => Ok(lhs.gte(scalar_value(v, kind, &bad)?)),
         Op::Lt | Op::Before => Ok(lhs.lt(scalar_value(v, kind, &bad)?)),
@@ -2498,6 +2502,46 @@ mod tests {
         )])))
         .unwrap_err();
         assert!(matches!(err, CompileError::BadValue { .. }));
+    }
+
+    /// E9: every text op escapes `\` / `%` / `_` in the value, names the
+    /// escape character, and binds the pattern — the user's string never
+    /// lands in the SQL text. Plain values keep their old pattern.
+    #[test]
+    fn text_ops_escape_like_metacharacters_and_bind_the_pattern() {
+        let cases = [
+            (Op::Contains, "X_Men", r"%X\_Men%"),
+            (Op::NotContains, "100%", r"%100\%%"),
+            (Op::StartsWith, "100%", r"100\%%"),
+            (Op::EndsWith, r"\", r"%\\"),
+            (Op::Contains, "Origin", "%Origin%"),
+        ];
+        for (op, value, pattern) in cases {
+            let (sql, values) = compile(&make(dsl_all(vec![cond(Field::Name, op, json!(value))])))
+                .unwrap()
+                .build(PostgresQueryBuilder);
+            let like = if op == Op::NotContains {
+                "NOT LIKE"
+            } else {
+                "LIKE"
+            };
+            assert!(
+                sql.contains(&format!(r#""series"."name" {like} $"#))
+                    && sql.contains(r"ESCAPE E'\\'"),
+                "{op:?}: SQL: {sql}"
+            );
+            // (A lone `\` also appears in the ESCAPE clause itself.)
+            if value.len() > 1 {
+                assert!(!sql.contains(value), "{op:?}: value inlined: {sql}");
+            }
+            assert!(
+                values
+                    .0
+                    .iter()
+                    .any(|v| *v == sea_orm::Value::from(pattern.to_owned())),
+                "{op:?}: pattern {pattern} not bound: {values:?}"
+            );
+        }
     }
 
     fn keyset_sql(sort_field: SortField, sort_order: SortOrder, cursor: IssueCursor) -> String {

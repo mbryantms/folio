@@ -302,6 +302,7 @@ export function IssueMetadataTab({
           seriesSlug={seriesSlug}
           issueSlug={issueSlug}
           chrome="bare"
+          canEdit={isAdmin}
         />
       </section>
 
