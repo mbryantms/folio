@@ -62,8 +62,14 @@
   --accent: oklch(0.789 0.1592 74.08);
   --accent-foreground: oklch(0.2196 0.0186 59);
 
-  --destructive: oklch(0.5714 0.2121 27.25);
-  --destructive-foreground: oklch(0.9843 0.0017 247.84);
+  /* Light red, dark label: the vendored Button / Badge / Alert
+   * `destructive` variants put `text-destructive` on a 10-30 % tint of
+   * itself, which only clears WCAG AA (4.7:1 at the 20 % button tint,
+   * 6.3:1 as text on a card) when the red is this light. A light solid
+   * fill then needs a dark label (6.7:1), so `-foreground` is the page
+   * background rather than near-white like the light/amber themes. */
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.1636 0.0105 266.93);
 
   /* Semantic status tokens (F1). success/warning/info pair with their
    * `-foreground` (text on the solid color); error reuses `--destructive`.
