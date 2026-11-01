@@ -15,8 +15,22 @@ use server::library::thumbnails;
 use std::path::Path;
 use uuid::Uuid;
 
-/// Seed an issue in `state`; any non-`active` state is also soft-removed.
-async fn seed(app: &TestApp, state: IssueState) -> String {
+/// Where an issue sits in the removal lifecycle
+/// (`docs/dev/library-scanner.md`, "Removal lifecycle"). Soft deletion is
+/// `removed_at`, not `issues.state`; confirmation adds
+/// `removal_confirmed_at`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Removal {
+    /// `removed_at IS NULL`.
+    Present,
+    /// `removed_at` set, `removal_confirmed_at` NULL — restorable.
+    Pending,
+    /// Both stamps set — the 04:00 auto-confirm or an admin confirm.
+    Confirmed,
+}
+
+/// Seed an issue in `state` at the given point of the removal lifecycle.
+async fn seed(app: &TestApp, state: IssueState, removal: Removal) -> String {
     let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
     let lib_id = Uuid::now_v7();
     let now = Utc::now().fixed_offset();
@@ -171,12 +185,14 @@ async fn seed(app: &TestApp, state: IssueState) -> String {
         last_metadata_sync_at: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        removed_at: Set(if state == IssueState::Active {
-            None
-        } else {
-            Some(now)
+        removed_at: Set(match removal {
+            Removal::Present => None,
+            Removal::Pending | Removal::Confirmed => Some(now),
         }),
-        removal_confirmed_at: Set(None),
+        removal_confirmed_at: Set(match removal {
+            Removal::Present | Removal::Pending => None,
+            Removal::Confirmed => Some(now),
+        }),
         superseded_by: Set(None),
         special_type: Set(None),
         slug: Set(uuid::Uuid::now_v7().to_string()),
@@ -214,7 +230,7 @@ fn put_fake_thumbs(data_dir: &Path, issue_id: &str) {
 #[tokio::test]
 async fn wipe_issue_thumbs_removes_cover_and_strip_dir() {
     let app = TestApp::spawn().await;
-    let id = seed(&app, IssueState::Active).await;
+    let id = seed(&app, IssueState::Active, Removal::Present).await;
     put_fake_thumbs(&app.state().cfg().data_path, &id);
 
     thumbnails::wipe_issue_thumbs(&app.state().cfg().data_path, &id);
@@ -232,9 +248,10 @@ async fn wipe_issue_thumbs_removes_cover_and_strip_dir() {
 #[tokio::test]
 async fn orphan_sweep_drops_artifacts_for_removed_issues() {
     let app = TestApp::spawn().await;
-    // Two issues: one active, one malformed + soft-removed.
-    let active_id = seed(&app, IssueState::Active).await;
-    let removed_id = seed(&app, IssueState::Malformed).await;
+    // Two issues: one active, one confirmed-removed the way production
+    // stamps it (`removed_at` + `removal_confirmed_at`, state untouched).
+    let active_id = seed(&app, IssueState::Active, Removal::Present).await;
+    let removed_id = seed(&app, IssueState::Active, Removal::Confirmed).await;
     put_fake_thumbs(&app.state().cfg().data_path, &active_id);
     put_fake_thumbs(&app.state().cfg().data_path, &removed_id);
 
@@ -243,7 +260,7 @@ async fn orphan_sweep_drops_artifacts_for_removed_issues() {
     put_fake_thumbs(&app.state().cfg().data_path, &stranger);
 
     let wiped = server::jobs::orphan_sweep::run(&app.state()).await.unwrap();
-    assert_eq!(wiped, 2, "should wipe 2 (removed + stranger)");
+    assert_eq!(wiped, 2, "should wipe 2 (confirmed-removed + stranger)");
 
     let active_cover = thumbnails::cover_path(
         &app.state().cfg().data_path,
@@ -266,9 +283,100 @@ async fn orphan_sweep_drops_artifacts_for_removed_issues() {
     );
     assert!(
         !removed_cover.exists(),
-        "removed issue's cover should be gone"
+        "confirmed-removed issue's cover should be gone"
     );
     assert!(!stranger_cover.exists(), "stranger's cover should be gone");
+}
+
+/// Regression: the keep-set used to be `state = 'active'` alone. Soft
+/// removal never changes `state`, so a confirmed removal that skipped the
+/// per-row wipe (the auto-confirm sweep is a bulk UPDATE) kept its thumbs
+/// and variant covers forever. The sweep must reclaim both trees.
+#[tokio::test]
+async fn orphan_sweep_reclaims_confirmed_removal_with_active_state() {
+    let app = TestApp::spawn().await;
+    let data_path = app.state().cfg().data_path.clone();
+    let confirmed_id = seed(&app, IssueState::Active, Removal::Confirmed).await;
+    put_fake_thumbs(&data_path, &confirmed_id);
+    let variant = put_fake_variant_cover(&data_path, &confirmed_id);
+
+    let wiped = server::jobs::orphan_sweep::run(&app.state()).await.unwrap();
+    assert_eq!(wiped, 2, "one thumb tree + one variant-cover tree");
+
+    let cover = thumbnails::cover_path(&data_path, &confirmed_id, thumbnails::ThumbFormat::Webp);
+    assert!(
+        !cover.exists(),
+        "confirmed-removed issue's cover should be gone"
+    );
+    assert!(
+        !thumbnails::issue_thumbs_dir(&data_path, &confirmed_id).exists(),
+        "confirmed-removed issue's strip dir should be gone"
+    );
+    assert!(
+        !variant.exists(),
+        "confirmed-removed issue's downloaded cover should be reclaimed"
+    );
+}
+
+/// An unconfirmed soft removal is still restorable — a returning file
+/// auto-restores it on the next scan, or an admin restores it from the
+/// Removed tab — so its artifacts stay until the removal is confirmed.
+#[tokio::test]
+async fn orphan_sweep_keeps_pending_removal_artifacts() {
+    let app = TestApp::spawn().await;
+    let data_path = app.state().cfg().data_path.clone();
+    let pending_id = seed(&app, IssueState::Active, Removal::Pending).await;
+    put_fake_thumbs(&data_path, &pending_id);
+    let variant = put_fake_variant_cover(&data_path, &pending_id);
+
+    let wiped = server::jobs::orphan_sweep::run(&app.state()).await.unwrap();
+    assert_eq!(wiped, 0, "a pending removal is not an orphan");
+
+    let cover = thumbnails::cover_path(&data_path, &pending_id, thumbnails::ThumbFormat::Webp);
+    assert!(cover.exists(), "pending removal's cover must be preserved");
+    assert!(
+        thumbnails::issue_thumbs_dir(&data_path, &pending_id).exists(),
+        "pending removal's strip dir must be preserved"
+    );
+    assert!(
+        variant.exists(),
+        "pending removal's downloaded cover must be preserved"
+    );
+}
+
+/// A present, active issue keeps everything.
+#[tokio::test]
+async fn orphan_sweep_keeps_active_issue_artifacts() {
+    let app = TestApp::spawn().await;
+    let data_path = app.state().cfg().data_path.clone();
+    let active_id = seed(&app, IssueState::Active, Removal::Present).await;
+    put_fake_thumbs(&data_path, &active_id);
+    let variant = put_fake_variant_cover(&data_path, &active_id);
+
+    let wiped = server::jobs::orphan_sweep::run(&app.state()).await.unwrap();
+    assert_eq!(wiped, 0);
+
+    let cover = thumbnails::cover_path(&data_path, &active_id, thumbnails::ThumbFormat::Webp);
+    assert!(cover.exists(), "active issue's cover must be preserved");
+    assert!(
+        variant.exists(),
+        "active issue's downloaded cover must be preserved"
+    );
+}
+
+/// A row whose archive did not open (`state != active`) is not readable, so
+/// its artifacts are reclaimed even without a removal stamp.
+#[tokio::test]
+async fn orphan_sweep_drops_artifacts_for_unreadable_issue() {
+    let app = TestApp::spawn().await;
+    let data_path = app.state().cfg().data_path.clone();
+    let malformed_id = seed(&app, IssueState::Malformed, Removal::Present).await;
+    put_fake_thumbs(&data_path, &malformed_id);
+
+    let wiped = server::jobs::orphan_sweep::run(&app.state()).await.unwrap();
+    assert_eq!(wiped, 1);
+    let cover = thumbnails::cover_path(&data_path, &malformed_id, thumbnails::ThumbFormat::Webp);
+    assert!(!cover.exists(), "malformed issue's cover should be gone");
 }
 
 #[tokio::test]
@@ -282,8 +390,8 @@ async fn orphan_sweep_no_op_when_thumbs_dir_missing() {
 #[tokio::test]
 async fn list_issues_on_disk_finds_both_layouts() {
     let app = TestApp::spawn().await;
-    let id1 = seed(&app, IssueState::Active).await;
-    let id2 = seed(&app, IssueState::Active).await;
+    let id1 = seed(&app, IssueState::Active, Removal::Present).await;
+    let id2 = seed(&app, IssueState::Active, Removal::Present).await;
     put_fake_thumbs(&app.state().cfg().data_path, &id1);
     // Only the strip dir exists for id2 — exercise that case.
     let strip = thumbnails::strip_path(
@@ -323,8 +431,8 @@ fn put_fake_variant_cover(data_dir: &Path, issue_id: &str) -> std::path::PathBuf
 #[tokio::test]
 async fn orphan_sweep_preserves_variant_covers_for_active_issue() {
     let app = TestApp::spawn().await;
-    let active_id = seed(&app, IssueState::Active).await;
-    let removed_id = seed(&app, IssueState::Malformed).await;
+    let active_id = seed(&app, IssueState::Active, Removal::Present).await;
+    let removed_id = seed(&app, IssueState::Active, Removal::Confirmed).await;
     let active_cover = put_fake_variant_cover(&app.state().cfg().data_path, &active_id);
     let removed_cover = put_fake_variant_cover(&app.state().cfg().data_path, &removed_id);
 
@@ -336,7 +444,7 @@ async fn orphan_sweep_preserves_variant_covers_for_active_issue() {
     );
     assert!(
         !removed_cover.exists(),
-        "removed issue's downloaded cover should be reclaimed"
+        "confirmed-removed issue's downloaded cover should be reclaimed"
     );
     // The shared container itself must never be wiped wholesale.
     let issues_root = app.state().cfg().data_path.join("thumbs").join("issues");

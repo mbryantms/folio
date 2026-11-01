@@ -1,11 +1,19 @@
 //! Daily orphan sweep for the thumbnail cache (M5).
 //!
 //! Walks `data_dir/thumbs/` and drops any artifact that doesn't correspond
-//! to a still-present, still-active issue row. Catches:
+//! to a still-present, still-active, not-yet-confirmed-removed issue row.
+//! Catches:
 //!   - issues confirmed-removed without their cleanup hook running
-//!     (e.g. the auto-confirm sweep's bulk UPDATE doesn't fire per-row)
+//!     (the 04:00 auto-confirm sweep is a bulk UPDATE that never wipes
+//!     thumbs per row; the admin `confirm-removal` handlers do)
 //!   - issues hard-deleted out from under the scanner
 //!   - server crashes that interrupt a regenerate-while-rewrite
+//!
+//! Soft deletion is `removed_at`, not `issues.state` (the state only says
+//! whether the archive opened). A soft-removed issue whose removal is not
+//! confirmed yet keeps its artifacts: a returning file auto-restores the
+//! row on the next scan and an admin can restore it from the Removed tab,
+//! so the thumbs would only have to be regenerated.
 //!
 //! Cheap: one query per run + a dirent scan. Best-effort — disk errors are
 //! logged and the loop continues; we'd rather skip one path than fail the
@@ -31,14 +39,17 @@ pub async fn run(state: &AppState) -> anyhow::Result<usize> {
         return Ok(0);
     }
 
-    // Find issue ids that should keep their artifacts: active rows only.
-    // Anything else (removed, removal_confirmed, missing entirely) is
-    // eligible for cleanup.
+    // Find issue ids that should keep their artifacts: active rows whose
+    // removal is not confirmed. Everything else (confirmed-removed, not
+    // active, missing entirely) is eligible for cleanup. Soft-removed rows
+    // keep `state = active` and get `removed_at` set, so filtering on the
+    // state alone never reclaimed a removed issue's thumbs.
     let candidates: Vec<String> = thumb_ids.union(&variant_ids).cloned().collect();
     let alive: Vec<String> = issue::Entity::find()
         .select_only()
         .column(issue::Column::Id)
         .filter(issue::Column::State.eq(issue::IssueState::Active))
+        .filter(issue::Column::RemovalConfirmedAt.is_null())
         .filter(issue::Column::Id.is_in(candidates))
         .into_tuple::<String>()
         .all(&state.db)
