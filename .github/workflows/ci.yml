@@ -63,6 +63,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'scripts/ci/migration-roundtrip.sh'
+              - 'scripts/ci/free-runner-disk.sh'
               - '.github/workflows/ci.yml'
             backend_or_spec:
               - 'crates/**'
@@ -115,6 +116,7 @@ jobs:
               - 'fixtures/**'
               - 'scripts/ci/sidecar_interop.py'
               - 'scripts/ci/sidecar-interop-requirements.txt'
+              - 'scripts/ci/free-runner-disk.sh'
               - '.github/workflows/ci.yml'
 
   # A malformed packageRule silently disables parts of the update pipeline —
@@ -228,8 +230,18 @@ jobs:
       # nextest's output names the failing test; only backtrace frames lose
       # their line numbers. `test`/`bench` profiles inherit from `dev`, so
       # this covers nextest binaries and doctests alike.
+      #
+      # 2026-11-01 (E14): strip the symbol table too. With debuginfo gone,
+      # `.symtab` + `.strtab` (mangled names) were 39% of every test binary:
+      # 240 binaries, 60.5 GB → 37.2 GB, whole target dir 63.7 → ~40 GB
+      # (measured locally, cold `cargo nextest run --workspace --no-run`).
+      # 63.7 GB no longer fit the 51 GB a 72 GB runner has after cleanup
+      # (#1426, #1433 ENOSPC'd in `rustc-LLVM`). The cost: a RUST_BACKTRACE
+      # backtrace prints no frames. The panic message, its file:line and
+      # the failing test's name still print; for a call chain, rerun the
+      # test locally (full debuginfo). Keep `sidecar-interop` identical.
       CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_DEV_STRIP: debuginfo
+      CARGO_PROFILE_DEV_STRIP: symbols
     # Service containers are pulled by the runner before any step runs, so
     # neither a login nor a daemon mirror can be applied first: reference
     # Docker Hub's official images through mirror.gcr.io directly (same
@@ -267,17 +279,18 @@ jobs:
       # dies mid-link anyway (the runner itself, not the step, hits ENOSPC —
       # the job ends with no failed step and no log). Run it always: a dead
       # shard costs far more than the minutes.
+      #
+      # 2026-11-01 (E14), replacing "run it always": the list lives in
+      # scripts/ci/free-runner-disk.sh (shared with sidecar-interop), grew
+      # JVM/Julia/vcpkg/browsers/LLVM, and reports what each path frees.
+      # The "run it always" rule dated from a ~64 GB build; with
+      # strip=symbols the build needs ~40 GB. Today's runners are 145 GB
+      # (~86 GB free on arrival) and 72 GB (~13 GB free; the ~60 GB above
+      # was an older image), so >= 60 GB free on arrival skips the deletes
+      # (saves ~2.5-3.5 min on the big runner) and anything less deletes
+      # the whole list. The step summary's disk table shows what is left.
       - name: free runner disk
-        run: |
-          df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-            /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
-            /usr/local/share/powershell /usr/share/swift \
-            /usr/local/share/chromium /usr/local/lib/node_modules \
-            /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
-            /usr/share/miniconda /opt/pipx
-          sudo docker image prune -af
-          df -h /
+        run: scripts/ci/free-runner-disk.sh
       - uses: dtolnay/rust-toolchain@1.96.0
       # One cache entry for all four shards (identical builds). Concurrent
       # saves of the same key are fine: the losers skip "already exists".
@@ -320,6 +333,26 @@ jobs:
             echo "| --- | ---: | ---: |"
             echo "| cargo nextest (build + run) | ${elapsed}s | ${status} |"
           } >> "$GITHUB_STEP_SUMMARY"
+          # Disk headroom at (about) peak: every test binary is built and
+          # nothing has been cleaned yet. Shows how close each runner size
+          # comes to ENOSPC, so a growing build is seen before it fails.
+          # 2026-11-01 (E14). Best effort: a report failure (e.g. a full
+          # disk) must not turn a green test run red.
+          disk_report() {
+            local source size used avail pcent target_size
+            read -r source size used avail pcent < <(df -BG --output=source,size,used,avail,pcent / | tail -1)
+            target_size=$(du -sh target 2>/dev/null | cut -f1)
+            {
+              echo
+              echo "| Disk after build + run | Size | Used | Free | Use% | target/ |"
+              echo "| --- | ---: | ---: | ---: | ---: | ---: |"
+              echo "| ${source} | ${size} | ${used} | ${avail} | ${pcent} | ${target_size} |"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "${avail%G}" -lt 10 ]; then
+              echo "::warning::Rust test shard ${{ matrix.shard }}: only ${avail} free on / after the build (target/ is ${target_size}); see scripts/ci/free-runner-disk.sh"
+            fi
+          }
+          disk_report || echo "disk report failed (ignored)"
           exit "$status"
         env:
           # renovate/* PRs auto-merge on green, so they get the no-retry
@@ -408,7 +441,7 @@ jobs:
       # reusable (a profile change re-fingerprints every crate).
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
-      CARGO_PROFILE_DEV_STRIP: debuginfo
+      CARGO_PROFILE_DEV_STRIP: symbols
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
@@ -426,18 +459,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Same reason as rust-test: the restored server target dir plus a
-      # cold link can overflow a 72 GB runner.
+      # cold link can overflow a 72 GB runner. Keeps the hostedtoolcache:
+      # setup-python below installs from it.
       - name: free runner disk
-        run: |
-          df -h /
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
-            /opt/ghc /usr/local/.ghcup \
-            /usr/local/share/powershell /usr/share/swift \
-            /usr/local/share/chromium /usr/local/lib/node_modules \
-            /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
-            /usr/share/miniconda /opt/pipx
-          sudo docker image prune -af
-          df -h /
+        run: scripts/ci/free-runner-disk.sh --keep-toolcache
       - uses: dtolnay/rust-toolchain@1.96.0
       # Read the test shards' cache (same key, same profile); never write
       # it — the shards own that entry.
