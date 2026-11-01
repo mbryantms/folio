@@ -58,6 +58,19 @@ The eviction counter only moves when the optional `cache.thumbs_budget_mb`
 budget is set — see [runtime-configuration.md](runtime-configuration.md).
 Alert idea: `folio_thumbs_bytes` growing toward the data volume's free space.
 
+### Audit-log retention — [`jobs::audit_log_retention`](../../crates/server/src/jobs/audit_log_retention.rs) (audit 2026-11 E1)
+| Metric | Type | Labels |
+|---|---|---|
+| `folio_audit_log_trimmed_total` | counter | — |
+
+Rows deleted from `audit_log` by the daily 03:45 UTC export-and-trim sweep.
+Moves only when `audit_log.retention_days` is non-zero
+([runtime-configuration.md](runtime-configuration.md)); each increment was
+preceded by a successful NDJSON export under `data_path/audit-log-exports/`.
+Alert idea: `increase(folio_audit_log_trimmed_total[2d]) == 0` while the
+setting is on and the table is older than the window means the export
+failed — check the server log for `folio::audit_log_retention` errors.
+
 ### Subsystem counters (pre-existing)
 `folio_scan_duration_seconds`, `folio_scan_files_total`, `folio_scan_health_issues_open`,
 `folio_zip_lru_{hits,misses,evictions}_total`, `folio_zip_lru_open_fds`,

@@ -142,3 +142,87 @@ async fn invalid_direction_rejected() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"]["code"], "validation");
 }
+
+/// Audit 2026-11 F6/F7: the seven reader display preferences round-trip
+/// through PATCH and `/auth/me`, start `null` (never set on the account),
+/// clear back to `null`, and reject values outside the slider ranges.
+#[tokio::test]
+async fn reader_display_prefs_round_trip() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+
+    let fresh = get_me(&app, &auth).await;
+    for key in [
+        "reader_brightness",
+        "reader_sepia",
+        "reader_grayscale",
+        "reader_invert",
+        "reader_warmth",
+        "reader_contrast",
+        "reader_zoom_persist",
+    ] {
+        assert!(fresh[key].is_null(), "{key} should start unset");
+    }
+
+    let (status, body) = patch_pref(
+        &app,
+        &auth,
+        r#"{"reader_brightness":1.2,"reader_sepia":0.35,"reader_grayscale":40,
+            "reader_invert":true,"reader_warmth":-20,"reader_contrast":110,
+            "reader_zoom_persist":true}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["reader_brightness"], 1.2);
+    assert_eq!(body["reader_sepia"], 0.35);
+    assert_eq!(body["reader_grayscale"], 40);
+    assert_eq!(body["reader_invert"], true);
+    assert_eq!(body["reader_warmth"], -20);
+    assert_eq!(body["reader_contrast"], 110);
+    assert_eq!(body["reader_zoom_persist"], true);
+
+    let me = get_me(&app, &auth).await;
+    assert_eq!(me["reader_brightness"], 1.2);
+    assert_eq!(me["reader_warmth"], -20);
+    assert_eq!(me["reader_zoom_persist"], true);
+
+    // A partial PATCH leaves the other slices alone; `null` clears one.
+    let (status, body) = patch_pref(
+        &app,
+        &auth,
+        r#"{"reader_grayscale":null,"reader_contrast":90}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["reader_grayscale"].is_null());
+    assert_eq!(body["reader_contrast"], 90);
+    assert_eq!(body["reader_brightness"], 1.2);
+    assert_eq!(body["reader_invert"], true);
+}
+
+#[tokio::test]
+async fn reader_display_prefs_out_of_range_rejected() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    for (body, field) in [
+        (r#"{"reader_brightness":2}"#, "reader_brightness"),
+        (r#"{"reader_sepia":1.5}"#, "reader_sepia"),
+        (r#"{"reader_grayscale":101}"#, "reader_grayscale"),
+        (r#"{"reader_warmth":51}"#, "reader_warmth"),
+        (r#"{"reader_contrast":49}"#, "reader_contrast"),
+    ] {
+        let (status, resp) = patch_pref(&app, &auth, body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{field}: {resp}");
+        assert_eq!(resp["error"]["code"], "validation");
+        assert!(
+            resp["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(field),
+            "{field}: {resp}"
+        );
+    }
+    // Nothing was written by the rejected bodies.
+    let me = get_me(&app, &auth).await;
+    assert!(me["reader_brightness"].is_null());
+}

@@ -543,6 +543,38 @@ test-rust-fast:
     COMIC_REDIS_URL=redis://localhost:6381 \
       cargo nextest run --workspace --all-features
 
+# Writeback interop check (audit 2026-11 WP A5; CI job `sidecar-interop`):
+# the producer test writes a rich Folio-authored CBZ + expected.json, then
+# scripts/ci/sidecar_interop.py reads the archive with ComicTagger
+# (comicapi) and Metron-Tagger (darkseid), pinned in
+# scripts/ci/sidecar-interop-requirements.txt, and diffs the readings.
+# Throwaway Postgres + Redis like `test-rust-fast` (own names/ports, so the
+# two can run side by side; never the dev services — the harness FLUSHDBs
+# a Redis logical DB). Needs Docker and `uv`. The archive, both sidecars,
+# expected.json stay in the printed directory for inspection.
+sidecar-interop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    trap 'docker rm -f folio-interop-pg folio-interop-redis >/dev/null 2>&1 || true' EXIT
+    docker rm -f folio-interop-pg folio-interop-redis >/dev/null 2>&1 || true
+    docker run -d --name folio-interop-pg \
+      -e POSTGRES_USER=comic -e POSTGRES_PASSWORD=comic -e POSTGRES_DB=comic_reader_test \
+      -p 5434:5432 postgres:18-alpine -c max_connections=100 -c fsync=off >/dev/null
+    docker run -d --name folio-interop-redis \
+      -p 6382:6379 redis:8-alpine redis-server --databases 16 >/dev/null
+    until docker exec folio-interop-pg pg_isready -U comic >/dev/null 2>&1; do sleep 0.5; done
+    until docker exec folio-interop-redis redis-cli ping >/dev/null 2>&1; do sleep 0.3; done
+    out=$(mktemp -d -t sidecar-interop.XXXXXX)
+    FOLIO_INTEROP_OUT="$out" \
+    COMIC_TEST_PG_URL=postgres://comic:comic@localhost:5434/comic_reader_test \
+    COMIC_DATABASE_URL=postgres://comic:comic@localhost:5434/comic_reader_test \
+    COMIC_REDIS_URL=redis://localhost:6382 \
+      cargo test -p server --test sidecar_interop_emit -- --nocapture
+    uv run --no-project --python 3.13 \
+      --with-requirements scripts/ci/sidecar-interop-requirements.txt \
+      python -I scripts/ci/sidecar_interop.py --dir "$out"
+    echo "==> archive, sidecars and expected.json left in $out"
+
 test-web:
     cd web && pnpm test
 

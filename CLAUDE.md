@@ -248,7 +248,13 @@ Default admin (first registered user becomes admin):
   for the slice-by-slice matrix and the "add a new setting" recipe.
 - **Audit log**: every mutating admin handler emits via `crate::audit::record`.
   Action names are dotted (`admin.user.update`, `admin.user.library_access.set`).
-  Append-only at the role level — never UPDATE/DELETE.
+  Append-only at the role level — never UPDATE/DELETE from a handler. The
+  **one sanctioned deleter** is the scheduled export-and-trim job
+  [`jobs/audit_log_retention.rs`](crates/server/src/jobs/audit_log_retention.rs)
+  (daily 03:45 UTC, `audit_log.retention_days`, default `0` = keep forever,
+  floor 90): it writes rows older than the cutoff to NDJSON under
+  `data_path/audit-log-exports/` and deletes only what the file holds. Don't
+  add a second delete path, and don't turn the job into a handler.
 - **CSRF**: cookie-bound. POST/PATCH/DELETE require `X-CSRF-Token` header
   matching `__Host-comic_csrf` cookie. Bearer-auth requests bypass.
 - **Cursor pagination**: `next_cursor` is opaque (base64). Don't expose ordering
@@ -699,6 +705,18 @@ Default admin (first registered user becomes admin):
   `saved_views::validate_create`) stay as free functions; every
   semantic-validation failure returns 422 (the parse-shape errors —
   malformed UUID, malformed RFC3339, malformed JSON — stay 400).
+  A JSON body that has a rule goes through `Validated<T>` — the
+  audit-2026-11 E2 pass moved collection create/rename, issue PATCH,
+  external-id add and CBL create (bulk-metadata's `manga` check is
+  still inline, tracked debt). **Reviewer heuristic:** a `Json<T>` handler that checks
+  `trim().is_empty()`, a range or an allowed-values list by hand is
+  the smell — its message can never reach `error.details`, so the
+  form cannot bind it. Garde `custom(...)` closures (see
+  `issues.rs::in_range`) keep an existing message string when a
+  built-in rule would change it. Web forms that keep values in
+  component state bind the same details via
+  [`collectServerErrors`](web/lib/api/form-errors.ts) (react-hook-form
+  forms keep using `applyServerErrors`).
 - **Admin-action audit enforcement** (audit-remediation M10.2): the
   `audit-check` binary at `crates/tools/audit-check/` walks every
   handler under `crates/server/src/api/` and fails CI if any

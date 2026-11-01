@@ -6,8 +6,11 @@
  * same series, and follow the account through
  * `/me/series/{id}/reader-prefs` (post-audit T4.4, see
  * `series-prefs-sync`): `init` mirrors the server row into the local
- * cache first, and every per-series write is pushed back. Other state is
- * per-issue and is reset each time the reader mounts.
+ * cache first, and every per-series write is pushed back. The global
+ * display prefs (brightness, sepia, grayscale, invert, warmth, contrast,
+ * zoom persist) follow the account the same way through
+ * `/me/preferences` (`account-prefs-sync`, audit 2026-11 F7). Other state
+ * is per-issue and is reset each time the reader mounts.
  */
 import { create } from "zustand";
 import type { Direction, ViewMode } from "@/lib/reader/detect";
@@ -18,6 +21,22 @@ import {
   readerPrefSet,
 } from "@/lib/reader/prefs-storage";
 import { DOUBLE_TAP_MS } from "@/lib/reader/zoom";
+import {
+  type AccountPrefSlice,
+  type AccountReaderPrefs,
+  clearAccountAdoption,
+  mirrorAccountPrefs,
+  noteAccountAdoption,
+  pushAccountPref,
+} from "@/lib/reader/account-prefs-sync";
+import {
+  DEFAULT_FILTERS,
+  clampBrightness,
+  clampContrast,
+  clampGrayscale,
+  clampSepia,
+  clampWarmth,
+} from "@/lib/reader/filters";
 import {
   mirrorServerPrefs,
   pendingAdoption,
@@ -73,6 +92,10 @@ type PersistedSlice =
   | "markersHidden"
   | "brightness"
   | "sepia"
+  | "grayscale"
+  | "invert"
+  | "warmth"
+  | "contrast"
   | "zoomPersist"
   | "chromeDismissed";
 
@@ -102,12 +125,22 @@ function load<T>(
 
 const isSeriesSlice = (s: PersistedSlice): s is SeriesPrefSlice =>
   s === "fitMode" || s === "viewMode" || s === "direction" || s === "coverSolo";
+const isAccountSlice = (s: PersistedSlice): s is AccountPrefSlice =>
+  s === "brightness" ||
+  s === "sepia" ||
+  s === "grayscale" ||
+  s === "invert" ||
+  s === "warmth" ||
+  s === "contrast" ||
+  s === "zoomPersist";
 
 function save(slice: PersistedSlice, seriesId: string | null, value: string) {
   readerPrefSet(slice, scopeOf(seriesId), value);
   // Per-series slices also follow the account (coalesced PUT; no-op
-  // until the Reader installs the transport).
+  // until the Reader installs the transport); so do the global display
+  // slices (coalesced PATCH `/me/preferences`, `account-prefs-sync`).
   if (seriesId && isSeriesSlice(slice)) pushSeriesPref(seriesId, slice, value);
+  else if (isAccountSlice(slice)) pushAccountPref(slice, value);
 }
 
 export const loadFitMode = (seriesId: string | null): FitMode =>
@@ -184,19 +217,12 @@ function noteChromeToggle(hidden: boolean) {
   }, CHROME_DISMISS_SETTLE_MS);
 }
 
-// Vision-adjustment bounds, shared by the setters and the loaders so a
-// persisted value can never re-hydrate outside the slider's range.
-const BRIGHTNESS_MIN = 0.5;
-const BRIGHTNESS_MAX = 1.5;
-const clampBrightness = (v: number) =>
-  Math.max(BRIGHTNESS_MIN, Math.min(BRIGHTNESS_MAX, v));
-const clampSepia = (v: number) => Math.max(0, Math.min(1, v));
-
-/** Brightness/sepia persist globally (not per-series): they're an
+/** The colour filters persist globally (not per-series): they're an
  *  eye-comfort setting about the viewer's screen and room, not the
  *  content, so they carry across the whole library — same reasoning as
- *  {@link loadMarkersHidden}. Null when unset so the user default /
- *  built-in fallback still applies. */
+ *  {@link loadMarkersHidden}. Null when unset so the built-in default
+ *  still applies. The clamps (`filters.ts`) are shared with the setters so
+ *  a persisted value can never re-hydrate outside the slider's range. */
 export const loadBrightness = (): number | null => {
   const raw = load("brightness", null, isNumericString);
   return raw === null ? null : clampBrightness(Number(raw));
@@ -204,6 +230,22 @@ export const loadBrightness = (): number | null => {
 export const loadSepia = (): number | null => {
   const raw = load("sepia", null, isNumericString);
   return raw === null ? null : clampSepia(Number(raw));
+};
+export const loadGrayscale = (): number | null => {
+  const raw = load("grayscale", null, isNumericString);
+  return raw === null ? null : clampGrayscale(Number(raw));
+};
+export const loadInvert = (): boolean | null => {
+  const raw = load("invert", null, isBoolFlag);
+  return raw === null ? null : raw === "true";
+};
+export const loadWarmth = (): number | null => {
+  const raw = load("warmth", null, isNumericString);
+  return raw === null ? null : clampWarmth(Number(raw));
+};
+export const loadContrast = (): number | null => {
+  const raw = load("contrast", null, isNumericString);
+  return raw === null ? null : clampContrast(Number(raw));
 };
 
 export interface ReaderState {
@@ -231,6 +273,14 @@ export interface ReaderState {
   brightness: number;
   /** Sepia tone amount in [0,1]. 0 = off, 1 = full sepia. */
   sepia: number;
+  /** CSS `grayscale()` percent, 0–100 (F6). */
+  grayscale: number;
+  /** Night mode: the page surface is colour-inverted (F6). */
+  invert: boolean;
+  /** Colour temperature, −50 (cool) … 50 (warm); 0 = neutral (F6). */
+  warmth: number;
+  /** CSS `contrast()` percent, 50–150; 100 = unchanged (F6). */
+  contrast: number;
   /** Render the first page solo in double-page view, like the front cover
    * of a printed comic. Defaults to true; user-toggleable per-series. */
   coverSolo: boolean;
@@ -276,6 +326,13 @@ export interface ReaderState {
   togglePageStrip: () => void;
   setBrightness: (v: number) => void;
   setSepia: (v: number) => void;
+  setGrayscale: (v: number) => void;
+  setInvert: (v: boolean) => void;
+  setWarmth: (v: number) => void;
+  setContrast: (v: number) => void;
+  /** Every colour filter back to its default (one coalesced account
+   *  write). */
+  resetFilters: () => void;
   setCoverSolo: (v: boolean) => void;
   setMarkersHidden: (v: boolean) => void;
   toggleMarkersHidden: () => void;
@@ -306,6 +363,12 @@ export interface ReaderState {
      *  stale local value. `null` = the fetch failed (offline): the local
      *  cache stands. Omit in tests that want pure local resolution. */
     serverSeriesPrefs?: SeriesReaderPrefsView | null;
+    /** The account's global display prefs (`/auth/me`, F7): set slices
+     *  are mirrored into the local cache before resolution; unset ones
+     *  leave the local value in charge and are adopted on the first
+     *  change. `null` / omitted = unknown (offline, tests): local stands
+     *  and nothing is adopted. */
+    serverAccountPrefs?: AccountReaderPrefs | null;
   }) => void;
 }
 
@@ -324,8 +387,12 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   chromeAutoHide: true,
   chromePinned: false,
   pageStripVisible: false,
-  brightness: 1,
-  sepia: 0,
+  brightness: DEFAULT_FILTERS.brightness,
+  sepia: DEFAULT_FILTERS.sepia,
+  grayscale: DEFAULT_FILTERS.grayscale,
+  invert: DEFAULT_FILTERS.invert,
+  warmth: DEFAULT_FILTERS.warmth,
+  contrast: DEFAULT_FILTERS.contrast,
   coverSolo: true,
   markersHidden: false,
   zoomPersist: false,
@@ -399,9 +466,9 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   togglePageStrip: () => set({ pageStripVisible: !get().pageStripVisible }),
 
   // Brightness 0.5–1.5 keeps the slider sane (no pure black, no flooded
-  // whites). Sepia 0–1 matches the CSS function's input domain. Both
-  // persist globally so the comfort setting survives reloads and issue
-  // switches (resolved back in `init`).
+  // whites). Sepia 0–1 matches the CSS function's input domain. Every
+  // filter persists globally so the comfort setting survives reloads and
+  // issue switches (resolved back in `init`) and follows the account.
   setBrightness: (v: number) => {
     const clamped = clampBrightness(v);
     save("brightness", null, String(clamped));
@@ -411,6 +478,35 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     const clamped = clampSepia(v);
     save("sepia", null, String(clamped));
     set({ sepia: clamped });
+  },
+  setGrayscale: (v: number) => {
+    const clamped = clampGrayscale(v);
+    save("grayscale", null, String(clamped));
+    set({ grayscale: clamped });
+  },
+  setInvert: (v: boolean) => {
+    save("invert", null, v ? "true" : "false");
+    set({ invert: v });
+  },
+  setWarmth: (v: number) => {
+    const clamped = clampWarmth(v);
+    save("warmth", null, String(clamped));
+    set({ warmth: clamped });
+  },
+  setContrast: (v: number) => {
+    const clamped = clampContrast(v);
+    save("contrast", null, String(clamped));
+    set({ contrast: clamped });
+  },
+  resetFilters: () => {
+    const d = DEFAULT_FILTERS;
+    save("brightness", null, String(d.brightness));
+    save("sepia", null, String(d.sepia));
+    save("grayscale", null, String(d.grayscale));
+    save("invert", null, d.invert ? "true" : "false");
+    save("warmth", null, String(d.warmth));
+    save("contrast", null, String(d.contrast));
+    set({ ...d });
   },
   setCoverSolo: (v: boolean) => {
     save("coverSolo", get().seriesId, v ? "true" : "false");
@@ -455,6 +551,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     initialPageStripVisible,
     initialCoverSolo,
     serverSeriesPrefs,
+    serverAccountPrefs,
   }) => {
     // Account overrides first (post-audit T4.4): the server row overwrites
     // the local cache, and local overrides the server has never seen are
@@ -463,6 +560,15 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       mirrorServerPrefs(seriesId, serverSeriesPrefs);
       const adopt = pendingAdoption(seriesId, serverSeriesPrefs);
       if (adopt) pushSeriesPrefs(seriesId, adopt);
+    }
+    // Global display prefs (F7): the account's set slices win over the
+    // local cache; slices it has never set keep the local value and ride
+    // along with the first change (write-through, not on read).
+    if (serverAccountPrefs) {
+      mirrorAccountPrefs(serverAccountPrefs);
+      noteAccountAdoption(serverAccountPrefs);
+    } else {
+      clearAccountAdoption();
     }
     // Stored per-series choice always wins over the auto-detected default and
     // over the user's global preference. Resolution order:
@@ -492,6 +598,10 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       // the built-in default).
       brightness: loadBrightness() ?? get().brightness,
       sepia: loadSepia() ?? get().sepia,
+      grayscale: loadGrayscale() ?? get().grayscale,
+      invert: loadInvert() ?? get().invert,
+      warmth: loadWarmth() ?? get().warmth,
+      contrast: loadContrast() ?? get().contrast,
       // Resolution order: per-series localStorage > user default (from
       // MeView) > built-in fallback (true).
       coverSolo: loadCoverSolo(seriesId) ?? initialCoverSolo ?? true,

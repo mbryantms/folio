@@ -463,6 +463,17 @@ pub struct Config {
     /// every sweep).
     #[serde(default = "default_hard_purge_multiplier")]
     pub library_hard_purge_multiplier: u32,
+
+    /// Audit-log retention in days (audit 2026-11 N-A7 / OP-5). `0`
+    /// (default) keeps every `audit_log` row forever — the pre-E1
+    /// behaviour. When set, the daily sweep
+    /// ([`crate::jobs::audit_log_retention`]) exports rows older than this
+    /// many days to newline-delimited JSON under
+    /// `data_path/audit-log-exports/` and only then deletes them. Floor
+    /// when non-zero: [`crate::jobs::audit_log_retention::MIN_RETENTION_DAYS`]
+    /// (90). DB key `audit_log.retention_days`; live (read on every sweep).
+    #[serde(default)]
+    pub audit_log_retention_days: u32,
 }
 
 fn default_hard_purge_multiplier() -> u32 {
@@ -552,6 +563,7 @@ impl std::fmt::Debug for Config {
             .field("auto_migrate", &self.auto_migrate)
             .field("zip_lru_capacity", &self.zip_lru_capacity)
             .field("thumbs_budget_mb", &self.thumbs_budget_mb)
+            .field("audit_log_retention_days", &self.audit_log_retention_days)
             .field("scan_worker_count", &self.scan_worker_count)
             .field("scan_folder_concurrency", &self.scan_folder_concurrency)
             .field("db_max_connections", &self.db_max_connections)
@@ -951,6 +963,16 @@ impl Config {
                 self.thumbs_budget_mb,
                 64,
                 16 * 1024 * 1024,
+            )?;
+        }
+        // 0 = keep forever; otherwise a floor so a typo (`9` for `90`)
+        // can't trim the audit trail down to a week.
+        if self.audit_log_retention_days != 0 {
+            check_range(
+                "audit_log_retention_days",
+                self.audit_log_retention_days,
+                crate::jobs::audit_log_retention::MIN_RETENTION_DAYS,
+                crate::jobs::audit_log_retention::MAX_RETENTION_DAYS,
             )?;
         }
         Ok(())
@@ -1497,6 +1519,13 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(n) => cfg.library_hard_purge_multiplier = u32::try_from(n).unwrap_or(u32::MAX),
             None => bad_type(&row.key, "uint", &row.value),
         },
+        // ──── audit 2026-11 E1: audit-log retention ────
+        "audit_log.retention_days" => match row.value.as_u64() {
+            // Unclamped so `Config::validate` rejects a below-floor PATCH
+            // (dry-run 422) instead of silently raising it.
+            Some(n) => cfg.audit_log_retention_days = u32::try_from(n).unwrap_or(u32::MAX),
+            None => bad_type(&row.key, "uint", &row.value),
+        },
         "metadata.auto_apply_threshold" => match row.value.as_u64() {
             Some(n) => cfg.metadata_auto_apply_threshold = n.min(100) as u32,
             None => bad_type(&row.key, "uint", &row.value),
@@ -1751,6 +1780,7 @@ mod tests {
             metadata_issue_refresh_enabled: false,
             metadata_issue_refresh_per_provider_cap: default_issue_refresh_cap(),
             library_hard_purge_multiplier: default_hard_purge_multiplier(),
+            audit_log_retention_days: 0,
         }
     }
 

@@ -35,6 +35,7 @@ import {
   useUpdateSeries,
   useSetIssueCoverPage,
 } from "@/lib/api/mutations";
+import { collectServerErrors } from "@/lib/api/form-errors";
 import { formatRelativeDate } from "@/lib/format";
 import type {
   IssueDetailView,
@@ -63,6 +64,11 @@ type PinControl = {
   pinnedFields: Set<string>;
   onRelease: (field: string) => void;
   pending: boolean;
+  /** Server 422 field errors (`error.details`) for the edit sheet, keyed
+   *  by request field, so a `<Field>` shows its own message under its
+   *  input without every call site threading one through. The mutation
+   *  hook still toasts the summary. */
+  serverErrors: Record<string, string>;
 };
 
 // Heavy page editor (+dnd-kit) — lazy so it stays out of the issue page's
@@ -73,6 +79,12 @@ const PageEditor = dynamic(
 );
 
 const PinControlContext = createContext<PinControl | null>(null);
+
+/** `Field.pinField` is the column key; a server error is keyed by the
+ *  request field. They differ only where the column is renamed. */
+const PIN_TO_REQUEST_FIELD: Readonly<Record<string, string>> = {
+  number_raw: "number",
+};
 
 const SERIES_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "", label: "—" },
@@ -435,13 +447,15 @@ function EditForm({
     () => new Set(issue.user_pinned_columns),
     [issue.user_pinned_columns],
   );
+  const [serverErrors, setServerErrors] = useState<Record<string, string>>({});
   const pinControl = useMemo<PinControl>(
     () => ({
       pinnedFields,
       onRelease: (field: string) => clearPin.mutate({ field }),
       pending: clearPin.isPending,
+      serverErrors,
     }),
-    [pinnedFields, clearPin.mutate, clearPin.isPending],
+    [pinnedFields, clearPin.mutate, clearPin.isPending, serverErrors],
   );
 
   const [form, setForm] = useState<FormState>(() =>
@@ -468,6 +482,7 @@ function EditForm({
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setServerErrors({});
     const issueBody = buildPatchBody(issue, form, links);
     const seriesBody = buildSeriesPatchBody(series, form);
 
@@ -490,8 +505,10 @@ function EditForm({
         router.refresh();
         onSaved();
       })
-      .catch(() => {
-        /* error toast already raised by useApiMutation */
+      .catch((err: unknown) => {
+        // The error toast is already raised by useApiMutation; bind the
+        // 422's per-field messages under their inputs.
+        setServerErrors(collectServerErrors(err));
       });
   };
   const isPending = update.isPending || updateSeries.isPending;
@@ -1054,6 +1071,9 @@ function Field({
 }) {
   const pin = useContext(PinControlContext);
   const isPinned = !!(pinField && pin?.pinnedFields.has(pinField));
+  const serverError = pinField
+    ? pin?.serverErrors[PIN_TO_REQUEST_FIELD[pinField] ?? pinField]
+    : undefined;
   return (
     <div className="grid gap-1.5">
       <div className="flex items-center gap-1.5">
@@ -1074,6 +1094,11 @@ function Field({
         )}
       </div>
       {children}
+      {serverError ? (
+        <p className="text-destructive text-sm" role="alert">
+          {serverError}
+        </p>
+      ) : null}
     </div>
   );
 }

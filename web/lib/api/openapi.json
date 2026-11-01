@@ -6164,7 +6164,7 @@
             }
           },
           "422": {
-            "description": "per-user URL/catalog list limit reached"
+            "description": "missing url / catalog_path (field-level `details`), or the per-user URL/catalog list limit reached"
           },
           "429": {
             "description": "per-user CBL import quota exceeded"
@@ -9891,13 +9891,16 @@
             }
           },
           "400": {
-            "description": "validation error"
+            "description": "malformed JSON body"
           },
           "403": {
             "description": "admin only"
           },
           "404": {
             "description": "issue not found"
+          },
+          "422": {
+            "description": "validation error (field-level `details`)"
           }
         }
       }
@@ -10723,13 +10726,16 @@
             }
           },
           "400": {
-            "description": "invalid source"
+            "description": "malformed JSON body"
           },
           "403": {
             "description": "library access denied"
           },
           "404": {
             "description": "series not found"
+          },
+          "422": {
+            "description": "unknown source or empty external_id (field-level `details`)"
           }
         }
       }
@@ -10974,13 +10980,16 @@
             }
           },
           "400": {
-            "description": "invalid source"
+            "description": "malformed JSON body"
           },
           "403": {
             "description": "library access denied"
           },
           "404": {
             "description": "issue not found"
+          },
+          "422": {
+            "description": "unknown source or empty external_id (field-level `details`)"
           }
         }
       }
@@ -13937,7 +13946,8 @@
         ],
         "properties": {
           "external_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Non-empty after trimming."
           },
           "external_url": {
             "type": [
@@ -18620,7 +18630,8 @@
               }
             }
           }
-        ]
+        ],
+        "description": "Body for `POST /me/cbl-lists`. The `kind` discriminator picks the\nvariant; the one required-when rule (a URL list needs `url`, a catalog\nlist needs `catalog_path`) is expressed per variant so a 422 names the\nfield in `error.details`. The URL's scheme / host policy stays with\nthe SSRF guard at fetch time (`invalid_url`, 400) — that is a\nparse-shape rejection, not a form rule. `refresh_schedule` is not\nvalidated here on purpose: the refresh sweep falls back to weekly for\nan unrecognised token so a typo never disables refresh."
       },
       "CreateCollectionReq": {
         "type": "object",
@@ -18635,7 +18646,8 @@
             ]
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "Non-empty after trimming; at most 200 bytes (UTF-8)."
           }
         }
       },
@@ -26439,6 +26451,60 @@
             "type": "boolean",
             "description": "True when `/me/account` accepts local password changes for this user."
           },
+          "reader_brightness": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Reader display preferences that follow the account (audit 2026-11\nF6/F7). Each is `null` until the account has set it; while `null`\nthe reader keeps the browser's own stored value and adopts it on\nthe first change. CSS `brightness()` multiplier, 0.5..=1.5."
+          },
+          "reader_contrast": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "CSS `contrast()` percent, 50..=150."
+          },
+          "reader_grayscale": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "CSS `grayscale()` percent, 0..=100."
+          },
+          "reader_invert": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Night mode: the page surface is colour-inverted."
+          },
+          "reader_sepia": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "CSS `sepia()` amount, 0..=1."
+          },
+          "reader_warmth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Colour temperature, -50 (cool) ..= 50 (warm); 0 is neutral."
+          },
+          "reader_zoom_persist": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "\"Keep zoom between pages\" in the reader."
+          },
           "reading_idle_ms": {
             "type": "integer",
             "format": "int32",
@@ -28122,6 +28188,58 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "reader_brightness": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Reader display preferences (audit 2026-11 F6/F7). Absent leaves the\nstored value; `null` clears it so the reader falls back to its\nbrowser value / built-in default. Ranges: brightness 0.5..=1.5."
+          },
+          "reader_contrast": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "50..=150."
+          },
+          "reader_grayscale": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "0..=100."
+          },
+          "reader_invert": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reader_sepia": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "0..=1."
+          },
+          "reader_warmth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "-50..=50."
+          },
+          "reader_zoom_persist": {
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "reading_idle_ms": {
@@ -34856,7 +34974,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "When present: non-empty after trimming; at most 200 bytes (UTF-8)."
           }
         }
       },

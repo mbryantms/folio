@@ -6062,6 +6062,7 @@ export interface components {
             ref_id: string;
         };
         AddExternalIdReq: {
+            /** @description Non-empty after trimming. */
             external_id: string;
             /**
              * @description Optional override; defaults to the canonical URL template for
@@ -8096,6 +8097,16 @@ export interface components {
             github_owner: string;
             github_repo: string;
         };
+        /**
+         * @description Body for `POST /me/cbl-lists`. The `kind` discriminator picks the
+         *     variant; the one required-when rule (a URL list needs `url`, a catalog
+         *     list needs `catalog_path`) is expressed per variant so a 422 names the
+         *     field in `error.details`. The URL's scheme / host policy stays with
+         *     the SSRF guard at fetch time (`invalid_url`, 400) — that is a
+         *     parse-shape rejection, not a form rule. `refresh_schedule` is not
+         *     validated here on purpose: the refresh sweep falls back to weekly for
+         *     an unrecognised token so a typo never disables refresh.
+         */
         CreateCblListReq: {
             description?: string | null;
             /** @enum {string} */
@@ -8115,6 +8126,7 @@ export interface components {
         };
         CreateCollectionReq: {
             description?: string | null;
+            /** @description Non-empty after trimming; at most 200 bytes (UTF-8). */
             name: string;
         };
         CreateDismissalReq: {
@@ -11198,6 +11210,38 @@ export interface components {
             /** @description True when `/me/account` accepts local password changes for this user. */
             password_editable: boolean;
             /**
+             * Format: double
+             * @description Reader display preferences that follow the account (audit 2026-11
+             *     F6/F7). Each is `null` until the account has set it; while `null`
+             *     the reader keeps the browser's own stored value and adopts it on
+             *     the first change. CSS `brightness()` multiplier, 0.5..=1.5.
+             */
+            reader_brightness?: number | null;
+            /**
+             * Format: int32
+             * @description CSS `contrast()` percent, 50..=150.
+             */
+            reader_contrast?: number | null;
+            /**
+             * Format: int32
+             * @description CSS `grayscale()` percent, 0..=100.
+             */
+            reader_grayscale?: number | null;
+            /** @description Night mode: the page surface is colour-inverted. */
+            reader_invert?: boolean | null;
+            /**
+             * Format: double
+             * @description CSS `sepia()` amount, 0..=1.
+             */
+            reader_sepia?: number | null;
+            /**
+             * Format: int32
+             * @description Colour temperature, -50 (cool) ..= 50 (warm); 0 is neutral.
+             */
+            reader_warmth?: number | null;
+            /** @description "Keep zoom between pages" in the reader. */
+            reader_zoom_persist?: boolean | null;
+            /**
              * Format: int32
              * @description M6a: idle threshold (ms) after which the client ends the session.
              */
@@ -11982,6 +12026,35 @@ export interface components {
              */
             max_rails_per_page?: number | null;
             motion?: components["schemas"]["Motion"] | null;
+            /**
+             * Format: double
+             * @description Reader display preferences (audit 2026-11 F6/F7). Absent leaves the
+             *     stored value; `null` clears it so the reader falls back to its
+             *     browser value / built-in default. Ranges: brightness 0.5..=1.5.
+             */
+            reader_brightness?: number | null;
+            /**
+             * Format: int32
+             * @description 50..=150.
+             */
+            reader_contrast?: number | null;
+            /**
+             * Format: int32
+             * @description 0..=100.
+             */
+            reader_grayscale?: number | null;
+            reader_invert?: boolean | null;
+            /**
+             * Format: double
+             * @description 0..=1.
+             */
+            reader_sepia?: number | null;
+            /**
+             * Format: int32
+             * @description -50..=50.
+             */
+            reader_warmth?: number | null;
+            reader_zoom_persist?: boolean | null;
             /**
              * Format: int32
              * @description M6a: idle threshold ms (30_000..=1_800_000).
@@ -14789,6 +14862,7 @@ export interface components {
              *     an explicit `null`; omitting the field leaves it unchanged.
              */
             description?: string | null;
+            /** @description When present: non-empty after trimming; at most 200 bytes (UTF-8). */
             name?: string | null;
         };
         UpdateEntryReq: {
@@ -21201,7 +21275,7 @@ export interface operations {
                     "application/json": components["schemas"]["CblListView"];
                 };
             };
-            /** @description per-user URL/catalog list limit reached */
+            /** @description missing url / catalog_path (field-level `details`), or the per-user URL/catalog list limit reached */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -24482,7 +24556,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueDetailView"];
                 };
             };
-            /** @description validation error */
+            /** @description malformed JSON body */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -24498,6 +24572,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation error (field-level `details`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25236,7 +25317,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExternalIdRow"];
                 };
             };
-            /** @description invalid source */
+            /** @description malformed JSON body */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -25252,6 +25333,13 @@ export interface operations {
             };
             /** @description series not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown source or empty external_id (field-level `details`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25488,7 +25576,7 @@ export interface operations {
                     "application/json": components["schemas"]["ExternalIdRow"];
                 };
             };
-            /** @description invalid source */
+            /** @description malformed JSON body */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -25504,6 +25592,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown source or empty external_id (field-level `details`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

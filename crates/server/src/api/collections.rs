@@ -40,6 +40,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::api::collection_sequence;
+use crate::api::extractors::Validated;
 use crate::api::issue_card::IssueCardRow;
 use crate::api::saved_views::{KIND_COLLECTION, SYSTEM_KEY_WANT_TO_READ, SavedViewView};
 use crate::api::series::{IssueSummaryView, SeriesView, hydrate_series};
@@ -180,21 +181,41 @@ pub struct CollectionWindowQuery {
     pub cursor: Option<i32>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct CreateCollectionReq {
+    /// Non-empty after trimming; at most 200 bytes (UTF-8).
+    #[garde(custom(collection_name))]
     pub name: String,
     #[serde(default)]
+    #[garde(skip)]
     pub description: Option<String>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateCollectionReq {
+    /// When present: non-empty after trimming; at most 200 bytes (UTF-8).
     #[serde(default)]
+    #[garde(inner(custom(collection_name)))]
     pub name: Option<String>,
     /// Double-Option lets the client clear the description by sending
     /// an explicit `null`; omitting the field leaves it unchanged.
     #[serde(default)]
+    #[garde(skip)]
     pub description: Option<Option<String>>,
+}
+
+/// The one name rule for create + rename: non-empty after trimming and at
+/// most 200 bytes. Runs through `Validated<T>` so a failure lands in
+/// `error.details` under `name` (audit 2026-11 N-A4).
+fn collection_name(value: &str, _: &()) -> garde::Result {
+    let name = value.trim();
+    if name.is_empty() {
+        return Err(garde::Error::new("name required"));
+    }
+    if name.len() > 200 {
+        return Err(garde::Error::new("name must be 200 chars or fewer"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -517,23 +538,9 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<CreateCollectionReq>,
+    Validated(req): Validated<CreateCollectionReq>,
 ) -> impl IntoResponse {
     let name = req.name.trim();
-    if name.is_empty() {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation",
-            "name required",
-        );
-    }
-    if name.len() > 200 {
-        return error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation",
-            "name must be 200 chars or fewer",
-        );
-    }
     let description = req
         .description
         .as_ref()
@@ -587,7 +594,7 @@ pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Json(req): Json<UpdateCollectionReq>,
+    Validated(req): Validated<UpdateCollectionReq>,
 ) -> impl IntoResponse {
     let row = match fetch_owned(&app.db, user.id, id).await {
         Ok(r) => r,
@@ -596,22 +603,7 @@ pub async fn update(
 
     let mut am: saved_view::ActiveModel = row.clone().into();
     if let Some(name) = req.name.as_ref() {
-        let trimmed = name.trim();
-        if trimmed.is_empty() {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation",
-                "name required",
-            );
-        }
-        if trimmed.len() > 200 {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation",
-                "name must be 200 chars or fewer",
-            );
-        }
-        am.name = Set(trimmed.to_owned());
+        am.name = Set(name.trim().to_owned());
     }
     if let Some(desc) = req.description.as_ref() {
         am.description = Set(desc

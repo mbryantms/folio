@@ -42,6 +42,7 @@ jobs:
       cargo_deps: ${{ steps.filter.outputs.cargo_deps || steps.mergequeue.outputs.full }}
       web_deps: ${{ steps.filter.outputs.web_deps || steps.mergequeue.outputs.full }}
       renovate: ${{ steps.filter.outputs.renovate || steps.mergequeue.outputs.full }}
+      sidecar_interop: ${{ steps.filter.outputs.sidecar_interop || steps.mergequeue.outputs.full }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # In the merge queue we validate the actual merged result, so run the
@@ -101,6 +102,20 @@ jobs:
               - '.github/workflows/ci.yml'
             renovate:
               - 'renovate.json'
+            # The writeback interop job: the Rust surface that writes the
+            # sidecars, the reader script + its pins, and `fixtures/**`
+            # (the parity goldens and the vendored MetronInfo XSD are the
+            # other half of the sidecar contract; the producer itself reads
+            # nothing from there).
+            sidecar_interop:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'fixtures/**'
+              - 'scripts/ci/sidecar_interop.py'
+              - 'scripts/ci/sidecar-interop-requirements.txt'
+              - '.github/workflows/ci.yml'
 
   # A malformed packageRule silently disables parts of the update pipeline —
   # renovate logs the error server-side where nobody looks. Validate on the
@@ -362,6 +377,121 @@ jobs:
           PG_URL_BASE: postgres://comic:comic@localhost:5432
           MIGRATION_BIN: target/debug/migration
           ROUNDTRIP_COUNT: "10"
+
+  # Writeback interop (audit 2026-11 WP A5, Slice A exit criterion): every
+  # production library has archive writeback on, so the ComicInfo.xml /
+  # MetronInfo.xml Folio writes are read by other tools. `sidecar_parity`
+  # pins Folio's XML against a ComicTagger-written golden and the MetronInfo
+  # XSD; this job runs the *tools*. The producer test seeds a rich issue in a
+  # writeback library, writes a CBZ through the real rewrite job and emits
+  # `expected.json`; `scripts/ci/sidecar_interop.py` opens that CBZ with
+  # ComicTagger's `comicapi` and Metron-Tagger's `darkseid` (versions pinned
+  # in scripts/ci/sidecar-interop-requirements.txt) and diffs what each tool
+  # reads against the JSON, tolerating only the *named* normalisations the
+  # script documents. Locally: `just sidecar-interop`.
+  #
+  # NOT a required check yet. Promote it (branch protection → required
+  # status checks → "Writeback — ComicTagger + Metron-Tagger read a Folio
+  # archive") once it has been green on main for a week; until then a red
+  # run here does not block a merge, so look at it on every writeback PR.
+  sidecar-interop:
+    name: Writeback — ComicTagger + Metron-Tagger read a Folio archive
+    runs-on: ubuntu-24.04
+    needs: [changes]
+    if: needs.changes.outputs.sidecar_interop == 'true'
+    # Same budget as a test shard: on a cache miss (toolchain bump, or a
+    # Cargo.lock change with only a prefix match) this builds the server
+    # test binary cold, like a shard does.
+    timeout-minutes: 90
+    env:
+      # Identical to rust-test so the restored `rust-test` cache entry is
+      # reusable (a profile change re-fingerprints every crate).
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_DEV_STRIP: debuginfo
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        env:
+          POSTGRES_USER: comic
+          POSTGRES_PASSWORD: comic
+          POSTGRES_DB: comic_reader_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Same reason as rust-test: the restored server target dir plus a
+      # cold link can overflow a 72 GB runner.
+      - name: free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet \
+            /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/share/swift \
+            /usr/local/share/chromium /usr/local/lib/node_modules \
+            /usr/lib/google-cloud-sdk /opt/microsoft /opt/az \
+            /usr/share/miniconda /opt/pipx
+          sudo docker image prune -af
+          df -h /
+      - uses: dtolnay/rust-toolchain@1.96.0
+      # Read the test shards' cache (same key, same profile); never write
+      # it — the shards own that entry.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: rust-test
+          save-if: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: scripts/ci/sidecar-interop-requirements.txt
+      - name: Install ComicTagger + Metron-Tagger (pinned)
+        run: |
+          start=$(date +%s)
+          python3 -m pip install --quiet --disable-pip-version-check -r scripts/ci/sidecar-interop-requirements.txt
+          elapsed=$(($(date +%s) - start))
+          {
+            echo "### Sidecar interop timings"
+            echo
+            echo "| Step | Duration |"
+            echo "| --- | ---: |"
+            echo "| pip install | ${elapsed}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Produce a Folio-written archive
+        run: |
+          start=$(date +%s)
+          cargo test -p server --test sidecar_interop_emit -- --nocapture
+          elapsed=$(($(date +%s) - start))
+          echo "| producer (build + run) | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          FOLIO_INTEROP_OUT: ${{ runner.temp }}/sidecar-interop
+          COMIC_TEST_PG_URL: postgres://comic:comic@localhost:5432/comic_reader_test
+          COMIC_DATABASE_URL: postgres://comic:comic@localhost:5432/comic_reader_test
+          COMIC_REDIS_URL: redis://localhost:6379
+      # `shell: bash` for pipefail: the default `bash -e` would let `tee`
+      # mask the script's exit 1 on a mismatch.
+      - name: Read it with ComicTagger and Metron-Tagger
+        shell: bash
+        run: |
+          start=$(date +%s)
+          python3 -I scripts/ci/sidecar_interop.py --dir "$RUNNER_TEMP/sidecar-interop" | tee "$RUNNER_TEMP/sidecar-interop/report.txt"
+          elapsed=$(($(date +%s) - start))
+          echo "| readers | ${elapsed}s |" >> "$GITHUB_STEP_SUMMARY"
+      # The archive, both sidecars, expected.json and the report, for
+      # debugging a red run without reproducing it.
+      - name: Upload the archive and sidecars
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sidecar-interop
+          path: ${{ runner.temp }}/sidecar-interop/
+          if-no-files-found: ignore
+          retention-days: 14
 
   rust-check:
     name: Rust — fmt / clippy / test

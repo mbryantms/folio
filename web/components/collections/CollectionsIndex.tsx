@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { collectServerErrors } from "@/lib/api/form-errors";
 import { useCollections } from "@/lib/api/queries";
 import { useCreateCollection } from "@/lib/api/mutations";
 import { TOAST } from "@/lib/api/toast-strings";
@@ -172,6 +173,9 @@ export function NewCollectionDialog({
   const create = useCreateCollection();
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
+  // Server 422 field errors (`error.details`) bound under their inputs;
+  // the mutation hook still toasts the summary.
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
     if (open) {
@@ -179,6 +183,7 @@ export function NewCollectionDialog({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setName("");
       setDescription("");
+      setErrors({});
     }
   }, [open]);
 
@@ -189,6 +194,7 @@ export function NewCollectionDialog({
       toast.error(TOAST.NAME_REQUIRED);
       return;
     }
+    setErrors({});
     create.mutate(
       { name: trimmed, description },
       {
@@ -196,6 +202,7 @@ export function NewCollectionDialog({
           toast.success(`Collection "${trimmed}" created`);
           onOpenChange(false);
         },
+        onError: (err) => setErrors(collectServerErrors(err, ["name"])),
       },
     );
   }
@@ -220,7 +227,19 @@ export function NewCollectionDialog({
               autoFocus
               required
               maxLength={200}
+              aria-invalid={errors.name ? true : undefined}
+              aria-describedby={
+                errors.name ? "new-collection-name-error" : undefined
+              }
             />
+            {errors.name ? (
+              <p
+                id="new-collection-name-error"
+                className="text-destructive text-sm"
+              >
+                {errors.name}
+              </p>
+            ) : null}
           </div>
           <div className="space-y-2">
             <Label htmlFor="new-collection-description">Description</Label>

@@ -1039,6 +1039,9 @@ impl TestApp {
             metadata_issue_refresh_enabled: false,
             metadata_issue_refresh_per_provider_cap: 200,
             library_hard_purge_multiplier: 2,
+            // audit 2026-11 E1: off by default (keep forever); the
+            // retention tests flip it via `replace_cfg`.
+            audit_log_retention_days: 0,
         };
 
         let jobs = JobRuntime::new(&redis_url, db.clone())

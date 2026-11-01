@@ -13,6 +13,10 @@ import type {
 import { detectInitialViewMode } from "@/lib/reader/detect";
 import type { Direction, SeriesDirection, ViewMode } from "@/lib/reader/detect";
 import type { FitMode } from "@/lib/reader/store";
+import {
+  accountReaderPrefsOf,
+  type AccountReaderPrefs,
+} from "@/lib/reader/account-prefs-sync";
 import { preload } from "react-dom";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
 
@@ -213,6 +217,9 @@ export default async function ReadPage({
   let userDefaultPageStrip = false;
   let userDefaultPageAnimation: "off" | "slide" | "fade" | null = null;
   let userDefaultCoverSolo = true;
+  // The account's global display prefs (F7). `null` when `/auth/me`
+  // failed: the reader keeps its local cache and adopts nothing.
+  let userReaderPrefs: AccountReaderPrefs | null = null;
   let userKeybinds: Record<string, string> = {};
   let activityTrackingEnabled = true;
   let readingMinActiveMs = 30_000;
@@ -249,6 +256,7 @@ export default async function ReadPage({
       userDefaultPageAnimation = me.default_page_animation;
     }
     userDefaultCoverSolo = me.default_cover_solo !== false;
+    userReaderPrefs = accountReaderPrefsOf(me);
     userKeybinds =
       (me.keybinds as Record<string, string> | null | undefined) ?? {};
     activityTrackingEnabled = me.activity_tracking_enabled !== false;
@@ -297,6 +305,7 @@ export default async function ReadPage({
         userDefaultPageStrip={userDefaultPageStrip}
         userDefaultPageAnimation={userDefaultPageAnimation}
         userDefaultCoverSolo={userDefaultCoverSolo}
+        userReaderPrefs={userReaderPrefs}
         userKeybinds={userKeybinds}
         activityTrackingEnabled={activityTrackingEnabled && !isIncognito}
         incognito={isIncognito}

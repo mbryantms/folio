@@ -18,6 +18,32 @@ import type { FieldValues, Path, UseFormSetError } from "react-hook-form";
 
 import { ApiMutationError } from "./mutations/_core";
 
+/**
+ * The same binding for a form that keeps its values in component state
+ * instead of react-hook-form (the small dialogs: new collection, add
+ * external id, CBL URL import, the issue edit sheet and inline field
+ * editor). Returns a `{ field: message }` record for the fields the form
+ * owns (every named field when `knownFields` is omitted); a whole-body
+ * rule or a field the form doesn't own lands under `root`. Empty when
+ * `err` carries no field errors, so a caller can
+ * `setErrors(collectServerErrors(err, FIELDS))` unconditionally.
+ */
+export function collectServerErrors(
+  err: unknown,
+  knownFields?: ReadonlyArray<string>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  applyServerErrors<Record<string, string>>(
+    (name, error) => {
+      const key = String(name);
+      out[key.startsWith("root") ? "root" : key] = error.message ?? "";
+    },
+    err,
+    knownFields,
+  );
+  return out;
+}
+
 export function applyServerErrors<TForm extends FieldValues>(
   setError: UseFormSetError<TForm>,
   err: unknown,

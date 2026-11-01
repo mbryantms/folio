@@ -769,6 +769,13 @@ pub async fn callback(
                 opds_wtr_reorder: Set(true),
                 opds_progress_glyphs: Set(true),
                 max_rails_per_page: Set(12),
+                reader_brightness: Set(None),
+                reader_sepia: Set(None),
+                reader_grayscale: Set(None),
+                reader_invert: Set(None),
+                reader_warmth: Set(None),
+                reader_contrast: Set(None),
+                reader_zoom_persist: Set(None),
             };
             let inserted = match am.insert(&txn).await {
                 Ok(m) => m,

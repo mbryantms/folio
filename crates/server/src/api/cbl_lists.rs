@@ -34,6 +34,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use super::extractors::Validated;
 use crate::api::issue_card::IssueCardRow;
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::cbl::{
@@ -311,30 +312,56 @@ pub struct RefreshLogListView {
     pub items: Vec<RefreshLogEntryView>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+/// Body for `POST /me/cbl-lists`. The `kind` discriminator picks the
+/// variant; the one required-when rule (a URL list needs `url`, a catalog
+/// list needs `catalog_path`) is expressed per variant so a 422 names the
+/// field in `error.details`. The URL's scheme / host policy stays with
+/// the SSRF guard at fetch time (`invalid_url`, 400) — that is a
+/// parse-shape rejection, not a form rule. `refresh_schedule` is not
+/// validated here on purpose: the refresh sweep falls back to weekly for
+/// an unrecognised token so a typo never disables refresh.
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CreateCblListReq {
     /// Direct URL to a `.cbl` file. Fetched server-side.
     Url {
+        #[garde(custom(required_after_trim("url")))]
         url: String,
         #[serde(default)]
+        #[garde(skip)]
         name: Option<String>,
         #[serde(default)]
+        #[garde(skip)]
         description: Option<String>,
         #[serde(default)]
+        #[garde(skip)]
         refresh_schedule: Option<String>,
     },
     /// Pick from a configured `catalog_sources` row.
     Catalog {
+        #[garde(skip)]
         catalog_source_id: Uuid,
+        #[garde(custom(required_after_trim("catalog_path")))]
         catalog_path: String,
         #[serde(default)]
+        #[garde(skip)]
         name: Option<String>,
         #[serde(default)]
+        #[garde(skip)]
         description: Option<String>,
         #[serde(default)]
+        #[garde(skip)]
         refresh_schedule: Option<String>,
     },
+}
+
+fn required_after_trim(field: &'static str) -> impl FnOnce(&str, &()) -> garde::Result {
+    move |value, _| {
+        if value.trim().is_empty() {
+            return Err(garde::Error::new(format!("{field} required")));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -1063,7 +1090,7 @@ pub async fn upload(
     request_body = CreateCblListReq,
     responses(
         (status = 201, body = CblListView),
-        (status = 422, description = "per-user URL/catalog list limit reached"),
+        (status = 422, description = "missing url / catalog_path (field-level `details`), or the per-user URL/catalog list limit reached"),
         (status = 429, description = "per-user CBL import quota exceeded"),
     )
 )]
@@ -1071,7 +1098,7 @@ pub async fn upload(
 pub async fn create_from_json(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<CreateCblListReq>,
+    Validated(req): Validated<CreateCblListReq>,
 ) -> impl IntoResponse {
     // M-5 (WP-6.3): both kinds make the server fetch a remote document now
     // and (with a schedule) on every refresh sweep — cap the standing count,

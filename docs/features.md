@@ -62,8 +62,11 @@ a meaningful share of pages are flagged as spreads or the pages are
 landscape, single otherwise. Your manual choice always wins and is
 remembered per series.
 
-Fit modes (fit-width / fit-height / original), a brightness slider, a sepia
-toggle, and auto-hiding chrome round out the settings popover.
+Fit modes (fit-width / fit-height / original), colour filters — brightness,
+contrast, grayscale, sepia, warmth and a night mode that inverts the page —
+and auto-hiding chrome round out the settings popover. The filters and
+"keep zoom between pages" follow your account to every device; a browser
+that already had a setting keeps it until you change it.
 
 ### Manga done properly
 
@@ -451,7 +454,9 @@ per-list opt-out to preserve curated orders).
   last-used tracking.
 - A complete admin area: users, libraries, scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every
-  admin action, runtime configuration edited from the UI (SMTP, auth
+  admin action (kept forever by default; an optional retention exports old
+  entries to NDJSON in the data volume before trimming them), runtime
+  configuration edited from the UI (SMTP, auth
   policy, workers — no container restarts), metadata dashboard, duplicates,
   a **relationship-suggestion review queue** (accept / edit kind / reject,
   bulk-accept the high-confidence ones), and stats.

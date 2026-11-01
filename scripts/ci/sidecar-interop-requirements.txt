@@ -1,0 +1,10 @@
+# Readers for scripts/ci/sidecar_interop.py (audit 2026-11 WP A5). The
+# script refuses to run against any other version of these three, so a
+# bump here is the only way the comparison's tolerated normalisations
+# move. ComicTagger 1.6 is the audit's stated target: 1.6.0b9 is the newest
+# 1.6 release on PyPI (1.5.5, the last stable, predates the `tags` plugin
+# API the script uses). darkseid is Metron-Tagger's reader; it is pinned
+# beside metron-tagger so the resolver can't float it.
+comictagger==1.6.0b9
+metron-tagger==5.0.0
+darkseid==9.1.0

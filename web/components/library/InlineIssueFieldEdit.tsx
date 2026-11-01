@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/folio/select";
 import { Textarea } from "@/components/ui/textarea";
+import { collectServerErrors } from "@/lib/api/form-errors";
 import { useUpdateIssue } from "@/lib/api/mutations";
 import { useMe } from "@/lib/api/queries";
 import type { UpdateIssueReq } from "@/lib/api/types";
@@ -154,6 +155,9 @@ export function InlineIssueFieldEdit({
   const update = useUpdateIssue(seriesSlug, issueSlug);
   const [open, setOpen] = React.useState(false);
   const [draft, setDraft] = React.useState(value);
+  // The server's 422 message for this field (`error.details`), shown under
+  // the input; the mutation hook still toasts the summary.
+  const [serverError, setServerError] = React.useState<string | null>(null);
 
   const shown = display ?? value;
   if (!isAdmin) return <>{shown}</>;
@@ -161,17 +165,23 @@ export function InlineIssueFieldEdit({
   // Re-seed the draft from the current value each time the popover opens, so
   // a save elsewhere (or a rescan) can't leave a stale edit queued.
   function onOpenChange(next: boolean) {
-    if (next) setDraft(value);
+    if (next) {
+      setDraft(value);
+      setServerError(null);
+    }
     setOpen(next);
   }
 
   function save() {
+    setServerError(null);
     update.mutate(buildFieldPatch(field, draft, kind), {
       onSuccess: () => {
         // The issue page is an RSC — refresh to re-render the new value.
         router.refresh();
         setOpen(false);
       },
+      onError: (err) =>
+        setServerError(collectServerErrors(err, [field])[field] ?? null),
     });
   }
 
@@ -209,6 +219,7 @@ export function InlineIssueFieldEdit({
               onChange={(e) => setDraft(e.target.value)}
               rows={4}
               autoFocus
+              aria-invalid={serverError ? true : undefined}
             />
           ) : (
             <Input
@@ -217,6 +228,7 @@ export function InlineIssueFieldEdit({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               autoFocus
+              aria-invalid={serverError ? true : undefined}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -225,6 +237,11 @@ export function InlineIssueFieldEdit({
               }}
             />
           )}
+          {serverError ? (
+            <p className="text-destructive text-xs" role="alert">
+              {serverError}
+            </p>
+          ) : null}
           <div className="flex items-center justify-end gap-1.5">
             <Button
               type="button"
