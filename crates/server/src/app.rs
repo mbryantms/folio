@@ -112,6 +112,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(auth::local::routes())
         .merge(auth::ws_ticket::routes())
         .merge(api::account::routes())
+        .merge(api::account_delete::routes())
         .merge(api::account_export::routes())
         .merge(api::holdings_export::routes())
         .merge(api::libraries::routes())

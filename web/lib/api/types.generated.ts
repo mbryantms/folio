@@ -2710,6 +2710,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["account_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/account": {
         parameters: {
             query?: never;
@@ -8848,6 +8864,23 @@ export interface components {
         DeepValidateResp: {
             library_id: string;
             state: string;
+        };
+        /**
+         * @description Body of `DELETE /me`. Exactly one field is required, depending on how
+         *     the account signs in (`password_editable` on `/auth/me`).
+         */
+        DeleteAccountReq: {
+            /**
+             * @description For accounts that sign in through an identity provider: the
+             *     account's email, typed to confirm (case-insensitive), or its display
+             *     name when the account has no email.
+             */
+            confirm?: string | null;
+            /**
+             * @description The account's current password. Required for accounts with a local
+             *     password.
+             */
+            password?: string | null;
         };
         DeleteAllResp: {
             deleted: number;
@@ -21133,6 +21166,63 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    account_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAccountReq"];
+            };
+        };
+        responses: {
+            /** @description Account and personal data deleted; session, CSRF and refresh cookies cleared */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description password incorrect, or the caller used an app password */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the caller is the instance's last active admin */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description password or confirmation missing / confirmation does not match */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description rate limited or locked out after failed attempts */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

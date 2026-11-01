@@ -1,4 +1,5 @@
 pub mod account;
+pub mod account_delete;
 pub mod account_export;
 pub mod admin_activity;
 pub mod admin_email;

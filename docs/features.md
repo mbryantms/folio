@@ -463,6 +463,10 @@ per-list opt-out to preserve curated orders).
   refresh-token rotation; a replayed refresh token is rejected.
 - **App passwords** per device/app, individually revocable, with
   last-used tracking.
+- **Self-service account deletion**: Settings → Account → Delete account
+  points at the JSON export first, re-checks the password (identity-provider
+  accounts type their email), and removes every personal row while the audit
+  log keeps its history; an instance's last admin can't delete itself.
 - A complete admin area: users, libraries, scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every
   admin action (kept forever by default; an optional retention exports old

@@ -40,6 +40,7 @@ import type {
   AcceptIssuesResp,
   AcceptMetadataResp,
   AccountReq,
+  DeleteAccountReq,
   AdminUserDetailView,
   AdminUserView,
   AddEntryReq,
@@ -1584,6 +1585,17 @@ export function useUpdateAccount() {
       },
     },
   );
+}
+
+/** `DELETE /me` (audit 2026-11 F5). No success toast: the caller leaves for
+ *  the sign-in page, whose "account deleted" notice is the confirmation.
+ *  Errors toast as usual and the dialog also shows them inline. */
+export function useDeleteAccount() {
+  return useApiMutation<null, DeleteAccountReq>((body) => ({
+    path: "/me",
+    method: "DELETE",
+    body,
+  }));
 }
 
 // ---------- Sessions (M5) ----------

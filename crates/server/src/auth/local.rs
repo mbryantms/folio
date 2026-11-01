@@ -40,8 +40,8 @@ use crate::state::AppState;
 
 use super::CurrentUser;
 use super::cookies::{
-    self, CSRF_COOKIE, LEGACY_REFRESH_COOKIE, REFRESH_COOKIE, REFRESH_PATH, SESSION_COOKIE,
-    csrf_cookie, new_csrf_token, new_refresh_token_raw, refresh_cookie, session_cookie, sha256_hex,
+    self, CSRF_COOKIE, REFRESH_COOKIE, csrf_cookie, new_csrf_token, new_refresh_token_raw,
+    refresh_cookie, session_cookie, sha256_hex,
 };
 use super::email_token::{self, TokenPurpose};
 use super::password;
@@ -982,11 +982,7 @@ pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::respon
             .exec(&app.db)
             .await;
     }
-    let cleared = jar
-        .remove(cookies::clear(SESSION_COOKIE, "/"))
-        .remove(cookies::clear(CSRF_COOKIE, "/"))
-        .remove(cookies::clear(REFRESH_COOKIE, REFRESH_PATH))
-        .remove(cookies::clear(LEGACY_REFRESH_COOKIE, REFRESH_PATH));
+    let cleared = cookies::clear_auth(jar);
 
     // RP-initiated logout (OIDC sessions only). If the session row was
     // born from an OIDC login AND the issuer publishes an
@@ -1809,6 +1805,14 @@ fn finalize_session(
     }
 }
 
+/// Whether the account signs in with a Folio password: a `local:` account
+/// with a stored hash. Drives `MeResp.password_editable`, and `DELETE /me`
+/// re-authenticates with the password exactly when this holds — the web
+/// dialog picks its input from that flag, so the two must never disagree.
+pub(crate) fn has_local_password(row: &user::Model) -> bool {
+    row.external_id.starts_with("local:") && row.password_hash.is_some()
+}
+
 /// Build a `MeResp` from a fully-loaded user row. Used by login, refresh,
 /// and the preferences PATCH so the response shape stays consistent.
 pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp {
@@ -1817,7 +1821,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         id: row.id.to_string(),
         email: row.email.clone(),
         email_editable: is_local,
-        password_editable: is_local && row.password_hash.is_some(),
+        password_editable: has_local_password(row),
         display_name: row.display_name.clone(),
         role: row.role,
         csrf_token,

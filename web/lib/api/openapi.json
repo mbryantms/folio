@@ -5829,6 +5829,41 @@
         }
       }
     },
+    "/api/me": {
+      "delete": {
+        "operationId": "account_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Account and personal data deleted; session, CSRF and refresh cookies cleared"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "password incorrect, or the caller used an app password"
+          },
+          "409": {
+            "description": "the caller is the instance's last active admin"
+          },
+          "422": {
+            "description": "password or confirmation missing / confirmation does not match"
+          },
+          "429": {
+            "description": "rate limited or locked out after failed attempts"
+          }
+        }
+      }
+    },
     "/api/me/account": {
       "patch": {
         "operationId": "account_update",
@@ -20616,6 +20651,26 @@
           },
           "state": {
             "type": "string"
+          }
+        }
+      },
+      "DeleteAccountReq": {
+        "type": "object",
+        "description": "Body of `DELETE /me`. Exactly one field is required, depending on how\nthe account signs in (`password_editable` on `/auth/me`).",
+        "properties": {
+          "confirm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For accounts that sign in through an identity provider: the\naccount's email, typed to confirm (case-insensitive), or its display\nname when the account has no email."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The account's current password. Required for accounts with a local\npassword."
           }
         }
       },

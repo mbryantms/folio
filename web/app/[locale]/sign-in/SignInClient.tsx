@@ -48,7 +48,7 @@ const registerSchema = z.object({
 });
 type RegisterValues = z.infer<typeof registerSchema>;
 
-type Banner = "verified" | "reset" | "pending" | "error" | null;
+type Banner = "verified" | "reset" | "pending" | "deleted" | "error" | null;
 
 export function SignInClient({
   config,
@@ -254,6 +254,13 @@ function BannerStrip({
     return (
       <Banner tone="info" icon={<Inbox className="size-4" />}>
         Check your email for a verification link.
+      </Banner>
+    );
+  }
+  if (banner === "deleted") {
+    return (
+      <Banner tone="success" icon={<CheckCircle2 className="size-4" />}>
+        Your account and its data have been deleted.
       </Banner>
     );
   }
