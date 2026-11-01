@@ -2451,17 +2451,66 @@ pub fn issue_column_pin_field(key: &str) -> Option<crate::metadata::MetadataFiel
     }
 }
 
+/// The [`MetadataField`](crate::metadata::MetadataField)s an issue
+/// field lock (`PUT /series/{s}/issues/{i}/field-provenance/{field}`)
+/// accepts, in display order: every field an issue column pin rolls up
+/// into ([`issue_column_pin_field`]), except
+///
+/// - the external ids — managed on their own card, where a user-set id
+///   already outranks a provider's;
+/// - `publisher`, `imprint` and `volume` — the composer writes them from
+///   the *series* row and the sidecar apply gates them on series pins
+///   (`apply::sidecar_pin_matches`), so an issue-level lock could not
+///   hold in a writeback library.
+///
+/// Covers have no column pin, so they are not lockable either.
+pub fn issue_lockable_fields() -> &'static [crate::metadata::MetadataField] {
+    use crate::metadata::MetadataField as F;
+    static FIELDS: std::sync::LazyLock<Vec<F>> = std::sync::LazyLock::new(|| {
+        let mut out: Vec<F> = Vec::new();
+        for key in ISSUE_COLUMN_PIN_KEYS {
+            if let Some(f) = issue_column_pin_field(key)
+                && !matches!(f, F::ExternalId(_) | F::Publisher | F::Imprint | F::Volume)
+                && !out.contains(&f)
+            {
+                out.push(f);
+            }
+        }
+        out
+    });
+    &FIELDS
+}
+
+/// The issue column pin keys a lock on `field` writes through
+/// [`write_issue_user_pins`] (and an unlock releases), so the column-level
+/// gates (scanner, edit sheet) and the `MetadataField`-level gates (apply,
+/// composer) see the same pin: every column rolling up into `field`, plus
+/// `sort_number` for `number` — the scanner derives the sort position from
+/// the file's number, so a locked number keeps its place too.
+pub fn issue_lock_column_keys(field: crate::metadata::MetadataField) -> Vec<&'static str> {
+    let mut keys: Vec<&'static str> = ISSUE_COLUMN_PIN_KEYS
+        .iter()
+        .copied()
+        .filter(|k| issue_column_pin_field(k) == Some(field))
+        .collect();
+    if field == crate::metadata::MetadataField::Number {
+        keys.push("sort_number");
+    }
+    keys
+}
+
 /// Record a user edit of the given issue columns: one `set_by='user'`
 /// `field_provenance` row per column key plus one per rolled-up
 /// [`MetadataField`](crate::metadata::MetadataField) (see
 /// [`ISSUE_COLUMN_PIN_KEYS`]). Keys outside the closed column set are
 /// ignored (debug-asserted). Run it in the same transaction as the
-/// column update so an edit never lands unpinned.
+/// column update so an edit never lands unpinned. Returns every key a
+/// row was written under, sorted.
 pub async fn write_issue_user_pins<C: ConnectionTrait>(
     db: &C,
     issue_id: &str,
     column_keys: &[&str],
-) -> Result<(), DbErr> {
+) -> Result<Vec<String>, DbErr> {
     let mut fields: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for key in column_keys {
         debug_assert!(
@@ -2477,8 +2526,9 @@ pub async fn write_issue_user_pins<C: ConnectionTrait>(
         }
     }
     if fields.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    let written: Vec<String> = fields.iter().cloned().collect();
     let now = chrono::Utc::now().fixed_offset();
     let models = fields
         .into_iter()
@@ -2506,7 +2556,7 @@ pub async fn write_issue_user_pins<C: ConnectionTrait>(
         )
         .exec_without_returning(db)
         .await?;
-    Ok(())
+    Ok(written)
 }
 
 /// Release a user pin on an issue, keeping the column-level and
@@ -2517,6 +2567,8 @@ pub async fn write_issue_user_pins<C: ConnectionTrait>(
 /// - `field` is a column key (e.g. `writer`) → its user row goes; the
 ///   rolled-up `MetadataField` row goes too once no sibling column
 ///   (`penciller`, …) is still user-pinned.
+/// - `summary` and `description` are released together (one column), and
+///   `number` releases `sort_number` with it ([`issue_lock_column_keys`]).
 ///
 /// Only `set_by='user'` rows are touched. Returns `true` when any row
 /// was deleted.
@@ -2528,12 +2580,22 @@ pub async fn clear_issue_user_pin<C: ConnectionTrait>(
     let pinned = fetch_user_pinned_fields(db, "issue", issue_id).await?;
     let mut to_clear: HashSet<String> = HashSet::new();
     to_clear.insert(field.to_owned());
-    // MetadataField key → drop every column pin rolling up into it.
+    // `summary` / `description` alias one column (`apply::user_pinned`,
+    // the scanner and the composer accept a pin under either key), so
+    // releasing one releases both — else the other keeps blocking.
+    match field {
+        "summary" => {
+            to_clear.insert("description".to_owned());
+        }
+        "description" => {
+            to_clear.insert("summary".to_owned());
+        }
+        _ => {}
+    }
+    // MetadataField key → drop every column pin a lock on it writes.
     if let Ok(mf) = field.parse::<crate::metadata::MetadataField>() {
-        for key in ISSUE_COLUMN_PIN_KEYS {
-            if issue_column_pin_field(key) == Some(mf) {
-                to_clear.insert((*key).to_owned());
-            }
+        for key in issue_lock_column_keys(mf) {
+            to_clear.insert(key.to_owned());
         }
     }
     // Column key → drop the rolled-up MetadataField row once no sibling

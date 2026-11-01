@@ -859,3 +859,177 @@ async fn empty_selection_applies_nothing_db_direct() {
 
     assert_eq!(issue_row(&f).await.summary.as_deref(), Some(OLD_SUMMARY));
 }
+
+// ───────── per-field lock (F1, audit 2026-11 §5 #5) ─────────
+
+/// `PUT` (lock) or `DELETE` (unlock) one issue field.
+async fn set_lock(f: &Fixture, field: &str, locked: bool) {
+    let (cookie, csrf) = &f.admin;
+    let row = issue_row(f).await;
+    let series_slug = entity::series::Entity::find_by_id(row.series_id)
+        .one(&f.app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+    let uri = format!(
+        "/api/series/{series_slug}/issues/{}/field-provenance/{field}",
+        row.slug
+    );
+    let resp = f
+        .app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(if locked { Method::PUT } else { Method::DELETE })
+                .uri(&uri)
+                .header(header::COOKIE, cookie)
+                .header("x-csrf-token", csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "{uri}");
+}
+
+/// The issue-scope apply endpoint in `replace_all` mode — the mode that
+/// overwrites a value the file already set, so a lock that holds there
+/// holds everywhere.
+async fn apply_replace_all(f: &Fixture, run_id: Uuid, selected: &[&str]) {
+    let row = issue_row(f).await;
+    post(
+        f,
+        &format!(
+            "/api/series/{}/issues/{}/metadata/apply",
+            row.series_id, row.slug
+        ),
+        json!({
+            "run_id": run_id,
+            "ordinal": 0,
+            "mode": "replace_all",
+            "apply_cover": false,
+            "cover_overwrite_policy": "when_missing",
+            "override_user_edits": false,
+            "selected_fields": selected,
+            "override_external_id_sources": [],
+        }),
+    )
+    .await;
+}
+
+/// DB-direct library: run the queued apply job only (no rewrite follows).
+async fn run_apply_jobs(f: &Fixture) {
+    let hash = f
+        .app
+        .state()
+        .jobs
+        .metadata_apply_issue_storage
+        .get_config()
+        .job_data_hash();
+    let jobs = drain::<server::jobs::metadata_apply::ApplyIssueJob>(&f.app, hash).await;
+    assert_eq!(jobs.len(), 1, "one apply job queued");
+    for job in jobs {
+        server::jobs::metadata_apply::handle_issue(job, apalis::prelude::Data::new(f.app.state()))
+            .await
+            .unwrap();
+    }
+}
+
+async fn queued_rewrites(f: &Fixture) -> usize {
+    let hash = f
+        .app
+        .state()
+        .jobs
+        .rewrite_issue_sidecars_storage
+        .get_config()
+        .job_data_hash();
+    drain::<server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob>(&f.app, hash)
+        .await
+        .len()
+}
+
+/// A locked title is left alone by a `replace_all` DB-direct apply and by
+/// a forced rescan of a retagged archive; once unlocked, the next apply
+/// writes the provider's title.
+#[tokio::test]
+async fn locked_field_survives_db_direct_apply_and_rescan_until_unlocked() {
+    let f = fixture(false).await;
+    set_lock(&f, "title", true).await;
+    assert_eq!(provenance(&f, "title").await.as_deref(), Some("user"));
+    assert_eq!(issue_row(&f).await.title.as_deref(), Some("Just Desserts"));
+
+    let run_id = seed_run(&f, NEW_SUMMARY, "unused").await;
+    apply_replace_all(&f, run_id, &["title", "description"]).await;
+    run_apply_jobs(&f).await;
+    let row = issue_row(&f).await;
+    assert_eq!(row.title.as_deref(), Some("Just Desserts"), "lock holds");
+    assert_eq!(
+        row.summary.as_deref(),
+        Some(NEW_SUMMARY),
+        "the unlocked field in the same apply is written"
+    );
+
+    write_cbz(&f.archive, &comicinfo("Retagged title", OLD_SUMMARY), 9);
+    scanner::scan_library_with(&f.app.state(), f.lib_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        issue_row(&f).await.title.as_deref(),
+        Some("Just Desserts"),
+        "a rescan keeps the locked value"
+    );
+
+    set_lock(&f, "title", false).await;
+    let run2 = seed_run(&f, NEW_SUMMARY, "unused").await;
+    apply_replace_all(&f, run2, &["title"]).await;
+    run_apply_jobs(&f).await;
+    assert_eq!(
+        issue_row(&f).await.title.as_deref(),
+        Some("Just Desserts, Part 4"),
+        "unlocked, the provider title applies"
+    );
+    assert_eq!(provenance(&f, "title").await.as_deref(), Some("comicvine"));
+}
+
+/// Writeback library: the lock needs no rewrite (the archive already has
+/// the value), the composer keeps the locked title in the XML it writes,
+/// the post-rewrite rescan and a later retag keep it in the DB, and an
+/// unlock lets the next apply through to the archive and the DB.
+#[tokio::test]
+async fn locked_field_survives_writeback_apply_and_rescan_until_unlocked() {
+    let f = fixture(true).await;
+    set_lock(&f, "title", true).await;
+    assert_eq!(queued_rewrites(&f).await, 0, "a lock rewrites nothing");
+
+    let run_id = seed_run(&f, NEW_SUMMARY, "unused").await;
+    apply_replace_all(&f, run_id, &["title", "description"]).await;
+    run_pipeline(&f).await;
+    assert_eq!(archive_title(&f.archive).as_deref(), Some("Just Desserts"));
+    assert_eq!(archive_summary(&f.archive).as_deref(), Some(NEW_SUMMARY));
+    let row = issue_row(&f).await;
+    assert_eq!(row.title.as_deref(), Some("Just Desserts"));
+    assert_eq!(row.summary.as_deref(), Some(NEW_SUMMARY));
+    assert_eq!(provenance(&f, "title").await.as_deref(), Some("user"));
+
+    write_cbz(&f.archive, &comicinfo("Retagged title", NEW_SUMMARY), 9);
+    scanner::scan_library_with(&f.app.state(), f.lib_id, true)
+        .await
+        .unwrap();
+    assert_eq!(issue_row(&f).await.title.as_deref(), Some("Just Desserts"));
+
+    set_lock(&f, "title", false).await;
+    let run2 = seed_run(&f, NEW_SUMMARY, "unused").await;
+    apply_replace_all(&f, run2, &["title"]).await;
+    run_pipeline(&f).await;
+    assert_eq!(
+        archive_title(&f.archive).as_deref(),
+        Some("Just Desserts, Part 4")
+    );
+    assert_eq!(
+        issue_row(&f).await.title.as_deref(),
+        Some("Just Desserts, Part 4")
+    );
+    assert_eq!(provenance(&f, "title").await.as_deref(), Some("comicvine"));
+}

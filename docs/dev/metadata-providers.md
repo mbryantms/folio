@@ -352,6 +352,34 @@ The same predicate is mirrored in `diff::classify_field` so the M5
 preview pane's per-field rows compute the same decision as the
 write path.
 
+**Where user pins come from.** A `set_by='user'` row is written by an
+edit of the field (issue / series / bulk-metadata PATCH) or by the
+issue Metadata tab's **per-field lock**:
+`PUT /series/{s}/issues/{i}/field-provenance/{field}` pins the field's
+*current* value without editing it (`api/issues.rs::lock_field`, admin
+only, audited as `admin.issue.field_pin_set`). The lock goes through
+`writers::write_issue_user_pins` with every column key that rolls up into
+the field (`writers::issue_lock_column_keys` — a `credits` lock pins
+`writer`, `penciller`, … and `credits`; a `number` lock also pins
+`sort_number`, which the scanner derives from the number), so the
+scanner's column gates and the apply / composer field gates agree.
+Lockable fields are `writers::issue_lockable_fields()`: every
+`MetadataField` an issue column pin rolls up into, minus the external ids
+(their own card), minus `publisher` / `imprint` / `volume` (the composer
+writes those from the series row and `apply::sidecar_pin_matches` gates
+them on series pins, so an issue lock could not hold under writeback);
+covers have no column pin. They are listed on
+`MetadataOverviewView.lockable_fields`, the current set in
+`locked_fields`, and any other user pin (`black_and_white`,
+`cover_page_index`, …) in `other_locked_fields` so the tab can release
+it. Unlock is the existing `DELETE …/field-provenance/{field}`
+(`writers::clear_issue_user_pin`, which releases `summary` with its
+`description` alias and `number` with `sort_number`). A lock
+needs no sidecar rewrite in a writeback library: the archive already
+carries the value, and the composer keeps the DB value for a pinned
+field on the next apply. The UI shows a lock toggle, not who set the
+field.
+
 `should_apply == true` for a field → the apply layer routes to the
 appropriate writer:
 

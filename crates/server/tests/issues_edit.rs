@@ -47,6 +47,12 @@ impl Authed {
 }
 
 async fn register_admin(app: &TestApp) -> Authed {
+    register(app, "admin@example.com").await
+}
+
+/// Register a local account. The first one becomes the admin; later
+/// ones are plain users.
+async fn register(app: &TestApp, email: &str) -> Authed {
     let resp = app
         .router
         .clone()
@@ -56,7 +62,11 @@ async fn register_admin(app: &TestApp) -> Authed {
                 .uri("/auth/local/register")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    r#"{"email":"admin@example.com","password":"correctly-horse-battery-staple"}"#,
+                    serde_json::json!({
+                        "email": email,
+                        "password": "correctly-horse-battery-staple",
+                    })
+                    .to_string(),
                 ))
                 .unwrap(),
         )
@@ -1596,4 +1606,287 @@ async fn next_and_prev_in_series_stay_in_the_current_lane() {
         json["items"].as_array().unwrap().is_empty(),
         "the only annual has no next in its lane"
     );
+}
+
+// ───── Per-field lock (PUT …/field-provenance/{field}) ─────
+
+async fn put_req(app: &TestApp, auth: &Authed, uri: &str) -> (StatusCode, serde_json::Value) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri(uri)
+                .header(header::COOKIE, auth.cookie())
+                .header("X-CSRF-Token", auth.csrf.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+async fn user_pins(app: &TestApp, issue_id: &str) -> std::collections::BTreeSet<String> {
+    field_provenance::Entity::find()
+        .filter(field_provenance::Column::EntityType.eq("issue"))
+        .filter(field_provenance::Column::EntityId.eq(issue_id))
+        .filter(field_provenance::Column::SetBy.eq("user"))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.field)
+        .collect()
+}
+
+async fn seed_lock_issue(app: &TestApp, series_slug: &str) -> String {
+    let (_lib, _series_id, _slug, ids) = seed(
+        app,
+        series_slug,
+        &[IssueSeed {
+            slug: "issue-1",
+            sort_number: Some(1.0),
+            number_raw: Some("1"),
+        }],
+    )
+    .await;
+    let issue_id = ids[0].clone();
+    let row = entity::issue::Entity::find_by_id(issue_id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: IssueAM = row.into();
+    am.title = Set(Some("Original title".into()));
+    am.writer = Set(Some("Original Writer".into()));
+    am.update(&app.state().db).await.unwrap();
+    issue_id
+}
+
+/// F1 (audit 2026-11 §5 #5): the lock writes the same user pin an edit
+/// writes, for the value the field already holds, and the overview
+/// reports it; the existing DELETE unlocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lock_field_pins_the_current_value_without_editing_it() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let series_slug = "lock-field";
+    let issue_id = seed_lock_issue(&app, series_slug).await;
+    let base = format!("/api/series/{series_slug}/issues/issue-1");
+
+    let (status, body) = put_req(&app, &auth, &format!("{base}/field-provenance/title")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["field"], "title");
+    assert_eq!(body["pinned_keys"], serde_json::json!(["title"]));
+    let row = entity::issue::Entity::find_by_id(issue_id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.title.as_deref(),
+        Some("Original title"),
+        "value unchanged"
+    );
+    assert_eq!(row.writer.as_deref(), Some("Original Writer"));
+    assert_eq!(
+        user_pins(&app, &issue_id).await,
+        ["title".to_owned()].into()
+    );
+
+    // A junction lock pins every column rolling into it, so the scanner's
+    // column gates and the apply's field gate agree.
+    let (status, body) = put_req(&app, &auth, &format!("{base}/field-provenance/credits")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["pinned_keys"],
+        serde_json::json!([
+            "colorist",
+            "cover_artist",
+            "credits",
+            "editor",
+            "inker",
+            "letterer",
+            "penciller",
+            "translator",
+            "writer"
+        ])
+    );
+    let (status, body) = put_req(&app, &auth, &format!("{base}/field-provenance/cover_date")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["pinned_keys"],
+        serde_json::json!(["cover_date", "day", "month", "year"])
+    );
+    // Idempotent.
+    let (status, _) = put_req(&app, &auth, &format!("{base}/field-provenance/title")).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, ov) = get(&app, &auth, &format!("{base}/metadata-overview")).await;
+    let lockable: Vec<&str> = ov["lockable_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(lockable.first(), Some(&"title"), "{lockable:?}");
+    for k in [
+        "number",
+        "summary",
+        "credits",
+        "characters",
+        "genres",
+        "web_url",
+    ] {
+        assert!(lockable.contains(&k), "{k} lockable; got {lockable:?}");
+    }
+    for k in [
+        "cover.primary",
+        "cover.variants",
+        "external_id.comicvine",
+        "page_count",
+        // Series-level in the composed XML; an issue lock could not hold.
+        "publisher",
+        "imprint",
+        "volume",
+    ] {
+        assert!(!lockable.contains(&k), "{k} must not be lockable");
+    }
+    assert_eq!(
+        ov["locked_fields"],
+        serde_json::json!(["title", "cover_date", "credits"])
+    );
+    assert_eq!(ov["other_locked_fields"], serde_json::json!([]));
+
+    let audit = entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq("admin.issue.field_pin_set"))
+        .filter(entity::audit_log::Column::TargetId.eq(issue_id.clone()))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(audit.len(), 4, "every lock is audited");
+
+    // Unlock through the existing DELETE: the whole family goes.
+    let (status, _) = delete_req(&app, &auth, &format!("{base}/field-provenance/credits")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, ov) = get(&app, &auth, &format!("{base}/metadata-overview")).await;
+    assert_eq!(
+        ov["locked_fields"],
+        serde_json::json!(["title", "cover_date"])
+    );
+    let pins = user_pins(&app, &issue_id).await;
+    assert!(
+        !pins.contains("writer") && !pins.contains("credits"),
+        "{pins:?}"
+    );
+
+    // A number lock keeps the sort position with it, and releases it too.
+    let (status, body) = put_req(&app, &auth, &format!("{base}/field-provenance/number")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["pinned_keys"],
+        serde_json::json!(["number", "number_raw", "sort_number"])
+    );
+    let (status, _) = delete_req(&app, &auth, &format!("{base}/field-provenance/number")).await;
+    assert_eq!(status, StatusCode::OK);
+    let pins = user_pins(&app, &issue_id).await;
+    for k in ["number", "number_raw", "sort_number"] {
+        assert!(!pins.contains(k), "{k} released; got {pins:?}");
+    }
+
+    // Pins outside the lockable set are still listed, so they can be
+    // released from the tab.
+    let (status, _) = patch(
+        &app,
+        &auth,
+        &base,
+        serde_json::json!({ "black_and_white": true, "publisher": "P" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, ov) = get(&app, &auth, &format!("{base}/metadata-overview")).await;
+    assert_eq!(
+        ov["other_locked_fields"],
+        serde_json::json!(["black_and_white", "publisher"])
+    );
+}
+
+/// `summary` and `description` are one column: a `description` user row
+/// reads as a locked summary, and unlocking the summary releases both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn summary_lock_reads_and_releases_the_description_alias() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let series_slug = "lock-summary-alias";
+    let issue_id = seed_lock_issue(&app, series_slug).await;
+    let base = format!("/api/series/{series_slug}/issues/issue-1");
+    use server::metadata::MetadataField;
+    use server::metadata::writers::{SetBy, write_field_provenance};
+    write_field_provenance(
+        &app.state().db,
+        "issue",
+        &issue_id,
+        MetadataField::Description,
+        SetBy::User,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let (_, ov) = get(&app, &auth, &format!("{base}/metadata-overview")).await;
+    assert_eq!(ov["locked_fields"], serde_json::json!(["summary"]));
+    let (status, _) = delete_req(&app, &auth, &format!("{base}/field-provenance/summary")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(user_pins(&app, &issue_id).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lock_field_rejects_fields_that_cannot_be_locked() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let series_slug = "lock-invalid";
+    let issue_id = seed_lock_issue(&app, series_slug).await;
+    let base = format!("/api/series/{series_slug}/issues/issue-1");
+    for field in [
+        "cover.primary",
+        "cover.variants",
+        "external_id.comicvine",
+        "external_id.gtin",
+        "page_count",
+        "publisher",
+        // Column keys are not lock targets; the field is `credits`.
+        "writer",
+        "bogus",
+    ] {
+        let (status, body) =
+            put_req(&app, &auth, &format!("{base}/field-provenance/{field}")).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{field}: {body}");
+        assert_eq!(body["error"]["code"], "validation", "{field}: {body}");
+    }
+    assert!(user_pins(&app, &issue_id).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lock_field_is_admin_only_and_404s_on_a_missing_issue() {
+    let app = TestApp::spawn().await;
+    let admin = register_admin(&app).await;
+    let reader = register(&app, "reader@example.com").await;
+    let series_slug = "lock-acl";
+    let issue_id = seed_lock_issue(&app, series_slug).await;
+    let base = format!("/api/series/{series_slug}/issues/issue-1");
+
+    let (status, body) = put_req(&app, &reader, &format!("{base}/field-provenance/title")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(user_pins(&app, &issue_id).await.is_empty());
+
+    let (status, _) = put_req(
+        &app,
+        &admin,
+        &format!("/api/series/{series_slug}/issues/no-such-issue/field-provenance/title"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
