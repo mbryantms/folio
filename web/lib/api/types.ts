@@ -41,6 +41,7 @@ type Schemas = components["schemas"];
 // the next `just openapi` when the Rust source moves. To change one of
 // these shapes, change the Rust DTO.
 export type LibraryView = Schemas["LibraryView"];
+export type LibraryStatsView = Schemas["LibraryStatsView"];
 export type CreateLibraryReq = Schemas["CreateLibraryReq"];
 export type UpdateLibraryReq = Schemas["UpdateLibraryReq"];
 export type HashBackfillView = Schemas["HashBackfillView"];
@@ -345,6 +346,9 @@ export type CollectionWindowEntry = Schemas["CollectionWindowEntry"];
 export type CollectionWindowView = Schemas["CollectionWindowView"];
 export type IssueCoverPickReq = Schemas["IssueCoverPickReq"];
 export type IssueCoverPickResp = Schemas["IssueCoverPickResp"];
+export type IssueVariantCoverResp = Schemas["IssueVariantCoverResp"];
+export type IssueVariantCoverClearResp =
+  Schemas["IssueVariantCoverClearResp"];
 export type SeriesCoverPickReq = Schemas["SeriesCoverPickReq"];
 export type SeriesCoverPickResp = Schemas["SeriesCoverPickResp"];
 export type SeriesReaderPrefsView = Schemas["SeriesReaderPrefsView"];

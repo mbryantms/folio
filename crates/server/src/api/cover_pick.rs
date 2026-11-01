@@ -9,7 +9,8 @@
 //!   composer forwards into ComicInfo's `<Pages>` block), pins the column
 //!   under the user tier so a rescan never moves it, queues the manual
 //!   sidecar rewrite (writeback libraries get the marker in the archive;
-//!   the scoped rescan then reads back the same page) and regenerates the
+//!   the scoped rescan then reads back the same page), drops a chosen
+//!   variant cover (below) so the page is what shows, and regenerates the
 //!   cover thumbnail.
 //! - **Series cover** — `PATCH /series/{s}/cover {issue_id}` records
 //!   which issue's cover represents the series as an active
@@ -20,10 +21,25 @@
 //!   log); a pick whose issue is gone or removed falls back silently.
 //!   `issue_id: null` clears the pick.
 //!
-//! Both are admin-level writes because they change what every user sees
-//! and, on writeback libraries, rewrite the archive — the same gate as the
-//! issue PATCH. There is no upload: a cover is always one of the archive's
-//! own pages.
+//! - **Variant as primary cover** — `POST
+//!   /series/{s}/issues/{i}/cover/variant/{variant_id}` makes one of the
+//!   issue's provider variant covers (`issue_cover` `kind = "variant"`) its
+//!   primary cover through [`writers::set_user_primary_cover`]: a new active
+//!   `primary/0` row holding a copy of the variant's image (hashes computed
+//!   at write time) plus a `cover.primary` user pin, so a later provider
+//!   apply keeps it (DB-direct and sidecar alike; only the admin-only
+//!   `override_user_edits` replaces it). The cover thumbnail then renders
+//!   from that image instead of the archive page, so cards follow.
+//!   `DELETE …/cover/variant` reverts: the pick and its pin go, the
+//!   provider primary it displaced comes back and the thumbnail renders
+//!   from the archive's cover page again. Neither touches the archive: on
+//!   a writeback library the primary cover is an `issue_cover` row too, so
+//!   no sidecar rewrite runs.
+//!
+//! All are admin-level writes because they change what every user sees
+//! and, on writeback libraries, the page pick rewrites the archive — the
+//! same gate as the issue PATCH. There is no upload: a cover is always one
+//! of the archive's own pages or a provider's cover image.
 
 use std::collections::HashMap;
 
@@ -34,7 +50,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use entity::{issue, library, series_cover};
+use entity::{issue, issue_cover, library, series_cover};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Set,
     TransactionTrait,
@@ -50,6 +66,8 @@ use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
 use crate::jobs::post_scan;
 use crate::library::thumbnails;
+use crate::metadata::writers::{self, CoverWrite};
+use crate::metadata::{Identifier, Source};
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -63,6 +81,8 @@ const PICK_PROVIDER: &str = "user";
 pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(set_issue_cover))
+        .routes(routes!(set_issue_variant_cover))
+        .routes(routes!(clear_issue_variant_cover))
         .routes(routes!(set_series_cover))
 }
 
@@ -81,6 +101,23 @@ pub struct IssueCoverPickResp {
     pub sidecar: String,
     /// `true` when a cover-thumbnail regeneration job was queued (the
     /// library has thumbnails enabled and no identical job was pending).
+    pub thumbnail_enqueued: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct IssueVariantCoverResp {
+    /// Id of the new primary `issue_cover` row (a copy of the variant).
+    pub cover_id: Uuid,
+    /// `true` when a cover-thumbnail regeneration job was queued (the
+    /// library has thumbnails enabled and no identical job was pending).
+    pub thumbnail_enqueued: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct IssueVariantCoverClearResp {
+    /// `false` when the issue had no chosen variant cover (nothing changed).
+    pub reverted: bool,
+    /// `true` when a cover-thumbnail regeneration job was queued.
     pub thumbnail_enqueued: bool,
 }
 
@@ -161,19 +198,24 @@ pub async fn set_issue_cover(
         .await
         .label();
 
-    // The cover thumbnail is derived from `cover_page_index`: drop the
-    // stale file (inline-generated covers are cached on disk too) and
-    // queue a fresh one where the library runs the thumbnail worker.
-    thumbnails::wipe_issue_cover(&app.cfg().data_path, &row.id);
-    crate::api::admin_thumbs::clear_thumb_state(&app, &row).await;
-    let thumbnails_enabled = library::Entity::find_by_id(row.library_id)
-        .one(&app.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some_and(|l| l.thumbnails_enabled);
-    let thumbnail_enqueued = thumbnails_enabled
-        && post_scan::enqueue_thumb_job(&app, post_scan::ThumbsJob::cover(row.id.clone())).await;
+    // Choosing a page replaces a chosen variant cover: the thumbnail would
+    // otherwise keep rendering the variant instead of the picked page.
+    let variant_cover_cleared = match writers::clear_user_primary_cover(
+        &app.db,
+        &app.cfg().data_path,
+        &row.id,
+    )
+    .await
+    {
+        Ok(cleared) => cleared,
+        Err(e) => {
+            tracing::warn!(issue_id = %row.id, error = %e, "cover pick: clearing the chosen variant cover failed");
+            false
+        }
+    };
+
+    // The cover thumbnail is derived from `cover_page_index`.
+    let thumbnail_enqueued = refresh_cover_thumbnail(&app, &row).await;
 
     audit::record(
         &app.db,
@@ -186,6 +228,7 @@ pub async fn set_issue_cover(
                 "page_index": req.page_index,
                 "previous_page_index": row.cover_page_index,
                 "sidecar": sidecar,
+                "variant_cover_cleared": variant_cover_cleared,
                 "thumbnail_enqueued": thumbnail_enqueued,
             }),
             ip: ctx.ip_string(),
@@ -200,6 +243,246 @@ pub async fn set_issue_cover(
         thumbnail_enqueued,
     })
     .into_response()
+}
+
+/// Drop the issue's cover thumbnail (inline-generated covers are cached on
+/// disk too) and queue a fresh one where the library runs the thumbnail
+/// worker; otherwise the next request regenerates it inline. Returns
+/// whether a job was queued.
+async fn refresh_cover_thumbnail(app: &AppState, row: &issue::Model) -> bool {
+    thumbnails::wipe_issue_cover(&app.cfg().data_path, &row.id);
+    crate::api::admin_thumbs::clear_thumb_state(app, row).await;
+    let thumbnails_enabled = library::Entity::find_by_id(row.library_id)
+        .one(&app.db)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|l| l.thumbnails_enabled);
+    thumbnails_enabled
+        && post_scan::enqueue_thumb_job(app, post_scan::ThumbsJob::cover(row.id.clone())).await
+}
+
+/// Make one of the issue's provider variant covers its primary cover.
+#[utoipa::path(
+    operation_id = "cover_pick_set_issue_variant_cover",    post,
+    path = "/series/{series_slug}/issues/{issue_slug}/cover/variant/{variant_id}",
+    params(
+        ("series_slug" = String, Path,),
+        ("issue_slug" = String, Path,),
+        ("variant_id" = Uuid, Path, description = "`issue_cover` id of an active variant of this issue"),
+    ),
+    responses(
+        (status = 200, body = IssueVariantCoverResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "issue or variant not found"),
+        (status = 422, description = "the variant has no image to use, or it is not a recognised image"),
+        (status = 502, description = "the variant image could not be downloaded"),
+    )
+)]
+#[handler]
+pub async fn set_issue_variant_cover(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath((series_slug, issue_slug, variant_id)): AxPath<(String, String, Uuid)>,
+) -> Response {
+    let row = match crate::api::issues::find_by_slugs(&app.db, &series_slug, &issue_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    let variant = match issue_cover::Entity::find_by_id(variant_id)
+        .filter(issue_cover::Column::IssueId.eq(&row.id))
+        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::IsActive.eq(true))
+        .one(&app.db)
+        .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return error(
+                StatusCode::NOT_FOUND,
+                "cover.variant_not_found",
+                "variant cover not found",
+            );
+        }
+        Err(e) => {
+            tracing::error!(issue_id = %row.id, error = %e, "variant cover: lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let bytes = match variant_image_bytes(&app, &variant).await {
+        Ok(b) => b,
+        Err(resp) => return resp,
+    };
+    let identifier = variant
+        .source_provider
+        .as_deref()
+        .and_then(|p| p.parse::<Source>().ok())
+        .zip(variant.source_external_id.clone())
+        .map(|(source, id)| Identifier {
+            source,
+            id,
+            url: None,
+        });
+    let write = CoverWrite {
+        issue_id: &row.id,
+        kind: "primary",
+        ordinal: 0,
+        identifier: identifier.as_ref(),
+        source_url: variant.source_url.as_deref(),
+        variant_label: variant.variant_label.as_deref(),
+        variant_artist_person_id: variant.variant_artist_person_id,
+        bytes: &bytes,
+        width: variant.width,
+        height: variant.height,
+        override_user_pin: false,
+    };
+    let cover_id = match writers::set_user_primary_cover(&app.db, &app.cfg().data_path, write).await
+    {
+        Ok(id) => id,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "cover.not_an_image",
+                "the variant image is not a recognised image",
+            );
+        }
+        Err(e) => {
+            tracing::error!(issue_id = %row.id, error = %e, "variant cover: write failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    let thumbnail_enqueued = refresh_cover_thumbnail(&app, &row).await;
+
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: actor.id,
+            action: "admin.issue.cover.variant.set",
+            target_type: Some("issue"),
+            target_id: Some(row.id.clone()),
+            payload: serde_json::json!({
+                "variant_id": variant.id,
+                "cover_id": cover_id,
+                "variant_label": variant.variant_label,
+                "source_provider": variant.source_provider,
+                "thumbnail_enqueued": thumbnail_enqueued,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
+    Json(IssueVariantCoverResp {
+        cover_id,
+        thumbnail_enqueued,
+    })
+    .into_response()
+}
+
+/// Revert a chosen variant cover: the issue's cover is its archive cover
+/// page again (and the provider primary the pick displaced is restored).
+#[utoipa::path(
+    operation_id = "cover_pick_clear_issue_variant_cover",    delete,
+    path = "/series/{series_slug}/issues/{issue_slug}/cover/variant",
+    params(
+        ("series_slug" = String, Path,),
+        ("issue_slug" = String, Path,),
+    ),
+    responses(
+        (status = 200, body = IssueVariantCoverClearResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "issue not found"),
+    )
+)]
+#[handler]
+pub async fn clear_issue_variant_cover(
+    State(app): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath((series_slug, issue_slug)): AxPath<(String, String)>,
+) -> Response {
+    let row = match crate::api::issues::find_by_slugs(&app.db, &series_slug, &issue_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    let reverted =
+        match writers::clear_user_primary_cover(&app.db, &app.cfg().data_path, &row.id).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!(issue_id = %row.id, error = %e, "variant cover: revert failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+    let thumbnail_enqueued = reverted && refresh_cover_thumbnail(&app, &row).await;
+
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: actor.id,
+            action: "admin.issue.cover.variant.clear",
+            target_type: Some("issue"),
+            target_id: Some(row.id.clone()),
+            payload: serde_json::json!({
+                "reverted": reverted,
+                "thumbnail_enqueued": thumbnail_enqueued,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
+    Json(IssueVariantCoverClearResp {
+        reverted,
+        thumbnail_enqueued,
+    })
+    .into_response()
+}
+
+/// The variant's image: the stored file when it was downloaded, else a
+/// fetch of its provider URL through the shared provider-cover path
+/// (`writers::fetch_cover_bytes`: https only, SSRF-vetted, magic-sniffed).
+async fn variant_image_bytes(
+    app: &AppState,
+    variant: &issue_cover::Model,
+) -> Result<Vec<u8>, Response> {
+    if !variant.local_path.is_empty() {
+        match tokio::fs::read(app.cfg().data_path.join(&variant.local_path)).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) => {
+                tracing::warn!(cover_id = %variant.id, error = %e, "variant cover: stored file unreadable; fetching the source");
+            }
+        }
+    }
+    let Some(url) = variant
+        .source_url
+        .as_deref()
+        .filter(|u| !u.trim().is_empty())
+    else {
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "cover.no_image",
+            "the variant has no image to use",
+        ));
+    };
+    writers::fetch_cover_bytes(url).await.map_err(|e| {
+        tracing::warn!(cover_id = %variant.id, url, error = %e, "variant cover: fetch failed");
+        if matches!(e, writers::CoverFetchError::NotAnImage) {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "cover.not_an_image",
+                "the variant image is not a recognised image",
+            );
+        }
+        error(
+            StatusCode::BAD_GATEWAY,
+            "cover.fetch_failed",
+            "the variant image could not be downloaded",
+        )
+    })
 }
 
 /// Choose which issue's cover represents the series (or clear the pick).

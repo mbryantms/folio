@@ -69,6 +69,7 @@ fn provider_write<'a>(issue_id: &'a str, ident: &'a Identifier, url: &'a str) ->
         bytes: COVER_BYTES,
         width: None,
         height: None,
+        override_user_pin: false,
     }
 }
 
