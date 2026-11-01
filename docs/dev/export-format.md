@@ -378,6 +378,53 @@ and per marker a line `**Kind** [★] · [Jump to page](url) [· tags: `a`, `b`]
 the captured text (`selection.text`) as a blockquote, and the note body
 verbatim.
 
+## Holdings CSV
+
+`GET /api/me/holdings.csv?scope=series|issues&library=<slug>` (product
+audit 2026-11 §5 item 14) lists what the caller can see as a spreadsheet:
+one row per series (`scope=series`, the default) or per issue file
+(`scope=issues`), optionally limited to one library.
+
+- Handler: [`crates/server/src/api/holdings_export.rs`](../../crates/server/src/api/holdings_export.rs)
+- Tests: [`crates/server/tests/holdings_export.rs`](../../crates/server/tests/holdings_export.rs)
+- UI: Settings → Account → Holdings
+  ([`HoldingsExportCard`](../../web/components/settings/HoldingsExportCard.tsx)),
+  a plain `<a download>` so the browser streams the file to disk.
+- Auth: cookie or Bearer. Visibility is the list rule
+  (`access::visible_series_select` / `visible_issues_select`): library
+  granted, within the age cap, series and issue not soft-deleted, and for
+  issues scan state `active`. An unknown or invisible `library` slug is a
+  404; an unknown `scope` is a 400. Rate-limited at 6 / min / IP in its
+  own bucket (`rate_limit::HOLDINGS_EXPORT`).
+- Response: `text/csv; charset=utf-8`, `Cache-Control: private, no-store`,
+  `Content-Disposition: attachment; filename="folio-holdings-<scope>-YYYY-MM-DD.csv"`.
+  The body streams in id-keyset batches of 500 (`HOLDINGS_BATCH`), so its
+  size does not bound server memory. A database error on a later batch
+  ends the body early (a truncated download); the first batch is read
+  before the headers go out, so an up-front failure is a 500 envelope.
+
+**Encoding.** UTF-8 **with a byte-order mark** (`EF BB BF`) so Excel opens
+non-ASCII names correctly; RFC 4180 quoting (a field with a comma, quote,
+CR or LF is quoted, quotes doubled) and CRLF record ends. A text cell a
+spreadsheet would evaluate as a formula (leading `=`, `+`, `-`, `@`, tab
+or CR) gets a leading `'`, except plain numbers such as issue `-1`. Rows
+come out in id order; sort in the spreadsheet. Empty cell = unknown.
+
+**Series columns**: `library` (name), `publisher`, `series`, `volume`,
+`start_year`, `status`, `issues_owned` (visible active issues),
+`total_issues` (the series' known issue count, empty when unknown),
+`issues_read` (owned issues the caller finished), `comicvine_id`,
+`metron_id`, `gcd_id` (series-level `external_ids`), then `folder_path`
+for admins only.
+
+**Issue columns**: `library`, `publisher` (series), `series`, `volume`
+(the issue's, else the series'), `number` (as tagged), `title`,
+`cover_date` (`YYYY-MM-DD`, `YYYY-MM` or `YYYY` depending on what the
+tags carry), `format`, `page_count`, `file_size_bytes`, `read_state`
+(`read` / `in_progress` / `unread`, the same rollup as
+`GET /issues?read_status=`), `comicvine_id`, `metron_id`, `gcd_id`
+(issue-level `external_ids`), then `file_path` for admins only.
+
 ## Changelog
 
 - **v1** (2026-09-29, WP-2.1) — initial shape.

@@ -50,6 +50,12 @@ const METADATA_FIELD_LABELS: Record<string, string> = {
   reprints: "Reprints",
   "cover.primary": "Cover",
   "cover.variants": "Cover variants",
+  // Issue column pin keys with no `MetadataField` slot of their own
+  // (listed on the Metadata tab's field locks while pinned).
+  sort_number: "Sort number",
+  black_and_white: "Black & white",
+  alternate_series: "Alternate series",
+  cover_page_index: "Cover page",
 };
 
 /** Label a single metadata field key. Handles the `external_id.<source>`

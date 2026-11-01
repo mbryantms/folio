@@ -11,7 +11,7 @@
  *   - freshness (last synced, last rewritten)
  *   - per-field provenance (field → source → when) — the differentiator
  *   - external IDs (the folded-in External IDs tab, add/unlink intact)
- *   - user-pinned fields (survive rescans)
+ *   - per-field locks (survive provider applies and rescans)
  */
 
 import {
@@ -46,6 +46,8 @@ import { formatRelativeDate } from "@/lib/format";
 import { metadataFieldLabel, metadataFieldLabels } from "@/lib/metadata-fields";
 import { cn } from "@/lib/utils";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
+
+import { IssueFieldLocks } from "./IssueFieldLocks";
 
 export function IssueMetadataTab({
   seriesSlug,
@@ -185,24 +187,6 @@ export function IssueMetadataTab({
             />
           </dl>
         </MetaCard>
-
-        {data.user_pinned_fields.length > 0 && (
-          <MetaCard title="Your pinned fields">
-            <p className="text-muted-foreground mb-2 text-xs">
-              Edited by you — preserved across rescans and provider syncs.
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {data.user_pinned_fields.map((f) => (
-                <span
-                  key={f}
-                  className="bg-secondary text-secondary-foreground inline-flex items-center rounded-md px-2 py-0.5 text-xs"
-                >
-                  {metadataFieldLabel(f)}
-                </span>
-              ))}
-            </div>
-          </MetaCard>
-        )}
       </div>
 
       {/* ── Alternate provider series (provider series-boundary divergence) ──
@@ -320,6 +304,17 @@ export function IssueMetadataTab({
           chrome="bare"
         />
       </section>
+
+      {/* ── Field locks: lock a field against provider updates without
+           editing it (audit 2026-11 §5 #5). ── */}
+      <IssueFieldLocks
+        seriesSlug={seriesSlug}
+        issueSlug={issueSlug}
+        lockableFields={data.lockable_fields}
+        lockedFields={data.locked_fields}
+        otherLockedFields={data.other_locked_fields}
+        canEdit={isAdmin}
+      />
 
       {/* ── Provenance ── */}
       <section className="space-y-2">
