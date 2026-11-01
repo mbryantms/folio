@@ -384,6 +384,7 @@ pub fn fill_missing_payload(
 /// Produce a fresh `ComicInfo` ready for [`parsers::comicinfo::serialize`].
 pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
     let junctions = ctx.issue_junctions;
+    let (story_arc, story_arc_number) = compose_comicinfo_arcs(ctx);
     let mut info = ComicInfo {
         // Series-level fields. Title at the series level == `<Series>`
         // in ComicInfo. The Anansi schema fuses series+issue into one
@@ -498,11 +499,7 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
             "MainCharacterOrTeam",
         ),
         review: ctx.issue.review.clone(),
-        gtin: prefer_external_id_str(
-            ctx.is_issue_pinned("external_id.gtin"),
-            ctx.issue_external_ids,
-            "gtin",
-        ),
+        gtin: comicinfo_gtin(ctx.issue_external_ids),
         scan_information: prefer_user_opt_str(
             ctx.is_issue_pinned("scan_information"),
             ctx.issue.scan_information.as_deref(),
@@ -577,17 +574,8 @@ pub fn compose_comicinfo(ctx: &ComposeContext) -> ComicInfo {
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
         ),
-        story_arc: compose_csv_field(
-            ctx.is_issue_pinned("story_arcs"),
-            &junctions.story_arcs(),
-            ctx.issue.story_arc.as_deref(),
-            &ctx.provider
-                .story_arcs
-                .iter()
-                .map(|a| a.name.as_str())
-                .collect::<Vec<_>>(),
-        ),
-        story_arc_number: ctx.issue.story_arc_number.clone(),
+        story_arc,
+        story_arc_number,
         // Per-role credits: the provider's role-tagged credits when it
         // has any for the role and the user hasn't pinned credits, else
         // the `issue_credits` rows for that role.
@@ -717,19 +705,15 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
             .map(|a| a.name.clone())
             .collect(),
     );
-    // `<Arc><Number>` for whichever arc list won: the junction's
-    // `position_in_arc`, else the provider's.
+    // `<Arc><Number>` for whichever arc list won ([`arc_slot`]; the same
+    // lookup feeds ComicInfo's `<StoryArcNumber>`). A file's non-integer
+    // number has no `positiveInteger` slot and stays ComicInfo-only.
+    let file_slots = file_arc_slots(ctx);
     let arc_numbers: BTreeMap<String, u32> = story_arcs
         .iter()
         .filter_map(|name| {
-            let n = junctions.arc_numbers.get(name).copied().or_else(|| {
-                ctx.provider
-                    .story_arcs
-                    .iter()
-                    .find(|a| &a.name == name)
-                    .and_then(|a| a.position_in_arc)
-            })?;
-            u32::try_from(n).ok().map(|n| (name.clone(), n))
+            let n = arc_slot(ctx, &file_slots, name)?.parse::<u32>().ok()?;
+            Some((name.clone(), n))
         })
         .collect();
     let store_date = if ctx.is_issue_pinned("store_date") {
@@ -1216,6 +1200,163 @@ fn prefer_external_id_str(
     map.get(source).cloned().filter(|s| !s.trim().is_empty())
 }
 
+/// ComicInfo `<GTIN>`: the issue's barcode from its external ids, in the
+/// order `gtin` → `upc` → `isbn` (audit 2026-11 WP A8).
+///
+/// ComicInfo has one barcode field (a single EAN / UPC / ISBN) where
+/// MetronInfo has `<GTIN><ISBN/><UPC/>`. A `gtin` row is that field's own
+/// value (read from a file's ComicInfo, or typed by the user), so it
+/// round-trips first. Otherwise the most specific barcode a provider gave
+/// wins: the UPC with its 5-digit add-on names this issue and cover,
+/// while an ISBN names the book edition. Spaces and hyphens are dropped
+/// (`978-1-60706-601-9` → `9781607066019`) and the value stays a string,
+/// so a leading zero survives. The scanner's ingest recognises the value
+/// as the `upc` / `isbn` row's echo and does not mint a `gtin` row beside
+/// it (`process::dedupe_barcodes`).
+fn comicinfo_gtin(ids: &BTreeMap<String, String>) -> Option<String> {
+    ["gtin", "upc", "isbn"]
+        .into_iter()
+        .filter_map(|k| ids.get(k))
+        .map(|v| normalize_barcode(v))
+        .find(|v| !v.is_empty())
+}
+
+/// A barcode with whitespace and hyphens removed and an ISBN-10 check
+/// digit upper-cased: the spelling ComicInfo `<GTIN>` carries, and the
+/// key the scanner compares barcodes of different sources by.
+pub fn normalize_barcode(v: &str) -> String {
+    v.chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect::<String>()
+        .to_ascii_uppercase()
+}
+
+/// The provider's arc list is the one both sidecars write: the apply
+/// carries arcs and the user has not pinned `story_arcs` (the rule
+/// [`compose_csv_field`] / [`compose_list`] apply to the names).
+fn provider_arcs_win(ctx: &ComposeContext) -> bool {
+    !ctx.is_issue_pinned("story_arcs") && !ctx.provider.story_arcs.is_empty()
+}
+
+/// An arc's number within whichever arc list won: the provider's
+/// `position_in_arc` first when its list won (a fresh apply beats a
+/// position an older tag left in the junction), else the junction's, each
+/// falling back to the other. One lookup for MetronInfo's `<Arc><Number>`
+/// and ComicInfo's `<StoryArcNumber>`, so the two sidecars agree.
+fn arc_number(ctx: &ComposeContext, name: &str) -> Option<i32> {
+    let junction = || ctx.issue_junctions.arc_numbers.get(name).copied();
+    let provider = || {
+        ctx.provider
+            .story_arcs
+            .iter()
+            .find(|a| a.name == name)
+            .and_then(|a| a.position_in_arc)
+    };
+    if provider_arcs_win(ctx) {
+        provider().or_else(junction)
+    } else {
+        junction().or_else(provider)
+    }
+}
+
+/// The file's own `<StoryArc>` / `<StoryArcNumber>` pairs when the file
+/// owns the arcs ([`IssueJunctions::arcs_from_file`]) and the provider's
+/// list is not the one written; else empty. Read from the parsed values
+/// the scanner keeps in `comic_info_raw`: lower-cased arc name (as the
+/// scanner's [`split_csv`] reads it, which is how the junction row was
+/// named) → the number text in the same slot, verbatim (`1.5`, `3a`).
+fn file_arc_slots(ctx: &ComposeContext) -> Vec<(String, String)> {
+    if provider_arcs_win(ctx) || !ctx.issue_junctions.arcs_from_file {
+        return Vec::new();
+    }
+    let raw = &ctx.issue.comic_info_raw;
+    let (Some(names), Some(numbers)) = (
+        comic_info_raw_str(raw, "story_arc", "StoryArc"),
+        comic_info_raw_str(raw, "story_arc_number", "StoryArcNumber"),
+    ) else {
+        return Vec::new();
+    };
+    split_csv(&names)
+        .into_iter()
+        .zip(numbers.split([',', ';']).map(str::trim))
+        .filter(|(_, n)| !n.is_empty())
+        .map(|(name, n)| (name.trim().to_lowercase(), n.to_owned()))
+        .collect()
+}
+
+/// One arc's number text: its position ([`arc_number`]), else the number
+/// the file paired with it ([`file_arc_slots`]).
+fn arc_slot(ctx: &ComposeContext, file_slots: &[(String, String)], name: &str) -> Option<String> {
+    arc_number(ctx, name).map(|p| p.to_string()).or_else(|| {
+        let key = name.trim().to_lowercase();
+        file_slots
+            .iter()
+            .find(|(n, _)| *n == key)
+            .map(|(_, v)| v.clone())
+    })
+}
+
+/// ComicInfo `<StoryArc>` + `<StoryArcNumber>` (audit 2026-11 WP A8).
+///
+/// The names come from the list that wins the usual way (the provider's
+/// unless the user pinned `story_arcs`, else the `issue_arcs` junction in
+/// `position_in_arc` order); the numbers are a **parallel** list in the
+/// same order, joined with the same separator ([`csv_separator`]: `; `
+/// once a name carries a comma) so slot N of one is slot N of the other.
+/// An arc without a number leaves its slot empty (`1, , 3`); trailing
+/// empty slots are dropped, and a list with no number at all omits the
+/// element.
+///
+/// A slot's number is the arc's position ([`arc_number`]); for arcs the
+/// file owns ([`IssueJunctions::arcs_from_file`]) an arc with no position
+/// takes the number the file itself paired with it ([`file_arc_slots`]).
+/// The scanner derives a position only for a single-arc issue and never
+/// updates one, so a file's multi-arc `<StoryArcNumber>` lives there
+/// alone, and a rewrite must not drop it or re-pair it to the junction's
+/// order. A user edit (PATCH) likewise positions a single integer arc
+/// only; with no position at all, a user-owned issue keeps the number
+/// column it typed. The flat `story_arc` / `story_arc_number` columns are
+/// otherwise read only when the issue has no junction rows (never
+/// derived; verbatim), so a stale column cannot outlive a provider's
+/// junction-only write.
+fn compose_comicinfo_arcs(ctx: &ComposeContext) -> (Option<String>, Option<String>) {
+    let junctions = ctx.issue_junctions;
+    let column = |v: Option<&str>| v.map(str::to_owned).filter(|s| !s.trim().is_empty());
+    let provider_won = provider_arcs_win(ctx);
+    let names: Vec<&str> = if provider_won {
+        ctx.provider
+            .story_arcs
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect()
+    } else if !junctions.story_arcs.is_empty() {
+        junctions.story_arcs()
+    } else {
+        return (
+            column(ctx.issue.story_arc.as_deref()),
+            column(ctx.issue.story_arc_number.as_deref()),
+        );
+    };
+    let file_slots = file_arc_slots(ctx);
+    let mut slots: Vec<String> = names
+        .iter()
+        .map(|n| arc_slot(ctx, &file_slots, n).unwrap_or_default())
+        .collect();
+    while slots.last().is_some_and(String::is_empty) {
+        slots.pop();
+    }
+    let story_arc = Some(join_unambiguous_csv(names.iter().copied()));
+    if slots.is_empty() {
+        let number = if ctx.is_issue_pinned("story_arcs") {
+            column(ctx.issue.story_arc_number.as_deref())
+        } else {
+            None
+        };
+        return (story_arc, number);
+    }
+    (story_arc, Some(slots.join(csv_separator(&names))))
+}
+
 /// Build a `<Characters>foo, bar</Characters>`-shaped CSV. User-pinned
 /// fields use the issue's junction rows; otherwise we synthesize from
 /// the provider's structured Vec, falling back to the junction rows when
@@ -1251,12 +1392,18 @@ fn compose_csv_field(
 /// our own scanner now recovers the boundaries.
 fn join_unambiguous_csv<'a, I: IntoIterator<Item = &'a str>>(names: I) -> String {
     let names: Vec<&str> = names.into_iter().collect();
-    let sep = if names.iter().any(|n| n.contains(',')) {
+    names.join(csv_separator(&names))
+}
+
+/// The joiner [`join_unambiguous_csv`] picks for `names`: `; ` once any
+/// name carries a comma, else `, `. A list parallel to `names`
+/// (`<StoryArcNumber>`) uses the same one so its slots line up.
+fn csv_separator(names: &[&str]) -> &'static str {
+    if names.iter().any(|n| n.contains(',')) {
         "; "
     } else {
         ", "
-    };
-    names.join(sep)
+    }
 }
 
 /// MetronInfo list variant — same logic as the CSV path but emits a
@@ -1487,6 +1634,12 @@ pub struct IssueJunctions {
     /// `issue_reprints` as display labels (the stored label, else
     /// `Series #N` of the linked local issue), in label order.
     pub reprints: Vec<String>,
+    /// The issue's arcs are file-owned: no `story_arcs` provenance row
+    /// above the file tier (the scanner's `arcs_file_owned` rule). Only
+    /// then may an arc with no position take the number the file paired
+    /// with it ([`file_arc_slots`]). `false` by default: the strict
+    /// junction-only reading.
+    pub arcs_from_file: bool,
 }
 
 impl IssueJunctions {
@@ -1639,8 +1792,39 @@ pub async fn load_issue_junctions(
           WHERE ia.issue_id = $1 ORDER BY ia.position_in_arc NULLS LAST, sa.name",
     ))
     .all(db);
-    // Nine independent reads; the series fan-out runs this per issue.
-    let (credits, characters, teams, locations, arcs, genres, tags, universes, reprints) = tokio::try_join!(
+    // The scanner's own `arcs_file_owned` rule, so the composer's column
+    // fallback and the rollup's reconcile agree on who owns the arcs.
+    #[derive(Debug, FromQueryResult)]
+    struct FlagRow {
+        flag: bool,
+    }
+    static ARCS_FROM_FILE_SQL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        format!(
+            "SELECT {} AS flag",
+            crate::library::scanner::metadata_rollup::arcs_file_owned("$1")
+        )
+    });
+    let arcs_from_file = async {
+        Ok::<_, sea_orm::DbErr>(
+            FlagRow::find_by_statement(stmt(&ARCS_FROM_FILE_SQL))
+                .one(db)
+                .await?
+                .is_some_and(|r| r.flag),
+        )
+    };
+    // Ten independent reads; the series fan-out runs this per issue.
+    let (
+        credits,
+        characters,
+        teams,
+        locations,
+        arcs,
+        genres,
+        tags,
+        universes,
+        reprints,
+        arcs_from_file,
+    ) = tokio::try_join!(
         credits,
         refs(
             "SELECT COALESCE(c.name, ic.\"character\") AS name, c.slug AS slug \
@@ -1678,6 +1862,7 @@ pub async fn load_issue_junctions(
                     AND (NULLIF(ir.reprinted_label, '') IS NOT NULL OR s.name IS NOT NULL) \
                   ORDER BY 1",
         ),
+        arcs_from_file,
     )?;
     let arc_numbers = arcs
         .iter()
@@ -1701,6 +1886,7 @@ pub async fn load_issue_junctions(
         arc_numbers,
         universes,
         reprints,
+        arcs_from_file,
     })
 }
 
@@ -3231,5 +3417,253 @@ mod archive_series_name_tests {
             fill_missing: false,
         };
         assert_eq!(compose_comicinfo(&ctx).series.as_deref(), Some("Firestorm"));
+    }
+}
+
+/// ComicInfo `<GTIN>` + `<StoryArcNumber>` (audit 2026-11 WP A8).
+#[cfg(test)]
+mod comicinfo_gtin_arc_tests {
+    use super::*;
+    use crate::metadata::provider::{EntityCandidate, GenericMetadata};
+    use std::collections::{BTreeMap, HashSet};
+
+    fn named(name: &str) -> JunctionRef {
+        JunctionRef {
+            name: name.into(),
+            slug: None,
+        }
+    }
+
+    #[test]
+    fn comicinfo_gtin_prefers_gtin_then_upc_then_isbn() {
+        let ids = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        // UPC only: the provider's issue barcode reaches ComicInfo, leading
+        // zero intact.
+        assert_eq!(
+            comicinfo_gtin(&ids(&[("upc", "07098530047000111")])).as_deref(),
+            Some("07098530047000111")
+        );
+        // UPC beats ISBN; a `gtin` row beats both.
+        assert_eq!(
+            comicinfo_gtin(&ids(&[
+                ("isbn", "9781607066019"),
+                ("upc", "70985300470200111")
+            ]))
+            .as_deref(),
+            Some("70985300470200111")
+        );
+        assert_eq!(
+            comicinfo_gtin(&ids(&[
+                ("gtin", "9781632154002"),
+                ("isbn", "9781607066019"),
+                ("upc", "70985300470200111"),
+            ]))
+            .as_deref(),
+            Some("9781632154002")
+        );
+        // ISBN only, hyphenated and spaced: normalised, check digit upper.
+        assert_eq!(
+            comicinfo_gtin(&ids(&[("isbn", " 1-60706-601-x ")])).as_deref(),
+            Some("160706601X")
+        );
+        // A blank `gtin` row does not hide the UPC.
+        assert_eq!(
+            comicinfo_gtin(&ids(&[("gtin", "  "), ("upc", "70985300470200111")])).as_deref(),
+            Some("70985300470200111")
+        );
+        assert_eq!(comicinfo_gtin(&ids(&[("comicvine", "1")])), None);
+    }
+
+    fn arcs_ctx_compose(
+        issue: &issue::Model,
+        provider: &GenericMetadata,
+        junctions: &IssueJunctions,
+    ) -> (ComicInfo, MetronInfo) {
+        arcs_ctx_compose_pinned(issue, provider, junctions, &HashSet::new())
+    }
+
+    fn arcs_ctx_compose_pinned(
+        issue: &issue::Model,
+        provider: &GenericMetadata,
+        junctions: &IssueJunctions,
+        pins: &HashSet<String>,
+    ) -> (ComicInfo, MetronInfo) {
+        let series = tests::make_series("Saga");
+        let ids: BTreeMap<String, String> = BTreeMap::new();
+        let none: HashSet<String> = HashSet::new();
+        let ctx = ComposeContext {
+            provider,
+            issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &ids,
+            issue_user_pins: pins,
+            series_user_pins: &none,
+            issue_junctions: junctions,
+            fill_missing: false,
+        };
+        (compose_comicinfo(&ctx), compose_metroninfo(&ctx))
+    }
+
+    fn arcs(rows: &[(&str, Option<i32>)]) -> IssueJunctions {
+        IssueJunctions {
+            story_arcs: rows.iter().map(|(n, _)| named(n)).collect(),
+            arc_numbers: rows
+                .iter()
+                .filter_map(|(n, p)| p.map(|p| ((*n).to_owned(), p)))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    /// A junction-only arc write (provider apply, hand edit) leaves the flat
+    /// columns empty; ComicInfo's parallel lists come from the junction, in
+    /// the same order, and agree with MetronInfo's `<Arc><Number>`.
+    #[test]
+    fn story_arc_number_is_the_junction_positions_in_parallel() {
+        let mut issue = tests::make_issue("X");
+        issue.story_arc = Some("Stale Arc".into());
+        issue.story_arc_number = Some("9".into());
+        let none = GenericMetadata::default();
+
+        let (ci, mi) = arcs_ctx_compose(
+            &issue,
+            &none,
+            &arcs(&[("Volume One", Some(1)), ("The War", Some(3))]),
+        );
+        assert_eq!(ci.story_arc.as_deref(), Some("Volume One, The War"));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("1, 3"));
+        assert_eq!(mi.story_arcs, ["Volume One", "The War"]);
+        assert_eq!(mi.arc_numbers.get("The War"), Some(&3));
+
+        // A comma in a name switches both lists to `; `.
+        let (ci, _) = arcs_ctx_compose(
+            &issue,
+            &none,
+            &arcs(&[("Volume One", Some(1)), ("Blood, Sweat", Some(4))]),
+        );
+        assert_eq!(ci.story_arc.as_deref(), Some("Volume One; Blood, Sweat"));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("1; 4"));
+
+        // An unnumbered arc keeps its slot; trailing empties are dropped.
+        let (ci, _) = arcs_ctx_compose(
+            &issue,
+            &none,
+            &arcs(&[("A", Some(1)), ("B", None), ("C", Some(3)), ("D", None)]),
+        );
+        assert_eq!(ci.story_arc.as_deref(), Some("A, B, C, D"));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("1, , 3"));
+
+        // No positions on provider-owned arcs: no number, and the stale
+        // column never reaches the file.
+        let (ci, _) = arcs_ctx_compose(&issue, &none, &arcs(&[("Volume One", None)]));
+        assert_eq!(ci.story_arc.as_deref(), Some("Volume One"));
+        assert_eq!(ci.story_arc_number, None);
+    }
+
+    /// With no junction rows the flat columns pass through verbatim.
+    /// For file-owned arcs an arc with no position takes the number the
+    /// file paired with *that arc* (`comic_info_raw`), re-ordered with the
+    /// junction's list rather than zipped against it.
+    #[test]
+    fn story_arc_number_takes_the_files_own_pairing_for_file_owned_arcs() {
+        let mut issue = tests::make_issue("X");
+        issue.story_arc = Some("Alpha, Zeta".into());
+        issue.story_arc_number = Some("3, 7".into());
+        issue.comic_info_raw = serde_json::json!({
+            "story_arc": "Zeta, Alpha, Omega",
+            "story_arc_number": "3, 7, 1.5",
+        });
+        let none = GenericMetadata::default();
+
+        let (ci, _) = arcs_ctx_compose(&issue, &none, &IssueJunctions::default());
+        assert_eq!(ci.story_arc.as_deref(), Some("Alpha, Zeta"));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("3, 7"));
+
+        // No positions (a multi-arc file): junction order is by name, the
+        // numbers follow their arcs; a non-integer stays ComicInfo-only.
+        let mut file_owned = arcs(&[("Alpha", None), ("Omega", None), ("Zeta", None)]);
+        file_owned.arcs_from_file = true;
+        let (ci, mi) = arcs_ctx_compose(&issue, &none, &file_owned);
+        assert_eq!(ci.story_arc.as_deref(), Some("Alpha, Omega, Zeta"));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("7, 1.5, 3"));
+        assert_eq!(mi.arc_numbers.get("Alpha"), Some(&7));
+        assert_eq!(mi.arc_numbers.get("Zeta"), Some(&3));
+        assert!(!mi.arc_numbers.contains_key("Omega"));
+
+        // A position kept from an earlier single-arc tag does not hide the
+        // file's number for the arc added since.
+        let mut file_owned = arcs(&[("Alpha", Some(9)), ("Zeta", None)]);
+        file_owned.arcs_from_file = true;
+        let (ci, _) = arcs_ctx_compose(&issue, &none, &file_owned);
+        assert_eq!(ci.story_arc_number.as_deref(), Some("9, 3"));
+
+        // Not file-owned (a provider wrote the arcs): the file's pairing is
+        // not consulted.
+        let (ci, _) = arcs_ctx_compose(&issue, &none, &arcs(&[("Alpha", None), ("Zeta", None)]));
+        assert_eq!(ci.story_arc_number, None);
+    }
+
+    /// A user edit positions a single integer arc only; a user-owned issue
+    /// with no position keeps the number column the user typed.
+    #[test]
+    fn story_arc_number_keeps_a_user_typed_column_without_positions() {
+        let mut issue = tests::make_issue("X");
+        issue.story_arc_number = Some("2, 5".into());
+        let none = GenericMetadata::default();
+        let pins: HashSet<String> = ["story_arcs".to_owned()].into();
+        let (ci, _) =
+            arcs_ctx_compose_pinned(&issue, &none, &arcs(&[("A", None), ("B", None)]), &pins);
+        assert_eq!(ci.story_arc.as_deref(), Some("A, B"));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("2, 5"));
+    }
+
+    /// When the provider's list wins, its fresh position beats one an
+    /// older tag left in the junction, in both sidecars.
+    #[test]
+    fn story_arc_number_prefers_the_providers_position_when_its_list_wins() {
+        let issue = tests::make_issue("X");
+        let provider = GenericMetadata {
+            story_arcs: vec![EntityCandidate {
+                name: "The War".into(),
+                identifiers: vec![],
+                is_first_appearance: false,
+                died_in_issue: None,
+                disbanded_in_issue: None,
+                position_in_arc: Some(2),
+            }],
+            ..Default::default()
+        };
+        let (ci, mi) = arcs_ctx_compose(&issue, &provider, &arcs(&[("The War", Some(1))]));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("2"));
+        assert_eq!(mi.arc_numbers.get("The War"), Some(&2));
+    }
+
+    /// A provider apply's arc list wins with its own positions, in the
+    /// provider's order, in both sidecars.
+    #[test]
+    fn story_arc_number_follows_the_provider_list_when_it_wins() {
+        let issue = tests::make_issue("X");
+        let arc = |name: &str, pos: Option<i32>| EntityCandidate {
+            name: name.into(),
+            identifiers: vec![],
+            is_first_appearance: false,
+            died_in_issue: None,
+            disbanded_in_issue: None,
+            position_in_arc: pos,
+        };
+        let provider = GenericMetadata {
+            story_arcs: vec![arc("The War", Some(2)), arc("Volume One", Some(6))],
+            ..Default::default()
+        };
+        let (ci, mi) = arcs_ctx_compose(&issue, &provider, &IssueJunctions::default());
+        assert_eq!(ci.story_arc.as_deref(), Some("The War, Volume One"));
+        assert_eq!(ci.story_arc_number.as_deref(), Some("2, 6"));
+        assert_eq!(mi.arc_numbers.get("Volume One"), Some(&6));
     }
 }
