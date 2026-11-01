@@ -143,11 +143,6 @@ const ROUTES: Route[] = [
   {
     path: (ids) => `/series/${ids.seriesSlug}?tab=metadata`,
     label: "series detail, Metadata tab",
-    // Finding: the "Needs metadata" tier badge is `text-destructive` on
-    // `bg-destructive/15` — 3.3:1 in the dark theme; the dark
-    // `--destructive` token (3.7:1 as plain text on a card) needs a
-    // palette decision (see PR body). Only the badge is excluded.
-    exclude: ['span.text-destructive[class*="bg-destructive/15"]'],
   },
   {
     path: (ids) => `/series/${ids.seriesSlug}/issues/${ids.issueSlug}`,
@@ -175,10 +170,6 @@ const ROUTES: Route[] = [
   {
     path: "/settings/activity",
     label: "settings, reading stats",
-    // Finding: the vendored Button `destructive` variant ("Delete
-    // history") is `text-destructive` on `dark:bg-destructive/20` —
-    // 3.2:1 in the dark theme; a palette / variant decision (see PR body).
-    exclude: ['[data-variant="destructive"]'],
   },
   { path: "/settings/downloads", label: "settings, downloads" },
   { path: "/settings/views", label: "settings, views" },
@@ -187,10 +178,6 @@ const ROUTES: Route[] = [
   {
     path: "/settings/account",
     label: "settings, account",
-    // Same finding as settings, reading stats: the "Delete account"
-    // button is the vendored `destructive` variant, 3.2:1 in the dark
-    // theme until the `--destructive` palette decision lands.
-    exclude: ['[data-variant="destructive"]'],
   },
   { path: "/settings/api-tokens", label: "settings, app passwords" },
   // ----- admin -----
@@ -225,10 +212,6 @@ const ROUTES: Route[] = [
   {
     path: (ids) => `/admin/libraries/${ids.librarySlug}/settings`,
     label: "admin, library settings",
-    // Finding: the Danger zone heading and its outline "Delete" button are
-    // `text-destructive` on a card — 3.7:1 / 3.5:1 in the dark theme (the
-    // same `--destructive` palette decision as above). Only those two.
-    exclude: ["h3.text-destructive", "button.text-destructive"],
   },
   {
     path: (ids) => `/admin/libraries/${ids.librarySlug}/thumbnails`,
