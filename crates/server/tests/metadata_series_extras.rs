@@ -353,6 +353,189 @@ async fn external_ids_delete_404_when_no_link() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+async fn user_id_by_email(app: &TestApp, email: &str) -> Uuid {
+    entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq(email))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("user row")
+        .id
+}
+
+async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid) {
+    use sea_orm::{ActiveModelTrait, Set};
+    let now = chrono::Utc::now().fixed_offset();
+    entity::library_user_access::ActiveModel {
+        user_id: Set(user_id),
+        library_id: Set(library_id),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+}
+
+/// `(source, external_id, set_by)` for every `external_ids` row on the
+/// entity, sorted — the "row is unchanged" probe.
+async fn id_rows(
+    app: &TestApp,
+    entity_type: &str,
+    entity_id: &str,
+) -> Vec<(String, String, String)> {
+    let mut rows: Vec<_> = entity::external_id::Entity::find()
+        .filter(entity::external_id::Column::EntityType.eq(entity_type))
+        .filter(entity::external_id::Column::EntityId.eq(entity_id))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.source, r.external_id, r.set_by))
+        .collect();
+    rows.sort();
+    rows
+}
+
+async fn audit_actions(app: &TestApp) -> Vec<String> {
+    entity::audit_log::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.action)
+        .collect()
+}
+
+/// Audit 2026-11 E13: external-id add / unlink are admin writes, like the
+/// series and issue `PATCH`. A reader with library access gets 403 on all
+/// four (and the rows stay as they were, with no audit row), while the
+/// list endpoints still answer them. The admin path keeps working and
+/// records its `admin.*.external_id_*` audit rows.
+#[tokio::test]
+async fn external_id_writes_require_admin_and_lists_stay_open_to_readers() {
+    use common::seed::IssueSeed;
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let reader = register_authed(&app, "reader@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path()).insert(&app.state().db).await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbz = dir.path().join("issue.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, b"dummy", 1.0)
+        .insert(&app.state().db)
+        .await;
+    let issue_slug = entity::issue::Entity::find_by_id(issue_id.clone())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug;
+    let reader_id = user_id_by_email(&app, "reader@example.com").await;
+    grant_library(&app, reader_id, lib_id).await;
+
+    let series_path = format!("/api/series/{series_id}/external-ids");
+    let issue_path = format!("/api/series/{series_id}/issues/{issue_slug}/external-ids");
+
+    // Admin links one id on each entity: still allowed, still audited.
+    for path in [&series_path, &issue_path] {
+        let resp = send(
+            &app,
+            &admin,
+            Method::POST,
+            path,
+            Some(json!({"source": "comicvine", "external_id": "12345"})),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED, "admin add {path}");
+    }
+    let series_before = id_rows(&app, "series", &series_id.to_string()).await;
+    let issue_before = id_rows(&app, "issue", &issue_id).await;
+    assert_eq!(series_before.len(), 1);
+    assert_eq!(issue_before.len(), 1);
+    let audit_before = audit_actions(&app).await;
+    assert!(audit_before.contains(&"admin.series.external_id_set".to_owned()));
+    assert!(audit_before.contains(&"admin.issue.external_id_set".to_owned()));
+
+    // The reader can see the library, so the lists answer them.
+    for path in [&series_path, &issue_path] {
+        let resp = get(&app, &reader, path).await;
+        assert_eq!(resp.status(), StatusCode::OK, "reader list {path}");
+        let body = body_json(resp.into_body()).await;
+        let rows = body["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{body:#?}");
+        assert_eq!(rows[0]["external_id"], "12345");
+    }
+
+    // Each write is refused before the handler body runs: 403 in the
+    // canonical envelope, whether it would add, re-point or unlink.
+    let writes = [
+        (
+            Method::POST,
+            series_path.clone(),
+            Some(json!({"source": "comicvine", "external_id": "99999"})),
+        ),
+        (
+            Method::POST,
+            series_path.clone(),
+            Some(json!({"source": "metron", "external_id": "7"})),
+        ),
+        (Method::DELETE, format!("{series_path}/comicvine"), None),
+        (
+            Method::POST,
+            issue_path.clone(),
+            Some(json!({"source": "comicvine", "external_id": "99999"})),
+        ),
+        (
+            Method::POST,
+            issue_path.clone(),
+            Some(json!({"source": "metron", "external_id": "7"})),
+        ),
+        (Method::DELETE, format!("{issue_path}/comicvine"), None),
+    ];
+    for (method, path, body) in writes {
+        let resp = send(&app, &reader, method.clone(), &path, body).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "reader {method} {path}"
+        );
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "auth.permission_denied", "{body:#?}");
+    }
+    assert_eq!(
+        id_rows(&app, "series", &series_id.to_string()).await,
+        series_before
+    );
+    assert_eq!(id_rows(&app, "issue", &issue_id).await, issue_before);
+    assert_eq!(audit_actions(&app).await.len(), audit_before.len());
+
+    // The admin's unlinks still go through and are audited.
+    for path in [&series_path, &issue_path] {
+        let resp = send(
+            &app,
+            &admin,
+            Method::DELETE,
+            &format!("{path}/comicvine"),
+            None,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT, "admin unlink {path}");
+    }
+    assert!(
+        id_rows(&app, "series", &series_id.to_string())
+            .await
+            .is_empty()
+    );
+    assert!(id_rows(&app, "issue", &issue_id).await.is_empty());
+    let audit_after = audit_actions(&app).await;
+    assert!(audit_after.contains(&"admin.series.external_id_unlink".to_owned()));
+    assert!(audit_after.contains(&"admin.issue.external_id_unlink".to_owned()));
+}
+
 // ───────── /issues/{id}/covers ─────────
 
 #[tokio::test]

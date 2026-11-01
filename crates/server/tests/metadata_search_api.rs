@@ -725,6 +725,92 @@ async fn apply_series_403_when_override_user_edits_requested_by_non_admin() {
     assert_eq!(body["error"]["code"], "auth.permission_denied");
 }
 
+/// Audit 2026-11 E13: "Use theirs" on an external-id conflict
+/// (`override_external_id_sources`) replaces a `set_by = 'user'` id, which
+/// only an admin may pin, so it is admin-gated like `override_user_edits`
+/// on the single and the composite apply. The pinned id survives a
+/// reader's attempt; a plain apply (no override) still reaches the
+/// handler for the reader.
+#[tokio::test]
+async fn apply_403_when_override_external_id_sources_requested_by_non_admin() {
+    let app = TestApp::spawn_with_comicvine("k", true).await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let dir = tempdir().unwrap();
+    let (lib_id, series_id) = seed_series_in_library(&app, dir.path()).await;
+    use entity::{external_id, library_user_access, user};
+    let user_row = user::Entity::find()
+        .filter(user::Column::Email.eq("user@example.com"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let now = Utc::now().fixed_offset();
+    library_user_access::ActiveModel {
+        user_id: Set(user_row.id),
+        library_id: Set(lib_id),
+        age_rating_max: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    // The admin pins CV 99999; the run's candidate says 12345.
+    let resp = post_json(
+        &app,
+        &admin,
+        &format!("/api/series/{series_id}/external-ids"),
+        json!({"source": "comicvine", "external_id": "99999"}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let (run_id, ord) = seed_completed_series_run(&app, series_id, "comicvine", "12345").await;
+
+    let attempts = [
+        (
+            format!("/api/series/{series_id}/metadata/apply"),
+            json!({"run_id": run_id, "ordinal": ord, "override_external_id_sources": ["comicvine"]}),
+        ),
+        (
+            format!("/api/series/{series_id}/metadata/composite-apply"),
+            json!({
+                "run_id": run_id,
+                "field_sources": [],
+                "included": [ord],
+                "override_external_id_sources": ["comicvine"],
+            }),
+        ),
+    ];
+    for (path, body) in attempts {
+        let resp = post_json(&app, &user, &path, body).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{path}");
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "auth.permission_denied", "{body:#?}");
+    }
+    let pinned = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq("series"))
+        .filter(external_id::Column::EntityId.eq(series_id.to_string()))
+        .filter(external_id::Column::Source.eq("comicvine"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pinned.external_id, "99999");
+    assert_eq!(pinned.set_by, "user");
+
+    // Without the override the reader's apply passes the gate (the
+    // reader apply surface itself is unchanged).
+    let resp = post_json(
+        &app,
+        &user,
+        &format!("/api/series/{series_id}/metadata/apply"),
+        json!({"run_id": run_id, "ordinal": ord, "override_external_id_sources": []}),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+}
+
 #[tokio::test]
 async fn apply_series_403_when_user_lacks_library_access() {
     let app = TestApp::spawn_with_comicvine("k", true).await;

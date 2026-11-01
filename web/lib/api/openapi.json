@@ -9894,7 +9894,7 @@
             }
           },
           "403": {
-            "description": "batch not visible / override_user_edits requires admin"
+            "description": "batch not visible / override_user_edits / override_external_id_sources requires admin"
           },
           "404": {
             "description": "batch not found"
@@ -11277,7 +11277,7 @@
             "description": "malformed JSON body"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "series not found"
@@ -11320,7 +11320,7 @@
             "description": "invalid source"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "series / link not found"
@@ -11537,7 +11537,7 @@
             "description": "malformed JSON body"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "issue not found"
@@ -11588,7 +11588,7 @@
             "description": "invalid source"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "issue / link not found"
@@ -11722,7 +11722,7 @@
             "description": "candidate not found / no providers"
           },
           "403": {
-            "description": "library access denied / override_user_edits requires admin"
+            "description": "library access denied / override_user_edits / override_external_id_sources requires admin"
           },
           "404": {
             "description": "issue / run not found"
@@ -12157,7 +12157,7 @@
             "description": "candidate not found / no providers"
           },
           "403": {
-            "description": "library access denied / override_user_edits requires admin"
+            "description": "library access denied / override_user_edits / override_external_id_sources requires admin"
           },
           "404": {
             "description": "series / run not found"

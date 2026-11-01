@@ -440,7 +440,7 @@ pub struct ApplyRequest {
 
 impl OverridesUserEdits for ApplyRequest {
     fn override_user_edits(&self) -> bool {
-        self.override_user_edits
+        self.override_user_edits || !self.override_external_id_sources.is_empty()
     }
 }
 
@@ -1867,7 +1867,7 @@ pub async fn proposed_diff_series(
     responses(
         (status = 202, body = ApplyAcceptedResp),
         (status = 400, description = "candidate not found / no providers"),
-        (status = 403, description = "library access denied / override_user_edits requires admin"),
+        (status = 403, description = "library access denied / override_user_edits / override_external_id_sources requires admin"),
         (status = 404, description = "series / run not found"),
         (status = 502, description = "queue error"),
     )
@@ -2207,7 +2207,7 @@ pub async fn composite_diff_issue(
     responses(
         (status = 202, body = ApplyAcceptedResp),
         (status = 400, description = "candidate not found / no providers"),
-        (status = 403, description = "library access denied / override_user_edits requires admin"),
+        (status = 403, description = "library access denied / override_user_edits / override_external_id_sources requires admin"),
         (status = 404, description = "issue / run not found"),
         (status = 502, description = "queue error"),
     )
@@ -2462,7 +2462,7 @@ pub struct CompositeApplyRequest {
 
 impl OverridesUserEdits for CompositeApplyRequest {
     fn override_user_edits(&self) -> bool {
-        self.override_user_edits
+        self.override_user_edits || !self.override_external_id_sources.is_empty()
     }
 }
 
@@ -4015,7 +4015,7 @@ pub struct BatchApplyResp {
     request_body = BatchApplyReq,
     responses(
         (status = 202, body = BatchApplyResp),
-        (status = 403, description = "batch not visible / override_user_edits requires admin"),
+        (status = 403, description = "batch not visible / override_user_edits / override_external_id_sources requires admin"),
         (status = 404, description = "batch not found"),
     )
 )]

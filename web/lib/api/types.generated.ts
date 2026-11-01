@@ -25294,7 +25294,7 @@ export interface operations {
                     "application/json": components["schemas"]["BatchApplyResp"];
                 };
             };
-            /** @description batch not visible / override_user_edits requires admin */
+            /** @description batch not visible / override_user_edits / override_external_id_sources requires admin */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26566,7 +26566,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26622,7 +26622,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26839,7 +26839,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26896,7 +26896,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27022,7 +27022,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied / override_user_edits requires admin */
+            /** @description library access denied / override_user_edits / override_external_id_sources requires admin */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27383,7 +27383,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied / override_user_edits requires admin */
+            /** @description library access denied / override_user_edits / override_external_id_sources requires admin */
             403: {
                 headers: {
                     [name: string]: unknown;

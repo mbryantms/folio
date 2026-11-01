@@ -177,7 +177,11 @@ fn json_rejection_to_response(rej: JsonRejection) -> Response {
 }
 
 /// A request body carrying the admin-only `override_user_edits` flag
-/// (metadata-providers: bypassing the user-precedence rule).
+/// (metadata-providers: bypassing the user-precedence rule). An apply body
+/// answers `true` for the force flag **and** for a non-empty
+/// `override_external_id_sources` ("Use theirs" on a conflict row): every
+/// such conflict is a `set_by = 'user'` external id, and pinning one is
+/// admin-only (audit 2026-11 E13), so replacing one is too.
 pub trait OverridesUserEdits {
     fn override_user_edits(&self) -> bool;
 }
@@ -222,7 +226,7 @@ where
                     return Err(respond(
                         StatusCode::FORBIDDEN,
                         ApiErrorCode::PermissionDenied,
-                        "override_user_edits requires admin",
+                        "overriding user-set values requires admin",
                     ));
                 }
                 Err(other) => return Err(other.into_response()),
