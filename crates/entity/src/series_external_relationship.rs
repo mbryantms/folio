@@ -11,6 +11,8 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::series_relationship::RelationshipKind;
+
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "series_external_relationship")]
 pub struct Model {
@@ -19,7 +21,7 @@ pub struct Model {
     /// The local series: "`from` `kind` the provider series".
     pub from_series_id: Uuid,
     /// One of the 31 relationship kinds (DB CHECK).
-    pub kind: String,
+    pub kind: RelationshipKind,
     /// Continuation qualifier or tie-in role (same CHECK as
     /// `series_relationship`).
     #[sea_orm(nullable)]

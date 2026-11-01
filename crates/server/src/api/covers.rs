@@ -38,8 +38,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 pub struct IssueCoverRow {
     pub id: Uuid,
     pub issue_id: String,
-    /// `"primary" | "variant" | "back" | "incentive"`.
-    pub kind: String,
+    pub kind: issue_cover::IssueCoverKind,
     pub ordinal: i32,
     pub source_provider: Option<String>,
     pub source_external_id: Option<String>,
@@ -112,7 +111,12 @@ pub async fn list_issue_covers(
         .order_by_asc(issue_cover::Column::Ordinal)
         .all(&app.db)
         .await
-        .unwrap_or_default();
+        // The gallery degrades to the page-thumb fallback, but a row whose
+        // `kind` no longer decodes (AR-7) must not vanish without a trace.
+        .unwrap_or_else(|e| {
+            tracing::warn!(issue_id = %id, error = %e, "issue covers: load failed");
+            Vec::new()
+        });
     let covers: Vec<IssueCoverRow> = rows
         .into_iter()
         .map(|r| {
@@ -149,7 +153,9 @@ pub async fn list_issue_covers(
     let variant_cover_chosen = crate::metadata::writers::primary_cover_pinned(&app.db, &id)
         .await
         .unwrap_or(false)
-        && covers.iter().any(|c| c.kind == "primary");
+        && covers
+            .iter()
+            .any(|c| c.kind == issue_cover::IssueCoverKind::Primary);
     Json(IssueCoversResp {
         issue_id: id.clone(),
         covers,

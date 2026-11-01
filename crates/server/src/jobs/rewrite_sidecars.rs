@@ -567,7 +567,9 @@ async fn write_primary_cover(state: &AppState, issue_id: &str, cover: &PrimaryCo
     if cover.policy != CoverOverwritePolicy::Always {
         let has_primary = entity::issue_cover::Entity::find()
             .filter(entity::issue_cover::Column::IssueId.eq(issue_id))
-            .filter(entity::issue_cover::Column::Kind.eq("primary"))
+            .filter(
+                entity::issue_cover::Column::Kind.eq(entity::issue_cover::IssueCoverKind::Primary),
+            )
             .filter(entity::issue_cover::Column::Ordinal.eq(0))
             .filter(entity::issue_cover::Column::IsActive.eq(true))
             .count(&state.db)
@@ -605,7 +607,7 @@ async fn write_primary_cover(state: &AppState, issue_id: &str, cover: &PrimaryCo
     };
     let write = CoverWrite {
         issue_id,
-        kind: "primary",
+        kind: entity::issue_cover::IssueCoverKind::Primary,
         ordinal: 0,
         identifier: cover.identifier.as_ref(),
         source_url: Some(&cover.url),

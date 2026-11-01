@@ -581,7 +581,7 @@ async fn seed_series_with_cover_phash(
     entity::issue_cover::ActiveModel {
         id: Set(Uuid::now_v7()),
         issue_id: Set(issue_id.clone()),
-        kind: Set("primary".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Primary),
         ordinal: Set(0),
         source_provider: Set(Some("archive_extracted".into())),
         source_external_id: Set(None),

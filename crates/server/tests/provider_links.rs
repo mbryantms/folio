@@ -335,7 +335,7 @@ async fn reprints_persist_on_db_direct_apply_and_roll_up_to_collects() {
     assert_eq!(report.by_source.get("reprint_rollup"), Some(&1));
     let s = suggestions(&db, f.tpb, f.saga).await;
     assert_eq!(s.len(), 1, "{s:?}");
-    assert_eq!(s[0].kind, "collects");
+    assert_eq!(s[0].kind.as_str(), "collects");
     assert_eq!(s[0].to_range.as_deref(), Some("1-2"));
     assert_eq!(s[0].coverage.as_deref(), Some("full"));
     assert_eq!(s[0].status, "pending");
@@ -377,7 +377,10 @@ async fn reprint_rows_resolve_on_the_suggestion_run_when_the_hook_was_missed() {
             .as_deref(),
         Some(saga_2.as_str())
     );
-    assert_eq!(suggestions(&db, f.tpb, f.saga).await[0].kind, "collects");
+    assert_eq!(
+        suggestions(&db, f.tpb, f.saga).await[0].kind.as_str(),
+        "collects"
+    );
 }
 
 #[tokio::test]
@@ -702,7 +705,7 @@ async fn associated_records_external_rows_and_local_suggestions() {
     assert_eq!(report.by_source.get("provider_associated"), Some(&1));
     let s = suggestions(&db, f.tpb, f.saga).await;
     assert_eq!(s.len(), 1, "{s:?}");
-    assert_eq!(s[0].kind, "collects");
+    assert_eq!(s[0].kind.as_str(), "collects");
     assert_eq!(s[0].bucket, "medium");
     let ev = &s[0].evidence["sources"][0];
     assert_eq!(ev["source"], "provider_associated");
@@ -751,7 +754,7 @@ async fn associated_annual_series_type_refines_to_annual_of() {
     relationship_suggest::run(&db, lib).await.unwrap();
     let s = suggestions(&db, specials, main).await;
     assert_eq!(s.len(), 1, "{s:?}");
-    assert_eq!(s[0].kind, "annual_of");
+    assert_eq!(s[0].kind.as_str(), "annual_of");
     assert!(s[0].confidence >= 0.7);
 }
 
@@ -785,7 +788,7 @@ async fn provider_row_promotes_to_a_suggestion_when_the_series_appears() {
     };
     let s = suggestions(&db, a, b).await;
     assert_eq!(s.len(), 1);
-    assert_eq!(s[0].kind, "see_also");
+    assert_eq!(s[0].kind.as_str(), "see_also");
     // Nothing is created without review.
     assert_eq!(
         series_relationship::Entity::find()
@@ -1233,7 +1236,14 @@ async fn user_link_promotes_to_a_pair_when_the_series_appears() {
         .unwrap();
     let mut kinds: Vec<(Uuid, String, Option<String>, String)> = edges
         .into_iter()
-        .map(|e| (e.from_series_id, e.kind, e.qualifier, e.source))
+        .map(|e| {
+            (
+                e.from_series_id,
+                e.kind.as_str().to_owned(),
+                e.qualifier,
+                e.source,
+            )
+        })
         .collect();
     kinds.sort();
     let mut want = vec![
@@ -1305,7 +1315,10 @@ async fn user_link_promotes_on_the_suggestion_run_when_the_hook_was_missed() {
     assert!(
         series_relationship::Entity::find()
             .filter(series_relationship::Column::FromSeriesId.eq(f.saga))
-            .filter(series_relationship::Column::Kind.eq("sequel_of"))
+            .filter(
+                series_relationship::Column::Kind
+                    .eq(series_relationship::RelationshipKind::SequelOf)
+            )
             .one(&db)
             .await
             .unwrap()

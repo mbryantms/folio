@@ -24171,6 +24171,16 @@
           }
         }
       },
+      "IssueCoverKind": {
+        "type": "string",
+        "description": "What an `issue_cover` row is. Writers today store `primary` (the\narchive / provider / admin-picked display cover) and `variant`\n(provider variant covers); `back` and `incentive` are the gallery\nkinds the M0 schema reserved.",
+        "enum": [
+          "primary",
+          "variant",
+          "back",
+          "incentive"
+        ]
+      },
       "IssueCoverPickReq": {
         "type": "object",
         "required": [
@@ -24245,8 +24255,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
-            "description": "`\"primary\" | \"variant\" | \"back\" | \"incentive\"`."
+            "$ref": "#/components/schemas/IssueCoverKind"
           },
           "ordinal": {
             "type": "integer",

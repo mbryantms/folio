@@ -295,7 +295,7 @@ pub async fn record_provider_links<C: ConnectionTrait>(
         return Ok(report);
     };
     let now = Utc::now().fixed_offset();
-    let mut keep: HashSet<(String, String)> = HashSet::new();
+    let mut keep: HashSet<(RelationshipKind, String)> = HashSet::new();
     let mut seen: HashSet<String> = HashSet::new();
     for link in links.iter().filter(|l| l.source == source) {
         let pid = link.id.trim();
@@ -308,7 +308,7 @@ pub async fn record_provider_links<C: ConnectionTrait>(
         };
         let (kind, confidence) =
             provider_kind(own_type, &series.name, b_type.as_deref(), &link.name);
-        keep.insert((kind.as_str().to_owned(), pid.to_owned()));
+        keep.insert((kind, pid.to_owned()));
         let name: String = link.name.chars().take(300).collect();
         let url = link
             .url
@@ -326,7 +326,7 @@ pub async fn record_provider_links<C: ConnectionTrait>(
         let am = ext::ActiveModel {
             id: Set(Uuid::now_v7()),
             from_series_id: Set(series.id),
-            kind: Set(kind.as_str().to_owned()),
+            kind: Set(kind),
             qualifier: Set(None),
             source: Set(src.as_str().to_owned()),
             provider_series_id: Set(pid.to_owned()),
@@ -392,7 +392,7 @@ pub async fn record_provider_links<C: ConnectionTrait>(
             if is_coverage_row(r) {
                 linked.contains(r.provider_series_id.as_str())
             } else {
-                !keep.contains(&(r.kind.clone(), r.provider_series_id.clone()))
+                !keep.contains(&(r.kind, r.provider_series_id.clone()))
             }
         })
         .map(|r| r.id)
@@ -509,7 +509,7 @@ pub async fn record_coverage_links<C: ConnectionTrait>(
         // A live coverage row of another kind: replaced by this one.
         let other_kind: Vec<Uuid> = rows
             .iter()
-            .filter(|r| r.kind != link.kind.as_str())
+            .filter(|r| r.kind != link.kind)
             .map(|r| r.id)
             .collect();
         if !other_kind.is_empty() {
@@ -539,7 +539,7 @@ pub async fn record_coverage_links<C: ConnectionTrait>(
         let am = ext::ActiveModel {
             id: Set(Uuid::now_v7()),
             from_series_id: Set(series_id),
-            kind: Set(link.kind.as_str().to_owned()),
+            kind: Set(link.kind),
             qualifier: Set(None),
             source: Set(src.as_str().to_owned()),
             provider_series_id: Set(pid.to_owned()),
@@ -742,9 +742,7 @@ async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Resul
             }
             continue;
         }
-        let Ok(kind) = row.kind.parse::<RelationshipKind>() else {
-            continue;
-        };
+        let kind = row.kind;
         let scope = Scope {
             qualifier: row.qualifier.as_deref().and_then(|q| q.parse().ok()),
             ..Scope::default()
@@ -767,7 +765,7 @@ async fn promote<C: ConnectionTrait>(conn: &C, resolved: Vec<Resolved>) -> Resul
                     external_id = %row.id,
                     from_series_id = %row.from_series_id,
                     to_series_id = %to,
-                    kind = row.kind,
+                    kind = row.kind.as_str(),
                     "external relationship promoted to a series relationship"
                 );
                 n.pairs_created += 1;
@@ -927,7 +925,7 @@ pub async fn create_user_link<C: ConnectionTrait>(
     let now = Utc::now().fixed_offset();
     let existing = ext::Entity::find()
         .filter(ext::Column::FromSeriesId.eq(from))
-        .filter(ext::Column::Kind.eq(link.kind.as_str()))
+        .filter(ext::Column::Kind.eq(link.kind))
         .filter(ext::Column::Source.eq(link.source.as_str()))
         .filter(ext::Column::ProviderSeriesId.eq(&link.provider_series_id))
         .one(conn)
@@ -983,7 +981,7 @@ pub async fn create_user_link<C: ConnectionTrait>(
             ext::Entity::insert(ext::ActiveModel {
                 id: Set(id),
                 from_series_id: Set(from),
-                kind: Set(link.kind.as_str().to_owned()),
+                kind: Set(link.kind),
                 qualifier: Set(link.qualifier.map(|q| q.as_str().to_owned())),
                 source: Set(link.source.as_str().to_owned()),
                 provider_series_id: Set(link.provider_series_id.clone()),

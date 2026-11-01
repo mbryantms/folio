@@ -811,7 +811,7 @@ async fn count_active_variant_rows(
     use sea_orm::PaginatorTrait;
     let n = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .filter(issue_cover::Column::IsActive.eq(true))
         .count(db)
         .await?;
