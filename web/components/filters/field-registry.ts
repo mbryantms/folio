@@ -93,6 +93,7 @@ const TEXT_OPS_REQUIRED: readonly [Op, ...Op[]] = [
   "contains",
   "not_contains",
   "starts_with",
+  "ends_with",
   "equals",
   "not_equals",
 ];
@@ -629,6 +630,7 @@ export const OP_LABELS: Record<Op, string> = {
   contains: "contains",
   not_contains: "does not contain",
   starts_with: "starts with",
+  ends_with: "ends with",
   equals: "equals",
   not_equals: "does not equal",
   is: "is",

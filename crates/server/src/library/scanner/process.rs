@@ -1400,6 +1400,15 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             }
         }
         remember_primary_issue_path(db, &row_id, &path_str).await?;
+        // One barcode, one row: drop the echoes of a barcode the issue (or
+        // the other sidecar) already holds under another source.
+        let (gtin, metron_ids) = dedupe_barcodes(
+            db,
+            Some(&updated.id),
+            info.gtin.as_deref(),
+            metron_ids.as_ref(),
+        )
+        .await?;
         // Persist CV / Metron / GTIN from ComicInfo into external_ids.
         // User-pinned values (set_by='user') are skipped automatically.
         let skips = crate::metadata::writers::set_legacy_id_trio(
@@ -1408,7 +1417,7 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             &updated.id,
             info.comicvine_id,
             info.metron_id,
-            info.gtin.as_deref(),
+            gtin.as_deref(),
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
@@ -1599,13 +1608,17 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         };
         let inserted = am.insert(db).await?;
         remember_primary_issue_path(db, &issue_id, &path_str).await?;
+        // A fresh row holds no ids yet; only the two sidecars can echo
+        // each other's barcode.
+        let (gtin, metron_ids) =
+            dedupe_barcodes(db, None, info.gtin.as_deref(), metron_ids.as_ref()).await?;
         let skips = crate::metadata::writers::set_legacy_id_trio(
             db,
             "issue",
             &inserted.id,
             info.comicvine_id,
             info.metron_id,
-            info.gtin.as_deref(),
+            gtin.as_deref(),
             crate::metadata::writers::SetBy::ComicInfo,
         )
         .await?;
@@ -2989,6 +3002,82 @@ async fn emit_external_id_skips<C: ConnectionTrait>(
         });
     }
     Ok(())
+}
+
+/// Barcode-carrying `external_ids` sources: ComicInfo's one `<GTIN>` and
+/// MetronInfo's `<GTIN><UPC/><ISBN/>`.
+const BARCODE_SOURCES: [&str; 3] = ["gtin", "upc", "isbn"];
+
+/// One barcode, one `external_ids` row (audit 2026-11 WP A8).
+///
+/// ComicInfo has a single `<GTIN>`; MetronInfo splits it into `<UPC>` /
+/// `<ISBN>`. The composer writes one barcode into both files
+/// (`sidecar_compose::comicinfo_gtin`, MetronInfo's shape classification
+/// of a `gtin` id), so a Folio-written archive names the same value under
+/// two sources, and a plain ingest of both would add a second row of the
+/// same barcode on every rescan: a `upc` row gained a `gtin` echo, and a
+/// `gtin` row a `upc` / `isbn` one. This drops the echoes before either
+/// writer runs:
+///
+/// - a MetronInfo `upc` / `isbn` (or pre-schema `gtin`) whose value the
+///   issue already holds under **another** barcode source is skipped;
+/// - ComicInfo's `<GTIN>` is skipped when the issue holds its value under
+///   another source, or the MetronInfo of the same archive carries it as a
+///   `upc` / `isbn` (the more specific spelling wins on a first ingest).
+///
+/// Values compare by `sidecar_compose::normalize_barcode` (no spaces or
+/// hyphens). A barcode new to the issue still lands under its own source,
+/// and a row whose value changed is rewritten as before. `issue_id` is
+/// `None` for a freshly inserted row, which holds no ids yet. Returns the
+/// ComicInfo GTIN to write and the MetronInfo ids map to write.
+async fn dedupe_barcodes<C: ConnectionTrait>(
+    db: &C,
+    issue_id: Option<&str>,
+    gtin: Option<&str>,
+    metron_ids: Option<&BTreeMap<String, String>>,
+) -> Result<(Option<String>, Option<BTreeMap<String, String>>), sea_orm::DbErr> {
+    use crate::metadata::sidecar_compose::normalize_barcode;
+    let file_has_barcode = gtin.is_some_and(|g| !g.trim().is_empty())
+        || metron_ids.is_some_and(|m| BARCODE_SOURCES.iter().any(|s| m.contains_key(*s)));
+    if !file_has_barcode {
+        return Ok((gtin.map(str::to_owned), metron_ids.cloned()));
+    }
+    let held: Vec<(String, String)> = match issue_id {
+        Some(id) => entity::external_id::Entity::find()
+            .filter(entity::external_id::Column::EntityType.eq("issue"))
+            .filter(entity::external_id::Column::EntityId.eq(id))
+            .filter(entity::external_id::Column::Source.is_in(BARCODE_SOURCES))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|r| (r.source, normalize_barcode(&r.external_id)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let held_elsewhere = |source: &str, value: &str| {
+        held.iter()
+            .any(|(s, v)| s.as_str() != source && v.as_str() == value)
+    };
+    let metron_ids = metron_ids.map(|m| {
+        m.iter()
+            .filter(|(source, value)| {
+                !BARCODE_SOURCES.contains(&source.as_str())
+                    || !held_elsewhere(source, &normalize_barcode(value))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<BTreeMap<_, _>>()
+    });
+    let gtin = gtin.filter(|g| {
+        let g = normalize_barcode(g);
+        let in_metron = metron_ids.as_ref().is_some_and(|m| {
+            ["upc", "isbn"]
+                .iter()
+                .filter_map(|s| m.get(*s))
+                .any(|v| normalize_barcode(v) == g)
+        });
+        !held_elsewhere("gtin", &g) && !in_metron
+    });
+    Ok((gtin.map(str::to_owned), metron_ids))
 }
 
 async fn write_metroninfo_external_ids<C: ConnectionTrait>(

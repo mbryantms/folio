@@ -1274,3 +1274,286 @@ async fn legacy_shape_archive_rescans_without_loss_after_the_schema_rewrite() {
     };
     assert_eq!(strip(new), strip(old), "{mi_xml}");
 }
+
+// ───────── ComicInfo GTIN + StoryArcNumber (audit 2026-11 WP A8) ─────────
+
+/// One-page CBZ whose page bytes differ per `tag` (distinct content
+/// hashes), optionally carrying a ComicInfo.xml.
+fn tagged_cbz(path: &Path, tag: &str, comic_info: Option<&str>) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zw.start_file("page-001.png", opts).unwrap();
+    let mut page = b"\x89PNG\r\n\x1a\n".to_vec();
+    page.extend_from_slice(tag.as_bytes());
+    zw.write_all(&page).unwrap();
+    if let Some(xml) = comic_info {
+        zw.start_file("ComicInfo.xml", opts).unwrap();
+        zw.write_all(xml.as_bytes()).unwrap();
+    }
+    zw.finish().unwrap();
+}
+
+/// Every external id and arc position of one issue: what a rescan must
+/// leave exactly as it found it.
+#[derive(Debug, PartialEq)]
+struct IdsAndArcs {
+    external_ids: BTreeMap<String, String>,
+    arc_positions: BTreeMap<String, Option<i32>>,
+}
+
+async fn ids_and_arcs(app: &TestApp, issue_id: &str) -> IdsAndArcs {
+    let db = &app.state().db;
+    let external_ids = external_id::Entity::find()
+        .filter(external_id::Column::EntityType.eq("issue"))
+        .filter(external_id::Column::EntityId.eq(issue_id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.source, r.external_id))
+        .collect();
+    let mut arc_positions = BTreeMap::new();
+    for row in entity::issue_arc::Entity::find()
+        .filter(entity::issue_arc::Column::IssueId.eq(issue_id))
+        .all(db)
+        .await
+        .unwrap()
+    {
+        let arc = entity::story_arc::Entity::find_by_id(row.arc_id)
+            .one(db)
+            .await
+            .unwrap()
+            .expect("arc row");
+        arc_positions.insert(arc.name, row.position_in_arc);
+    }
+    IdsAndArcs {
+        external_ids,
+        arc_positions,
+    }
+}
+
+/// A provider- / hand-written issue whose barcode lives only under `upc`
+/// (or only under `gtin`) and whose arc positions live only in the
+/// junction: ComicInfo carries `<GTIN>` and a parallel `<StoryArcNumber>`,
+/// a rescan of the rewritten archive mints no echo id under the other
+/// barcode source and keeps every arc position, and a second rewrite is
+/// byte-identical. A file-tagged multi-arc issue keeps its own
+/// `<StoryArcNumber>` through the rewrite.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gtin_and_arc_numbers_round_trip_through_a_rescan() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Saga (2012)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let paths: Vec<PathBuf> = (1..=3)
+        .map(|n| folder.join(format!("Saga {n:03} (2012).cbz")))
+        .collect();
+    tagged_cbz(&paths[0], "upc", None);
+    tagged_cbz(&paths[1], "gtin", None);
+    tagged_cbz(
+        &paths[2],
+        "file-arcs",
+        Some(
+            "<?xml version=\"1.0\"?>\n<ComicInfo>\n  <Series>Saga</Series>\n  \
+             <Number>3</Number>\n  <StoryArc>Zeta, Alpha</StoryArc>\n  \
+             <StoryArcNumber>3, 7</StoryArcNumber>\n</ComicInfo>\n",
+        ),
+    );
+    let db = &app.state().db;
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(db)
+        .await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.expect("scan");
+    let issue_id = async |path: &Path| -> String {
+        issue::Entity::find()
+            .filter(issue::Column::LibraryId.eq(lib_id))
+            .filter(issue::Column::FilePath.eq(path.to_string_lossy().into_owned()))
+            .one(db)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| panic!("{} ingested", path.display()))
+            .id
+    };
+    let (upc_issue, gtin_issue, file_issue) = (
+        issue_id(&paths[0]).await,
+        issue_id(&paths[1]).await,
+        issue_id(&paths[2]).await,
+    );
+
+    // #1: a provider apply's barcode (`upc` only) and two numbered arcs
+    // written to the junction alone (the flat number column stays empty).
+    let set_by = SetBy::Provider(Source::Metron);
+    writers::set_external_id(
+        db,
+        "issue",
+        &upc_issue,
+        &Identifier::new(Source::Upc, "07098530047000111"),
+        set_by,
+    )
+    .await
+    .unwrap();
+    let batch = CsvRebuildBatch::new();
+    let mut arcs = Vec::new();
+    for (name, pos) in [("Volume One", 1), ("The War", 3)] {
+        let id = writers::upsert_story_arc(db, name, &[], set_by)
+            .await
+            .unwrap();
+        arcs.push((id, Some(pos)));
+    }
+    writers::set_issue_story_arcs(db, &upc_issue, arcs, set_by, None, &batch)
+        .await
+        .unwrap();
+    batch.flush(db).await.unwrap();
+    let row = issue::Entity::find_by_id(upc_issue.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.story_arc_number, None, "junction-only write");
+    // #2, the reverse direction: a ComicInfo-sourced `gtin` row (an
+    // ISBN-13, which MetronInfo files under `<ISBN>`).
+    writers::set_external_id(
+        db,
+        "issue",
+        &gtin_issue,
+        &Identifier::new(Source::Gtin, "9781632154002"),
+        SetBy::ComicInfo,
+    )
+    .await
+    .unwrap();
+
+    let (upc_ci, upc_mi) = rewrite_from_db(&app, &upc_issue, &paths[0]).await;
+    assert!(
+        upc_ci.contains("<GTIN>07098530047000111</GTIN>"),
+        "{upc_ci}"
+    );
+    assert!(
+        upc_ci.contains("<StoryArc>Volume One, The War</StoryArc>"),
+        "{upc_ci}"
+    );
+    assert!(
+        upc_ci.contains("<StoryArcNumber>1, 3</StoryArcNumber>"),
+        "{upc_ci}"
+    );
+    assert_valid_metroninfo(&upc_mi);
+    assert!(upc_mi.contains("<UPC>07098530047000111</UPC>"), "{upc_mi}");
+    let (gtin_ci, gtin_mi) = rewrite_from_db(&app, &gtin_issue, &paths[1]).await;
+    assert!(gtin_ci.contains("<GTIN>9781632154002</GTIN>"), "{gtin_ci}");
+    assert!(gtin_mi.contains("<ISBN>9781632154002</ISBN>"), "{gtin_mi}");
+    assert_valid_metroninfo(&gtin_mi);
+    let (file_ci, file_mi) = rewrite_from_db(&app, &file_issue, &paths[2]).await;
+    // The junction lists the unpositioned arcs by name; each keeps the
+    // number the file paired with it.
+    assert!(
+        file_ci.contains("<StoryArc>Alpha, Zeta</StoryArc>"),
+        "{file_ci}"
+    );
+    assert!(
+        file_ci.contains("<StoryArcNumber>7, 3</StoryArcNumber>"),
+        "the file's own multi-arc numbers survive the rewrite, paired\n{file_ci}"
+    );
+    assert!(
+        file_mi.contains("<Name>Zeta</Name>\n      <Number>3</Number>"),
+        "{file_mi}"
+    );
+
+    let before = [
+        ids_and_arcs(&app, &upc_issue).await,
+        ids_and_arcs(&app, &gtin_issue).await,
+        ids_and_arcs(&app, &file_issue).await,
+    ];
+    assert_eq!(
+        before[0].external_ids,
+        BTreeMap::from([("upc".to_string(), "07098530047000111".to_string())])
+    );
+    assert_eq!(
+        before[0].arc_positions,
+        BTreeMap::from([
+            ("The War".to_string(), Some(3)),
+            ("Volume One".to_string(), Some(1)),
+        ])
+    );
+    assert_eq!(
+        before[1].external_ids,
+        BTreeMap::from([("gtin".to_string(), "9781632154002".to_string())])
+    );
+
+    // The rescan ingests the rewritten sidecars …
+    scanner::scan_library(&state, lib_id).await.expect("rescan");
+    let row = issue::Entity::find_by_id(upc_issue.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.story_arc_number.as_deref(),
+        Some("1, 3"),
+        "the rescan read the rewritten ComicInfo"
+    );
+    // … and adds no echo id under the other barcode source, nor moves an
+    // arc position.
+    let after = [
+        ids_and_arcs(&app, &upc_issue).await,
+        ids_and_arcs(&app, &gtin_issue).await,
+        ids_and_arcs(&app, &file_issue).await,
+    ];
+    assert_eq!(after, before);
+
+    // A second rewrite from the rescanned DB is a fixed point.
+    let (again_ci, again_mi) = rewrite_from_db(&app, &upc_issue, &paths[0]).await;
+    assert_eq!(again_ci, upc_ci, "ComicInfo rewrite drifted");
+    assert_eq!(again_mi, upc_mi, "MetronInfo rewrite drifted");
+    let (again_ci, _) = rewrite_from_db(&app, &file_issue, &paths[2]).await;
+    assert_eq!(again_ci, file_ci, "file-owned ComicInfo rewrite drifted");
+}
+
+/// A first ingest of an archive whose two sidecars name one barcode (the
+/// shape every Folio-written archive now has) records it once, under the
+/// more specific MetronInfo source.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_ingest_of_a_folio_written_barcode_records_one_row() {
+    let app = TestApp::spawn().await;
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Saga (2012)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("Saga 001 (2012).cbz");
+    {
+        let f = std::fs::File::create(&path).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("page-001.png", opts).unwrap();
+        zw.write_all(b"\x89PNG\r\n\x1a\nfirst-ingest").unwrap();
+        zw.start_file("ComicInfo.xml", opts).unwrap();
+        zw.write_all(
+            b"<?xml version=\"1.0\"?>\n<ComicInfo>\n  <Series>Saga</Series>\n  \
+              <Number>1</Number>\n  <GTIN>07098530047000111</GTIN>\n</ComicInfo>\n",
+        )
+        .unwrap();
+        zw.start_file("MetronInfo.xml", opts).unwrap();
+        zw.write_all(
+            b"<?xml version=\"1.0\"?>\n<MetronInfo>\n  <Series>\n    <Name>Saga</Name>\n  \
+              </Series>\n  <Number>1</Number>\n  <GTIN>\n    <UPC>0709-8530-0470-00111</UPC>\n  \
+              </GTIN>\n</MetronInfo>\n",
+        )
+        .unwrap();
+        zw.finish().unwrap();
+    }
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    scanner::scan_library(&app.state(), lib_id)
+        .await
+        .expect("scan");
+    let (_row, ingested) = ingested(&app, lib_id).await;
+    assert_eq!(
+        ingested.external_ids,
+        BTreeMap::from([("upc".to_string(), "0709-8530-0470-00111".to_string())]),
+        "one barcode, one row"
+    );
+}
