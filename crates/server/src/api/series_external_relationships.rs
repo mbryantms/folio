@@ -209,7 +209,7 @@ fn view_of(
     r: ext::Model,
     local_series: Option<ExternalLocalSeries>,
 ) -> Option<SeriesExternalRelationshipView> {
-    let kind: RelationshipKind = r.kind.parse().ok()?;
+    let kind = r.kind;
     let source = ExternalSource::parse(&r.source)?;
     let qualifier: Option<RelationshipQualifier> =
         r.qualifier.as_deref().and_then(|q| q.parse().ok());
@@ -425,9 +425,7 @@ pub async fn create(
             else {
                 return internal_msg();
             };
-            let Some(view) = super::series_relationships::edge_view_pub(pair.forward, sv) else {
-                return internal_msg();
-            };
+            let view = super::series_relationships::edge_view_pub(pair.forward, sv);
             (
                 StatusCode::CREATED,
                 Json(CreateExternalRelationshipResp {

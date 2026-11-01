@@ -339,7 +339,7 @@ async fn rows(db: &DatabaseConnection) -> Vec<sug::Model> {
 
 fn find<'a>(rows: &'a [sug::Model], from: Uuid, to: Uuid, kind: &str) -> Option<&'a sug::Model> {
     rows.iter()
-        .find(|r| r.from_series_id == from && r.to_series_id == Some(to) && r.kind == kind)
+        .find(|r| r.from_series_id == from && r.to_series_id == Some(to) && r.kind.as_str() == kind)
 }
 
 fn sources(r: &sug::Model) -> Vec<String> {
@@ -709,7 +709,10 @@ async fn fixture_library_yields_one_suggestion_per_source() {
 
     // SeriesGroup no longer suggests pairwise same_universe (WP-7.6: it is
     // derived from universe / SeriesGroup membership instead).
-    assert!(all.iter().all(|r| r.kind != "same_universe"), "{dump}");
+    assert!(
+        all.iter().all(|r| r.kind.as_str() != "same_universe"),
+        "{dump}"
+    );
 
     // Shared story arc → each series ties in to the arc (WP-7.6), not a
     // pairwise crossover. 3 vs 2 issues: no clear main, so medium/low.
@@ -721,7 +724,7 @@ async fn fixture_library_yields_one_suggestion_per_source() {
             .expect(&dump)
     };
     let main = tie(f.avengers);
-    assert_eq!(main.kind, "tie_in_to");
+    assert_eq!(main.kind.as_str(), "tie_in_to");
     assert_eq!(main.qualifier.as_deref(), Some("main"));
     assert_eq!(main.from_range.as_deref(), Some("1-3"));
     assert_eq!(sources(main), vec!["arc_tie_in"]);
@@ -763,11 +766,7 @@ async fn fixture_library_yields_one_suggestion_per_source() {
     for r in &all {
         assert_eq!(r.status, "pending");
         assert!(!r.reason.is_empty());
-        assert!(
-            r.kind.parse::<RelationshipKind>().unwrap().is_canonical(),
-            "{}",
-            r.kind
-        );
+        assert!(r.kind.is_canonical(), "{}", r.kind);
         if ["crossover_with", "same_universe", "see_also"].contains(&r.kind.as_str()) {
             assert!(r.to_series_id.is_some_and(|t| r.from_series_id < t));
         }
@@ -915,7 +914,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
         .await
         .unwrap()
         .expect("forward edge");
-    assert_eq!(fwd.kind, "continues");
+    assert_eq!(fwd.kind.as_str(), "continues");
     assert_eq!(fwd.source, "suggested");
     assert!((fwd.confidence.unwrap() - 0.9).abs() < 1e-6);
     assert_eq!(fwd.created_by, Some(admin.user_id));
@@ -926,7 +925,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
         .await
         .unwrap()
         .expect("inverse edge");
-    assert_eq!(inv.kind, "continued_by");
+    assert_eq!(inv.kind.as_str(), "continued_by");
     assert_eq!(
         audit_count(&db, "admin.relationship_suggestion.accept").await,
         1
@@ -951,7 +950,7 @@ async fn accept_creates_the_pair_and_is_never_resuggested() {
         rel::Entity::find()
             .filter(rel::Column::FromSeriesId.eq(a))
             .filter(rel::Column::ToSeriesId.eq(b))
-            .filter(rel::Column::Kind.eq("spin_off_of"))
+            .filter(rel::Column::Kind.eq(rel::RelationshipKind::SpinOffOf))
             .one(&db)
             .await
             .unwrap()
@@ -1466,7 +1465,7 @@ async fn bulk_accept_by_ids_is_one_batch_with_partial_failures() {
         rel::Entity::find()
             .filter(rel::Column::FromSeriesId.eq(f.dd_2014))
             .filter(rel::Column::ToSeriesId.eq(f.dd_2011))
-            .filter(rel::Column::Kind.eq("continues"))
+            .filter(rel::Column::Kind.eq(rel::RelationshipKind::Continues))
             .filter(rel::Column::Source.eq("suggested"))
             .one(&db)
             .await
@@ -1904,7 +1903,7 @@ async fn sequel_of_and_continues_dedupe_each_other() {
     assert_eq!(pv.status, "pending");
     assert!(
         all.iter()
-            .all(|r| r.kind != "sequel_of" || r.status != "pending")
+            .all(|r| r.kind.as_str() != "sequel_of" || r.status != "pending")
     );
 
     // Accepting a `continues` suggestion while a `has_sequel` edge already
@@ -2122,12 +2121,12 @@ async fn annual_detector_picks_the_volume_whose_years_contain_it() {
     assert_eq!(th.evidence["sources"][0]["signal"], "seriestype");
     assert!(
         all.iter()
-            .all(|r| r.kind != "annual_of" || !r.reason.contains("Hawkman")),
+            .all(|r| r.kind.as_str() != "annual_of" || !r.reason.contains("Hawkman")),
         "{d}"
     );
     let xf = all
         .iter()
-        .find(|r| r.from_series_id == x_annual && r.kind == "annual_of")
+        .find(|r| r.from_series_id == x_annual && r.kind.as_str() == "annual_of")
         .expect(&d);
     assert!(xf.to_series_id == Some(x_a) || xf.to_series_id == Some(x_b));
     assert!(xf.confidence < 0.8, "ambiguous volume → not high: {d}");
@@ -2189,7 +2188,7 @@ async fn arc_tie_ins_assign_roles_and_co_mains_cross_over() {
     let d = dump(&all);
     let role = |s: Uuid, arc: Uuid| {
         let r = arc_row(&all, s, arc).expect(&d);
-        assert_eq!(r.kind, "tie_in_to");
+        assert_eq!(r.kind.as_str(), "tie_in_to");
         (r.qualifier.clone().unwrap(), r.bucket.clone())
     };
     assert_eq!(role(sw, sw_arc), ("main".into(), "high".into()));
@@ -2222,7 +2221,9 @@ async fn arc_tie_ins_assign_roles_and_co_mains_cross_over() {
     assert_eq!(sources(cross), vec!["arc_crossover"]);
     // No pairwise crossover for plain tie-ins.
     assert_eq!(
-        all.iter().filter(|r| r.kind == "crossover_with").count(),
+        all.iter()
+            .filter(|r| r.kind.as_str() == "crossover_with")
+            .count(),
         1,
         "{d}"
     );
@@ -2367,7 +2368,7 @@ async fn reprint_rollup_and_citations_carry_ranges_and_coverage() {
     assert_eq!(cite.coverage.as_deref(), Some("partial"), "{d}");
     assert_eq!(
         all.iter()
-            .filter(|r| r.from_series_id == pg_hc && r.kind == "collects")
+            .filter(|r| r.from_series_id == pg_hc && r.kind.as_str() == "collects")
             .count(),
         1,
         "citations roll up per pair"
@@ -2426,7 +2427,7 @@ async fn alternate_editions_facsimiles_supplements() {
     assert!(find(&all, a, b, "alternate_edition_of").is_some(), "{d}");
     assert!(
         all.iter()
-            .filter(|r| r.kind == "alternate_edition_of")
+            .filter(|r| r.kind.as_str() == "alternate_edition_of")
             .count()
             == 2,
         "Absolute Carnage is not an edition: {d}"
@@ -2447,7 +2448,9 @@ async fn alternate_editions_facsimiles_supplements() {
     let hb = find(&all, ohotmu, marvel_u, "supplement_to").expect(&d);
     assert!(hb.reason.contains("handbook"), "{}", hb.reason);
     assert_eq!(
-        all.iter().filter(|r| r.kind == "supplement_to").count(),
+        all.iter()
+            .filter(|r| r.kind.as_str() == "supplement_to")
+            .count(),
         3,
         "{d}"
     );
@@ -2570,12 +2573,14 @@ async fn translation_detector_points_at_the_original() {
     );
     assert!(
         all.iter()
-            .filter(|r| r.kind == "translation_of")
+            .filter(|r| r.kind.as_str() == "translation_of")
             .all(|r| r.bucket != "high"),
         "translations are medium or low: {d}"
     );
     assert_eq!(
-        all.iter().filter(|r| r.kind == "translation_of").count(),
+        all.iter()
+            .filter(|r| r.kind.as_str() == "translation_of")
+            .count(),
         3,
         "{d}"
     );
@@ -2767,7 +2772,7 @@ async fn retired_pairwise_suggestions_go_stale() {
     assert!(
         rel::Entity::find()
             .filter(rel::Column::FromSeriesId.eq(f.saga))
-            .filter(rel::Column::Kind.eq("same_universe"))
+            .filter(rel::Column::Kind.eq(rel::RelationshipKind::SameUniverse))
             .one(&db)
             .await
             .unwrap()
@@ -2780,7 +2785,7 @@ async fn retired_pairwise_suggestions_go_stale() {
             .await
             .iter()
             .filter(|r| r.status == "pending")
-            .all(|r| r.kind != "same_universe"),
+            .all(|r| r.kind.as_str() != "same_universe"),
     );
 }
 
@@ -2858,7 +2863,7 @@ async fn accepting_scoped_and_arc_suggestions_creates_the_right_edges() {
         .await
         .unwrap()
         .expect("arc edge");
-    assert_eq!(edge.kind, "tie_in_to");
+    assert_eq!(edge.kind.as_str(), "tie_in_to");
     assert_eq!(edge.qualifier.as_deref(), Some("main"));
     assert_eq!(edge.from_range.as_deref(), Some("1-3"));
     assert_eq!(edge.source, "suggested");
@@ -2940,7 +2945,7 @@ async fn accepting_scoped_and_arc_suggestions_creates_the_right_edges() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(e.kind, "sequel_of");
+    assert_eq!(e.kind.as_str(), "sequel_of");
     assert_eq!(e.qualifier, None);
 
     // Bulk accept handles arc suggestions too.
@@ -3378,7 +3383,7 @@ async fn bulk_accept_by_ids_takes_an_optional_kind() {
             .await
             .unwrap()
             .expect("edge");
-        assert_eq!(edge.kind, "see_also");
+        assert_eq!(edge.kind.as_str(), "see_also");
         // Scope the new kind doesn't take is dropped (Scope::fitted).
         assert_eq!(edge.qualifier, None);
         assert_eq!(edge.coverage, None);
@@ -3451,7 +3456,7 @@ async fn noise_rules_drop_publisher_only_and_unlimited_matches() {
     relationship_suggest::run(&db, lib).await.unwrap();
     let all = rows(&db).await;
     let d = dump(&all);
-    let kinds = |k: &str| all.iter().filter(|r| r.kind == k).count();
+    let kinds = |k: &str| all.iter().filter(|r| r.kind.as_str() == k).count();
     assert_eq!(kinds("supplement_to"), 1, "{d}");
     assert!(find(&all, wedding, ff, "supplement_to").is_some(), "{d}");
     assert_eq!(kinds("alternate_edition_of"), 1, "{d}");

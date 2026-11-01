@@ -951,11 +951,7 @@ where
 {
     let txn = conn.begin().await?;
     let row = lock_in(&txn, id, &[SuggestionStatus::Pending]).await?;
-    let suggested: RelationshipKind = row
-        .kind
-        .parse()
-        .map_err(|()| ReviewError::Db(DbErr::Custom(format!("bad kind {}", row.kind))))?;
-    let kind = kind_override.unwrap_or(suggested);
+    let kind = kind_override.unwrap_or(row.kind);
     let scope = scope_of(&row).fitted(kind);
     let confidence = Some(row.confidence.clamp(0.0, 1.0));
     let pair_err = |e: PairError| match e {
@@ -999,7 +995,7 @@ where
             )));
         }
     };
-    let modified = kind != suggested;
+    let modified = kind != row.kind;
     let now = Utc::now().fixed_offset();
     let status = if modified {
         SuggestionStatus::Modified

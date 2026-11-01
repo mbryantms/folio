@@ -1493,7 +1493,7 @@ async fn compute_issue_diff_variants_no_change_when_counts_match() {
         issue_cover::ActiveModel {
             id: Set(Uuid::now_v7()),
             issue_id: Set(issue_id.clone()),
-            kind: Set("variant".into()),
+            kind: Set(entity::issue_cover::IssueCoverKind::Variant),
             ordinal: Set(ordinal_n),
             source_provider: Set(Some("comicvine".into())),
             source_external_id: Set(None),
@@ -1573,7 +1573,7 @@ async fn apply_issue_respects_variants_toggled_off_in_selected_fields() {
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .all(&app.state().db)
         .await
         .unwrap();

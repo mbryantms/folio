@@ -60,7 +60,7 @@ async fn fixture() -> Fixture {
 fn provider_write<'a>(issue_id: &'a str, ident: &'a Identifier, url: &'a str) -> CoverWrite<'a> {
     CoverWrite {
         issue_id,
-        kind: "primary",
+        kind: entity::issue_cover::IssueCoverKind::Primary,
         ordinal: 0,
         identifier: Some(ident),
         source_url: Some(url),
@@ -84,7 +84,7 @@ fn cv(id: &str) -> Identifier {
 async fn primary_rows(db: &DatabaseConnection, issue_id: &str) -> Vec<issue_cover::Model> {
     issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Primary))
         .filter(issue_cover::Column::Ordinal.eq(0))
         .all(db)
         .await
@@ -308,7 +308,7 @@ async fn active_slot_is_unique_but_inactive_rows_may_repeat() {
     let row = |active: bool| issue_cover::ActiveModel {
         id: Set(Uuid::now_v7()),
         issue_id: Set(f.issue_id.clone()),
-        kind: Set("primary".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Primary),
         ordinal: Set(0),
         source_provider: Set(Some("comicvine".into())),
         source_external_id: Set(None),
@@ -376,7 +376,7 @@ async fn failed_variant_replace_keeps_the_previous_set() {
 
     let mut urls: Vec<String> = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&f.issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .all(&f.db)
         .await
         .unwrap()

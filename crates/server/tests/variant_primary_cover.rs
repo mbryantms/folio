@@ -158,7 +158,7 @@ async fn seed_variant(f: &Fixture, label: &str, bytes: &[u8]) -> issue_cover::Mo
     issue_cover::ActiveModel {
         id: Set(id),
         issue_id: Set(f.issue_id.clone()),
-        kind: Set("variant".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Variant),
         ordinal: Set(next_variant_ordinal(f).await),
         source_provider: Set(Some("metron".into())),
         source_external_id: Set(Some("5551".into())),
@@ -183,7 +183,7 @@ async fn seed_variant(f: &Fixture, label: &str, bytes: &[u8]) -> issue_cover::Mo
 async fn next_variant_ordinal(f: &Fixture) -> i32 {
     issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&f.issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .all(&f.app.state().db)
         .await
         .unwrap()
@@ -207,7 +207,7 @@ async fn seed_provider_primary(f: &Fixture, url: &str) -> Uuid {
         &f.data_path(),
         CoverWrite {
             issue_id: &f.issue_id,
-            kind: "primary",
+            kind: entity::issue_cover::IssueCoverKind::Primary,
             ordinal: 0,
             identifier: Some(&ident),
             source_url: Some(url),
@@ -228,7 +228,7 @@ async fn seed_provider_primary(f: &Fixture, url: &str) -> Uuid {
 async fn active_primary(f: &Fixture) -> Option<issue_cover::Model> {
     issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&f.issue_id))
-        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Primary))
         .filter(issue_cover::Column::Ordinal.eq(0))
         .filter(issue_cover::Column::IsActive.eq(true))
         .one(&f.app.state().db)
@@ -626,7 +626,7 @@ async fn pick(f: &Fixture) -> issue_cover::Model {
         &f.data_path(),
         CoverWrite {
             issue_id: &f.issue_id,
-            kind: "primary",
+            kind: entity::issue_cover::IssueCoverKind::Primary,
             ordinal: 0,
             identifier: None,
             source_url: variant.source_url.as_deref(),

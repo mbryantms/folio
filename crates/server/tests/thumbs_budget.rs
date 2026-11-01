@@ -35,14 +35,14 @@ async fn scrape_metrics(app: &TestApp) -> String {
 
 fn cover_row(
     issue_id: &str,
-    kind: &str,
+    kind: issue_cover::IssueCoverKind,
     ordinal: i32,
     local_path: &str,
 ) -> issue_cover::ActiveModel {
     issue_cover::ActiveModel {
         id: Set(Uuid::now_v7()),
         issue_id: Set(issue_id.to_owned()),
-        kind: Set(kind.into()),
+        kind: Set(kind),
         ordinal: Set(ordinal),
         source_provider: Set(Some("comicvine".into())),
         source_external_id: Set(None),
@@ -115,7 +115,12 @@ async fn variant_cover_backfill_pages_past_a_full_page_of_stored_rows() {
     // ascending ids so the page boundary is deterministic)…
     let rows: Vec<issue_cover::ActiveModel> = (1..=cap)
         .map(|i| {
-            let mut r = cover_row(&issue_id, "variant", i, &stored_rel);
+            let mut r = cover_row(
+                &issue_id,
+                issue_cover::IssueCoverKind::Variant,
+                i,
+                &stored_rel,
+            );
             r.id = Set(Uuid::from_u128(i as u128));
             r
         })
@@ -125,7 +130,7 @@ async fn variant_cover_backfill_pages_past_a_full_page_of_stored_rows() {
         .await
         .unwrap();
     // …then one row with no local artifact behind it.
-    let mut trailing = cover_row(&issue_id, "variant", cap + 1, "");
+    let mut trailing = cover_row(&issue_id, issue_cover::IssueCoverKind::Variant, cap + 1, "");
     trailing.id = Set(Uuid::from_u128(cap as u128 + 1));
     trailing.insert(db).await.unwrap();
 

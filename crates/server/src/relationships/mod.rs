@@ -46,465 +46,10 @@ pub const MAX_RANGE_LEN: usize = 100;
 /// Longest accepted `note`.
 pub const MAX_NOTE_LEN: usize = 500;
 
-/// UI group of a kind (WP-7.5): the picker's section headings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationshipGroup {
-    /// Narrative relations: sequels, prequels, spin-offs, tie-ins, …
-    Story,
-    /// Publication history: continuations, annuals, supplements.
-    Publication,
-    /// Editions & contents: collections, reprints, alternate editions,
-    /// translations.
-    Editions,
-    /// Adaptations and reimaginings (comic-to-comic).
-    Advanced,
-}
-
-impl RelationshipGroup {
-    pub const ALL: [Self; 4] = [
-        Self::Story,
-        Self::Publication,
-        Self::Editions,
-        Self::Advanced,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Story => "Story",
-            Self::Publication => "Publication history",
-            Self::Editions => "Editions & contents",
-            Self::Advanced => "Advanced",
-        }
-    }
-}
-
-/// The kind of a directed relationship edge. Wire + DB form is snake_case
-/// (`sequel_of`, …); the DB CHECK in `m20270505_000001_relationship_taxonomy`
-/// mirrors this list. Every kind has an inverse (self-inverse kinds are
-/// their own); [`Self::ALL`] is the catalogue order (grouped, each
-/// directional pair adjacent).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationshipKind {
-    // ── Story ──
-    /// `from` is a narrative sequel of `to` (`to` is read first).
-    SequelOf,
-    /// Inverse of `sequel_of`.
-    HasSequel,
-    /// `from` is a narrative prequel of `to`: written later, set earlier.
-    PrequelOf,
-    /// Inverse of `prequel_of`.
-    HasPrequel,
-    /// `from` was spun off from `to`.
-    SpinOffOf,
-    /// Inverse of `spin_off_of`.
-    HasSpinOff,
-    /// `from` is a side story of `to`.
-    SideStoryOf,
-    /// Inverse of `side_story_of`.
-    HasSideStory,
-    /// `from` ties in to `to` (a series or a story arc); the qualifier
-    /// carries the role (`main | tie_in | prelude | aftermath`).
-    TieInTo,
-    /// Inverse of `tie_in_to` (series targets only).
-    HasTieIn,
-    /// Self-inverse.
-    CrossoverWith,
-    /// Self-inverse.
-    CompanionTo,
-    /// Self-inverse (manual use; WP-7.6 derives it from universe data).
-    SameUniverse,
-    /// Self-inverse catch-all.
-    SeeAlso,
-    // ── Publication history ──
-    /// `from` continues the publication of `to` (relaunch, retitle, …).
-    Continues,
-    /// Inverse of `continues`.
-    ContinuedBy,
-    /// `from` is an annual of `to`.
-    AnnualOf,
-    /// Inverse of `annual_of`.
-    HasAnnual,
-    /// `from` is a supplement to `to`.
-    SupplementTo,
-    /// Inverse of `supplement_to`.
-    HasSupplement,
-    // ── Editions & contents ──
-    /// `from` (e.g. a TPB / omnibus series) collects `to`.
-    Collects,
-    /// Inverse of `collects`.
-    CollectedIn,
-    /// `from` reprints `to`.
-    Reprints,
-    /// Inverse of `reprints`.
-    ReprintedIn,
-    /// Self-inverse.
-    AlternateEditionOf,
-    /// `from` is a translation of `to`.
-    TranslationOf,
-    /// Inverse of `translation_of`.
-    HasTranslation,
-    // ── Advanced ──
-    /// `from` adapts `to` (comic-to-comic).
-    AdaptationOf,
-    /// Inverse of `adaptation_of`.
-    AdaptedAs,
-    /// `from` reimagines `to`.
-    ReimaginingOf,
-    /// Inverse of `reimagining_of`.
-    ReimaginedAs,
-}
-
-impl RelationshipKind {
-    pub const ALL: [Self; 31] = [
-        Self::SequelOf,
-        Self::HasSequel,
-        Self::PrequelOf,
-        Self::HasPrequel,
-        Self::SpinOffOf,
-        Self::HasSpinOff,
-        Self::SideStoryOf,
-        Self::HasSideStory,
-        Self::TieInTo,
-        Self::HasTieIn,
-        Self::CrossoverWith,
-        Self::CompanionTo,
-        Self::SameUniverse,
-        Self::SeeAlso,
-        Self::Continues,
-        Self::ContinuedBy,
-        Self::AnnualOf,
-        Self::HasAnnual,
-        Self::SupplementTo,
-        Self::HasSupplement,
-        Self::Collects,
-        Self::CollectedIn,
-        Self::Reprints,
-        Self::ReprintedIn,
-        Self::AlternateEditionOf,
-        Self::TranslationOf,
-        Self::HasTranslation,
-        Self::AdaptationOf,
-        Self::AdaptedAs,
-        Self::ReimaginingOf,
-        Self::ReimaginedAs,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SequelOf => "sequel_of",
-            Self::HasSequel => "has_sequel",
-            Self::PrequelOf => "prequel_of",
-            Self::HasPrequel => "has_prequel",
-            Self::SpinOffOf => "spin_off_of",
-            Self::HasSpinOff => "has_spin_off",
-            Self::SideStoryOf => "side_story_of",
-            Self::HasSideStory => "has_side_story",
-            Self::TieInTo => "tie_in_to",
-            Self::HasTieIn => "has_tie_in",
-            Self::CrossoverWith => "crossover_with",
-            Self::CompanionTo => "companion_to",
-            Self::SameUniverse => "same_universe",
-            Self::SeeAlso => "see_also",
-            Self::Continues => "continues",
-            Self::ContinuedBy => "continued_by",
-            Self::AnnualOf => "annual_of",
-            Self::HasAnnual => "has_annual",
-            Self::SupplementTo => "supplement_to",
-            Self::HasSupplement => "has_supplement",
-            Self::Collects => "collects",
-            Self::CollectedIn => "collected_in",
-            Self::Reprints => "reprints",
-            Self::ReprintedIn => "reprinted_in",
-            Self::AlternateEditionOf => "alternate_edition_of",
-            Self::TranslationOf => "translation_of",
-            Self::HasTranslation => "has_translation",
-            Self::AdaptationOf => "adaptation_of",
-            Self::AdaptedAs => "adapted_as",
-            Self::ReimaginingOf => "reimagining_of",
-            Self::ReimaginedAs => "reimagined_as",
-        }
-    }
-
-    /// The kind of the reverse edge (`to → from`).
-    pub fn inverse(self) -> Self {
-        match self {
-            Self::SequelOf => Self::HasSequel,
-            Self::HasSequel => Self::SequelOf,
-            Self::PrequelOf => Self::HasPrequel,
-            Self::HasPrequel => Self::PrequelOf,
-            Self::SpinOffOf => Self::HasSpinOff,
-            Self::HasSpinOff => Self::SpinOffOf,
-            Self::SideStoryOf => Self::HasSideStory,
-            Self::HasSideStory => Self::SideStoryOf,
-            Self::TieInTo => Self::HasTieIn,
-            Self::HasTieIn => Self::TieInTo,
-            Self::Continues => Self::ContinuedBy,
-            Self::ContinuedBy => Self::Continues,
-            Self::AnnualOf => Self::HasAnnual,
-            Self::HasAnnual => Self::AnnualOf,
-            Self::SupplementTo => Self::HasSupplement,
-            Self::HasSupplement => Self::SupplementTo,
-            Self::Collects => Self::CollectedIn,
-            Self::CollectedIn => Self::Collects,
-            Self::Reprints => Self::ReprintedIn,
-            Self::ReprintedIn => Self::Reprints,
-            Self::TranslationOf => Self::HasTranslation,
-            Self::HasTranslation => Self::TranslationOf,
-            Self::AdaptationOf => Self::AdaptedAs,
-            Self::AdaptedAs => Self::AdaptationOf,
-            Self::ReimaginingOf => Self::ReimaginedAs,
-            Self::ReimaginedAs => Self::ReimaginingOf,
-            Self::CrossoverWith
-            | Self::CompanionTo
-            | Self::SameUniverse
-            | Self::SeeAlso
-            | Self::AlternateEditionOf => self,
-        }
-    }
-
-    pub fn is_self_inverse(self) -> bool {
-        self.inverse() == self
-    }
-
-    /// The direction suggestion rows are stored in: self-inverse kinds and
-    /// the "subject" half of every directional pair (`sequel_of`,
-    /// `continues`, `collects`, …), never `has_*` / `*_by` / `*_in` / `*_as`.
-    pub fn is_canonical(self) -> bool {
-        matches!(
-            self,
-            Self::SequelOf
-                | Self::PrequelOf
-                | Self::SpinOffOf
-                | Self::SideStoryOf
-                | Self::TieInTo
-                | Self::Continues
-                | Self::AnnualOf
-                | Self::SupplementTo
-                | Self::Collects
-                | Self::Reprints
-                | Self::TranslationOf
-                | Self::AdaptationOf
-                | Self::ReimaginingOf
-        ) || self.is_self_inverse()
-    }
-
-    /// Human label from the subject's point of view ("Sequel to").
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::SequelOf => "Sequel to",
-            Self::HasSequel => "Has sequel",
-            Self::PrequelOf => "Prequel to",
-            Self::HasPrequel => "Has prequel",
-            Self::SpinOffOf => "Spin-off of",
-            Self::HasSpinOff => "Has spin-off",
-            Self::SideStoryOf => "Side story of",
-            Self::HasSideStory => "Has side story",
-            Self::TieInTo => "Tie-in to",
-            Self::HasTieIn => "Has tie-in",
-            Self::CrossoverWith => "Crossover with",
-            Self::CompanionTo => "Companion to",
-            Self::SameUniverse => "Same universe as",
-            Self::SeeAlso => "See also",
-            Self::Continues => "Continues",
-            Self::ContinuedBy => "Continued by",
-            Self::AnnualOf => "Annual of",
-            Self::HasAnnual => "Has annual",
-            Self::SupplementTo => "Supplement to",
-            Self::HasSupplement => "Has supplement",
-            Self::Collects => "Collects",
-            Self::CollectedIn => "Collected in",
-            Self::Reprints => "Reprints",
-            Self::ReprintedIn => "Reprinted in",
-            Self::AlternateEditionOf => "Alternate edition of",
-            Self::TranslationOf => "Translation of",
-            Self::HasTranslation => "Has translation",
-            Self::AdaptationOf => "Adaptation of",
-            Self::AdaptedAs => "Adapted as",
-            Self::ReimaginingOf => "Reimagining of",
-            Self::ReimaginedAs => "Reimagined as",
-        }
-    }
-
-    /// The label with the qualifier folded in where it changes the
-    /// meaning: a tie-in's role ("Prelude to", "Has aftermath"). Other
-    /// kinds return [`Self::label`] (a continuation qualifier is shown
-    /// next to the label, not inside it).
-    pub fn display_label(self, qualifier: Option<RelationshipQualifier>) -> String {
-        use RelationshipQualifier as Q;
-        match (self, qualifier) {
-            (Self::TieInTo, Some(Q::Main)) => "Main story of".to_owned(),
-            (Self::TieInTo, Some(Q::Prelude)) => "Prelude to".to_owned(),
-            (Self::TieInTo, Some(Q::Aftermath)) => "Aftermath of".to_owned(),
-            (Self::HasTieIn, Some(Q::Main)) => "Has main story".to_owned(),
-            (Self::HasTieIn, Some(Q::Prelude)) => "Has prelude".to_owned(),
-            (Self::HasTieIn, Some(Q::Aftermath)) => "Has aftermath".to_owned(),
-            _ => self.label().to_owned(),
-        }
-    }
-
-    pub fn group(self) -> RelationshipGroup {
-        match self {
-            Self::SequelOf
-            | Self::HasSequel
-            | Self::PrequelOf
-            | Self::HasPrequel
-            | Self::SpinOffOf
-            | Self::HasSpinOff
-            | Self::SideStoryOf
-            | Self::HasSideStory
-            | Self::TieInTo
-            | Self::HasTieIn
-            | Self::CrossoverWith
-            | Self::CompanionTo
-            | Self::SameUniverse
-            | Self::SeeAlso => RelationshipGroup::Story,
-            Self::Continues
-            | Self::ContinuedBy
-            | Self::AnnualOf
-            | Self::HasAnnual
-            | Self::SupplementTo
-            | Self::HasSupplement => RelationshipGroup::Publication,
-            Self::Collects
-            | Self::CollectedIn
-            | Self::Reprints
-            | Self::ReprintedIn
-            | Self::AlternateEditionOf
-            | Self::TranslationOf
-            | Self::HasTranslation => RelationshipGroup::Editions,
-            Self::AdaptationOf | Self::AdaptedAs | Self::ReimaginingOf | Self::ReimaginedAs => {
-                RelationshipGroup::Advanced
-            }
-        }
-    }
-
-    /// `coverage` is meaningful (collections and reprints, both halves).
-    pub fn allows_coverage(self) -> bool {
-        matches!(
-            self,
-            Self::Collects | Self::CollectedIn | Self::Reprints | Self::ReprintedIn
-        )
-    }
-
-    /// The qualifiers this kind accepts (empty = none).
-    pub fn qualifiers(self) -> &'static [RelationshipQualifier] {
-        use RelationshipQualifier as Q;
-        match self {
-            Self::Continues | Self::ContinuedBy => {
-                &[Q::Relaunch, Q::Retitle, Q::Merge, Q::Split, Q::Numbering]
-            }
-            Self::TieInTo | Self::HasTieIn => &[Q::Main, Q::TieIn, Q::Prelude, Q::Aftermath],
-            _ => &[],
-        }
-    }
-
-    /// Kinds that contradict `self` on the same ordered pair: the inverse
-    /// of a directional kind (`A sequel_of B` vs `A has_sequel B`). The two
-    /// reading-order families count as one (`sequel_of` / `continues` both
-    /// put *to* first), so `A continues B` also contradicts `A has_sequel
-    /// B`. Self-inverse kinds contradict nothing.
-    pub fn contradictions(self) -> Vec<Self> {
-        match self {
-            Self::SequelOf | Self::Continues => vec![Self::HasSequel, Self::ContinuedBy],
-            Self::HasSequel | Self::ContinuedBy => vec![Self::SequelOf, Self::Continues],
-            k if k.is_self_inverse() => Vec::new(),
-            k => vec![k.inverse()],
-        }
-    }
-
-    /// May target a story arc instead of a series (`tie_in_to` only).
-    pub fn allows_arc_target(self) -> bool {
-        self == Self::TieInTo
-    }
-
-    /// The suggestion engine may pair series in **different** libraries
-    /// for this kind (WP-8.2): the edition kinds — `collects`, `reprints`,
-    /// `alternate_edition_of`, `translation_of` and their inverses — since
-    /// trades and translations often live in a library of their own. Story
-    /// and publication kinds stay within one library.
-    pub fn may_cross_libraries(self) -> bool {
-        self.group() == RelationshipGroup::Editions
-    }
-}
-
-impl fmt::Display for RelationshipKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for RelationshipKind {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::ALL.into_iter().find(|k| k.as_str() == s).ok_or(())
-    }
-}
-
-/// Continuation qualifier (`continues` / `continued_by`) or tie-in role
-/// (`tie_in_to` / `has_tie_in`). The DB CHECK binds each set to its kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationshipQualifier {
-    Relaunch,
-    Retitle,
-    Merge,
-    Split,
-    Numbering,
-    Main,
-    TieIn,
-    Prelude,
-    Aftermath,
-}
-
-impl RelationshipQualifier {
-    pub const ALL: [Self; 9] = [
-        Self::Relaunch,
-        Self::Retitle,
-        Self::Merge,
-        Self::Split,
-        Self::Numbering,
-        Self::Main,
-        Self::TieIn,
-        Self::Prelude,
-        Self::Aftermath,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Relaunch => "relaunch",
-            Self::Retitle => "retitle",
-            Self::Merge => "merge",
-            Self::Split => "split",
-            Self::Numbering => "numbering",
-            Self::Main => "main",
-            Self::TieIn => "tie_in",
-            Self::Prelude => "prelude",
-            Self::Aftermath => "aftermath",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Relaunch => "Relaunch",
-            Self::Retitle => "Retitle",
-            Self::Merge => "Merge",
-            Self::Split => "Split",
-            Self::Numbering => "Numbering change",
-            Self::Main => "Main story",
-            Self::TieIn => "Tie-in",
-            Self::Prelude => "Prelude",
-            Self::Aftermath => "Aftermath",
-        }
-    }
-}
-
-impl FromStr for RelationshipQualifier {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::ALL.into_iter().find(|q| q.as_str() == s).ok_or(())
-    }
-}
+// The kind taxonomy lives on the entity (AR-7, E4 batch 2) so the three
+// relationship tables carry it as a typed column; re-exported here, where
+// every caller already imports it.
+pub use entity::series_relationship::{RelationshipGroup, RelationshipKind, RelationshipQualifier};
 
 /// How much of the target a collection / reprint covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
@@ -970,7 +515,7 @@ pub async fn create_arc_edge<C: ConnectionTrait>(
     let row = rel::Entity::find()
         .filter(rel::Column::FromSeriesId.eq(from))
         .filter(rel::Column::ToArcId.eq(arc_id))
-        .filter(rel::Column::Kind.eq(kind.as_str()))
+        .filter(rel::Column::Kind.eq(kind))
         .one(conn)
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("series_relationship arc row".into()))?;
@@ -1007,10 +552,7 @@ pub async fn update_edge<C: ConnectionTrait>(
     kind: RelationshipKind,
     scope: Scope,
 ) -> Result<UpdateOutcome, PairError> {
-    let old_kind: RelationshipKind = forward
-        .kind
-        .parse()
-        .map_err(|()| DbErr::Custom(format!("bad relationship kind {}", forward.kind)))?;
+    let old_kind = forward.kind;
     check_scope(&scope, kind)?;
 
     // Arc edge: single row, kind must stay arc-capable.
@@ -1092,7 +634,7 @@ async fn set_scope<C: ConnectionTrait>(
     use sea_orm::{ActiveModelTrait, Set};
     let am = rel::ActiveModel {
         id: Set(id),
-        kind: Set(kind.as_str().to_owned()),
+        kind: Set(kind),
         from_range: Set(scope.from_range.clone()),
         to_range: Set(scope.to_range.clone()),
         coverage: Set(scope.coverage.map(|c| c.as_str().to_owned())),
@@ -1118,13 +660,13 @@ pub async fn delete_pair<C: ConnectionTrait>(
             sea_orm::Condition::all()
                 .add(rel::Column::FromSeriesId.eq(from))
                 .add(rel::Column::ToSeriesId.eq(to))
-                .add(rel::Column::Kind.eq(kind.as_str())),
+                .add(rel::Column::Kind.eq(kind)),
         )
         .add(
             sea_orm::Condition::all()
                 .add(rel::Column::FromSeriesId.eq(to))
                 .add(rel::Column::ToSeriesId.eq(from))
-                .add(rel::Column::Kind.eq(kind.inverse().as_str())),
+                .add(rel::Column::Kind.eq(kind.inverse())),
         );
     rel::Entity::delete_many()
         .filter(pair_filter)
@@ -1142,13 +684,12 @@ pub async fn delete_pair_by_id<C: ConnectionTrait>(
     let Some(row) = rel::Entity::find_by_id(id).one(conn).await? else {
         return Ok(None);
     };
-    let (Some(to), Ok(kind)) = (row.to_series_id, row.kind.parse::<RelationshipKind>()) else {
-        // An arc edge (single row), or an unknown kind (unreachable under
-        // the DB CHECK): drop the lone row.
+    let Some(to) = row.to_series_id else {
+        // An arc edge: a single row, no inverse half.
         rel::Entity::delete_by_id(id).exec(conn).await?;
         return Ok(Some(row));
     };
-    delete_pair(conn, row.from_series_id, to, kind).await
+    delete_pair(conn, row.from_series_id, to, row.kind).await
 }
 
 async fn find_edge<C: ConnectionTrait>(
@@ -1160,7 +701,7 @@ async fn find_edge<C: ConnectionTrait>(
     rel::Entity::find()
         .filter(rel::Column::FromSeriesId.eq(from))
         .filter(rel::Column::ToSeriesId.eq(to))
-        .filter(rel::Column::Kind.eq(kind.as_str()))
+        .filter(rel::Column::Kind.eq(kind))
         .one(conn)
         .await
 }
@@ -1180,10 +721,7 @@ pub async fn row_from_perspective<C: ConnectionTrait>(
     if row.to_series_id != Some(series_id) {
         return Ok(None);
     }
-    let Ok(kind) = row.kind.parse::<RelationshipKind>() else {
-        return Ok(None);
-    };
-    find_edge(conn, series_id, row.from_series_id, kind.inverse()).await
+    find_edge(conn, series_id, row.from_series_id, row.kind.inverse()).await
 }
 
 /// Series → arc edges out of `series_id`, oldest first.

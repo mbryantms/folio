@@ -86,7 +86,7 @@ async fn upsert_archive_cover_hashes_inserts_then_updates_in_place() {
     assert!(row1.dhash.is_some());
     assert!(row1.ahash.is_some());
     assert_eq!(row1.source_provider.as_deref(), Some("archive_extracted"));
-    assert_eq!(row1.kind, "primary");
+    assert_eq!(row1.kind.as_str(), "primary");
     assert_eq!(row1.ordinal, 0);
     assert!(!row1.is_active, "archive-extracted rows default inactive");
 
@@ -144,7 +144,7 @@ async fn run_backfill_hashes_null_rows_from_archive_bytes() {
     issue_cover::ActiveModel {
         id: Set(cover_id),
         issue_id: Set(issue_id.clone()),
-        kind: Set("primary".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Primary),
         ordinal: Set(0),
         source_provider: Set(Some("archive_extracted".into())),
         source_external_id: Set(None),
@@ -265,7 +265,7 @@ async fn run_backfill_skips_rows_when_archive_unreadable() {
     issue_cover::ActiveModel {
         id: Set(cover_id),
         issue_id: Set(issue_id.clone()),
-        kind: Set("primary".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Primary),
         ordinal: Set(0),
         source_provider: Set(Some("archive_extracted".into())),
         source_external_id: Set(None),

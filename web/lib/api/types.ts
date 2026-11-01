@@ -1025,6 +1025,7 @@ export type ReopenRelationshipSuggestionResp =
 export type SuggestionStatusFilter = SuggestionStatus | "all";
 export type IssueCoversResp = Schemas["IssueCoversResp"];
 export type IssueCoverRow = Schemas["IssueCoverRow"];
+export type IssueCoverKind = Schemas["IssueCoverKind"];
 // M5 preview pane / proposed-diff
 export type DiffResp = Schemas["DiffResp"];
 export type ScalarDiffRow = Schemas["ScalarDiffRow"];

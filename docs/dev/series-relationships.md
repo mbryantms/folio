@@ -84,14 +84,17 @@ families count as one (`RelationshipKind::contradictions`): `A continues B`
 also contradicts `A has_sequel B`, and `A sequel_of B` contradicts
 `A continued_by B`.
 
-The typed enum is `server::relationships::RelationshipKind` (serde
-snake_case + `ToSchema`, with `inverse()`, `label()`, `display_label(qualifier)`,
-`group()`, `qualifiers()`, `allows_coverage()`, `allows_arc_target()`,
-`is_canonical()`, `as_str()`), next to `RelationshipGroup`
-(`story | publication | editions | advanced`), `RelationshipQualifier`,
-`RelationshipCoverage` and `RelationshipSource` (`manual | suggested`). The
-DB CHECK mirrors the enum: adding a kind needs both a migration and the enum
-variant.
+The typed enum is `entity::series_relationship::RelationshipKind`,
+re-exported as `server::relationships::RelationshipKind` (serde snake_case +
+`ToSchema` + `DeriveActiveEnum`, with `inverse()`, `label()`,
+`display_label(qualifier)`, `group()`, `qualifiers()`, `allows_coverage()`,
+`allows_arc_target()`, `is_canonical()`, `as_str()`, `parse()`). It is the
+`kind` column type of `series_relationship`, `series_external_relationship`
+and `series_relationship_suggestion` (AR-7, E4 batch 2). `RelationshipGroup`
+(`story | publication | editions | advanced`) and `RelationshipQualifier`
+live beside it in `entity`; `RelationshipCoverage` and `RelationshipSource`
+(`manual | suggested`) stay in `server::relationships`. The DB CHECK mirrors
+the enum: adding a kind needs both a migration and the enum variant.
 
 The **catalogue** is served at `GET /api/relationship-kinds`
 (`RelationshipCatalogue { groups: [{group, label}], kinds: [{kind, inverse,

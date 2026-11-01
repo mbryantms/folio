@@ -10151,6 +10151,14 @@ export interface components {
             story_arcs: components["schemas"]["EntityRefView"][];
             teams: components["schemas"]["EntityRefView"][];
         };
+        /**
+         * @description What an `issue_cover` row is. Writers today store `primary` (the
+         *     archive / provider / admin-picked display cover) and `variant`
+         *     (provider variant covers); `back` and `incentive` are the gallery
+         *     kinds the M0 schema reserved.
+         * @enum {string}
+         */
+        IssueCoverKind: "primary" | "variant" | "back" | "incentive";
         IssueCoverPickReq: {
             /**
              * Format: int32
@@ -10187,8 +10195,7 @@ export interface components {
             image_url?: string | null;
             is_active: boolean;
             issue_id: string;
-            /** @description `"primary" | "variant" | "back" | "incentive"`. */
-            kind: string;
+            kind: components["schemas"]["IssueCoverKind"];
             /** Format: int32 */
             ordinal: number;
             source_external_id?: string | null;

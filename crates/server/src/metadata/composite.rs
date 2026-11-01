@@ -345,7 +345,10 @@ async fn issue_current(
             use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter};
             let n = entity::issue_cover::Entity::find()
                 .filter(entity::issue_cover::Column::IssueId.eq(&row.id))
-                .filter(entity::issue_cover::Column::Kind.eq("variant"))
+                .filter(
+                    entity::issue_cover::Column::Kind
+                        .eq(entity::issue_cover::IssueCoverKind::Variant),
+                )
                 .filter(entity::issue_cover::Column::IsActive.eq(true))
                 .count(&state.db)
                 .await

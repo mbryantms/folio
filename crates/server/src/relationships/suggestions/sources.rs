@@ -1739,11 +1739,8 @@ pub async fn provider_associated<C: ConnectionTrait>(
         // The local rows say nothing (types not applied, no name marker):
         // fall back to the kind recorded at apply time from the provider's
         // own series types.
-        if kind == RelationshipKind::SeeAlso
-            && let Ok(stored) = row.kind.parse::<RelationshipKind>()
-            && stored != RelationshipKind::SeeAlso
-        {
-            kind = stored;
+        if kind == RelationshipKind::SeeAlso && row.kind != RelationshipKind::SeeAlso {
+            kind = row.kind;
             confidence = row
                 .confidence
                 .unwrap_or(external::ASSOCIATED_TYPED_ONE_SIDE);
