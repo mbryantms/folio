@@ -75,7 +75,13 @@ const CREDITS: &[(&str, &str)] = &[
 const CHARACTERS: &[&str] = &["Alana", "Marko", "Hazel"];
 const TEAMS: &[&str] = &["Landfall Coalition", "Wreath High Command"];
 const LOCATIONS: &[&str] = &["Cleave", "Landfall"];
-const ARCS: &[(&str, i32)] = &[("Volume One", 1)];
+/// Written to the junction only (no flat `story_arc_number`), in reading
+/// order: ComicInfo's `<StoryArc>` / `<StoryArcNumber>` are parallel
+/// lists built from these rows (audit 2026-11 WP A8).
+const ARCS: &[(&str, i32)] = &[("Volume One", 1), ("The Will", 4)];
+/// ComicInfo has one `<GTIN>`: the issue has no `gtin` id, so the UPC
+/// wins over the ISBN (`sidecar_compose::comicinfo_gtin`).
+const COMICINFO_GTIN: &str = UPC;
 const GENRES: &[&str] = &["Science Fiction", "Fantasy"];
 const TAGS: &[&str] = &["Image 20th", "Eisner Winner"];
 const UNIVERSES: &[&str] = &["Saga Universe"];
@@ -125,6 +131,7 @@ fn expected() -> serde_json::Value {
         "ids": {"comicvine": COMICVINE_ID, "metron": METRON_ID, "gcd": GCD_ID},
         "primary_id_source": "metron",
         "gtin": {"upc": UPC, "isbn": ISBN},
+        "comicinfo_gtin": COMICINFO_GTIN,
         "age_rating": AGE_RATING,
         "age_rating_metron": AGE_RATING_METRON,
         "web": WEB,
@@ -427,6 +434,13 @@ async fn folio_written_archive_and_expected_json_for_the_interop_readers() {
     assert_eq!(ci.tags.as_deref(), Some("Image 20th, Eisner Winner"));
     assert_eq!(ci.comicvine_id, Some(123_456));
     assert_eq!(ci.metron_id, Some(290_431));
+    assert_eq!(ci.gtin.as_deref(), Some(COMICINFO_GTIN));
+    assert_eq!(ci.story_arc.as_deref(), Some("Volume One, The Will"));
+    assert_eq!(
+        ci.story_arc_number.as_deref(),
+        Some("1, 4"),
+        "parallel to <StoryArc>, from the arc junction"
+    );
     let mi = parsers::metroninfo::parse(mi_xml.as_bytes()).expect("MetronInfo parses");
     assert_eq!(mi.series.as_deref(), Some(SERIES));
     assert_eq!(mi.number.as_deref(), Some(NUMBER));
@@ -436,6 +450,7 @@ async fn folio_written_archive_and_expected_json_for_the_interop_readers() {
     assert_eq!(mi.series_id.as_deref(), Some(SERIES_METRON_ID));
     assert_eq!(mi.age_rating.as_deref(), Some(AGE_RATING_METRON));
     assert_eq!(mi.arc_numbers.get("Volume One"), Some(&1));
+    assert_eq!(mi.arc_numbers.get("The Will"), Some(&4));
     assert_eq!(
         mi.credits.get("Penciller").map(Vec::as_slice),
         Some(["Fiona Staples".to_string(), "Mike Deodato, Jr.".to_string()].as_slice())

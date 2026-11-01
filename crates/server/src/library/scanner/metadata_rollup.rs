@@ -7,7 +7,8 @@
 //!   - `replace_issue_metadata` — called from the per-issue upsert in
 //!     `process::ingest_one_with_fingerprint`. Wipes and re-writes a single
 //!     issue's `issue_genres / issue_tags / issue_credits` rows from the
-//!     ComicInfo CSVs (or the user-edited values if the column is sticky).
+//!     ComicInfo CSVs (or the DB values where `field_provenance` protects
+//!     the column from the file).
 //!   - `rollup_series_metadata` — called once per series after a folder scan
 //!     completes. Recomputes `series_genres / series_tags / series_credits`
 //!     as the distinct union of the series's active issues' junctions.
@@ -68,7 +69,8 @@ impl CreditRole {
     }
 }
 
-/// Resolved per-issue metadata values, post-user-edited check. `genre` /
+/// Resolved per-issue metadata values, after the `field_provenance`
+/// protection check. `genre` /
 /// `tags` carry the raw CSV strings as written to the issue row; each credit
 /// role likewise holds its raw CSV. Splitting + dedup + write happens here.
 #[derive(Debug, Default, Clone)]
@@ -1051,11 +1053,13 @@ async fn ensure_persons_for_series<C: ConnectionTrait>(
 /// for a different name; more than a few in a row is not a race any more.
 const PERSON_INSERT_ATTEMPTS: u32 = 4;
 
-/// Protection predicate on `issues i`: true when the issue's story arcs
-/// are *not* owned by a provider apply or a user edit (no
-/// `field_provenance` row for `story_arcs` outside the file tiers). Same
-/// rule as `scanner::process`'s `protected()` for the other junctions.
-fn arcs_file_owned() -> String {
+/// Protection predicate on the issue whose id is the SQL expression
+/// `issue_id` (`i.id` here, `$1` in the sidecar composer's
+/// `load_issue_junctions`): true when the issue's story arcs are *not*
+/// owned by a provider apply or a user edit (no `field_provenance` row for
+/// `story_arcs` outside the file tiers). Same rule as `scanner::process`'s
+/// `protected()` for the other junctions.
+pub(crate) fn arcs_file_owned(issue_id: &str) -> String {
     let tiers = crate::metadata::writers::FILE_SOURCED_SET_BY
         .iter()
         .map(|t| format!("'{t}'"))
@@ -1063,7 +1067,7 @@ fn arcs_file_owned() -> String {
         .join(", ");
     format!(
         "NOT EXISTS (SELECT 1 FROM field_provenance fp \
-          WHERE fp.entity_type = 'issue' AND fp.entity_id = i.id \
+          WHERE fp.entity_type = 'issue' AND fp.entity_id = {issue_id} \
             AND fp.field = 'story_arcs' AND fp.set_by NOT IN ({tiers}))"
     )
 }
@@ -1092,7 +1096,7 @@ async fn link_series_entity_ids<C: ConnectionTrait>(
     series_id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
     let backend = db.get_database_backend();
-    let owned = arcs_file_owned();
+    let owned = arcs_file_owned("i.id");
     let active = "i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL";
     let arc_split = "regexp_split_to_table(i.story_arc, \
          CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END)";
@@ -1172,7 +1176,7 @@ pub async fn replace_issue_metadata_from_row<C: ConnectionTrait>(
     issue_id: &str,
 ) -> Result<(), sea_orm::DbErr> {
     // We re-read the row inside the txn so we always reflect the values that
-    // just got written (post user-edited stickiness). Cheap PK lookup.
+    // just got written (after `field_provenance` protection). Cheap PK lookup.
     let row = issue::Entity::find_by_id(issue_id.to_owned())
         .one(db)
         .await?;

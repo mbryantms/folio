@@ -1271,6 +1271,7 @@ fn scalar_predicate(
             Ok(lhs.not_like(format!("%{}%", as_text(v, &bad)?)))
         }
         Op::StartsWith => Ok(lhs.like(format!("{}%", as_text(v, &bad)?))),
+        Op::EndsWith => Ok(lhs.like(format!("%{}", as_text(v, &bad)?))),
         Op::Gt | Op::After => Ok(lhs.gt(scalar_value(v, kind, &bad)?)),
         Op::Gte => Ok(lhs.gte(scalar_value(v, kind, &bad)?)),
         Op::Lt | Op::Before => Ok(lhs.lt(scalar_value(v, kind, &bad)?)),
@@ -2338,6 +2339,68 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// UX-8: `ends_with` parses off the wire, compiles to a suffix
+    /// `LIKE` (same case-sensitive form as `contains` / `starts_with`), and
+    /// is offered on exactly the fields that offer `starts_with`.
+    #[test]
+    fn ends_with_parses_and_compiles_to_suffix_like() {
+        let parsed: Condition = serde_json::from_value(
+            json!({ "field": "name", "op": "ends_with", "value": "Annual" }),
+        )
+        .expect("ends_with parses");
+        assert_eq!(parsed.op, Op::EndsWith);
+        assert_eq!(
+            serde_json::to_value(Op::EndsWith).unwrap(),
+            json!("ends_with")
+        );
+        assert!(
+            serde_json::from_value::<Condition>(
+                json!({ "field": "name", "op": "ends_with_ci", "value": "x" })
+            )
+            .is_err(),
+            "unknown ops stay a deserialize error"
+        );
+
+        let sql = compile(&make(dsl_all(vec![parsed])))
+            .unwrap()
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#""series"."name" LIKE '%Annual'"#),
+            "SQL: {sql}"
+        );
+        let sql = issues_sql(vec![cond(Field::Title, Op::EndsWith, json!("Part One"))]).unwrap();
+        assert!(
+            sql.contains(r#""issues"."title" LIKE '%Part One'"#),
+            "SQL: {sql}"
+        );
+
+        for spec in registry::all_specs() {
+            assert_eq!(
+                spec.allowed_ops.contains(&Op::EndsWith),
+                spec.allowed_ops.contains(&Op::StartsWith),
+                "{:?}: ends_with must ride with starts_with",
+                spec.field
+            );
+        }
+        let err = compile(&make(dsl_all(vec![cond(
+            Field::Year,
+            Op::EndsWith,
+            json!("9"),
+        )])))
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            CompileError::OpNotAllowedForField(Field::Year, Op::EndsWith)
+        ));
+        let err = compile(&make(dsl_all(vec![cond(
+            Field::Name,
+            Op::EndsWith,
+            json!(5),
+        )])))
+        .unwrap_err();
+        assert!(matches!(err, CompileError::BadValue { .. }));
     }
 
     fn keyset_sql(sort_field: SortField, sort_order: SortOrder, cursor: IssueCursor) -> String {
