@@ -4659,7 +4659,16 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Lock one field of an issue against provider updates without editing
+         *     it: writes the same `set_by='user'` pin an edit of the field writes,
+         *     for the value the field holds now. A provider apply (DB-direct or
+         *     sidecar) and a rescan then leave the field alone until it is unlocked
+         *     through the sibling `DELETE`. The value is unchanged, so a writeback
+         *     library needs no sidecar rewrite: the archive already carries it, and
+         *     the composer keeps the DB value for a pinned field on the next apply.
+         */
+        put: operations["issues_lock_field"];
         post?: never;
         delete: operations["issues_clear_field_pin"];
         options?: never;
@@ -9777,6 +9786,17 @@ export interface components {
             /** Format: int64 */
             issues: number;
         };
+        /** @description Response for `PUT …/field-provenance/{field}`. */
+        FieldLockResp: {
+            /** @description The locked `MetadataField` key. */
+            field: string;
+            /**
+             * @description Every `field_provenance` key the lock wrote a user row under: the
+             *     field itself plus the issue columns that roll up into it (a
+             *     `credits` lock also pins `writer`, `penciller`, …). Sorted.
+             */
+            pinned_keys: string[];
+        };
         /**
          * @description One field's provenance: which source set it, when, and (for provider
          *     sources) which external record it came from.
@@ -11405,6 +11425,23 @@ export interface components {
             last_metadata_sync_at?: string | null;
             last_rewrite_at?: string | null;
             last_rewrite_kind?: string | null;
+            /**
+             * @description `MetadataField` keys the per-field lock accepts
+             *     (`PUT …/field-provenance/{field}`), in display order.
+             */
+            lockable_fields: string[];
+            /**
+             * @description The subset of `lockable_fields` currently locked — a provider
+             *     apply and a rescan leave these values alone.
+             */
+            locked_fields: string[];
+            /**
+             * @description User pins outside the lockable set (`sort_number`,
+             *     `black_and_white`, `cover_page_index`, an external id, a series-level
+             *     field pinned on the issue, …) — still honoured, so the UI lists them
+             *     as locked and can release them through the same `DELETE`. Sorted.
+             */
+            other_locked_fields: string[];
             provenance: components["schemas"]["FieldProvenanceRow"][];
             source_files: components["schemas"]["SourceFilesView"];
             /**
@@ -24881,6 +24918,51 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_lock_field: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+                /** @description A `MetadataOverviewView.lockable_fields` key — e.g. `title`, `credits`, `cover_date` */
+                field: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldLockResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the field cannot be locked (unknown, a cover, or an external id) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -276,8 +276,9 @@ Applying metadata is never a blind overwrite:
 - Every applied field records **provenance**: hover a field and see
   "set by Metron, 2 days ago."
 - Any field you've edited by hand is **never silently overwritten** by a
-  provider. Overriding user edits requires an explicit, admin-only,
-  audited flag.
+  provider, and a per-field **lock** on the issue Metadata tab protects a
+  field the same way without editing it. Overriding user edits requires
+  an explicit, admin-only, audited flag.
 
 An optional weekly refresh keeps recent and stale series current, a
 per-library opt-in searches providers for the series a scan creates (up to

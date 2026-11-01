@@ -45,7 +45,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(get_one))
         .routes(routes!(metadata_overview))
         .routes(routes!(update))
-        .routes(routes!(clear_field_pin))
+        .routes(routes!(clear_field_pin, lock_field))
         .routes(routes!(scan_issue))
         .routes(routes!(next_in_series))
         .routes(routes!(prev_in_series))
@@ -250,6 +250,17 @@ pub struct MetadataOverviewView {
     /// keys (`writer`, `number_raw`, …) and the `MetadataField` keys
     /// they roll up into (`credits`, `number`, …). Sorted.
     pub user_pinned_fields: Vec<String>,
+    /// `MetadataField` keys the per-field lock accepts
+    /// (`PUT …/field-provenance/{field}`), in display order.
+    pub lockable_fields: Vec<String>,
+    /// The subset of `lockable_fields` currently locked — a provider
+    /// apply and a rescan leave these values alone.
+    pub locked_fields: Vec<String>,
+    /// User pins outside the lockable set (`sort_number`,
+    /// `black_and_white`, `cover_page_index`, an external id, a series-level
+    /// field pinned on the issue, …) — still honoured, so the UI lists them
+    /// as locked and can release them through the same `DELETE`. Sorted.
+    pub other_locked_fields: Vec<String>,
     pub last_metadata_sync_at: Option<String>,
     pub last_rewrite_at: Option<String>,
     pub last_rewrite_kind: Option<String>,
@@ -362,6 +373,28 @@ pub async fn metadata_overview(
         .map(|p| p.field.clone())
         .collect();
     user_pinned_fields.sort();
+    let lockable = crate::metadata::writers::issue_lockable_fields();
+    let locked_fields: Vec<String> = lockable
+        .iter()
+        .filter(|f| field_locked(&user_pinned_fields, **f))
+        .map(|f| f.key())
+        .collect();
+    let lockable_fields: Vec<String> = lockable.iter().map(|f| f.key()).collect();
+    let covered: std::collections::HashSet<String> = lockable
+        .iter()
+        .flat_map(|f| {
+            crate::metadata::writers::issue_lock_column_keys(*f)
+                .into_iter()
+                .map(str::to_owned)
+                .chain(std::iter::once(f.key()))
+        })
+        .chain(std::iter::once("description".to_owned()))
+        .collect();
+    let other_locked_fields: Vec<String> = user_pinned_fields
+        .iter()
+        .filter(|k| !covered.contains(*k))
+        .cloned()
+        .collect();
     let provenance: Vec<FieldProvenanceRow> = provenance_rows
         .into_iter()
         .map(|p| FieldProvenanceRow {
@@ -394,12 +427,25 @@ pub async fn metadata_overview(
         external_ids,
         provenance,
         user_pinned_fields,
+        lockable_fields,
+        locked_fields,
+        other_locked_fields,
         last_metadata_sync_at,
         last_rewrite_at,
         last_rewrite_kind,
         alternate_provider_series,
     })
     .into_response()
+}
+
+/// Whether `field` is locked for an issue whose user pins are `pinned`:
+/// the `MetadataField` key carries a user row (what the apply, the
+/// composer and the scanner check), with `summary` / `description` read
+/// as one column the way `apply::user_pinned` reads them.
+fn field_locked(pinned: &[String], field: crate::metadata::MetadataField) -> bool {
+    let has = |k: &str| pinned.iter().any(|p| p == k);
+    has(&field.key())
+        || (matches!(field, crate::metadata::MetadataField::Summary) && has("description"))
 }
 
 /// Map a nullable scanner presence flag to the wire string. `None` = scanned
@@ -1174,6 +1220,96 @@ pub async fn clear_field_pin(
         Json(serde_json::json!({"cleared": cleared})),
     )
         .into_response()
+}
+
+/// Response for `PUT …/field-provenance/{field}`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct FieldLockResp {
+    /// The locked `MetadataField` key.
+    pub field: String,
+    /// Every `field_provenance` key the lock wrote a user row under: the
+    /// field itself plus the issue columns that roll up into it (a
+    /// `credits` lock also pins `writer`, `penciller`, …). Sorted.
+    pub pinned_keys: Vec<String>,
+}
+
+/// Lock one field of an issue against provider updates without editing
+/// it: writes the same `set_by='user'` pin an edit of the field writes,
+/// for the value the field holds now. A provider apply (DB-direct or
+/// sidecar) and a rescan then leave the field alone until it is unlocked
+/// through the sibling `DELETE`. The value is unchanged, so a writeback
+/// library needs no sidecar rewrite: the archive already carries it, and
+/// the composer keeps the DB value for a pinned field on the next apply.
+#[utoipa::path(
+    operation_id = "issues_lock_field",
+    put,
+    path = "/series/{series_slug}/issues/{issue_slug}/field-provenance/{field}",
+    params(
+        ("series_slug" = String, Path,),
+        ("issue_slug" = String, Path,),
+        ("field" = String, Path, description = "A `MetadataOverviewView.lockable_fields` key — e.g. `title`, `credits`, `cover_date`"),
+    ),
+    responses(
+        (status = 200, body = FieldLockResp),
+        (status = 403, description = "admin only"),
+        (status = 404, description = "issue not found"),
+        (status = 422, description = "the field cannot be locked (unknown, a cover, or an external id)"),
+    )
+)]
+#[handler]
+pub async fn lock_field(
+    State(app): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
+    AxPath((series_slug, issue_slug, field)): AxPath<(String, String, String)>,
+) -> impl IntoResponse {
+    use crate::metadata::writers;
+    let row = match find_by_slugs(&app.db, &series_slug, &issue_slug).await {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    if !access::issue_visible(&app, &user, &row).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    }
+    let Some(mf) = field
+        .parse::<crate::metadata::MetadataField>()
+        .ok()
+        .filter(|f| writers::issue_lockable_fields().contains(f))
+    else {
+        return super::respond(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            shared::error::ApiErrorCode::Validation,
+            format!("`{field}` is not a lockable issue field"),
+        );
+    };
+    let column_keys = writers::issue_lock_column_keys(mf);
+    let pinned_keys = match writers::write_issue_user_pins(&app.db, &row.id, &column_keys).await {
+        Ok(keys) => keys,
+        Err(e) => {
+            tracing::error!(issue_id = row.id, field, error = %e, "lock_field failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: user.id,
+            action: "admin.issue.field_pin_set",
+            target_type: Some("issue"),
+            target_id: Some(row.id.clone()),
+            payload: serde_json::json!({"field": mf.key(), "pinned_keys": pinned_keys}),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
+    Json(FieldLockResp {
+        field: mf.key(),
+        pinned_keys,
+    })
+    .into_response()
 }
 
 #[utoipa::path(
