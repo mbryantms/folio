@@ -574,7 +574,7 @@ async fn gather_events(
     } else {
         let candidates_for_cover = issue::Entity::find()
             .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
@@ -942,7 +942,8 @@ fn hydrate(
         month: i.month,
         day: i.day,
         page_count: i.page_count,
-        cover_url: (i.state == "active").then(|| format!("/issues/{}/pages/0/thumb", i.id)),
+        cover_url: (i.state == entity::issue::IssueState::Active)
+            .then(|| format!("/issues/{}/pages/0/thumb", i.id)),
         writer: i.writer.clone(),
         penciller: i.penciller.clone(),
         inker: i.inker.clone(),

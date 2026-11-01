@@ -756,7 +756,7 @@ async fn scoped_scan_honours_duplicate_removals_and_orphaned_series_json() {
         .await
         .unwrap()
         .into_iter()
-        .map(|h| h.kind)
+        .map(|h| h.kind.as_str().to_owned())
         .collect();
     assert!(
         kinds.iter().any(|k| k == "OrphanedSeriesJson"),

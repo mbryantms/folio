@@ -452,7 +452,7 @@ where
     issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::RemovedAt.is_null())
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .count(db)
         .await
         .map(|n| n as i64)

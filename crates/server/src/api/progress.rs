@@ -612,7 +612,7 @@ pub async fn upsert_series(
     // wide rows of every issue in the series.
     let issues = match issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(srow.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
@@ -744,7 +744,7 @@ pub async fn upsert_series_matching(
 
     let mut query = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(srow.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null());
 
     if let Some(raw) = req.q.as_deref() {
@@ -951,7 +951,7 @@ pub async fn upsert_bulk(
     // WP-3.6: id / page_count + the ACL columns are all that's read.
     let rows = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(ids.clone()))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
@@ -1184,7 +1184,7 @@ pub async fn upsert_series_bulk(
         // WP-3.6: id / page_count only — project.
         let issues = match issue::Entity::find()
             .filter(issue::Column::SeriesId.eq(srow.id))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)

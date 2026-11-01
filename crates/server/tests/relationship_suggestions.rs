@@ -3375,7 +3375,7 @@ async fn bulk_accept_by_ids_takes_an_optional_kind() {
             .unwrap()
             .unwrap();
         assert_eq!(after.status, "modified");
-        assert_eq!(after.accepted_kind.as_deref(), Some("see_also"));
+        assert_eq!(after.accepted_kind, Some(RelationshipKind::SeeAlso));
         let edge = rel::Entity::find()
             .filter(rel::Column::FromSeriesId.eq(from))
             .filter(rel::Column::ToSeriesId.eq(to))

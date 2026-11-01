@@ -142,7 +142,7 @@ async fn seed_issue(app: &TestApp, file_path: &Path, pages: usize) -> String {
         file_path: Set(file_path.to_string_lossy().into_owned()),
         file_size: Set(std::fs::metadata(file_path).unwrap().len() as i64),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(hash.clone()),
         title: Set(None),
         sort_number: Set(Some(1.0)),
@@ -533,7 +533,7 @@ async fn worker_marks_error_on_unreadable_archive() {
         file_path: Set(cbz.to_string_lossy().into_owned()),
         file_size: Set(std::fs::metadata(&cbz).unwrap().len() as i64),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(id.clone()),
         title: Set(None),
         sort_number: Set(Some(1.0)),
@@ -662,14 +662,14 @@ async fn worker_skips_non_active_issue() {
     build_cbz(&cbz, 2);
     let id = seed_issue(&app, &cbz, 2).await;
 
-    // Flip state to non-active (e.g. encrypted / removed).
+    // Flip state to non-active.
     let row = IssueEntity::find_by_id(id.clone())
         .one(&app.state().db)
         .await
         .unwrap()
         .unwrap();
     let mut am: IssueAM = row.into();
-    am.state = Set("removed".into());
+    am.state = Set(entity::issue::IssueState::Encrypted);
     am.update(&app.state().db).await.unwrap();
 
     let state = app.state();

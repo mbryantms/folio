@@ -157,7 +157,7 @@ async fn scan_converts_rar_named_cbz_in_place_when_enabled() {
         .await
         .unwrap();
     assert_eq!(issues.len(), 1);
-    assert_eq!(issues[0].state, "active");
+    assert_eq!(issues[0].state, entity::issue::IssueState::Active);
     assert_eq!(issues[0].page_count, Some(3));
 
     // No misleading ComicInfo diagnosis anywhere.
@@ -167,8 +167,9 @@ async fn scan_converts_rar_named_cbz_in_place_when_enabled() {
         .await
         .unwrap();
     assert!(
-        rows.iter()
-            .all(|r| r.kind != "MalformedComicInfo" && r.kind != "MalformedArchive"),
+        rows.iter().all(|r| r.kind
+            != entity::library_health_issue::HealthIssueKind::MalformedComicInfo
+            && r.kind != entity::library_health_issue::HealthIssueKind::MalformedArchive),
         "no malformed rows: {rows:?}"
     );
 
@@ -221,7 +222,9 @@ async fn scan_flags_rar_named_cbz_as_unsupported_when_disabled() {
         .unwrap();
     let unsupported: Vec<_> = rows
         .iter()
-        .filter(|r| r.kind == "UnsupportedArchiveFormat")
+        .filter(|r| {
+            r.kind == entity::library_health_issue::HealthIssueKind::UnsupportedArchiveFormat
+        })
         .collect();
     assert_eq!(
         unsupported.len(),
@@ -236,7 +239,8 @@ async fn scan_flags_rar_named_cbz_as_unsupported_when_disabled() {
         unsupported[0].payload
     );
     assert!(
-        rows.iter().all(|r| r.kind != "MalformedComicInfo"),
+        rows.iter()
+            .all(|r| r.kind != entity::library_health_issue::HealthIssueKind::MalformedComicInfo),
         "no MalformedComicInfo row: {rows:?}"
     );
 }

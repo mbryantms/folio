@@ -785,7 +785,7 @@ pub(crate) async fn apply_series_via_sidecar(
     // safely rewrite those archives.
     let issues = entity::issue::Entity::find()
         .filter(entity::issue::Column::SeriesId.eq(series_row.id))
-        .filter(entity::issue::Column::State.eq("active"))
+        .filter(entity::issue::Column::State.eq(entity::issue::IssueState::Active))
         .all(&state.db)
         .await?;
 

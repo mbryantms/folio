@@ -21647,7 +21647,7 @@
             ]
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/IssueState"
           },
           "title": {
             "type": [
@@ -24238,6 +24238,33 @@
           }
         }
       },
+      "HealthIssueKind": {
+        "type": "string",
+        "description": "What a health row reports. The scanner's typed payload enum\n(`server::library::health::IssueKind`) maps each of its variants onto\none of these.",
+        "enum": [
+          "FileAtRoot",
+          "EmptyFolder",
+          "UnreadableFile",
+          "UnreadableFolder",
+          "UnreadableArchive",
+          "MissingComicInfo",
+          "MalformedComicInfo",
+          "MalformedArchive",
+          "EncryptedArchive",
+          "FolderNameMismatch",
+          "MixedSeriesInFolder",
+          "DuplicateContent",
+          "OrphanedSeriesJson",
+          "UnsupportedArchiveFormat",
+          "RecoveredArchive",
+          "SkippedArchiveEntries",
+          "UnreadablePage",
+          "NoPages",
+          "AmbiguousFolder",
+          "DuplicateExternalId",
+          "MetadataDriftFromXml"
+        ]
+      },
       "HealthIssueKindFacet": {
         "type": "object",
         "description": "One kind-facet tally within the current status+severity scope (drives the\nper-kind filter pills).",
@@ -24252,7 +24279,7 @@
             "minimum": 0
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/HealthIssueKind"
           }
         }
       },
@@ -24284,7 +24311,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/HealthIssueKind"
           },
           "last_seen_at": {
             "type": "string"
@@ -24960,7 +24987,7 @@
             "format": "double"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/IssueState"
           },
           "story_arc": {
             "type": [
@@ -25415,6 +25442,15 @@
           }
         }
       },
+      "IssueState": {
+        "type": "string",
+        "description": "Whether an issue's archive opened cleanly. The scanner writes it on\nevery ingest (`scanner::process`); only `active` issues have readable\npages, so covers, page bytes and most list surfaces key off it.\nSoft deletion is `removed_at`, not a state.",
+        "enum": [
+          "active",
+          "encrypted",
+          "malformed"
+        ]
+      },
       "IssueSummaryView": {
         "type": "object",
         "required": [
@@ -25483,7 +25519,7 @@
             "description": "Spec §6.5 classification: `\"Special\"`, `\"Annual\"`, `\"OneShot\"`,\n`\"TPB\"`, or `None` for ordinary numbered issues. Drives the\nreader's Specials & Extras section on the series detail page."
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/IssueState"
           },
           "title": {
             "type": [

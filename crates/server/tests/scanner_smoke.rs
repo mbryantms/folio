@@ -888,7 +888,7 @@ async fn duplicate_content_is_skipped_and_reported() {
         .await
         .unwrap()
         .into_iter()
-        .map(|h| h.kind)
+        .map(|h| h.kind.as_str().to_owned())
         .collect();
     assert!(
         health_kinds.iter().any(|k| k == "DuplicateContent"),

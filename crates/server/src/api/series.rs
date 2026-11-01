@@ -1083,7 +1083,7 @@ pub struct IssueSummaryView {
     pub sort_number: Option<f64>,
     pub year: Option<i32>,
     pub page_count: Option<i32>,
-    pub state: String,
+    pub state: entity::issue::IssueState,
     pub cover_url: Option<String>,
     /// Spec §6.5 classification: `"Special"`, `"Annual"`, `"OneShot"`,
     /// `"TPB"`, or `None` for ordinary numbered issues. Drives the
@@ -1134,7 +1134,7 @@ pub struct IssueDetailView {
     pub series_id: String,
     pub library_id: String,
     pub file_path: String,
-    pub state: String,
+    pub state: entity::issue::IssueState,
     pub title: Option<String>,
     pub number: Option<String>,
     pub sort_number: Option<f64>,
@@ -2492,7 +2492,7 @@ pub(crate) async fn hydrate_series(
     // (2026-05-23 ask); specials + preludes excluded 2026-10-05.
     let cover_rows = issue::Entity::find()
         .filter(issue::Column::SeriesId.is_in(series_ids.clone()))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::SeriesId)
@@ -2750,7 +2750,7 @@ pub(crate) fn assess_issue_view(
         has_credits,
         // An on-disk active issue always has a renderable cover (page 0). No
         // separate extract-failed flag exists today.
-        has_cover: view.state == "active",
+        has_cover: view.state == entity::issue::IssueState::Active,
         has_characters: non_empty(view.characters.as_deref()),
         has_story_arcs: non_empty(view.story_arc.as_deref()),
         has_genres: non_empty(view.genre.as_deref()),
@@ -3301,7 +3301,7 @@ pub(crate) struct IssueCompletenessRow {
     cover_artist: Option<String>,
     editor: Option<String>,
     translator: Option<String>,
-    state: String,
+    state: entity::issue::IssueState,
     pub(crate) metadata_review_accepted_at: Option<sea_orm::prelude::DateTimeWithTimeZone>,
 }
 
@@ -3322,7 +3322,7 @@ pub(crate) async fn score_series_issues(
     };
     let rows = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::Id)
@@ -3390,7 +3390,7 @@ pub(crate) async fn score_series_issues(
                 has_summary: non_empty(r.summary.as_deref()),
                 has_page_count: r.page_count.is_some_and(|p| p > 0),
                 has_credits,
-                has_cover: r.state == "active",
+                has_cover: r.state == entity::issue::IssueState::Active,
                 ..Default::default()
             });
             // Overlay the operator's "mark complete" acknowledgement (B4).
@@ -3470,7 +3470,7 @@ pub async fn collection_report(
     // the saved-view `collection_completeness` count.
     let rows = match issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::SortNumber)
@@ -3578,7 +3578,7 @@ pub async fn get_one(
         Some(id) => Some(id),
         None => issue::Entity::find()
             .filter(issue::Column::SeriesId.eq(row.id))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .order_by_asc(Expr::cust("special_type IS NOT NULL"))
             .order_by_asc(Expr::cust("CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END"))
@@ -3599,7 +3599,7 @@ pub async fn get_one(
     // come from the junction tables below.
     let agg_rows = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .order_by_asc(issue::Column::SortNumber)
         .select_only()
@@ -4803,7 +4803,7 @@ pub async fn resume(
     // 200 with null issue (clients should disable the play CTA).
     let mut issues_sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(srow.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null());
     if let Some(cap) = acl.issue_cap_condition() {
         issues_sel = issues_sel.filter(cap);

@@ -16,6 +16,7 @@ use axum::{
     http::{Method, Request, StatusCode, header},
 };
 use common::TestApp;
+use entity::library_health_issue::HealthIssueKind;
 use entity::{library::ActiveModel as LibraryAM, library_health_issue::Entity as HealthEntity};
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use server::library::scanner;
@@ -322,7 +323,7 @@ async fn dismiss_hides_issue() {
     let issues = HealthEntity::find().all(&state.db).await.unwrap();
     let target = issues
         .iter()
-        .find(|i| i.kind == "FileAtRoot")
+        .find(|i| i.kind == HealthIssueKind::FileAtRoot)
         .expect("FileAtRoot row");
     let issue_id = target.id;
 
@@ -418,7 +419,7 @@ async fn skipped_archive_entries_emits_health_issue() {
     let issues = HealthEntity::find().all(&state.db).await.unwrap();
     let skipped = issues
         .iter()
-        .find(|i| i.kind == "SkippedArchiveEntries")
+        .find(|i| i.kind == HealthIssueKind::SkippedArchiveEntries)
         .expect("SkippedArchiveEntries row should land in library_health_issues");
     let data = &skipped.payload["data"];
     assert_eq!(data["dropped"].as_u64().unwrap(), 1);
@@ -440,7 +441,7 @@ async fn skipped_archive_entries_emits_health_issue() {
         .await
         .unwrap()
         .into_iter()
-        .filter(|i| i.kind == "SkippedArchiveEntries")
+        .filter(|i| i.kind == HealthIssueKind::SkippedArchiveEntries)
         .count();
     assert_eq!(
         count, 1,
@@ -527,7 +528,7 @@ async fn recovered_archive_emits_health_issue() {
     let issues = HealthEntity::find().all(&state.db).await.unwrap();
     let recovered = issues
         .iter()
-        .find(|i| i.kind == "RecoveredArchive")
+        .find(|i| i.kind == HealthIssueKind::RecoveredArchive)
         .expect("RecoveredArchive row should land in library_health_issues");
     let data = &recovered.payload["data"];
     assert_eq!(data["technique"].as_str().unwrap(), "cdfh-offset-rebuild");
@@ -621,16 +622,16 @@ async fn misnamed_sidecar_page_entry_is_dropped_and_surfaced() {
         Some(2),
         "page_count must count only the real image entries"
     );
-    assert_eq!(issues[0].state, "active");
+    assert_eq!(issues[0].state, entity::issue::IssueState::Active);
 
     let health = HealthEntity::find().all(&state.db).await.unwrap();
     assert!(
-        !health.iter().any(|i| i.kind == "NoPages"),
+        !health.iter().any(|i| i.kind == HealthIssueKind::NoPages),
         "two real pages remain — NoPages must not fire",
     );
     let skipped = health
         .iter()
-        .find(|i| i.kind == "SkippedArchiveEntries")
+        .find(|i| i.kind == HealthIssueKind::SkippedArchiveEntries)
         .expect("SkippedArchiveEntries row for the misnamed entry");
     let data = &skipped.payload["data"];
     assert_eq!(data["dropped"].as_u64().unwrap(), 1);
@@ -668,12 +669,13 @@ async fn deep_validate_emits_unreadable_page() {
     scanner::scan_library(&state, lib_id).await.unwrap();
     let pre = HealthEntity::find().all(&state.db).await.unwrap();
     assert!(
-        !pre.iter().any(|i| i.kind == "UnreadablePage"),
+        !pre.iter()
+            .any(|i| i.kind == HealthIssueKind::UnreadablePage),
         "regular scan must NOT decode pages",
     );
     assert!(
         pre.iter()
-            .any(|i| i.kind == "FileAtRoot" && i.resolved_at.is_none()),
+            .any(|i| i.kind == HealthIssueKind::FileAtRoot && i.resolved_at.is_none()),
         "scan reports the stray root file",
     );
 
@@ -685,7 +687,7 @@ async fn deep_validate_emits_unreadable_page() {
     let post = HealthEntity::find().all(&state.db).await.unwrap();
     let unreadable = post
         .iter()
-        .find(|i| i.kind == "UnreadablePage")
+        .find(|i| i.kind == HealthIssueKind::UnreadablePage)
         .expect("UnreadablePage row should land after deep-validate");
     let data = &unreadable.payload["data"];
     assert_eq!(data["page_index"].as_u64().unwrap(), 0);
@@ -695,7 +697,7 @@ async fn deep_validate_emits_unreadable_page() {
     // library-wide auto-resolve sweep and close every other finding).
     let root = post
         .iter()
-        .find(|i| i.kind == "FileAtRoot")
+        .find(|i| i.kind == HealthIssueKind::FileAtRoot)
         .expect("FileAtRoot row");
     assert!(
         root.resolved_at.is_none(),
@@ -710,7 +712,7 @@ async fn deep_validate_emits_unreadable_page() {
         .await
         .unwrap()
         .into_iter()
-        .filter(|i| i.kind == "UnreadablePage")
+        .filter(|i| i.kind == HealthIssueKind::UnreadablePage)
         .count();
     assert_eq!(count, 1, "re-validate must upsert by fingerprint");
 
@@ -724,7 +726,7 @@ async fn deep_validate_emits_unreadable_page() {
         .await
         .unwrap()
         .into_iter()
-        .any(|i| i.kind == "UnreadablePage" && i.resolved_at.is_none());
+        .any(|i| i.kind == HealthIssueKind::UnreadablePage && i.resolved_at.is_none());
     assert!(
         still_open,
         "an unopenable file keeps its UnreadablePage open"
@@ -920,6 +922,25 @@ async fn admin_cross_library_health_aggregates_and_filters() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
+    // Unknown (here: retired) kind → 422.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/admin/health-issues?kind=PageCountMismatch")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", auth.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
     // Invalid library_id → 422.
     let resp = app
         .router
@@ -1008,7 +1029,7 @@ async fn undismiss_restores_issue_and_audits() {
     let issues = HealthEntity::find().all(&state.db).await.unwrap();
     let target = issues
         .iter()
-        .find(|i| i.kind == "FileAtRoot")
+        .find(|i| i.kind == HealthIssueKind::FileAtRoot)
         .expect("FileAtRoot row");
     let issue_id = target.id;
 
@@ -1184,7 +1205,7 @@ async fn per_library_health_status_filter_and_validation() {
         .await
         .unwrap()
         .into_iter()
-        .find(|i| i.kind == "FileAtRoot")
+        .find(|i| i.kind == HealthIssueKind::FileAtRoot)
         .expect("FileAtRoot row");
     let resp = app
         .router
@@ -1233,8 +1254,9 @@ async fn per_library_health_status_filter_and_validation() {
         .count();
     assert_eq!(kinds, 2, "status=all surfaces both rows: {all}");
 
-    // Bad status / severity → 422 (not a silent empty list).
-    for q in ["status=bogus", "severity=loud"] {
+    // Bad status / severity / kind → 422 (not a silent empty list). A kind
+    // is the stored PascalCase name, never the payload's snake_case tag.
+    for q in ["status=bogus", "severity=loud", "kind=file_at_root"] {
         let resp = app
             .router
             .clone()

@@ -140,7 +140,7 @@ async fn seed_issue(db: &DatabaseConnection, lib_id: Uuid, series_id: Uuid, suff
         file_path: Set(format!("/tmp/rollup-persons/{series_id}/{suffix}.cbz")),
         file_size: Set(1),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(issue_id.clone()),
         title: Set(None),
         sort_number: Set(Some(suffix as f64)),

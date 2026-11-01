@@ -152,7 +152,7 @@ async fn health_issue_dismiss_writes_audit_row() {
         id: Set(issue_id),
         library_id: Set(lib_id),
         scan_id: Set(None),
-        kind: Set("ambiguous_folder".into()),
+        kind: Set(library_health_issue::HealthIssueKind::AmbiguousFolder),
         payload: Set(serde_json::json!({})),
         severity: Set("warning".into()),
         fingerprint: Set("test-fingerprint".into()),
@@ -181,7 +181,7 @@ async fn health_issue_dismiss_writes_audit_row() {
     assert_eq!(hit["action"], "admin.library.health_issue.dismiss");
     assert_eq!(hit["target_type"], "library_health_issue");
     assert_eq!(hit["payload"]["library_id"], lib_id.to_string());
-    assert_eq!(hit["payload"]["kind"], "ambiguous_folder");
+    assert_eq!(hit["payload"]["kind"], "AmbiguousFolder");
 }
 
 #[tokio::test]

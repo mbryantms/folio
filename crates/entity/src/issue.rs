@@ -1,5 +1,58 @@
+use sea_orm::Iterable;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+
+// Storage contract (AR-7): `issues.state` stays `TEXT` (column default
+// `'active'`, no CHECK) holding exactly these strings; `string_value` and
+// the serde name are the same string (tests below). A row holding any
+// other string fails to load with a `DbErr` instead of being coerced.
+
+/// Whether an issue's archive opened cleanly. The scanner writes it on
+/// every ingest (`scanner::process`); only `active` issues have readable
+/// pages, so covers, page bytes and most list surfaces key off it.
+/// Soft deletion is `removed_at`, not a state.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum IssueState {
+    /// The archive opened (with or without a ComicInfo.xml).
+    #[sea_orm(string_value = "active")]
+    Active,
+    /// Password-protected archive; no pages were read.
+    #[sea_orm(string_value = "encrypted")]
+    Encrypted,
+    /// Malformed ComicInfo.xml or a malformed archive container.
+    #[sea_orm(string_value = "malformed")]
+    Malformed,
+}
+
+impl IssueState {
+    /// The stored / wire string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Encrypted => "encrypted",
+            Self::Malformed => "malformed",
+        }
+    }
+
+    /// The variant whose stored string is `s`, if any.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::iter().find(|v| v.as_str() == s)
+    }
+}
 
 // Note: `search_doc` is a Postgres GENERATED ALWAYS column (tsvector,
 // see m20260301_000001_search_docs) and is intentionally omitted from
@@ -25,7 +78,8 @@ pub struct Model {
     pub file_path: String,
     pub file_size: i64,
     pub file_mtime: DateTimeWithTimeZone,
-    pub state: String,
+    /// See [`IssueState`].
+    pub state: IssueState,
     pub content_hash: String,
 
     #[sea_orm(nullable)]
@@ -280,3 +334,23 @@ impl Related<super::series::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enum_contract::assert_exact_strings;
+
+    #[test]
+    fn state_round_trips_exact_db_strings() {
+        assert_exact_strings(
+            &[
+                (IssueState::Active, "active"),
+                (IssueState::Encrypted, "encrypted"),
+                (IssueState::Malformed, "malformed"),
+            ],
+            IssueState::as_str,
+            IssueState::parse,
+            &["Active", "removed", "deleted", "unreadable", ""],
+        );
+    }
+}

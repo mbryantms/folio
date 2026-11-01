@@ -277,7 +277,7 @@ async fn insert_issue(
         file_path: Set(format!("/tmp/{slug}/{sort_number}.cbz")),
         file_size: Set(1),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(issue_id.into()),
         title: Set(Some(format!("Issue {sort_number}"))),
         sort_number: Set(Some(sort_number)),
@@ -357,7 +357,6 @@ async fn soft_delete_issue(app: &TestApp, issue_id: &str) {
     let now = Utc::now().fixed_offset();
     entity::issue::ActiveModel {
         id: Unchanged(issue_id.into()),
-        state: Set("removed".into()),
         removed_at: Set(Some(now)),
         ..Default::default()
     }

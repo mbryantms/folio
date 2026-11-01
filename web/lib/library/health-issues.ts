@@ -5,9 +5,13 @@
  *
  * Payloads serialize as adjacently-tagged `{kind, data: {…}}` (see
  * `crates/server/src/library/health.rs::IssueKind`); the synthesized
- * metadata-drift row is flat. `kind` on the wire is a plain string, so
- * unknown kinds fall through to a generic summary.
+ * metadata-drift row is flat. `kind` is the closed `HealthIssueKind` set;
+ * `KIND_COPY` must label every member (the `satisfies` check). The helpers
+ * still take a plain string (WS events, URL state), so a kind they do not
+ * know falls through to a generic summary.
  */
+
+import type { HealthIssueKind } from "@/lib/api/types";
 
 /** Unwrap a health payload to its field object (nested or flat). */
 export function healthPayloadFields(p: unknown): Record<string, unknown> {
@@ -90,7 +94,7 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Two files claim the same provider id; only one can hold it. Remove the extra copy, or fix the id on the file that is tagged wrong, then rescan.",
   },
   MetadataDriftFromXml: { label: "Edits not written to XML" },
-};
+} satisfies Record<HealthIssueKind, KindCopy>;
 
 /** Human title for a health kind (falls back to the raw kind). */
 export function healthKindLabel(kind: string): string {

@@ -235,7 +235,7 @@ async fn eligible(state: &AppState, ids: &[Uuid]) -> Result<HashSet<Uuid>, sea_o
         .column(issue::Column::SeriesId)
         .distinct()
         .filter(issue::Column::SeriesId.is_in(live.iter().copied()))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .into_tuple::<Uuid>()
         .all(&state.db)

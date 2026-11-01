@@ -163,7 +163,7 @@ pub(crate) async fn load_for_view(
     if !series_ids.is_empty() {
         let rows = issue::Entity::find()
             .filter(issue::Column::SeriesId.is_in(series_ids.clone()))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .order_by_asc(Expr::cust("special_type IS NOT NULL"))
             .order_by_asc(Expr::cust("sort_number IS NULL"))
@@ -187,7 +187,7 @@ pub(crate) async fn load_for_view(
     if !issue_ids.is_empty() {
         let rows = issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids.clone()))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)

@@ -625,7 +625,7 @@ pub async fn force_recreate(
 
     let issue_ids: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(lib_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .select_only()
         .column(issue::Column::Id)
         .into_tuple::<String>()
@@ -780,7 +780,7 @@ pub async fn regenerate_series_cover(
     let issue_ids: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(series_row.library_id))
         .filter(issue::Column::SeriesId.eq(series_row.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .select_only()
         .column(issue::Column::Id)
         .into_tuple::<String>()
@@ -945,7 +945,7 @@ pub async fn force_recreate_series_page_map(
     let issue_ids: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(series_row.library_id))
         .filter(issue::Column::SeriesId.eq(series_row.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .select_only()
         .column(issue::Column::Id)
         .into_tuple::<String>()
@@ -1200,7 +1200,7 @@ async fn clear_thumb_state_for_library(
         })
         .filter(issue::Column::LibraryId.eq(lib_id));
     if active_only {
-        update = update.filter(issue::Column::State.eq("active"));
+        update = update.filter(issue::Column::State.eq(issue::IssueState::Active));
     }
     update.exec(&app.db).await.map(|res| res.rows_affected)
 }
@@ -1254,7 +1254,7 @@ async fn page_thumb_status_counts(
         .column(issue::Column::Id)
         .column(issue::Column::PageCount)
         .filter(issue::Column::LibraryId.eq(lib_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .into_model::<PageThumbIssueRow>()
         .all(&app.db)
         .await?;
@@ -1363,7 +1363,7 @@ async fn clear_thumb_state_for_series(
             ..Default::default()
         })
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .exec(&app.db)
         .await
         .map(|res| res.rows_affected)

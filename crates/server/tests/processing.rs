@@ -412,11 +412,9 @@ async fn page_count_reflects_archive_not_comicinfo() {
         .expect("issue row");
     assert_eq!(issue.page_count, Some(2));
 
-    let health = HealthEntity::find().all(&state.db).await.unwrap();
-    assert!(
-        health.iter().all(|i| i.kind != "PageCountMismatch"),
-        "PageCountMismatch is retired and should not be emitted: {health:?}",
-    );
+    // `PageCountMismatch` is retired: `HealthIssueKind` has no such
+    // variant, so a stored row of that kind would fail this load.
+    HealthEntity::find().all(&state.db).await.unwrap();
 }
 
 /// Regression: rescanning a library where nothing on disk has changed must
@@ -1595,7 +1593,10 @@ async fn corrupt_archive_surfaces_malformed_archive_not_comicinfo() {
         !kinds.contains(&"MalformedComicInfo"),
         "a corrupt container must not be blamed on ComicInfo: {kinds:?}"
     );
-    let row = rows.iter().find(|r| r.kind == "MalformedArchive").unwrap();
+    let row = rows
+        .iter()
+        .find(|r| r.kind == entity::library_health_issue::HealthIssueKind::MalformedArchive)
+        .unwrap();
     assert_eq!(row.severity, "error");
     assert!(
         row.payload.to_string().contains("Corrupt 001"),
@@ -1645,14 +1646,14 @@ async fn encrypted_archive_raises_health_finding_and_scan_stat() {
         .await
         .unwrap()
         .expect("the encrypted file still ingests as an issue");
-    assert_eq!(issue.state, "encrypted");
+    assert_eq!(issue.state, entity::issue::IssueState::Encrypted);
     assert_eq!(issue.page_count.unwrap_or(0), 0);
 
     let rows = HealthEntity::find().all(&state.db).await.unwrap();
     let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
     let row = rows
         .iter()
-        .find(|r| r.kind == "EncryptedArchive")
+        .find(|r| r.kind == entity::library_health_issue::HealthIssueKind::EncryptedArchive)
         .unwrap_or_else(|| panic!("expected an EncryptedArchive row: {kinds:?}"));
     assert_eq!(row.severity, "error");
     assert!(row.resolved_at.is_none());
@@ -1722,7 +1723,7 @@ async fn encrypted_archive_finding_resolves_when_file_becomes_readable() {
     assert_eq!(stats.files_updated, 1, "{stats:?}");
 
     let issue = IssueEntity::find().one(&state.db).await.unwrap().unwrap();
-    assert_eq!(issue.state, "active");
+    assert_eq!(issue.state, entity::issue::IssueState::Active);
     assert_eq!(issue.page_count, Some(3));
 
     let resolved = HealthEntity::find_by_id(open[0].id)
@@ -1778,7 +1779,7 @@ async fn malformed_comicinfo_scan_succeeds_and_surfaces_health_row() {
     let rows = HealthEntity::find().all(&state.db).await.unwrap();
     let malformed: Vec<_> = rows
         .iter()
-        .filter(|r| r.kind == "MalformedComicInfo")
+        .filter(|r| r.kind == entity::library_health_issue::HealthIssueKind::MalformedComicInfo)
         .collect();
     assert_eq!(
         malformed.len(),
@@ -1822,7 +1823,10 @@ async fn imageless_archive_surfaces_no_pages_health_row() {
         .expect("scan succeeds");
 
     let rows = HealthEntity::find().all(&state.db).await.unwrap();
-    let no_pages: Vec<_> = rows.iter().filter(|r| r.kind == "NoPages").collect();
+    let no_pages: Vec<_> = rows
+        .iter()
+        .filter(|r| r.kind == entity::library_health_issue::HealthIssueKind::NoPages)
+        .collect();
     assert_eq!(no_pages.len(), 1, "one NoPages row expected: {rows:?}");
     assert_eq!(no_pages[0].severity, "warning");
     assert!(

@@ -1295,7 +1295,7 @@ pub async fn scan_preview(
 
     let thumbnail_backlog = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(row.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(
             Condition::any()
                 .add(issue::Column::ThumbnailsGeneratedAt.is_null())

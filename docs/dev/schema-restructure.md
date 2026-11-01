@@ -541,25 +541,40 @@ junction still carries a provider credit that has no ComicInfo column
 drop those credits or fail the issue page on load. The scanner itself
 only writes the eight (`scanner::metadata_rollup::CreditRole`).
 
-**E4 backlog** — the remaining stringly `role` / `state` / `kind`
-entity fields after E4 batch 3, left for batch 4:
+**E4 batch 4** converted the last `role` / `state` / `kind` entity
+fields:
 
-| Column | Entity field |
-|---|---|
-| `issues.state` | `crates/entity/src/issue.rs:28` |
-| `library_health_issues.kind` | `crates/entity/src/library_health_issue.rs:26` |
+- `issues.state` (`IssueState`: `active | encrypted | malformed`, the three
+  values `scanner::process` writes). Soft deletion is `removed_at`, not a
+  state; tests that seeded `state = 'removed'` / `'missing'` now seed a real
+  non-active state. `IssueSummaryView`, `IssueDetailView`,
+  `DuplicateIssueView` and the `IssueCardRow` projection carry the enum.
+  Raw SQL keeps `state = 'active'`.
+- `library_health_issues.kind` (`HealthIssueKind`: the PascalCase variant
+  names `IssueKind::kind()` returns, plus `MetadataDriftFromXml`, which
+  is never stored and only names the per-request synth row). The retired
+  `PageCountMismatch` (deleted by `m20261210_000002`) and the never-emitted
+  `AmbiguousVolume` are not variants. The `?kind=` filter on both health
+  lists now answers 422 `validation.kind` for an unknown kind instead of
+  an empty page.
+- `series_relationship_suggestion.accepted_kind` (`Option<RelationshipKind>`;
+  the `accepted_kind_chk` set is the full kind list) and the suggestion
+  engine's `KeyRow.kind`.
+- The raw-SQL marker-kind spellings in `api::bookmarks_feed` (`FeedKind`
+  maps onto `MarkerKind`; the counts fold matches the enum exhaustively)
+  and the saved-view `Source::MarkerExists(MarkerKind)`.
 
-Also left from batch 2: `series_relationship_suggestion.accepted_kind`
-(nullable, same set as `RelationshipKind`) and the suggestion engine's raw
-`KeyRow.kind` string; from batch 3, the raw-SQL marker-kind readers named
-above.
+Left as strings on purpose: the reading-log `marker_kind` payload (a
+raw-SQL union over several event types), the WS `ScanEvent::HealthIssue`
+`kind`, and `library_health_issues.severity` (a `status`-style column, see
+below).
 
 Beyond `role` / `state` / `kind`, the same shape fits the `status`,
 `scope`, `source`, `set_by` and `severity` discriminators
 (`metadata_run.rs:15,31`, `metadata_batch.rs:21,27`,
 `metadata_match_outcome.rs:24`, `metadata_run_candidate.rs:24`,
 `external_id.rs:29,37`, `field_provenance.rs:34`,
-`library_event.rs:37,53`, `library_health_issue.rs:29`,
+`library_event.rs:37,53`, `library_health_issue.rs:157`,
 `series.rs:33`, `series_external_relationship.rs:30,42`,
 `series_provider_range.rs:23,48`, `series_relationship.rs:550`,
 `series_relationship_suggestion.rs:39,46`, `saved_view_group.rs:17`,

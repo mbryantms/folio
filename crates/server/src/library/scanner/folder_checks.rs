@@ -240,7 +240,7 @@ pub async fn check_series_folder(
             "ci_series",
         )
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .into_tuple()
         .all(db)

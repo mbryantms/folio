@@ -251,7 +251,7 @@ async fn seed_issue(app: &TestApp, file_path: &str) -> (Uuid, String) {
         file_path: Set(file_path.to_string()),
         file_size: Set(0),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(issue_id.clone()),
         title: Set(Some("Issue".into())),
         sort_number: Set(Some(1.0)),

@@ -390,7 +390,7 @@ pub(crate) async fn load_local_issues<C: ConnectionTrait>(
 ) -> Result<Vec<LocalIssue>, sea_orm::DbErr> {
     let rows: Vec<(Option<String>, Option<i32>)> = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::SpecialType.is_null())
         .order_by_asc(issue::Column::SortNumber)
         .select_only()

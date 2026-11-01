@@ -301,7 +301,7 @@ async fn seed_world(db: &DatabaseConnection, tmp: &std::path::Path, reader: Uuid
     )
     .await;
     IssueSeed::new(lib_a, saga, &root_a.join("saga-4.cbz"), b"saga-4", 4.0)
-        .with_state("malformed")
+        .with_state(entity::issue::IssueState::Malformed)
         .insert(db)
         .await;
     seed_progress_finished(db, reader, &saga_1).await;

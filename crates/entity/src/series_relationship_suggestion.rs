@@ -45,8 +45,10 @@ pub struct Model {
     /// longer produced by the engine; WP-7.3, `m20270503`).
     pub status: String,
     /// Kind actually created when accepted with an override (`modified`).
+    /// Any [`RelationshipKind`] (the `accepted_kind_chk` set is the full
+    /// one, not only the canonical half).
     #[sea_orm(nullable)]
-    pub accepted_kind: Option<String>,
+    pub accepted_kind: Option<RelationshipKind>,
     /// Proposed scope (WP-7.6), read from the `from` side like
     /// `series_relationship`: issue ranges, `coverage` (collects /
     /// reprints), and `qualifier` (continuation or tie-in role).

@@ -242,7 +242,7 @@ fn writeback_on(lib: &library::Model) -> bool {
 fn live_issues(library_id: Uuid) -> sea_orm::Select<issue::Entity> {
     issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
 }
 

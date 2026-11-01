@@ -799,9 +799,9 @@ async fn apply_series_with_writeback_enabled_composes_per_issue_and_triggers_one
 
 #[tokio::test]
 async fn apply_series_with_writeback_skips_removed_issues() {
-    // Only `state IN ('ok','recovered')` rows are eligible. Removed +
-    // malformed issues are skipped entirely (no entry in skip_reasons
-    // either — they aren't *attempted*).
+    // Only `state = 'active'` rows are eligible. A malformed
+    // issue is skipped entirely (no entry in skip_reasons
+    // either — it isn't *attempted*).
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let dir = tempdir().unwrap();
     let lib_id = LibrarySeed::new(dir.path())
@@ -820,7 +820,7 @@ async fn apply_series_with_writeback_skips_removed_issues() {
         .await;
     let cbz_removed = dir.path().join("saga-002.cbz");
     IssueSeed::new(lib_id, series_id, &cbz_removed, &removed_payload, 2.0)
-        .with_state("removed")
+        .with_state(entity::issue::IssueState::Malformed)
         .insert(&app.state().db)
         .await;
 

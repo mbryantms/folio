@@ -157,7 +157,7 @@ pub async fn enqueue_series_rewrite(
     }
     let issues = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_row.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .all(&state.db)
         .await?;
@@ -211,7 +211,10 @@ pub async fn enqueue_reemit_issue(
     let Some(row) = issue::Entity::find_by_id(issue_id).one(&state.db).await? else {
         return Ok(false);
     };
-    if row.series_id != series.row.id || row.state != "active" || row.removed_at.is_some() {
+    if row.series_id != series.row.id
+        || row.state != entity::issue::IssueState::Active
+        || row.removed_at.is_some()
+    {
         return Ok(false);
     }
     push_from_db(state, &row, series, actor, true, Some(tag)).await?;

@@ -427,7 +427,7 @@ async fn series_counts(ctx: &Ctx, ids: Vec<Uuid>) -> Result<HashMap<Uuid, (i64, 
         return Ok(HashMap::new());
     }
     let rows = access::visible_issues_select(&ctx.acl)
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::SeriesId.is_in(ids))
         .select_only()
         .column(issue::Column::SeriesId)
@@ -475,7 +475,8 @@ struct IssueSeriesRow {
 }
 
 async fn issue_chunk(ctx: &Ctx, after: Option<String>) -> Result<Chunk, DbErr> {
-    let mut sel = access::visible_issues_select(&ctx.acl).filter(issue::Column::State.eq("active"));
+    let mut sel = access::visible_issues_select(&ctx.acl)
+        .filter(issue::Column::State.eq(issue::IssueState::Active));
     if let Some(lib) = ctx.library_id {
         sel = sel.filter(issue::Column::LibraryId.eq(lib));
     }

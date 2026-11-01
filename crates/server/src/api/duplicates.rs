@@ -211,7 +211,7 @@ pub struct DuplicateIssueView {
     pub file_path: String,
     pub file_size: i64,
     pub page_count: Option<i32>,
-    pub state: String,
+    pub state: entity::issue::IssueState,
     /// `/issues/{id}/pages/0/thumb` for active issues; `null` otherwise.
     pub cover_url: Option<String>,
     /// The admin's decision so far; `null` when undecided.
@@ -809,7 +809,7 @@ struct IssueRow {
     file_path: String,
     file_size: i64,
     page_count: Option<i32>,
-    state: String,
+    state: entity::issue::IssueState,
     decision: Option<String>,
 }
 
@@ -901,8 +901,8 @@ async fn hydrate(
                     file_path: r.file_path.clone(),
                     file_size: r.file_size,
                     page_count: r.page_count,
-                    state: r.state.clone(),
-                    cover_url: (r.state == "active")
+                    state: r.state,
+                    cover_url: (r.state == entity::issue::IssueState::Active)
                         .then(|| format!("/issues/{}/pages/0/thumb", r.id)),
                     decision: r.decision.as_deref().and_then(DuplicateDecision::parse),
                 })

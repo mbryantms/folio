@@ -243,7 +243,7 @@ async fn seed_one(app: &TestApp, name: &str) -> (Uuid, Uuid, String) {
         file_path: Set(format!("/tmp/{name}/issue.cbz")),
         file_size: Set(1),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(issue_id.clone()),
         title: Set(None),
         sort_number: Set(Some(1.0)),

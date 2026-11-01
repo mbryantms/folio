@@ -11,6 +11,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::{DateTime, FixedOffset};
+use entity::library_health_issue::HealthIssueKind;
 use entity::{library, library_health_issue};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, FromQueryResult, PaginatorTrait,
@@ -108,7 +109,7 @@ pub async fn backup_storage(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HealthIssueView {
     pub id: String,
-    pub kind: String,
+    pub kind: HealthIssueKind,
     pub severity: String,
     pub fingerprint: String,
     pub payload: serde_json::Value,
@@ -171,7 +172,7 @@ impl StatusFilter {
 /// per-kind filter pills).
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct HealthIssueKindFacet {
-    pub kind: String,
+    pub kind: HealthIssueKind,
     pub count: u64,
 }
 
@@ -206,7 +207,8 @@ pub struct ListQuery {
     /// `error` | `warning` | `info` | `all`. Unknown values 422.
     #[serde(default)]
     pub severity: Option<String>,
-    /// Restrict to one `IssueKind`. Omit / `all` for every kind.
+    /// Restrict to one `HealthIssueKind`. Omit / `all` for every kind;
+    /// unknown values 422.
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
@@ -273,11 +275,10 @@ pub async fn list(
             );
         }
     };
-    let kind = q
-        .kind
-        .as_deref()
-        .filter(|s| !s.is_empty() && *s != "all")
-        .map(str::to_owned);
+    let kind = match parse_kind_filter(q.kind.as_deref()) {
+        Ok(k) => k,
+        Err(resp) => return resp,
+    };
 
     let cursor: Option<(DateTime<FixedOffset>, Uuid)> = match q.cursor.as_deref() {
         None => None,
@@ -301,7 +302,7 @@ pub async fn list(
     if let Some(sev) = severity.as_deref() {
         select = select.filter(library_health_issue::Column::Severity.eq(sev));
     }
-    if let Some(k) = kind.as_deref() {
+    if let Some(k) = kind {
         select = select.filter(library_health_issue::Column::Kind.eq(k));
     }
     if let Some((c_at, c_id)) = cursor {
@@ -362,7 +363,7 @@ pub async fn list(
     if first_page
         && lib.metadata_writeback_enabled
         && severity.as_deref().is_none_or(|s| s == "info")
-        && kind.as_deref().is_none_or(|k| k == "MetadataDriftFromXml")
+        && kind.is_none_or(|k| k == HealthIssueKind::MetadataDriftFromXml)
     {
         match crate::metadata::drift::count_drift_in_library(&app.db, uuid).await {
             Ok(summary) if !summary.is_empty() => {
@@ -375,7 +376,7 @@ pub async fn list(
                 if let Some(c) = counts.as_mut() {
                     c.open += 1;
                     c.total += 1;
-                    bump_kind_facet(&mut c.kinds, "MetadataDriftFromXml");
+                    bump_kind_facet(&mut c.kinds, HealthIssueKind::MetadataDriftFromXml);
                 }
             }
             Ok(_) => {}
@@ -445,20 +446,35 @@ async fn compute_counts(
 
 #[derive(FromQueryResult)]
 struct KindCountRow {
-    kind: String,
+    kind: HealthIssueKind,
     count: i64,
 }
 
 /// Add 1 to `kind`'s facet (creating it if absent) — used to fold the synthetic
 /// drift row into the first-page kind counts.
-fn bump_kind_facet(kinds: &mut Vec<HealthIssueKindFacet>, kind: &str) {
+fn bump_kind_facet(kinds: &mut Vec<HealthIssueKindFacet>, kind: HealthIssueKind) {
     if let Some(f) = kinds.iter_mut().find(|f| f.kind == kind) {
         f.count += 1;
     } else {
-        kinds.push(HealthIssueKindFacet {
-            kind: kind.to_owned(),
-            count: 1,
-        });
+        kinds.push(HealthIssueKindFacet { kind, count: 1 });
+    }
+}
+
+/// The `?kind=` filter: omitted, empty or `all` means every kind. An
+/// unknown kind is a 422 (like `severity`) rather than a silently empty
+/// page.
+fn parse_kind_filter(
+    raw: Option<&str>,
+) -> Result<Option<HealthIssueKind>, axum::response::Response> {
+    match raw {
+        None | Some("") | Some("all") => Ok(None),
+        Some(s) => HealthIssueKind::parse(s).map(Some).ok_or_else(|| {
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.kind",
+                "kind must be a health issue kind",
+            )
+        }),
     }
 }
 
@@ -475,7 +491,7 @@ fn synth_metadata_drift_row(summary: &crate::metadata::drift::DriftSummary) -> H
     let now = chrono::Utc::now().fixed_offset().to_rfc3339();
     HealthIssueView {
         id: SYNTH_METADATA_DRIFT_ID.to_owned(),
-        kind: "MetadataDriftFromXml".to_owned(),
+        kind: HealthIssueKind::MetadataDriftFromXml,
         severity: "info".to_owned(),
         fingerprint: SYNTH_METADATA_DRIFT_ID.to_owned(),
         payload: serde_json::json!({
@@ -511,7 +527,8 @@ pub struct AdminListQuery {
     /// Restrict to one library (UUID). Omit / `all` for cross-library.
     #[serde(default)]
     pub library_id: Option<String>,
-    /// Restrict to one `IssueKind` variant (e.g. `UnreadableArchive`).
+    /// Restrict to one `HealthIssueKind` (e.g. `UnreadableArchive`). Omit /
+    /// `all` for every kind; unknown values 422.
     #[serde(default)]
     pub kind: Option<String>,
     /// `error` | `warning` | `info`. Unknown values 422.
@@ -568,6 +585,11 @@ pub async fn admin_list(
         }
     };
 
+    let kind_filter = match parse_kind_filter(q.kind.as_deref()) {
+        Ok(k) => k,
+        Err(resp) => return resp,
+    };
+
     let library_filter = match q.library_id.as_deref() {
         None | Some("") | Some("all") => None,
         Some(raw) => match Uuid::parse_str(raw) {
@@ -594,7 +616,7 @@ pub async fn admin_list(
     if let Some(lib_id) = library_filter {
         select = select.filter(library_health_issue::Column::LibraryId.eq(lib_id));
     }
-    if let Some(kind) = q.kind.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(kind) = kind_filter {
         select = select.filter(library_health_issue::Column::Kind.eq(kind));
     }
     if let Some(sev) = severity_filter.as_deref() {
@@ -719,7 +741,7 @@ pub async fn dismiss(
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
 
-    let kind = row.kind.clone();
+    let kind = row.kind;
     let mut am: library_health_issue::ActiveModel = row.into();
     am.dismissed_at = Set(Some(chrono::Utc::now().fixed_offset()));
     if let Err(e) = am.update(&app.db).await {
@@ -778,7 +800,7 @@ pub async fn undismiss(
     // Idempotent: un-dismissing a row that was never dismissed is a
     // no-op 204 rather than an error — the admin UI's pill state can
     // lag the server after a concurrent edit.
-    let kind = row.kind.clone();
+    let kind = row.kind;
     let mut am: library_health_issue::ActiveModel = row.into();
     am.dismissed_at = Set(None);
     if let Err(e) = am.update(&app.db).await {

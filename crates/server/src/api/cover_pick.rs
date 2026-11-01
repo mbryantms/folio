@@ -524,7 +524,7 @@ pub async fn set_series_cover(
     if let Some(issue_id) = req.issue_id.as_deref() {
         let member = issue::Entity::find_by_id(issue_id)
             .filter(issue::Column::SeriesId.eq(series_row.id))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .select_only()
             .column(issue::Column::Id)
@@ -638,7 +638,7 @@ pub(crate) async fn user_cover_picks<C: ConnectionTrait>(
     }
     let live = issue::Entity::find()
         .filter(issue::Column::Id.is_in(wanted.keys().cloned().collect::<Vec<_>>()))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::Id)

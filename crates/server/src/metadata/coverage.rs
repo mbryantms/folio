@@ -718,7 +718,7 @@ pub async fn load_local_with_specials<C: ConnectionTrait>(
     type Row = (Option<String>, Option<i32>, Option<i32>, Option<String>);
     let rows: Vec<Row> = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .order_by_asc(issue::Column::SortNumber)
         .select_only()
         .column(issue::Column::NumberRaw)
@@ -3034,7 +3034,7 @@ async fn write_issue_ids<C: ConnectionTrait>(
 ) -> Result<(u32, u32), sea_orm::DbErr> {
     let rows: Vec<(String, Option<String>)> = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(issue::Column::SpecialType.is_null())
         .order_by_asc(issue::Column::SortNumber)

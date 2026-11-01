@@ -331,7 +331,7 @@ async fn compute_totals(app: &AppState) -> Result<TotalsBlock, sea_orm::DbErr> {
     let libraries = library::Entity::find().count(&app.db).await? as i64;
     let series = series::Entity::find().count(&app.db).await? as i64;
     let issues = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .count(&app.db)
         .await? as i64;

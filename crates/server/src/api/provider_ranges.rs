@@ -196,7 +196,7 @@ pub async fn coverage_series(
     // issue rows would drag the large `comic_info_raw` / `pages` JSON.
     let issue_numbers: Vec<String> = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(s.id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .order_by_asc(issue::Column::SortNumber)
         .select_only()
         .column(issue::Column::NumberRaw)

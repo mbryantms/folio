@@ -2012,7 +2012,7 @@ mod tests {
             file_path: "/tmp/fixture.cbz".into(),
             file_size: 1,
             file_mtime: now,
-            state: "active".into(),
+            state: entity::issue::IssueState::Active,
             content_hash: "abc".into(),
             title: Some(title.to_owned()),
             sort_number: Some(1.0),

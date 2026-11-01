@@ -4,6 +4,7 @@ mod common;
 
 use chrono::Utc;
 use common::TestApp;
+use entity::issue::IssueState;
 use entity::{
     issue::{ActiveModel as IssueAM, Entity as IssueEntity},
     library,
@@ -14,7 +15,8 @@ use server::library::thumbnails;
 use std::path::Path;
 use uuid::Uuid;
 
-async fn seed(app: &TestApp, with_thumbs_for_state: &str) -> String {
+/// Seed an issue in `state`; any non-`active` state is also soft-removed.
+async fn seed(app: &TestApp, state: IssueState) -> String {
     let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
     let lib_id = Uuid::now_v7();
     let now = Utc::now().fixed_offset();
@@ -118,7 +120,7 @@ async fn seed(app: &TestApp, with_thumbs_for_state: &str) -> String {
         file_path: Set(format!("{root}/x.cbz")),
         file_size: Set(1),
         file_mtime: Set(now),
-        state: Set(with_thumbs_for_state.to_owned()),
+        state: Set(state),
         content_hash: Set(id.clone()),
         title: Set(None),
         sort_number: Set(Some(1.0)),
@@ -169,7 +171,7 @@ async fn seed(app: &TestApp, with_thumbs_for_state: &str) -> String {
         last_metadata_sync_at: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
-        removed_at: Set(if with_thumbs_for_state == "active" {
+        removed_at: Set(if state == IssueState::Active {
             None
         } else {
             Some(now)
@@ -212,7 +214,7 @@ fn put_fake_thumbs(data_dir: &Path, issue_id: &str) {
 #[tokio::test]
 async fn wipe_issue_thumbs_removes_cover_and_strip_dir() {
     let app = TestApp::spawn().await;
-    let id = seed(&app, "active").await;
+    let id = seed(&app, IssueState::Active).await;
     put_fake_thumbs(&app.state().cfg().data_path, &id);
 
     thumbnails::wipe_issue_thumbs(&app.state().cfg().data_path, &id);
@@ -230,9 +232,9 @@ async fn wipe_issue_thumbs_removes_cover_and_strip_dir() {
 #[tokio::test]
 async fn orphan_sweep_drops_artifacts_for_removed_issues() {
     let app = TestApp::spawn().await;
-    // Two issues: one active, one in `removed` state.
-    let active_id = seed(&app, "active").await;
-    let removed_id = seed(&app, "removed").await;
+    // Two issues: one active, one malformed + soft-removed.
+    let active_id = seed(&app, IssueState::Active).await;
+    let removed_id = seed(&app, IssueState::Malformed).await;
     put_fake_thumbs(&app.state().cfg().data_path, &active_id);
     put_fake_thumbs(&app.state().cfg().data_path, &removed_id);
 
@@ -280,8 +282,8 @@ async fn orphan_sweep_no_op_when_thumbs_dir_missing() {
 #[tokio::test]
 async fn list_issues_on_disk_finds_both_layouts() {
     let app = TestApp::spawn().await;
-    let id1 = seed(&app, "active").await;
-    let id2 = seed(&app, "active").await;
+    let id1 = seed(&app, IssueState::Active).await;
+    let id2 = seed(&app, IssueState::Active).await;
     put_fake_thumbs(&app.state().cfg().data_path, &id1);
     // Only the strip dir exists for id2 — exercise that case.
     let strip = thumbnails::strip_path(
@@ -321,8 +323,8 @@ fn put_fake_variant_cover(data_dir: &Path, issue_id: &str) -> std::path::PathBuf
 #[tokio::test]
 async fn orphan_sweep_preserves_variant_covers_for_active_issue() {
     let app = TestApp::spawn().await;
-    let active_id = seed(&app, "active").await;
-    let removed_id = seed(&app, "removed").await;
+    let active_id = seed(&app, IssueState::Active).await;
+    let removed_id = seed(&app, IssueState::Malformed).await;
     let active_cover = put_fake_variant_cover(&app.state().cfg().data_path, &active_id);
     let removed_cover = put_fake_variant_cover(&app.state().cfg().data_path, &removed_id);
 
