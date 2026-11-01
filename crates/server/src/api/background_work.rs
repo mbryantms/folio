@@ -178,14 +178,10 @@ pub struct TaskWorkView {
 }
 
 /// A library-wide sidecar re-emit run ([`crate::jobs::sidecar_reemit`]).
+/// A stalled run (`run.stalled`) is excluded from `busy`.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SidecarReemitWorkView {
     pub library_name: String,
-    /// Live (`running` / `draining`) but no tick is queued for it, so
-    /// nothing will advance it — a dead-lettered tick or a cleared queue.
-    /// Starting a new run for the library supersedes it. Excluded from
-    /// `busy`.
-    pub stalled: bool,
     pub run: super::sidecar_reemit::SidecarReemitRunView,
 }
 
@@ -398,7 +394,6 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         }
     }
 
-    let reemit_ticks_live = outstanding("sidecar_reemit") > 0;
     let day_ago = chrono::Utc::now() - chrono::Duration::hours(24);
     let library_names: HashMap<Uuid, String> =
         libraries.iter().map(|l| (l.id, l.name.clone())).collect();
@@ -418,7 +413,6 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
                     .get(&r.library_id)
                     .cloned()
                     .unwrap_or_default(),
-                stalled: r.is_live() && !reemit_ticks_live,
                 run: r.into(),
             })
             .collect();
@@ -530,7 +524,7 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         || !tasks.is_empty()
         || sidecar_reemits
             .iter()
-            .any(|r| !r.stalled && matches!(r.run.status.as_str(), "running" | "draining"));
+            .any(|r| !r.run.stalled && matches!(r.run.status.as_str(), "running" | "draining"));
 
     Ok(BackgroundWorkView {
         generated_at: chrono::Utc::now().to_rfc3339(),

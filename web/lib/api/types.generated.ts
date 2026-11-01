@@ -14556,6 +14556,12 @@ export interface components {
              *     unsupported formats): skipped, never queued.
              */
             skipped_refused: number;
+            /**
+             * @description Live, but no tick has run for 15 minutes (a dead-lettered tick or a
+             *     cleared queue): nothing will advance it, and starting a new run
+             *     supersedes it.
+             */
+            stalled: boolean;
             started_at: string;
             /**
              * @description `running` (queueing rewrites) | `draining` (all queued, waiting for
@@ -14572,17 +14578,13 @@ export interface components {
         SidecarReemitStatusView: {
             run?: components["schemas"]["SidecarReemitRunView"] | null;
         };
-        /** @description A library-wide sidecar re-emit run ([`crate::jobs::sidecar_reemit`]). */
+        /**
+         * @description A library-wide sidecar re-emit run ([`crate::jobs::sidecar_reemit`]).
+         *     A stalled run (`run.stalled`) is excluded from `busy`.
+         */
         SidecarReemitWorkView: {
             library_name: string;
             run: components["schemas"]["SidecarReemitRunView"];
-            /**
-             * @description Live (`running` / `draining`) but no tick is queued for it, so
-             *     nothing will advance it — a dead-lettered tick or a cleared queue.
-             *     Starting a new run for the library supersedes it. Excluded from
-             *     `busy`.
-             */
-            stalled: boolean;
         };
         /** @description One shared entity explaining a match. */
         SimilarReason: {

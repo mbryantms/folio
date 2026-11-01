@@ -630,7 +630,10 @@ reemit_in_progress` while the library already has a live run.
   week after the run ends): total, queued, rewritten, skipped (format),
   failed. It shows on `/admin/background-work` (“Metadata file rewrites”)
   and on the library's settings card. A restart resumes from the persisted
-  cursor.
+  cursor. Every report is matched to the queued issue, so an operator Retry
+  of a dead-lettered rewrite moves its count instead of adding one. A run
+  with no tick for 15 minutes reads as stalled; starting again supersedes
+  it.
 - **Stopping.** Turning either writeback flag off aborts the run at its next
   tick; the at most 32 rewrites already queued still finish (or refuse
   themselves when archive writeback is off). *Clear metadata queues* on

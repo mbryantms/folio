@@ -169,8 +169,8 @@ async fn scoped_scan_jobs(app: &TestApp) -> i64 {
     hlen(app, hash).await
 }
 
-/// Decode, run and drop every queued rewrite job; returns them.
-async fn run_queued_rewrites(app: &TestApp) -> Vec<RewriteIssueSidecarsJob> {
+/// Decode and drop every queued rewrite job, without running them.
+async fn take_queued_rewrites(app: &TestApp) -> Vec<RewriteIssueSidecarsJob> {
     let data_hash = app
         .state()
         .jobs
@@ -193,14 +193,24 @@ async fn run_queued_rewrites(app: &TestApp) -> Vec<RewriteIssueSidecarsJob> {
         .map(|blob| serde_json::from_str(blob).expect("job args"))
         .collect();
     jobs.sort_by(|a, b| a.issue_id.cmp(&b.issue_id));
+    jobs
+}
+
+async fn run_rewrite(app: &TestApp, job: &RewriteIssueSidecarsJob) {
+    server::jobs::rewrite_sidecars::handle(
+        job.clone(),
+        apalis::prelude::Data::new(app.state()),
+        apalis::prelude::Attempt::new_with_value(1),
+    )
+    .await
+    .expect("rewrite job handle");
+}
+
+/// Decode, run and drop every queued rewrite job; returns them.
+async fn run_queued_rewrites(app: &TestApp) -> Vec<RewriteIssueSidecarsJob> {
+    let jobs = take_queued_rewrites(app).await;
     for job in &jobs {
-        server::jobs::rewrite_sidecars::handle(
-            job.clone(),
-            apalis::prelude::Data::new(app.state()),
-            apalis::prelude::Attempt::new_with_value(1),
-        )
-        .await
-        .expect("rewrite job handle");
+        run_rewrite(app, job).await;
     }
     jobs
 }
@@ -517,4 +527,131 @@ async fn turning_writeback_off_aborts_the_run() {
             assert!(ci.contains("<Title>Stale</Title>"), "{ci}");
         }
     }
+}
+
+/// An operator Retry of a dead-lettered rewrite reports a second time: the
+/// count moves from failed to rewritten instead of being counted twice, and
+/// the series still gets its rescan.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_second_report_for_the_same_issue_moves_the_count() {
+    use server::jobs::sidecar_reemit::{RewriteEnd, on_rewrite_finished};
+
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let dir = tempdir().unwrap();
+    let s = seed(&app, dir.path(), true, true, false).await;
+    let (status, body) = start(&app, &admin, s.lib).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let run_id: Uuid = body["run_id"].as_str().unwrap().parse().unwrap();
+
+    assert_eq!(
+        sidecar_reemit::tick(&app.state(), run_id).await.unwrap(),
+        TickOutcome::Wait,
+        "the whole library fits one tick; the run drains"
+    );
+    let jobs = take_queued_rewrites(&app).await;
+    assert_eq!(jobs.len(), 3);
+    // The first Saga rewrite gives up for good (its last attempt).
+    let saga = s.series[0].0;
+    let failed = jobs
+        .iter()
+        .find(|j| j.reemit.as_ref().unwrap().series_id == saga)
+        .unwrap()
+        .clone();
+    on_rewrite_finished(
+        &app.state(),
+        failed.reemit.as_ref().unwrap(),
+        &failed.issue_id,
+        RewriteEnd::Failed,
+    )
+    .await;
+    for job in jobs.iter().filter(|j| j.issue_id != failed.issue_id) {
+        run_rewrite(&app, job).await;
+    }
+    let run = sidecar_reemit::load_run(&app.state(), run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((run.rewritten, run.failed, run.outstanding), (2, 1, 0));
+    assert_eq!(scoped_scan_jobs(&app).await, 2, "both series rescanned");
+
+    // The run completes with the failure on record...
+    assert_eq!(
+        sidecar_reemit::tick(&app.state(), run_id).await.unwrap(),
+        TickOutcome::Done
+    );
+    // ...then the operator retries the dead job and it lands.
+    run_rewrite(&app, &failed).await;
+    let run = sidecar_reemit::load_run(&app.state(), run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "completed");
+    assert_eq!(
+        (run.rewritten, run.failed),
+        (3, 0),
+        "moved, not double counted"
+    );
+    // Running it once more changes nothing.
+    run_rewrite(&app, &failed).await;
+    let run = sidecar_reemit::load_run(&app.state(), run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!((run.rewritten, run.failed), (3, 0));
+    assert_eq!(library_scan_jobs(&app).await, 0);
+}
+
+/// A run whose tick chain died reads as stalled once its library claim
+/// lapses, and a new start supersedes it instead of answering 409 forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stalled_run_is_superseded_by_a_new_start() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let dir = tempdir().unwrap();
+    let s = seed(&app, dir.path(), true, true, false).await;
+    let (status, body) = start(&app, &admin, s.lib).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let old: Uuid = body["run_id"].as_str().unwrap().parse().unwrap();
+
+    // The claim lapses (no tick for ACTIVE_TTL_SECS).
+    let mut conn = app.state().jobs.redis.clone();
+    let _: i64 = redis::cmd("DEL")
+        .arg(format!("sidecar_reemit:active:{}", s.lib))
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let (status, body) = send(
+        &app,
+        &admin,
+        Method::GET,
+        &format!("/api/libraries/{}/sidecar-reemit", s.lib),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["run"]["stalled"], true, "{body}");
+
+    let (status, body) = start(&app, &admin, s.lib).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let new: Uuid = body["run_id"].as_str().unwrap().parse().unwrap();
+    assert_ne!(old, new);
+    let stale = sidecar_reemit::load_run(&app.state(), old)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stale.status, "aborted");
+    // A leftover tick of the old run stops instead of taking the claim back.
+    assert_eq!(
+        sidecar_reemit::tick(&app.state(), old).await.unwrap(),
+        TickOutcome::Done
+    );
+    let (_, body) = send(
+        &app,
+        &admin,
+        Method::GET,
+        &format!("/api/libraries/{}/sidecar-reemit", s.lib),
+    )
+    .await;
+    assert_eq!(body["run"]["run_id"], new.to_string());
+    assert_eq!(body["run"]["stalled"], false);
 }

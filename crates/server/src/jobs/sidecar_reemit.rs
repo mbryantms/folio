@@ -20,9 +20,9 @@
 //! one go would park tens of MB in Redis and put every interactive
 //! apply/edit behind the whole library; with the cap a user's edit waits
 //! behind at most [`MAX_OUTSTANDING`] rewrites on the two sidecar workers.
-//! A throttled or draining tick sleeps [`TICK_PAUSE`] before re-pushing
-//! itself; an unthrottled one re-pushes at once (the 500 ms worker poll
-//! paces it).
+//! A throttled or draining tick schedules its successor [`TICK_PAUSE`] out
+//! (apalis's delayed set, so the worker is free for other runs' ticks); an
+//! unthrottled one re-pushes at once (the 500 ms worker poll paces it).
 //!
 //! ## Rescans
 //!
@@ -32,16 +32,22 @@
 //! that series. Whoever drops the counter to zero (the last rewrite to
 //! finish, or the walk leaving the series) queues **one** series-scoped
 //! rescan, and only if at least one archive of that series was rewritten —
-//! the series-scope apply pattern, never an unscoped library scan.
+//! the series-scope apply pattern, never an unscoped library scan. A
+//! rewrite that lands after its run stopped counting it (a straggler after
+//! an abort, an operator Retry of a dead-lettered rewrite) queues its
+//! series rescan itself.
 //!
 //! ## State
 //!
 //! Run state lives in Redis next to the queue (`sidecar_reemit:run:<id>`),
 //! so a restart resumes from the persisted cursor (apalis re-enqueues the
-//! orphaned tick). Finished runs expire after [`FINISHED_RUN_TTL_SECS`].
-//! One run per library: `sidecar_reemit:active:<library_id>` names it while
-//! it runs (TTL refreshed every tick, so a chain that died frees the library
-//! after [`ACTIVE_TTL_SECS`]).
+//! orphaned tick). The rewrites a run is waiting on are a hash of issue id
+//! → series id, so every report is matched to one queued rewrite and a
+//! second report for the same issue only corrects the counts. Finished runs
+//! expire after [`FINISHED_RUN_TTL_SECS`]. One run per library:
+//! `sidecar_reemit:active:<library_id>` names it while it runs (TTL
+//! refreshed every tick, so a chain that died frees the library after
+//! [`ACTIVE_TTL_SECS`]; until then the run reads as stalled).
 //!
 //! Archives the sidecar path refuses (`sidecar_refusal`: CBR / CB7 without
 //! conversion, unknown formats) are skipped and counted, never queued.
@@ -51,9 +57,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use apalis::prelude::*;
+use apalis_redis::RedisStorage;
 use chrono::Utc;
 use entity::{issue, library, series};
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
@@ -68,15 +76,16 @@ use crate::state::AppState;
 pub const TICK_BATCH: i64 = 32;
 /// Most rewrites of one run queued or running at once.
 pub const MAX_OUTSTANDING: i64 = 32;
-/// Pause before a throttled or draining tick re-enqueues itself.
+/// Delay before a throttled or draining tick runs again.
 pub const TICK_PAUSE: Duration = Duration::from_secs(2);
 /// The library's active-run marker lives this long past the last tick.
 pub const ACTIVE_TTL_SECS: u64 = 15 * 60;
 /// How long a finished run stays readable (background work, library card).
 pub const FINISHED_RUN_TTL_SECS: i64 = 7 * 24 * 3600;
-/// Consecutive ticks that must see the rewrite queue empty while the run
-/// still counts outstanding rewrites before those are written off as lost.
-const LOST_AFTER_IDLE_TICKS: i64 = 2;
+/// How long the rewrite queue must stay empty, with no rewrite reporting
+/// back, while the run still waits on rewrites before those are written off
+/// as lost (cleared or dead-lettered without a report).
+const LOST_AFTER_MS: i64 = 10_000;
 
 pub mod status {
     pub const RUNNING: &str = "running";
@@ -114,17 +123,41 @@ pub enum RewriteEnd {
     Failed,
 }
 
+impl RewriteEnd {
+    /// The run-hash counter this outcome lands in.
+    fn field(self) -> &'static str {
+        match self {
+            Self::Rewritten => "rewritten",
+            Self::Refused => "refused",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 fn run_key(run: Uuid) -> String {
     format!("sidecar_reemit:run:{run}")
 }
+/// Issue id → series id of every rewrite the run is waiting on.
+fn queued_key(run: Uuid) -> String {
+    format!("sidecar_reemit:run:{run}:queued")
+}
+/// Issue id → counter field of every rewrite that reported back.
+fn reported_key(run: Uuid) -> String {
+    format!("sidecar_reemit:run:{run}:reported")
+}
+/// Series id → holds (queued rewrites + the walk's guard).
 fn pending_key(run: Uuid) -> String {
     format!("sidecar_reemit:run:{run}:pending")
 }
+/// Series with at least one rewritten archive and no rescan queued yet.
 fn rewrote_key(run: Uuid) -> String {
     format!("sidecar_reemit:run:{run}:rewrote")
 }
 fn active_key(library: Uuid) -> String {
     format!("sidecar_reemit:active:{library}")
+}
+fn latest_key(library: Uuid) -> String {
+    format!("sidecar_reemit:latest:{library}")
 }
 const RUNS_INDEX: &str = "sidecar_reemit:runs";
 
@@ -151,12 +184,16 @@ pub struct RunSnapshot {
     pub failed: i64,
     /// Rewrites queued or running right now.
     pub outstanding: i64,
+    /// Live, but the library claim no longer names it: no tick has run for
+    /// [`ACTIVE_TTL_SECS`] (dead-lettered tick or cleared queue). A new run
+    /// supersedes it.
+    pub stalled: bool,
     /// Why an aborted run stopped.
     pub note: Option<String>,
 }
 
 impl RunSnapshot {
-    fn from_hash(run_id: Uuid, h: &HashMap<String, String>) -> Option<Self> {
+    fn from_hash(run_id: Uuid, h: &HashMap<String, String>, outstanding: i64) -> Option<Self> {
         let library_id = h.get("library_id")?.parse().ok()?;
         let int = |k: &str| h.get(k).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
         Some(Self {
@@ -171,7 +208,8 @@ impl RunSnapshot {
             gone: int("gone"),
             rewritten: int("rewritten"),
             failed: int("failed"),
-            outstanding: int("outstanding").max(0),
+            outstanding,
+            stalled: false,
             note: h.get("note").cloned().filter(|s| !s.is_empty()),
         })
     }
@@ -261,9 +299,18 @@ pub async fn start(
             ("actor_ip", actor.ip.clone().unwrap_or_default()),
             ("actor_ua", actor.user_agent.clone().unwrap_or_default()),
         ];
-        let _: () = conn.hset_multiple(run_key(run_id), &fields).await?;
         let cutoff = now.timestamp_millis() - FINISHED_RUN_TTL_SECS * 1000;
         let _: () = redis::pipe()
+            .hset_multiple(run_key(run_id), &fields)
+            .ignore()
+            .expire(run_key(run_id), FINISHED_RUN_TTL_SECS)
+            .ignore()
+            .set_ex(
+                latest_key(lib.id),
+                run_id.to_string(),
+                FINISHED_RUN_TTL_SECS as u64,
+            )
+            .ignore()
             .zadd(RUNS_INDEX, run_id.to_string(), now.timestamp_millis())
             .ignore()
             .zrembyscore(RUNS_INDEX, "-inf", cutoff)
@@ -299,27 +346,61 @@ pub async fn start(
         .ok_or_else(|| StartError::Other(anyhow::anyhow!("run {run_id} vanished after start")))
 }
 
+/// Decode several runs with one pipelined round trip.
+async fn load_runs(state: &AppState, run_ids: &[Uuid]) -> anyhow::Result<Vec<RunSnapshot>> {
+    if run_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut conn = state.jobs.redis.clone();
+    let mut pipe = redis::pipe();
+    for id in run_ids {
+        pipe.hgetall(run_key(*id)).hlen(queued_key(*id));
+    }
+    let raw: Vec<redis::Value> = pipe.query_async(&mut conn).await?;
+    let mut raw = raw.into_iter();
+    let mut runs = Vec::with_capacity(run_ids.len());
+    for id in run_ids {
+        let (Some(h), Some(n)) = (raw.next(), raw.next()) else {
+            break;
+        };
+        let h: HashMap<String, String> = redis::from_redis_value(h)?;
+        let n: i64 = redis::from_redis_value(n)?;
+        if let Some(run) = RunSnapshot::from_hash(*id, &h, n) {
+            runs.push(run);
+        }
+    }
+    // A live run is stalled once the library claim no longer names it.
+    let live: Vec<&RunSnapshot> = runs.iter().filter(|r| r.is_live()).collect();
+    if !live.is_empty() {
+        let mut pipe = redis::pipe();
+        for r in &live {
+            pipe.get(active_key(r.library_id));
+        }
+        let holders: Vec<Option<String>> = pipe.query_async(&mut conn).await?;
+        let stalled: Vec<Uuid> = live
+            .iter()
+            .zip(holders)
+            .filter(|(r, h)| h.as_deref() != Some(r.run_id.to_string().as_str()))
+            .map(|(r, _)| r.run_id)
+            .collect();
+        for r in &mut runs {
+            r.stalled = stalled.contains(&r.run_id);
+        }
+    }
+    Ok(runs)
+}
+
 /// One run, or `None` once it expired (or a queue clear removed it).
 pub async fn load_run(state: &AppState, run_id: Uuid) -> anyhow::Result<Option<RunSnapshot>> {
-    let mut conn = state.jobs.redis.clone();
-    let h: HashMap<String, String> = conn.hgetall(run_key(run_id)).await?;
-    Ok(RunSnapshot::from_hash(run_id, &h))
+    Ok(load_runs(state, &[run_id]).await?.pop())
 }
 
 /// The most recent runs (newest first), live and finished, still readable.
 pub async fn recent_runs(state: &AppState, limit: isize) -> anyhow::Result<Vec<RunSnapshot>> {
     let mut conn = state.jobs.redis.clone();
     let ids: Vec<String> = conn.zrevrange(RUNS_INDEX, 0, limit - 1).await?;
-    let mut out = Vec::with_capacity(ids.len());
-    for id in ids {
-        let Ok(run_id) = id.parse::<Uuid>() else {
-            continue;
-        };
-        if let Some(run) = load_run(state, run_id).await? {
-            out.push(run);
-        }
-    }
-    Ok(out)
+    let ids: Vec<Uuid> = ids.iter().filter_map(|s| s.parse().ok()).collect();
+    load_runs(state, &ids).await
 }
 
 /// The newest readable run of one library.
@@ -327,10 +408,12 @@ pub async fn latest_for_library(
     state: &AppState,
     library_id: Uuid,
 ) -> anyhow::Result<Option<RunSnapshot>> {
-    Ok(recent_runs(state, 50)
-        .await?
-        .into_iter()
-        .find(|r| r.library_id == library_id))
+    let mut conn = state.jobs.redis.clone();
+    let id: Option<String> = conn.get(latest_key(library_id)).await?;
+    match id.and_then(|s| s.parse::<Uuid>().ok()) {
+        Some(run_id) => load_run(state, run_id).await,
+        None => Ok(None),
+    }
 }
 
 /// What one [`tick`] left for the next.
@@ -340,59 +423,66 @@ pub enum TickOutcome {
     Continue,
     /// Throttled or draining; re-enqueue after [`TICK_PAUSE`].
     Wait,
-    /// The run is over (completed, aborted, or gone).
+    /// The run is over (completed, aborted, superseded, or gone).
     Done,
 }
 
-/// apalis entry point: one tick, then re-enqueue the next while the run
-/// lives. A tick error returns `Err` so apalis retries this tick (the
-/// cursor is persisted per issue, so a retry resumes where it stopped).
+/// apalis entry point: one tick, then queue the next while the run lives.
+/// A tick error returns `Err` so apalis retries this tick (the cursor is
+/// persisted per issue, so a retry resumes where it stopped).
 pub async fn handle(job: SidecarReemitJob, state: Data<AppState>) -> Result<(), BoxDynError> {
     let state: AppState = (*state).clone();
     let outcome = tick(&state, job.run_id).await.map_err(|e| {
         tracing::warn!(run_id = %job.run_id, error = %e, "sidecar re-emit: tick failed");
         BoxDynError::from(e.to_string())
     })?;
-    match outcome {
+    let delay = match outcome {
         TickOutcome::Done => return Ok(()),
-        TickOutcome::Wait => tokio::time::sleep(TICK_PAUSE).await,
-        TickOutcome::Continue => {}
-    }
-    let mut storage = state.jobs.sidecar_reemit_storage.clone();
-    storage
-        .push(job.clone())
+        TickOutcome::Wait => Some(TICK_PAUSE),
+        TickOutcome::Continue => None,
+    };
+    push_tick(&state.jobs.sidecar_reemit_storage, job.clone(), delay)
         .await
-        .map_err(|e| BoxDynError::from(format!("sidecar re-emit: next tick push failed: {e}")))?;
-    Ok(())
+        .map_err(|e| BoxDynError::from(format!("sidecar re-emit: next tick push failed: {e}")))
+}
+
+async fn push_tick(
+    storage: &RedisStorage<SidecarReemitJob>,
+    job: SidecarReemitJob,
+    delay: Option<Duration>,
+) -> Result<(), String> {
+    let mut storage = storage.clone();
+    let mut task = TaskBuilder::new(job);
+    if let Some(d) = delay {
+        // Into apalis's delayed set: the worker stays free for other runs.
+        task = task.run_after(d);
+    }
+    storage
+        .push_task(task.build())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Advance a run by one step. Public so tests can drive a run without the
 /// worker's pacing.
 pub async fn tick(state: &AppState, run_id: Uuid) -> anyhow::Result<TickOutcome> {
     let mut conn = state.jobs.redis.clone();
-    let h: HashMap<String, String> = conn.hgetall(run_key(run_id)).await?;
-    let Some(run) = RunSnapshot::from_hash(run_id, &h) else {
+    let (h, outstanding): (HashMap<String, String>, i64) = redis::pipe()
+        .hgetall(run_key(run_id))
+        .hlen(queued_key(run_id))
+        .query_async(&mut conn)
+        .await?;
+    let Some(run) = RunSnapshot::from_hash(run_id, &h, outstanding) else {
         // Expired or cleared with the metadata queues: nothing to do.
         return Ok(TickOutcome::Done);
     };
     if !run.is_live() {
         return Ok(TickOutcome::Done);
     }
-    // Refresh the library claim, and keep the run's keys alive for a week
-    // past its last tick (a chain that died still ages out).
-    let _: () = redis::pipe()
-        .set_ex(
-            active_key(run.library_id),
-            run_id.to_string(),
-            ACTIVE_TTL_SECS,
-        )
-        .ignore()
-        .expire(run_key(run_id), FINISHED_RUN_TTL_SECS)
-        .ignore()
-        .expire(pending_key(run_id), FINISHED_RUN_TTL_SECS)
-        .ignore()
-        .query_async(&mut conn)
-        .await?;
+    if !hold_claim(&mut conn, &run).await? {
+        // A newer run owns the library (this tick is a leftover copy).
+        return Ok(TickOutcome::Done);
+    }
 
     let lib = library::Entity::find_by_id(run.library_id)
         .one(&state.db)
@@ -408,37 +498,7 @@ pub async fn tick(state: &AppState, run_id: Uuid) -> anyhow::Result<TickOutcome>
         return Ok(TickOutcome::Done);
     };
 
-    // Rewrites the run is still waiting on, but whose queue is empty: they
-    // were cleared or dead-lettered without reporting back. Write them off
-    // so the throttle (and the drain) cannot wait forever.
-    let mut outstanding = run.outstanding;
-    if outstanding > 0 {
-        let queue_empty = state
-            .jobs
-            .queue_counts()
-            .await?
-            .iter()
-            .find(|c| c.queue == "rewrite_issue_sidecars")
-            .is_none_or(|c| c.outstanding() == 0);
-        if queue_empty {
-            let idle: i64 = conn.hincr(run_key(run_id), "idle_ticks", 1).await?;
-            if idle >= LOST_AFTER_IDLE_TICKS {
-                tracing::warn!(run_id = %run_id, lost = outstanding, "sidecar re-emit: rewrites lost with their queue; counting them failed");
-                let _: () = redis::pipe()
-                    .hincr(run_key(run_id), "failed", outstanding)
-                    .ignore()
-                    .hset(run_key(run_id), "outstanding", 0)
-                    .ignore()
-                    .hset(run_key(run_id), "idle_ticks", 0)
-                    .ignore()
-                    .query_async(&mut conn)
-                    .await?;
-                outstanding = 0;
-            }
-        } else {
-            let _: () = conn.hset(run_key(run_id), "idle_ticks", 0).await?;
-        }
-    }
+    let outstanding = write_off_lost(state, &run, &h).await?;
 
     if run.status == status::DRAINING {
         if outstanding <= 0 {
@@ -452,27 +512,139 @@ pub async fn tick(state: &AppState, run_id: Uuid) -> anyhow::Result<TickOutcome>
     if budget <= 0 {
         return Ok(TickOutcome::Wait);
     }
-    walk(state, &run, &lib, budget as u64).await
+    walk(state, &run, &h, &lib, budget as u64).await
+}
+
+/// Keep (or retake, after a long stall) the library claim for `run`, and
+/// keep its keys alive for a week past this tick. `false` when another run
+/// holds the claim.
+async fn hold_claim(conn: &mut ConnectionManager, run: &RunSnapshot) -> anyhow::Result<bool> {
+    let me = run.run_id.to_string();
+    let took: Option<String> = redis::cmd("SET")
+        .arg(active_key(run.library_id))
+        .arg(&me)
+        .arg("NX")
+        .arg("EX")
+        .arg(ACTIVE_TTL_SECS)
+        .query_async(conn)
+        .await?;
+    if took.is_none() {
+        let holder: Option<String> = conn.get(active_key(run.library_id)).await?;
+        if holder.as_deref() != Some(me.as_str()) {
+            return Ok(false);
+        }
+    }
+    let run_id = run.run_id;
+    let mut pipe = redis::pipe();
+    pipe.expire(active_key(run.library_id), ACTIVE_TTL_SECS as i64)
+        .ignore();
+    for key in [
+        run_key(run_id),
+        queued_key(run_id),
+        reported_key(run_id),
+        pending_key(run_id),
+        rewrote_key(run_id),
+        latest_key(run.library_id),
+    ] {
+        pipe.expire(key, FINISHED_RUN_TTL_SECS).ignore();
+    }
+    let _: () = pipe.query_async(conn).await?;
+    Ok(true)
+}
+
+/// Outstanding rewrites the run waits on although the rewrite queue holds
+/// nothing and no rewrite has reported back for [`LOST_AFTER_MS`]: they
+/// were cleared or dead-lettered without a report. Count them failed and
+/// release their series so the throttle and the drain cannot wait forever.
+/// Returns what is still outstanding.
+async fn write_off_lost(
+    state: &AppState,
+    run: &RunSnapshot,
+    h: &HashMap<String, String>,
+) -> anyhow::Result<i64> {
+    let run_id = run.run_id;
+    let mut conn = state.jobs.redis.clone();
+    let reset = |conn: &mut ConnectionManager| {
+        let mut conn = conn.clone();
+        async move {
+            let _: () = conn
+                .hdel(run_key(run_id), &["idle_since", "idle_reports"])
+                .await?;
+            anyhow::Ok(())
+        }
+    };
+    if run.outstanding <= 0 {
+        reset(&mut conn).await?;
+        return Ok(0);
+    }
+    let queue_idle = state
+        .jobs
+        .queue_outstanding(&state.jobs.rewrite_issue_sidecars_storage)
+        .await?
+        == 0;
+    if !queue_idle {
+        reset(&mut conn).await?;
+        return Ok(run.outstanding);
+    }
+    let now = Utc::now().timestamp_millis();
+    let reports = h.get("reports").cloned().unwrap_or_default();
+    let since: Option<i64> = h.get("idle_since").and_then(|v| v.parse().ok());
+    let same_reports = h.get("idle_reports") == Some(&reports);
+    match since {
+        Some(t) if same_reports && now - t >= LOST_AFTER_MS => {}
+        Some(_) if same_reports => return Ok(run.outstanding),
+        _ => {
+            let _: () = redis::pipe()
+                .hset(run_key(run_id), "idle_since", now)
+                .ignore()
+                .hset(run_key(run_id), "idle_reports", &reports)
+                .ignore()
+                .query_async(&mut conn)
+                .await?;
+            return Ok(run.outstanding);
+        }
+    }
+    let lost: HashMap<String, String> = conn.hgetall(queued_key(run_id)).await?;
+    tracing::warn!(run_id = %run_id, lost = lost.len(), "sidecar re-emit: rewrites lost with their queue; counting them failed");
+    for (issue_id, series) in &lost {
+        let removed: i64 = conn.hdel(queued_key(run_id), issue_id).await?;
+        if removed == 0 {
+            continue; // it reported after all
+        }
+        let _: () = redis::pipe()
+            .hset_nx(reported_key(run_id), issue_id, RewriteEnd::Failed.field())
+            .ignore()
+            .hincr(run_key(run_id), RewriteEnd::Failed.field(), 1)
+            .ignore()
+            .query_async(&mut conn)
+            .await?;
+        if let Ok(series_id) = series.parse::<Uuid>() {
+            release_series(state, run_id, run.library_id, series_id).await?;
+        }
+    }
+    reset(&mut conn).await?;
+    Ok(conn.hlen(queued_key(run_id)).await?)
 }
 
 /// Queue up to `budget` rewrites from the cursor on.
 async fn walk(
     state: &AppState,
     run: &RunSnapshot,
+    h: &HashMap<String, String>,
     lib: &library::Model,
     budget: u64,
 ) -> anyhow::Result<TickOutcome> {
     let run_id = run.run_id;
     let mut conn = state.jobs.redis.clone();
-    let cursor: (Option<String>, Option<String>, Option<String>) = redis::pipe()
-        .hget(run_key(run_id), "cursor_series")
-        .hget(run_key(run_id), "cursor_issue")
-        .hget(run_key(run_id), "guard_series")
-        .query_async(&mut conn)
-        .await?;
-    let cursor_series: Option<Uuid> = cursor.0.and_then(|s| s.parse().ok());
-    let cursor_issue = cursor.1.unwrap_or_default();
-    let mut guard: Option<Uuid> = cursor.2.and_then(|s| s.parse().ok());
+    let field = |k: &str| h.get(k).filter(|v| !v.is_empty()).cloned();
+    let cursor_series: Option<Uuid> = field("cursor_series").and_then(|s| s.parse().ok());
+    let cursor_issue = field("cursor_issue").unwrap_or_default();
+    let mut guard: Option<Uuid> = field("guard_series").and_then(|s| s.parse().ok());
+    let actor = Actor {
+        id: field("actor_id").and_then(|s| s.parse().ok()),
+        ip: field("actor_ip"),
+        user_agent: field("actor_ua"),
+    };
 
     // Keyset page over (series_id, id), projecting only what the walk
     // needs; the composer loads one full row at a time.
@@ -498,7 +670,6 @@ async fn walk(
         .all(&state.db)
         .await?;
 
-    let actor = run_actor(state, run_id).await?;
     let mut series_ctx: Option<SeriesContext> = None;
     for (issue_id, series_id, file_path) in &rows {
         if guard != Some(*series_id) {
@@ -532,12 +703,12 @@ async fn walk(
                 library_id: run.library_id,
                 series_id: *series_id,
             };
-            // Count the rewrite before it is queued, so a fast worker can
-            // never report back below zero.
+            // Record the rewrite before it is queued, so a fast worker's
+            // report always finds it.
             let _: () = redis::pipe()
-                .hincr(pending_key(run_id), series_id.to_string(), 1)
+                .hset(queued_key(run_id), issue_id, series_id.to_string())
                 .ignore()
-                .hincr(run_key(run_id), "outstanding", 1)
+                .hincr(pending_key(run_id), series_id.to_string(), 1)
                 .ignore()
                 .query_async(&mut conn)
                 .await?;
@@ -552,11 +723,11 @@ async fn walk(
                     let _: () = conn.hincr(run_key(run_id), "enqueued", 1).await?;
                 }
                 Ok(false) => {
-                    undo_count(&mut conn, run_id, *series_id).await?;
+                    undo_queued(&mut conn, run_id, issue_id, *series_id).await?;
                     let _: () = conn.hincr(run_key(run_id), "gone", 1).await?;
                 }
                 Err(e) => {
-                    undo_count(&mut conn, run_id, *series_id).await?;
+                    undo_queued(&mut conn, run_id, issue_id, *series_id).await?;
                     return Err(e);
                 }
             }
@@ -576,43 +747,50 @@ async fn walk(
             release_series(state, run_id, run.library_id, prev).await?;
             let _: () = conn.hdel(run_key(run_id), "guard_series").await?;
         }
-        let _: () = conn
-            .hset(run_key(run_id), "status", status::DRAINING)
-            .await?;
+        set_status_if(&mut conn, run_id, status::RUNNING, status::DRAINING).await?;
         return Ok(TickOutcome::Wait);
     }
     Ok(TickOutcome::Continue)
 }
 
-/// Take back the count of a rewrite that was never queued.
-async fn undo_count(
-    conn: &mut redis::aio::ConnectionManager,
+/// Compare-and-set on the run's status, so a late tick never overwrites a
+/// run that was aborted underneath it.
+async fn set_status_if(
+    conn: &mut ConnectionManager,
     run_id: Uuid,
+    from: &str,
+    to: &str,
+) -> redis::RedisResult<bool> {
+    let script = redis::Script::new(
+        r"if redis.call('HGET', KEYS[1], 'status') == ARGV[1] then
+              redis.call('HSET', KEYS[1], 'status', ARGV[2])
+              return 1
+          end
+          return 0",
+    );
+    let changed: i64 = script
+        .key(run_key(run_id))
+        .arg(from)
+        .arg(to)
+        .invoke_async(conn)
+        .await?;
+    Ok(changed == 1)
+}
+
+/// Take back the record of a rewrite that was never queued.
+async fn undo_queued(
+    conn: &mut ConnectionManager,
+    run_id: Uuid,
+    issue_id: &str,
     series_id: Uuid,
 ) -> redis::RedisResult<()> {
     redis::pipe()
-        .hincr(pending_key(run_id), series_id.to_string(), -1)
+        .hdel(queued_key(run_id), issue_id)
         .ignore()
-        .hincr(run_key(run_id), "outstanding", -1)
+        .hincr(pending_key(run_id), series_id.to_string(), -1)
         .ignore()
         .query_async(conn)
         .await
-}
-
-async fn run_actor(state: &AppState, run_id: Uuid) -> anyhow::Result<Actor> {
-    let mut conn = state.jobs.redis.clone();
-    let (id, ip, ua): (Option<String>, Option<String>, Option<String>) = redis::pipe()
-        .hget(run_key(run_id), "actor_id")
-        .hget(run_key(run_id), "actor_ip")
-        .hget(run_key(run_id), "actor_ua")
-        .query_async(&mut conn)
-        .await?;
-    let non_empty = |s: Option<String>| s.filter(|v| !v.is_empty());
-    Ok(Actor {
-        id: non_empty(id).and_then(|s| s.parse().ok()),
-        ip: non_empty(ip),
-        user_agent: non_empty(ua),
-    })
 }
 
 /// Drop one hold on `series`; the hold that reaches zero queues the
@@ -624,8 +802,11 @@ async fn release_series(
     series_id: Uuid,
 ) -> anyhow::Result<()> {
     let mut conn = state.jobs.redis.clone();
-    let left: i64 = conn
+    let (left,): (i64,) = redis::pipe()
         .hincr(pending_key(run_id), series_id.to_string(), -1)
+        .expire(pending_key(run_id), FINISHED_RUN_TTL_SECS)
+        .ignore()
+        .query_async(&mut conn)
         .await?;
     if left != 0 {
         return Ok(());
@@ -633,24 +814,19 @@ async fn release_series(
     let _: () = conn
         .hdel(pending_key(run_id), series_id.to_string())
         .await?;
-    rescan_if_rewritten(state, run_id, library_id, series_id).await
-}
-
-async fn rescan_if_rewritten(
-    state: &AppState,
-    run_id: Uuid,
-    library_id: Uuid,
-    series_id: Uuid,
-) -> anyhow::Result<()> {
-    let mut conn = state.jobs.redis.clone();
     let rewrote: i64 = conn
         .srem(rewrote_key(run_id), series_id.to_string())
         .await?;
-    if rewrote == 0 {
-        return Ok(());
+    if rewrote == 1 {
+        rescan_series(state, library_id, series_id).await;
     }
-    // Best-effort, as on the series-scope apply: the XML already landed
-    // and the next scheduled scan ingests it if this enqueue fails.
+    Ok(())
+}
+
+/// One series-scoped rescan. Best-effort, as on the series-scope apply:
+/// the XML already landed and the next scheduled scan ingests it if this
+/// enqueue fails.
+async fn rescan_series(state: &AppState, library_id: Uuid, series_id: Uuid) {
     if let Err(e) = state
         .jobs
         .coalesce_scoped_scan(
@@ -665,11 +841,10 @@ async fn rescan_if_rewritten(
     {
         tracing::error!(series_id = %series_id, error = %e, "sidecar re-emit: series rescan enqueue failed");
     }
-    Ok(())
 }
 
 /// Close a run: stamp it, queue the rescans still owed, free the library
-/// and let the keys expire.
+/// and let the keys expire. Rewrites still queued report as stragglers.
 async fn finish(
     state: &AppState,
     run: &RunSnapshot,
@@ -685,28 +860,32 @@ async fn finish(
         .ignore()
         .hset(run_key(run_id), "note", note.unwrap_or_default())
         .ignore()
+        .del(queued_key(run_id))
+        .ignore()
+        .del(pending_key(run_id))
+        .ignore()
         .query_async(&mut conn)
         .await?;
-    // Series whose count never reached zero (lost rewrites, an abort
-    // mid-series) still get their rescan if anything was written.
-    let owed: HashMap<String, i64> = conn.hgetall(pending_key(run_id)).await?;
-    for series in owed.keys() {
+    // Series that were rewritten but whose count never reached zero (lost
+    // rewrites, an abort mid-series) still get their rescan.
+    let owed: Vec<String> = conn.smembers(rewrote_key(run_id)).await?;
+    let _: () = conn.del(rewrote_key(run_id)).await?;
+    for series in owed {
         if let Ok(series_id) = series.parse::<Uuid>() {
-            rescan_if_rewritten(state, run_id, run.library_id, series_id).await?;
+            rescan_series(state, run.library_id, series_id).await;
         }
     }
-    let leftover: Vec<String> = conn.smembers(rewrote_key(run_id)).await?;
-    for series in leftover {
-        if let Ok(series_id) = series.parse::<Uuid>() {
-            rescan_if_rewritten(state, run_id, run.library_id, series_id).await?;
-        }
-    }
-    let _: () = conn.del(pending_key(run_id)).await?;
     let holder: Option<String> = conn.get(active_key(run.library_id)).await?;
     if holder.as_deref() == Some(run_id.to_string().as_str()) {
         let _: () = conn.del(active_key(run.library_id)).await?;
     }
-    let _: () = conn.expire(run_key(run_id), FINISHED_RUN_TTL_SECS).await?;
+    let _: () = redis::pipe()
+        .expire(run_key(run_id), FINISHED_RUN_TTL_SECS)
+        .ignore()
+        .expire(reported_key(run_id), FINISHED_RUN_TTL_SECS)
+        .ignore()
+        .query_async(&mut conn)
+        .await?;
     tracing::info!(run_id = %run_id, library_id = %run.library_id, status = final_status, "sidecar re-emit finished");
     Ok(())
 }
@@ -714,8 +893,13 @@ async fn finish(
 /// Called by the rewrite job when a tagged rewrite reaches a terminal
 /// state. Best-effort: a Redis failure here only logs (the archive write
 /// already happened or already failed).
-pub async fn on_rewrite_finished(state: &AppState, tag: &ReemitTag, end: RewriteEnd) {
-    if let Err(e) = record_rewrite_end(state, tag, end).await {
+pub async fn on_rewrite_finished(
+    state: &AppState,
+    tag: &ReemitTag,
+    issue_id: &str,
+    end: RewriteEnd,
+) {
+    if let Err(e) = record_rewrite_end(state, tag, issue_id, end).await {
         tracing::warn!(run_id = %tag.run_id, error = %e, "sidecar re-emit: progress update failed");
     }
 }
@@ -723,40 +907,62 @@ pub async fn on_rewrite_finished(state: &AppState, tag: &ReemitTag, end: Rewrite
 async fn record_rewrite_end(
     state: &AppState,
     tag: &ReemitTag,
+    issue_id: &str,
     end: RewriteEnd,
 ) -> anyhow::Result<()> {
+    let run_id = tag.run_id;
     let mut conn = state.jobs.redis.clone();
-    // A run removed by a queue clear (or expired) takes no updates; the
-    // hash must not be resurrected field by field.
-    let run_status: Option<String> = conn.hget(run_key(tag.run_id), "status").await?;
-    let Some(run_status) = run_status else {
+    // A run removed by a queue clear (or expired) takes no updates; its
+    // keys must not be resurrected field by field.
+    let exists: bool = conn.exists(run_key(run_id)).await?;
+    if !exists {
+        if end == RewriteEnd::Rewritten {
+            rescan_series(state, tag.library_id, tag.series_id).await;
+        }
         return Ok(());
-    };
-    let live = run_status == status::RUNNING || run_status == status::DRAINING;
-    let field = match end {
-        RewriteEnd::Rewritten => "rewritten",
-        RewriteEnd::Refused => "refused",
-        RewriteEnd::Failed => "failed",
-    };
-    let mut pipe = redis::pipe();
-    pipe.hincr(run_key(tag.run_id), field, 1).ignore();
-    if end == RewriteEnd::Rewritten {
-        pipe.sadd(rewrote_key(tag.run_id), tag.series_id.to_string())
-            .ignore()
-            .expire(rewrote_key(tag.run_id), FINISHED_RUN_TTL_SECS)
-            .ignore();
     }
-    if !live {
-        // A straggler after the run closed: count it, nothing else (the
-        // close already queued the rescans and dropped the counters).
+    let (removed, prev): (i64, Option<String>) = redis::pipe()
+        .hdel(queued_key(run_id), issue_id)
+        .hget(reported_key(run_id), issue_id)
+        .hset(reported_key(run_id), issue_id, end.field())
+        .ignore()
+        .expire(reported_key(run_id), FINISHED_RUN_TTL_SECS)
+        .ignore()
+        .hincr(run_key(run_id), "reports", 1)
+        .ignore()
+        .query_async(&mut conn)
+        .await?;
+
+    if removed == 1 && prev.is_none() {
+        // The report the run was waiting for.
+        let mut pipe = redis::pipe();
+        pipe.hincr(run_key(run_id), end.field(), 1).ignore();
+        if end == RewriteEnd::Rewritten {
+            pipe.sadd(rewrote_key(run_id), tag.series_id.to_string())
+                .ignore()
+                .expire(rewrote_key(run_id), FINISHED_RUN_TTL_SECS)
+                .ignore();
+        }
         let _: () = pipe.query_async(&mut conn).await?;
-        return Ok(());
+        return release_series(state, run_id, tag.library_id, tag.series_id).await;
     }
-    pipe.hincr(run_key(tag.run_id), "outstanding", -1);
-    let (left,): (i64,) = pipe.query_async(&mut conn).await?;
-    if left < 0 {
-        // A dead-letter retry of an already-counted rewrite.
-        let _: () = conn.hset(run_key(tag.run_id), "outstanding", 0).await?;
+
+    // A rewrite the run no longer waits on: a second report for the same
+    // issue (an operator Retry of a dead-lettered rewrite, a write-off that
+    // landed after all) or a straggler after the run closed. Move the count
+    // to the new outcome, and rescan the series itself when it rewrote —
+    // the run's own rescan for that series already happened.
+    let prev_field = prev.as_deref();
+    if prev_field != Some(end.field()) {
+        let mut pipe = redis::pipe();
+        if let Some(p) = prev_field.filter(|p| ["rewritten", "refused", "failed"].contains(p)) {
+            pipe.hincr(run_key(run_id), p, -1).ignore();
+        }
+        pipe.hincr(run_key(run_id), end.field(), 1).ignore();
+        let _: () = pipe.query_async(&mut conn).await?;
     }
-    release_series(state, tag.run_id, tag.library_id, tag.series_id).await
+    if end == RewriteEnd::Rewritten {
+        rescan_series(state, tag.library_id, tag.series_id).await;
+    }
+    Ok(())
 }

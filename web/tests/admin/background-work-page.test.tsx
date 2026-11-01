@@ -204,7 +204,6 @@ describe("BackgroundWorkClient", () => {
       sidecar_reemits: [
         {
           library_name: "Marvel",
-          stalled: false,
           run: {
             run_id: "r1",
             library_id: "a",
@@ -218,6 +217,7 @@ describe("BackgroundWorkClient", () => {
             rewritten: 250,
             failed: 3,
             outstanding: 47,
+            stalled: false,
             note: null,
           },
         },

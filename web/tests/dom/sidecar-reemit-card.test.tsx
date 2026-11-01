@@ -103,6 +103,7 @@ describe("<SidecarReemitCard>", () => {
       rewritten: 30,
       failed: 1,
       outstanding: 9,
+      stalled: false,
       note: null,
     };
     render(<SidecarReemitCard slug="marvel" />);
@@ -110,5 +111,27 @@ describe("<SidecarReemitCard>", () => {
     expect((live as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("33 / 100")).toBeTruthy();
     expect(screen.getByText(/30 rewritten/)).toBeTruthy();
+  });
+
+  it("can start again when the live run has stalled", () => {
+    m.run = {
+      run_id: "r1",
+      library_id: "a",
+      status: "running",
+      started_at: "2026-11-01T00:00:00Z",
+      finished_at: null,
+      total: 100,
+      enqueued: 40,
+      skipped_refused: 0,
+      skipped_gone: 0,
+      rewritten: 30,
+      failed: 0,
+      outstanding: 10,
+      stalled: true,
+      note: null,
+    };
+    render(<SidecarReemitCard slug="marvel" />);
+    expect((button() as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText(/Stalled/)).toBeTruthy();
   });
 });

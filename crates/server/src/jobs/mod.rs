@@ -1008,6 +1008,30 @@ impl JobRuntime {
         Ok(active + due)
     }
 
+    /// Every unfinished job of one queue: waiting, retry-delayed, and held
+    /// by a worker — [`Self::queue_counts`]'s `outstanding()` for a single
+    /// queue, without reading the other sixteen.
+    pub async fn queue_outstanding<T>(&self, storage: &RedisStorage<T>) -> redis::RedisResult<i64> {
+        let cfg = storage.get_config();
+        let mut conn = self.redis.clone();
+        let (active, scheduled, workers): (i64, i64, Vec<String>) = redis::pipe()
+            .llen(cfg.active_jobs_list())
+            .zcard(cfg.scheduled_jobs_set())
+            .zrange(cfg.workers_set(), 0, -1)
+            .query_async(&mut conn)
+            .await?;
+        let mut held = 0;
+        if !workers.is_empty() {
+            let mut pipe = redis::pipe();
+            for w in &workers {
+                pipe.scard(inflight_set_key(cfg, w));
+            }
+            let sizes: Vec<i64> = pipe.query_async(&mut conn).await?;
+            held = sizes.iter().sum();
+        }
+        Ok(active + scheduled + held)
+    }
+
     /// Boot-time sweep of queue state written by apalis-redis 0.7 (folio ≤
     /// 0.61). The key names are unchanged, but 0.7 stored each job as a
     /// whole `Request` JSON and kept per-worker sets in a `{queue}:consumers`

@@ -56,6 +56,10 @@ pub struct SidecarReemitRunView {
     pub failed: i64,
     /// Rewrites queued or running right now.
     pub outstanding: i64,
+    /// Live, but no tick has run for 15 minutes (a dead-lettered tick or a
+    /// cleared queue): nothing will advance it, and starting a new run
+    /// supersedes it.
+    pub stalled: bool,
     /// Why an aborted run stopped.
     pub note: Option<String>,
 }
@@ -75,6 +79,7 @@ impl From<RunSnapshot> for SidecarReemitRunView {
             rewritten: r.rewritten,
             failed: r.failed,
             outstanding: r.outstanding,
+            stalled: r.stalled,
             note: r.note,
         }
     }

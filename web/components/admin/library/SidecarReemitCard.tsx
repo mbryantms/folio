@@ -27,6 +27,12 @@ function isLive(run: SidecarReemitRunView | null | undefined): boolean {
   return run?.status === "running" || run?.status === "draining";
 }
 
+/** Live and still advancing. A stalled run (no tick for 15 minutes) can be
+ *  superseded by starting a new one. */
+function isActive(run: SidecarReemitRunView | null | undefined): boolean {
+  return isLive(run) && !run?.stalled;
+}
+
 /**
  * "Rewrite metadata files" on the library Settings tab (audit 2026-11 A7):
  * re-emits the ComicInfo / MetronInfo sidecars of every issue from the
@@ -42,7 +48,7 @@ export function SidecarReemitCard({ slug }: { slug: string }) {
   const start = useStartSidecarReemit(slug);
   const [open, setOpen] = useState(false);
   const run = status?.run ?? null;
-  const live = isLive(run);
+  const live = isActive(run);
 
   return (
     <Card>
@@ -122,11 +128,13 @@ function RunSummary({ run }: { run: SidecarReemitRunView }) {
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span className="text-muted-foreground">
-          {live
-            ? "In progress"
-            : run.status === "aborted"
-              ? "Stopped"
-              : "Last run"}
+          {run.stalled
+            ? "Stalled — start it again to resume"
+            : live
+              ? "In progress"
+              : run.status === "aborted"
+                ? "Stopped"
+                : "Last run"}
           {run.note ? ` — ${run.note}` : ""}
         </span>
         <span className="tabular-nums">

@@ -536,13 +536,11 @@ function ReemitRow({ reemit }: { reemit: SidecarReemitWorkView }) {
           <span
             className={cn(
               "ml-2 text-xs",
-              reemit.stalled
-                ? statusToneText("warning")
-                : "text-muted-foreground",
+              r.stalled ? statusToneText("warning") : "text-muted-foreground",
             )}
           >
-            {reemit.stalled
-              ? "stalled — no tick queued for it"
+            {r.stalled
+              ? "stalled — start it again from the library settings"
               : (REEMIT_STATUS[r.status] ?? r.status)}
           </span>
         </span>

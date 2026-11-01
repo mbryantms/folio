@@ -283,10 +283,10 @@ pub async fn handle(
                 use crate::jobs::sidecar_reemit::{RewriteEnd, on_rewrite_finished};
                 match disposition {
                     FailureDisposition::Refused => {
-                        on_rewrite_finished(&state, tag, RewriteEnd::Refused).await;
+                        on_rewrite_finished(&state, tag, &job.issue_id, RewriteEnd::Refused).await;
                     }
                     FailureDisposition::Final { .. } => {
-                        on_rewrite_finished(&state, tag, RewriteEnd::Failed).await;
+                        on_rewrite_finished(&state, tag, &job.issue_id, RewriteEnd::Failed).await;
                     }
                     // apalis runs it again; not terminal yet.
                     FailureDisposition::Retrying { .. } => {}
@@ -357,6 +357,7 @@ pub async fn handle(
         crate::jobs::sidecar_reemit::on_rewrite_finished(
             &state,
             tag,
+            &job.issue_id,
             crate::jobs::sidecar_reemit::RewriteEnd::Rewritten,
         )
         .await;
@@ -396,6 +397,7 @@ async fn requeue_busy(state: &AppState, job: &RewriteIssueSidecarsJob) -> Result
         crate::jobs::sidecar_reemit::on_rewrite_finished(
             state,
             tag,
+            &job.issue_id,
             crate::jobs::sidecar_reemit::RewriteEnd::Failed,
         )
         .await;
