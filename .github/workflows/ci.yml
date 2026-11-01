@@ -280,15 +280,17 @@ jobs:
       # the job ends with no failed step and no log). Run it always: a dead
       # shard costs far more than the minutes.
       #
-      # 2026-11-01 (E14): the list lives in scripts/ci/free-runner-disk.sh
-      # (shared with sidecar-interop), grew JVM/Julia/vcpkg/browsers/LLVM,
-      # and reports what each path frees. It now keys on free space, not a
-      # guess: the two runner sizes are 145 GB (~86 GB free on arrival) and
-      # 72 GB (~13 GB free), and with strip=symbols the build needs ~40 GB,
-      # so >= 80 GB free skips the deletes (saves ~2.5-3.5 min on the big
-      # runner) and anything less deletes everything on the list.
+      # 2026-11-01 (E14), replacing "run it always": the list lives in
+      # scripts/ci/free-runner-disk.sh (shared with sidecar-interop), grew
+      # JVM/Julia/vcpkg/browsers/LLVM, and reports what each path frees.
+      # The "run it always" rule dated from a ~64 GB build; with
+      # strip=symbols the build needs ~40 GB. Today's runners are 145 GB
+      # (~86 GB free on arrival) and 72 GB (~13 GB free; the ~60 GB above
+      # was an older image), so >= 60 GB free on arrival skips the deletes
+      # (saves ~2.5-3.5 min on the big runner) and anything less deletes
+      # the whole list. The step summary's disk table shows what is left.
       - name: free runner disk
-        run: scripts/ci/free-runner-disk.sh --force
+        run: scripts/ci/free-runner-disk.sh
       - uses: dtolnay/rust-toolchain@1.96.0
       # One cache entry for all four shards (identical builds). Concurrent
       # saves of the same key are fine: the losers skip "already exists".
@@ -334,19 +336,23 @@ jobs:
           # Disk headroom at (about) peak: every test binary is built and
           # nothing has been cleaned yet. Shows how close each runner size
           # comes to ENOSPC, so a growing build is seen before it fails.
-          # 2026-11-01 (E14).
-          read -r size used avail pcent < <(df -h --output=size,used,avail,pcent / | tail -1)
-          target_size=$(du -sh target 2>/dev/null | cut -f1)
-          {
-            echo
-            echo "| Disk after build + run | Size | Used | Free | Use% | target/ |"
-            echo "| --- | ---: | ---: | ---: | ---: | ---: |"
-            echo "| $(df --output=source / | tail -1) | ${size} | ${used} | ${avail} | ${pcent} | ${target_size} |"
-          } >> "$GITHUB_STEP_SUMMARY"
-          avail_gb=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
-          if [ "$avail_gb" -lt 10 ]; then
-            echo "::warning::Rust test shard ${{ matrix.shard }}: only ${avail_gb} GB free on / after the build (target/ is ${target_size}); see scripts/ci/free-runner-disk.sh"
-          fi
+          # 2026-11-01 (E14). Best effort: a report failure (e.g. a full
+          # disk) must not turn a green test run red.
+          disk_report() {
+            local source size used avail pcent target_size
+            read -r source size used avail pcent < <(df -BG --output=source,size,used,avail,pcent / | tail -1)
+            target_size=$(du -sh target 2>/dev/null | cut -f1)
+            {
+              echo
+              echo "| Disk after build + run | Size | Used | Free | Use% | target/ |"
+              echo "| --- | ---: | ---: | ---: | ---: | ---: |"
+              echo "| ${source} | ${size} | ${used} | ${avail} | ${pcent} | ${target_size} |"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            if [ "${avail%G}" -lt 10 ]; then
+              echo "::warning::Rust test shard ${{ matrix.shard }}: only ${avail} free on / after the build (target/ is ${target_size}); see scripts/ci/free-runner-disk.sh"
+            fi
+          }
+          disk_report || echo "disk report failed (ignored)"
           exit "$status"
         env:
           # renovate/* PRs auto-merge on green, so they get the no-retry

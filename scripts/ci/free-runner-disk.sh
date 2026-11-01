@@ -5,7 +5,9 @@
 # Hosted runners come in two sizes at random: a 145 GB `/dev/root` (~86 GB
 # free on arrival) and a 72 GB `/dev/mapper/cow-root` (~13 GB free). A
 # cold workspace test build needs ~40 GB (2026-11-01, strip=symbols; see the
-# rust-test job comments in .github/workflows/ci.yml), so:
+# rust-test job comments in .github/workflows/ci.yml), so the threshold sits
+# at the build's need plus margin, not just under the big runner's free
+# space (image drift there would silently bring the deletes back):
 #
 #   * >= SKIP_ABOVE_GB free on arrival  → nothing to do (the big runner);
 #     skipping saves the ~2.5-3.5 min the deletes cost.
@@ -21,7 +23,7 @@
 # Usage: free-runner-disk.sh [--keep-toolcache] [--force]
 #   --keep-toolcache  keep /opt/hostedtoolcache (jobs that use setup-python)
 #   --force           delete even on a big runner
-# Env: SKIP_ABOVE_GB (default 80).
+# Env: SKIP_ABOVE_GB (default 60).
 set -euo pipefail
 
 keep_toolcache=0
@@ -33,7 +35,7 @@ for arg in "$@"; do
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
-skip_above_gb="${SKIP_ABOVE_GB:-80}"
+skip_above_gb="${SKIP_ABOVE_GB:-60}"
 
 avail_mb() { df --output=avail -BM / | tail -1 | tr -dc '0-9'; }
 
@@ -52,7 +54,9 @@ paths=(
   /usr/local/lib/node_modules /usr/lib/google-cloud-sdk /opt/microsoft
   /opt/az /usr/share/miniconda /opt/pipx
   # Added 2026-11-01 (E14): JVMs, Julia, vcpkg, browsers, cloud CLIs, LLVM
-  # (rustc ships its own; the cc/cmake builds use gcc).
+  # (rustc ships its own; the cc/cmake builds use gcc). Measured on the
+  # 145 GB image: these free ~6.6 GB more (whole list + prune: 43 GB in
+  # 126-218 s, leaving 16 GB used), and a cold build passed with them deleted.
   /usr/lib/jvm /usr/local/julia* /usr/share/kotlinc /usr/local/share/vcpkg
   /opt/google /usr/lib/firefox /usr/lib/mono /usr/local/aws-cli
   /usr/local/aws-sam-cli /usr/share/gradle* /usr/share/apache-maven*
