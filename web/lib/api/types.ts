@@ -346,6 +346,9 @@ export type CollectionWindowEntry = Schemas["CollectionWindowEntry"];
 export type CollectionWindowView = Schemas["CollectionWindowView"];
 export type IssueCoverPickReq = Schemas["IssueCoverPickReq"];
 export type IssueCoverPickResp = Schemas["IssueCoverPickResp"];
+export type IssueVariantCoverResp = Schemas["IssueVariantCoverResp"];
+export type IssueVariantCoverClearResp =
+  Schemas["IssueVariantCoverClearResp"];
 export type SeriesCoverPickReq = Schemas["SeriesCoverPickReq"];
 export type SeriesCoverPickResp = Schemas["SeriesCoverPickResp"];
 export type SeriesReaderPrefsView = Schemas["SeriesReaderPrefsView"];
