@@ -98,6 +98,46 @@ export function SignInClient({
   const showRegister = localEnabled && config.registration_open;
   const showOidc = config.oidc_enabled;
 
+  // `auth.oidc.auto_redirect`: skip this page and go straight to the IdP.
+  // Client-only snapshot (SSR renders the normal page) so `?local=1` and the
+  // loop guard can be read from the browser.
+  const autoRedirect = useSyncExternalStore(
+    subscribeNoop,
+    () =>
+      shouldAutoRedirect(
+        showOidc && config.oidc_auto_redirect,
+        banner,
+        errorMessage,
+      ),
+    getServerInsecureSnapshot,
+  );
+  const ssoHref = oidcStartHref(next);
+  useEffect(() => {
+    if (!autoRedirect) return;
+    try {
+      window.sessionStorage.setItem(AUTO_REDIRECT_KEY, String(Date.now()));
+    } catch {
+      // storage unavailable (private mode): the guard just doesn't apply
+    }
+    window.location.replace(ssoHref);
+  }, [autoRedirect, ssoHref]);
+
+  if (autoRedirect) {
+    return (
+      <CenteredCard>
+        <CardHeader className="space-y-2 text-center">
+          <CardTitle className="text-2xl">
+            <h1>Signing you in…</h1>
+          </CardTitle>
+          <CardDescription>Taking you to your sign-in page.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SsoButton next={next} />
+        </CardContent>
+      </CenteredCard>
+    );
+  }
+
   if (pendingEmail) {
     return (
       <CenteredCard>
@@ -293,10 +333,43 @@ function Banner({
   );
 }
 
-function SsoButton({ next }: { next: string | null }) {
-  const href = next
+const AUTO_REDIRECT_KEY = "folio:oidc-auto-redirect-at";
+/** A second automatic bounce within this window means the IdP sent the
+ *  user straight back (e.g. a failed callback) — show the page instead of
+ *  looping. */
+const AUTO_REDIRECT_GUARD_MS = 30_000;
+
+function oidcStartHref(next: string | null): string {
+  return next
     ? `/auth/oidc/start?redirect_after=${encodeURIComponent(next)}`
     : `/auth/oidc/start`;
+}
+
+/** Decide (client-side) whether `/sign-in` should forward straight to the
+ *  IdP. Never when: the operator hasn't enabled it, the page carries a
+ *  banner or error (the user needs to read it), `?local=1` asks for the
+ *  local form (break-glass when the IdP is down), or we already bounced
+ *  within the guard window. */
+export function shouldAutoRedirect(
+  enabled: boolean,
+  banner: Banner,
+  errorMessage: string | null,
+): boolean {
+  if (!enabled || banner !== null || errorMessage) return false;
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("local") === "1") return false;
+  try {
+    const last = Number(window.sessionStorage.getItem(AUTO_REDIRECT_KEY));
+    if (last && Date.now() - last < AUTO_REDIRECT_GUARD_MS) return false;
+  } catch {
+    // storage unavailable: fall through
+  }
+  return true;
+}
+
+function SsoButton({ next }: { next: string | null }) {
+  const href = oidcStartHref(next);
   // Plain `<a>` instead of next/link: this URL is a Rust route that
   // immediately 302s to the OIDC provider, not a Next page. With
   // `<Link>`, App Router prefetches it as RSC on render — which

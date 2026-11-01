@@ -146,6 +146,11 @@ pub struct PublicAuthConfigView {
     /// SMTP credentials. Anonymous-safe; just reflects whether
     /// `smtp.host` is set.
     pub password_recovery_enabled: bool,
+    /// True when the sign-in page should send visitors straight to the IdP
+    /// (`auth.oidc.auto_redirect`). Only ever true when `oidc_enabled` is.
+    /// The page still honours `?local=1` and never redirects while showing
+    /// an OIDC error.
+    pub oidc_auto_redirect: bool,
 }
 
 #[utoipa::path(
@@ -183,6 +188,7 @@ pub async fn get_public_config(State(app): State<AppState>) -> Response {
         // Password recovery requires both an SMTP backend and local auth
         // (OIDC-only deployments never call /auth/forgot-password).
         password_recovery_enabled: local_enabled && smtp_configured,
+        oidc_auto_redirect: oidc_enabled && cfg.oidc_auto_redirect,
     })
     .into_response()
 }

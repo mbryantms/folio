@@ -391,6 +391,8 @@ async fn public_auth_config_advertises_oidc_when_configured() {
     assert_eq!(body["auth_mode"], "both");
     assert_eq!(body["oidc_enabled"], true);
     assert_eq!(body["registration_open"], true);
+    // Off unless the operator opts in.
+    assert_eq!(body["oidc_auto_redirect"], false);
     assert!(
         body["client_id"].is_null(),
         "public surface must not leak client_id"
@@ -404,6 +406,42 @@ async fn public_auth_config_advertises_oidc_when_configured() {
         !raw.contains(issuer.trim_end_matches('/')),
         "public /auth/config leaked the OIDC issuer: {raw}"
     );
+}
+
+async fn public_auth_config(app: &TestApp) -> serde_json::Value {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/api/auth/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    body_json(resp.into_body()).await
+}
+
+#[tokio::test]
+async fn public_auth_config_advertises_auto_redirect_when_enabled() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_auto_redirect(op.issuer()).await;
+    let body = public_auth_config(&app).await;
+    assert_eq!(body["oidc_enabled"], true);
+    assert_eq!(body["oidc_auto_redirect"], true);
+}
+
+#[tokio::test]
+async fn public_auth_config_never_auto_redirects_without_oidc() {
+    // Auto-redirect requested but no IdP wired: the flag must stay false so
+    // the sign-in page can never bounce users to a provider that isn't there.
+    let app = TestApp::spawn_with_auto_redirect_without_oidc().await;
+    let body = public_auth_config(&app).await;
+    assert_eq!(body["oidc_enabled"], false);
+    assert_eq!(body["oidc_auto_redirect"], false);
 }
 
 #[tokio::test]

@@ -34,6 +34,7 @@ const localConfig = {
   oidc_enabled: false,
   registration_open: true,
   password_recovery_enabled: false,
+  oidc_auto_redirect: false,
 } as const;
 
 function renderSignIn(
@@ -182,5 +183,81 @@ describe("SignInClient (jsdom)", () => {
 
     renderSignIn({ banner: "verified" });
     expect(screen.getByRole("status").textContent).toContain("Email verified");
+  });
+});
+
+describe("SignInClient auto-redirect (auth.oidc.auto_redirect)", () => {
+  const ssoConfig = {
+    auth_mode: "both",
+    oidc_enabled: true,
+    registration_open: false,
+    password_recovery_enabled: false,
+    oidc_auto_redirect: true,
+  } as const;
+  const replace = vi.fn();
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/sign-in");
+    vi.spyOn(window, "location", "get").mockReturnValue({
+      ...window.location,
+      search: window.location.search,
+      replace,
+    } as Location);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    replace.mockReset();
+  });
+
+  it("forwards straight to the IdP, preserving next", async () => {
+    renderSignIn({ config: ssoConfig as never, next: "/library" });
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(
+        "/auth/oidc/start?redirect_after=%2Flibrary",
+      ),
+    );
+    expect(
+      screen.getByRole("heading", { name: /signing you in/i }),
+    ).toBeTruthy();
+  });
+
+  it("stays on the page when the flag is off", () => {
+    renderSignIn({
+      config: { ...ssoConfig, oidc_auto_redirect: false } as never,
+    });
+    expect(replace).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: /sign in to folio/i }),
+    ).toBeTruthy();
+  });
+
+  it("never redirects while showing an error, so the user can read it", () => {
+    renderSignIn({
+      config: ssoConfig as never,
+      banner: "error",
+      errorMessage: "oidc state mismatch",
+    });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("?local=1 keeps the local form reachable (break-glass)", () => {
+    vi.spyOn(window, "location", "get").mockReturnValue({
+      ...window.location,
+      search: "?local=1",
+      replace,
+    } as Location);
+    renderSignIn({ config: ssoConfig as never });
+    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/email/i)).toBeTruthy();
+  });
+
+  it("does not loop: a second bounce inside the guard window shows the page", () => {
+    window.sessionStorage.setItem(
+      "folio:oidc-auto-redirect-at",
+      String(Date.now()),
+    );
+    renderSignIn({ config: ssoConfig as never });
+    expect(replace).not.toHaveBeenCalled();
   });
 });
