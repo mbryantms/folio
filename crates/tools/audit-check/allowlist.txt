@@ -64,7 +64,7 @@ refresh_catalog_index  # POST — kicks off catalog refresh job; the worker writ
 # ── libraries.rs (write paths that delegate or kick async work) ─
 create           # POST /libraries — admin-create; covered by audit ledger when the scan worker writes rows. v0.4 audit gap noted in [[audit_remediation_m10_done]]; add `record_admin_action!` once the create-flow audit-action name is decided.
 scan             # POST /libraries/{slug}/scan — kicks off the scanner; the scan_run is the audit ledger
-validate_deeply  # POST /libraries/{slug}/validate-deeply — kicks off a read-only deep-validate; no DB writes
+validate_deeply  # POST /libraries/{slug}/validate-deeply — kicks off a deep-validate (reads archives only); like `scan`, its scan_run (kind deep_validate) is the audit ledger
 scan_preview     # POST /libraries/{slug}/scan-preview — dry-run scan; no DB writes
 
 # ── series.rs ───────────────────────────────────────────────

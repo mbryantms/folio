@@ -495,7 +495,9 @@ primary key). Conventions it added:
   became typed aliases of the variants, so call sites and `match` arms
   read as before.
 - `scan_runs.kind` also holds `deep_validate` (the page-decode probe);
-  the History filter still rejects it as a `?kind=` value.
+  the History filter still rejects it as a `?kind=` value, and
+  `/admin/background-work` lists such a run under `tasks`, never as a
+  scan (E11).
 
 **E4 batch 2** converted `issue_cover.kind` (`IssueCoverKind`:
 `primary | variant | back | incentive`), `series_cover.kind`

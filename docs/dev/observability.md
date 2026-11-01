@@ -143,7 +143,13 @@ surface that owns the detail (a library's Live scan page, `/admin/queue`,
 - **Metadata batches** with member runs still to finish.
 - **Tasks** spawned outside the queues (deep validation, reading-list
   rematch): wrap the task body in `AppState::track_background_task` and it
-  appears here for as long as the guard lives. Thumbnail pace
+  appears here for as long as the guard lives. A task that owns a
+  `scan_runs` row (deep validation) registers with
+  `track_background_run(kind, library, run_id)` instead: its row never
+  counts as a scan, and a row still `running` with no live task behind it
+  lists as a `stalled` task (excluded from `busy`). The boot sweep
+  `deep_validate::close_interrupted_runs` closes such rows `failed`.
+  Thumbnail pace
   (`thumbs_per_min` / `thumbs_eta_secs`) comes from a two-minute window of
   finished jobs.
 

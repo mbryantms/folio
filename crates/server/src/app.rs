@@ -665,6 +665,20 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         Err(e) => tracing::warn!(error = %e, "scan boot sweep failed"),
     }
 
+    // Deep-validate runs are process-local tasks: one still `running` at
+    // boot died with the previous process. Close it so it never reads as
+    // in progress.
+    match crate::library::deep_validate::close_interrupted_runs(&state.db).await {
+        Ok(n) if n > 0 => {
+            tracing::info!(
+                closed = n,
+                "deep-validate boot sweep: closed interrupted runs"
+            )
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "deep-validate boot sweep failed"),
+    }
+
     // Re-seed the process-local thumbnail-job marks from the jobs Redis
     // still holds, before any worker starts. Without it a restart mid-drain
     // makes every per-library "queued" count read 0 (and lets the same
