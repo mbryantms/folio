@@ -127,7 +127,7 @@ pub async fn enqueue_issue_rewrite(
         return Ok(IssueEnqueue::Gone);
     };
     let series_ctx = SeriesContext::load(state, &series_row).await?;
-    push_from_db(state, &row, &series_ctx, actor, skip_rescan).await?;
+    push_from_db(state, &row, &series_ctx, actor, skip_rescan, None).await?;
     Ok(IssueEnqueue::Enqueued)
 }
 
@@ -168,7 +168,7 @@ pub async fn enqueue_series_rewrite(
             out.refused.push((row.id.clone(), reason));
             continue;
         }
-        push_from_db(state, row, &series_ctx, actor, true).await?;
+        push_from_db(state, row, &series_ctx, actor, true, None).await?;
         out.enqueued += 1;
     }
     // One series-scoped rescan after the fan-out (best-effort: the XML
@@ -195,15 +195,39 @@ pub async fn enqueue_series_rewrite(
     Ok(out)
 }
 
-/// Series-level inputs the composer needs, loaded once per call.
-struct SeriesContext {
+/// Compose one issue for the library-wide sidecar re-emit
+/// ([`crate::jobs::sidecar_reemit`]) and queue its rewrite with
+/// `skip_rescan = true`; the run queues one rescan per series. The caller
+/// already checked the writeback flags and `sidecar_refusal` from its
+/// projected walk row. Returns `false` when the issue disappeared or left
+/// `series` since the walk read it.
+pub async fn enqueue_reemit_issue(
+    state: &AppState,
+    issue_id: &str,
+    series: &SeriesContext,
+    actor: &Actor,
+    tag: crate::jobs::sidecar_reemit::ReemitTag,
+) -> anyhow::Result<bool> {
+    let Some(row) = issue::Entity::find_by_id(issue_id).one(&state.db).await? else {
+        return Ok(false);
+    };
+    if row.series_id != series.row.id || row.state != "active" || row.removed_at.is_some() {
+        return Ok(false);
+    }
+    push_from_db(state, &row, series, actor, true, Some(tag)).await?;
+    Ok(true)
+}
+
+/// Series-level inputs the composer needs, loaded once per call (and once
+/// per series by the library re-emit walk).
+pub struct SeriesContext {
     row: series::Model,
     external_ids: std::collections::BTreeMap<String, String>,
     user_pins: std::collections::HashSet<String>,
 }
 
 impl SeriesContext {
-    async fn load(state: &AppState, row: &series::Model) -> anyhow::Result<Self> {
+    pub async fn load(state: &AppState, row: &series::Model) -> anyhow::Result<Self> {
         let id = row.id.to_string();
         let external_ids =
             crate::metadata::sidecar_compose::load_external_ids(&state.db, "series", &id).await?;
@@ -223,6 +247,7 @@ async fn push_from_db(
     series: &SeriesContext,
     actor: &Actor,
     skip_rescan: bool,
+    reemit: Option<crate::jobs::sidecar_reemit::ReemitTag>,
 ) -> anyhow::Result<()> {
     let issue_external_ids =
         crate::metadata::sidecar_compose::load_external_ids(&state.db, "issue", &row.id).await?;
@@ -266,6 +291,7 @@ async fn push_from_db(
             // The handler already wrote the user's provenance in its own
             // transaction; there is nothing to defer until the rewrite.
             post_apply: None,
+            reemit,
         })
         .await
         .map_err(|e| anyhow::anyhow!("rewrite job enqueue failed: {e}"))?;

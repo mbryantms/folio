@@ -2560,6 +2560,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/libraries/{slug}/sidecar-reemit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["libraries_sidecar_reemit_status"];
+        put?: never;
+        post: operations["libraries_sidecar_reemit_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/libraries/{slug}/validate-deeply": {
         parameters: {
             query?: never;
@@ -6512,6 +6528,11 @@ export interface components {
             metadata_batches: components["schemas"]["MetadataBatchWorkView"][];
             /** @description Every queue, in a stable order. */
             queues: components["schemas"]["QueueWorkView"][];
+            /**
+             * @description Sidecar re-emit runs that are live or finished in the last 24 h,
+             *     newest first.
+             */
+            sidecar_reemits: components["schemas"]["SidecarReemitWorkView"][];
             /**
              * @description Spawned tasks with no queue (process-local): deep validation,
              *     reading-list rematch.
@@ -12552,6 +12573,11 @@ export interface components {
             scan_series: number;
             /**
              * Format: int64
+             * @description Library-wide sidecar re-emit ticks (one chain per running run).
+             */
+            sidecar_reemit: number;
+            /**
+             * Format: int64
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
@@ -14491,6 +14517,72 @@ export interface components {
         };
         SidebarLayoutView: {
             entries: components["schemas"]["SidebarEntryView"][];
+        };
+        /** @description One library-wide sidecar re-emit run. */
+        SidecarReemitRunView: {
+            /**
+             * Format: int64
+             * @description Rewrites queued so far.
+             */
+            enqueued: number;
+            /**
+             * Format: int64
+             * @description Rewrites that gave up after their retries.
+             */
+            failed: number;
+            finished_at?: string | null;
+            library_id: string;
+            /** @description Why an aborted run stopped. */
+            note?: string | null;
+            /**
+             * Format: int64
+             * @description Rewrites queued or running right now.
+             */
+            outstanding: number;
+            /**
+             * Format: int64
+             * @description Archives whose sidecars were rewritten.
+             */
+            rewritten: number;
+            run_id: string;
+            /**
+             * Format: int64
+             * @description Issues removed between the walk and the compose.
+             */
+            skipped_gone: number;
+            /**
+             * Format: int64
+             * @description Archives the sidecar path refused (CBR / CB7 without conversion,
+             *     unsupported formats): skipped, never queued.
+             */
+            skipped_refused: number;
+            started_at: string;
+            /**
+             * @description `running` (queueing rewrites) | `draining` (all queued, waiting for
+             *     the last rewrites) | `completed` | `aborted`.
+             */
+            status: string;
+            /**
+             * Format: int64
+             * @description Active, non-removed issues when the run started.
+             */
+            total: number;
+        };
+        /** @description `GET /libraries/{slug}/sidecar-reemit`. */
+        SidecarReemitStatusView: {
+            run?: components["schemas"]["SidecarReemitRunView"] | null;
+        };
+        /** @description A library-wide sidecar re-emit run ([`crate::jobs::sidecar_reemit`]). */
+        SidecarReemitWorkView: {
+            library_name: string;
+            run: components["schemas"]["SidecarReemitRunView"];
+            /**
+             * @description Live (`running` / `draining`) but no tick is queued for it, so
+             *     nothing will advance it — a dead-lettered tick or a cleared queue.
+             *     Starting a new run for the library supersedes it. Excluded from
+             *     `busy`.
+             */
+            stalled: boolean;
         };
         /** @description One shared entity explaining a match. */
         SimilarReason: {
@@ -20919,6 +21011,83 @@ export interface operations {
                 content?: never;
             };
             /** @description scan run already terminal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    libraries_sidecar_reemit_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SidecarReemitStatusView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    libraries_sidecar_reemit_start: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SidecarReemitRunView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description writeback is off on this library, or a run is already in progress */
             409: {
                 headers: {
                     [name: string]: unknown;

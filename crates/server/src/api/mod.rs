@@ -86,6 +86,7 @@ pub mod server_info;
 pub mod server_releases;
 pub mod sessions;
 pub mod sidebar_layout;
+pub mod sidecar_reemit;
 pub mod teams;
 pub mod thumbnails;
 pub mod view_groups;

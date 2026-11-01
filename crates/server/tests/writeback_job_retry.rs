@@ -78,6 +78,7 @@ fn sidecar_job(issue_id: &str, run_id: Uuid) -> RewriteIssueSidecarsJob {
         skip_rescan: false,
         attempt: 0,
         post_apply: None,
+        reemit: None,
     }
 }
 

@@ -87,6 +87,7 @@ pub mod rewrite_sidecars;
 pub mod scan;
 pub mod scan_series;
 pub mod scheduler;
+pub mod sidecar_reemit;
 
 /// Owned by [`AppState`]. Cloneable handle into the apalis storages and a
 /// raw Redis connection (used for the coalescing keys, which live outside
@@ -110,6 +111,7 @@ pub struct JobRuntime {
     pub relationship_suggest_storage: RedisStorage<relationship_suggest::RelationshipSuggestJob>,
     pub provider_coverage_storage: RedisStorage<provider_coverage::ProviderCoverageJob>,
     pub entity_enrich_storage: RedisStorage<entity_enrich::EntityEnrichJob>,
+    pub sidecar_reemit_storage: RedisStorage<sidecar_reemit::SidecarReemitJob>,
     pub redis: ConnectionManager,
 }
 
@@ -139,6 +141,7 @@ impl JobRuntime {
         let provider_coverage_storage =
             storage::<provider_coverage::ProviderCoverageJob>(conn.clone());
         let entity_enrich_storage = storage::<entity_enrich::EntityEnrichJob>(conn.clone());
+        let sidecar_reemit_storage = storage::<sidecar_reemit::SidecarReemitJob>(conn.clone());
         let rt = Self {
             db,
             scan_storage,
@@ -157,6 +160,7 @@ impl JobRuntime {
             relationship_suggest_storage,
             provider_coverage_storage,
             entity_enrich_storage,
+            sidecar_reemit_storage,
             redis: conn,
         };
         rt.purge_legacy_queue_state().await?;
@@ -591,6 +595,16 @@ impl JobRuntime {
             self.entity_enrich_storage,
             1,
             entity_enrich::handle
+        );
+        // Library-wide sidecar re-emit ticks — concurrency=1. A tick only
+        // composes and queues rewrites (bounded by the run's own throttle);
+        // the archive work happens on the sidecar rewrite workers above.
+        let monitor = register!(
+            monitor,
+            "sidecar_reemit",
+            self.sidecar_reemit_storage,
+            1,
+            sidecar_reemit::handle
         );
 
         let shutdown_fut = {
@@ -1078,6 +1092,7 @@ impl JobRuntime {
                 self.provider_coverage_storage.get_config(),
             ),
             ("entity_enrich", self.entity_enrich_storage.get_config()),
+            ("sidecar_reemit", self.sidecar_reemit_storage.get_config()),
         ]
     }
 
@@ -1196,7 +1211,7 @@ impl JobRuntime {
 }
 
 /// Number of apalis queues [`JobRuntime`] owns.
-pub const QUEUE_COUNT: usize = 16;
+pub const QUEUE_COUNT: usize = 17;
 
 /// One queue's outstanding jobs — see [`JobRuntime::queue_counts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

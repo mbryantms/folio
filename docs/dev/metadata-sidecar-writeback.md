@@ -593,6 +593,49 @@ The scoped rescan re-ingests the XML; the user's `field_provenance` pins
 edits queue one job each; the per-issue rewrite mutex serialises them and
 the last one carries the final state.
 
+## Library-wide re-emit (audit 2026-11 A7)
+
+When the composer changes (MetronInfo v1.2, GTIN, arc numbers, junction
+fixes), archives written earlier keep the older XML until something
+touches them again. **Settings → Rewrite metadata files** on a library
+(`POST /libraries/{slug}/sidecar-reemit`, admin, audited as
+`admin.library.sidecars.reemit`) re-emits both sidecars for every active
+issue from the database so the files catch up. It is refused with `409
+writeback_disabled` unless both writeback flags are on, and with `409
+reemit_in_progress` while the library already has a live run.
+
+- **Same path as a manual edit.** Each issue is composed by
+  `manual_writeback::enqueue_reemit_issue` (empty provider payload,
+  `post_apply = None`, the starting admin as audit actor) and written by
+  the ordinary `RewriteIssueSidecarsJob`, so `archive::rewrite_policy`,
+  the `.bak` rotation and the rewrite mutex all apply. No new archive
+  writer.
+- **Throttle.** The run is a self-re-enqueueing tick on its own
+  `sidecar_reemit` queue (concurrency 1). A tick queues at most 32
+  rewrites and the run never has more than 32 queued or running
+  (`TICK_BATCH`, `MAX_OUTSTANDING` in
+  [`jobs/sidecar_reemit.rs`](../../crates/server/src/jobs/sidecar_reemit.rs)).
+  Each rewrite job carries its XML inline, so a 10k-issue library queued at
+  once would park tens of MB in Redis and put every interactive apply behind
+  it; with the cap an edit waits behind at most 32 rewrites. The walk pages
+  `(series_id, id)` with a projected `select_only` row; the composer loads
+  one full issue at a time.
+- **Rescans.** Rewrites run with `skip_rescan = true`. A per-series counter
+  (one per queued rewrite, plus a guard while the walk is inside the
+  series) queues **one** series-scoped rescan when it reaches zero, and
+  only if an archive of that series was rewritten. Never a library scan.
+- **Refusals.** `sidecar_refusal` archives (CBR / CB7 without conversion,
+  unknown formats) are skipped and counted, never queued.
+- **Progress.** Run state lives in Redis (`sidecar_reemit:run:<id>`, kept a
+  week after the run ends): total, queued, rewritten, skipped (format),
+  failed. It shows on `/admin/background-work` (“Metadata file rewrites”)
+  and on the library's settings card. A restart resumes from the persisted
+  cursor.
+- **Stopping.** Turning either writeback flag off aborts the run at its next
+  tick; the at most 32 rewrites already queued still finish (or refuse
+  themselves when archive writeback is off). *Clear metadata queues* on
+  `/admin/queue` also drops the run and its queued rewrites.
+
 ## Series-scope fan-out
 
 Series-scope apply ([`apply_series_via_sidecar`](../../crates/server/src/metadata/apply.rs))
@@ -1065,3 +1108,4 @@ branch from `apply_issue` / `apply_series` once the
 | [`server/tests/sidecar_interop_emit.rs`](../../crates/server/tests/sidecar_interop_emit.rs) | Interop producer: writes a rich Folio-authored CBZ + `expected.json` to `FOLIO_INTEROP_OUT` (CI job `sidecar-interop`, `just sidecar-interop`). |
 | [`scripts/ci/sidecar_interop.py`](../../scripts/ci/sidecar_interop.py) | Interop readers: ComicTagger (`comicapi`) + Metron-Tagger (`darkseid`) read that CBZ; diff against `expected.json`; pins in `sidecar-interop-requirements.txt`. |
 | [`server/api/health_issues.rs`](../../crates/server/src/api/health_issues.rs) — `flush_metadata_drift` | M6 flush endpoint: composer-only re-emit of DB state to XML.        |
+| [`server/jobs/sidecar_reemit.rs`](../../crates/server/src/jobs/sidecar_reemit.rs) | Library-wide re-emit: throttled tick that queues one DB-composed rewrite per issue, one rescan per series. |

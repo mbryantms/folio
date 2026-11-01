@@ -1330,6 +1330,7 @@ pub(crate) async fn apply_issue_via_sidecar(
             skip_rescan: false,
             attempt: 0,
             post_apply: Some(post_apply),
+            reemit: None,
         })
         .await
         .map_err(|e| ApplyError::InvalidScope(format!("rewrite_sidecars push failed: {e}")))?;

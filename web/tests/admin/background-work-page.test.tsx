@@ -54,6 +54,7 @@ function view(over: Partial<BackgroundWorkView>): BackgroundWorkView {
     queues: [],
     metadata_batches: [],
     tasks: [],
+    sidecar_reemits: [],
     ...over,
   };
 }
@@ -196,6 +197,41 @@ describe("BackgroundWorkClient", () => {
     // only clears scans and thumbnails.
     expect(html).toContain('aria-label="Cancel this metadata batch"');
     expect(html).toContain("10 / 40");
+  });
+
+  it("shows a library-wide metadata file rewrite with its counts", () => {
+    state.data = view({
+      sidecar_reemits: [
+        {
+          library_name: "Marvel",
+          stalled: false,
+          run: {
+            run_id: "r1",
+            library_id: "a",
+            status: "running",
+            started_at: "2026-10-05T00:00:00Z",
+            finished_at: null,
+            total: 1_000,
+            enqueued: 300,
+            skipped_refused: 12,
+            skipped_gone: 0,
+            rewritten: 250,
+            failed: 3,
+            outstanding: 47,
+            note: null,
+          },
+        },
+      ],
+    });
+    const html = render();
+    expect(html).toContain("Metadata file rewrites");
+    expect(html).toContain("Marvel");
+    expect(html).toContain("queueing rewrites");
+    // rewritten + failed + skipped of the library's total.
+    expect(html).toContain("265 / 1,000");
+    expect(html).toContain("12 skipped (format)");
+    expect(html).toContain("3 failed");
+    expect(html).not.toContain("Nothing queued.");
   });
 
   it("says so when nothing is running", () => {

@@ -94,6 +94,9 @@ page_count       # GET /issues/{id}/archive/page-count — read-only live page c
 # ── library_hash_backfill.rs ────────────────────────────────
 hash_backfill_status  # GET /libraries/{slug}/hash-backfill — read-only progress counts
 
+# ── sidecar_reemit.rs ───────────────────────────────────────
+sidecar_reemit_status  # GET /libraries/{slug}/sidecar-reemit — read-only run counts
+
 # ── libraries.rs ────────────────────────────────────────────
 list_health      # GET /libraries/{slug}/health — health-issue rollup
 list_removed     # GET /libraries/{slug}/removed — soft-deleted issue list

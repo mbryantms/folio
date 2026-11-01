@@ -1732,6 +1732,7 @@ fn sidecar_job(issue_id: &str) -> RewriteIssueSidecarsJob {
         skip_rescan: false,
         attempt: 0,
         post_apply: None,
+        reemit: None,
     }
 }
 

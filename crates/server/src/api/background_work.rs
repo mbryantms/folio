@@ -14,7 +14,9 @@
 //! - **per queue**: waiting / retry-delayed / held-by-a-worker / dead;
 //! - **metadata batches** still running or waiting on provider quota;
 //! - **tasks** spawned outside the queues (deep validation, reading-list
-//!   rematch), from a process-local registry.
+//!   rematch), from a process-local registry;
+//! - **sidecar re-emit runs** (library-wide sidecar rewrites) that are live
+//!   or finished in the last day, with their counts.
 //!
 //! Page-strip readiness is deliberately absent: it is counted from files on
 //! disk (one stat per page), too slow for a polled cross-library snapshot.
@@ -175,6 +177,18 @@ pub struct TaskWorkView {
     pub started_at: String,
 }
 
+/// A library-wide sidecar re-emit run ([`crate::jobs::sidecar_reemit`]).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SidecarReemitWorkView {
+    pub library_name: String,
+    /// Live (`running` / `draining`) but no tick is queued for it, so
+    /// nothing will advance it — a dead-lettered tick or a cleared queue.
+    /// Starting a new run for the library supersedes it. Excluded from
+    /// `busy`.
+    pub stalled: bool,
+    pub run: super::sidecar_reemit::SidecarReemitRunView,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BackgroundWorkView {
     pub generated_at: String,
@@ -188,6 +202,9 @@ pub struct BackgroundWorkView {
     /// Spawned tasks with no queue (process-local): deep validation,
     /// reading-list rematch.
     pub tasks: Vec<TaskWorkView>,
+    /// Sidecar re-emit runs that are live or finished in the last 24 h,
+    /// newest first.
+    pub sidecar_reemits: Vec<SidecarReemitWorkView>,
 }
 
 #[utoipa::path(
@@ -381,6 +398,31 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         }
     }
 
+    let reemit_ticks_live = outstanding("sidecar_reemit") > 0;
+    let day_ago = chrono::Utc::now() - chrono::Duration::hours(24);
+    let library_names: HashMap<Uuid, String> =
+        libraries.iter().map(|l| (l.id, l.name.clone())).collect();
+    let sidecar_reemits: Vec<SidecarReemitWorkView> =
+        crate::jobs::sidecar_reemit::recent_runs(app, 20)
+            .await?
+            .into_iter()
+            .filter(|r| {
+                r.is_live()
+                    || r.finished_at
+                        .as_deref()
+                        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                        .is_some_and(|t| t >= day_ago)
+            })
+            .map(|r| SidecarReemitWorkView {
+                library_name: library_names
+                    .get(&r.library_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                stalled: r.is_live() && !reemit_ticks_live,
+                run: r.into(),
+            })
+            .collect();
+
     let libraries: Vec<LibraryWorkView> = libraries
         .into_iter()
         .map(|lib| {
@@ -485,7 +527,10 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         || metadata_batches
             .iter()
             .any(|b| b.status == "running" && !b.stalled)
-        || !tasks.is_empty();
+        || !tasks.is_empty()
+        || sidecar_reemits
+            .iter()
+            .any(|r| !r.stalled && matches!(r.run.status.as_str(), "running" | "draining"));
 
     Ok(BackgroundWorkView {
         generated_at: chrono::Utc::now().to_rfc3339(),
@@ -494,5 +539,6 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         queues,
         metadata_batches,
         tasks,
+        sidecar_reemits,
     })
 }
