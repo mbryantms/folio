@@ -87,7 +87,7 @@ async fn promote_to_admin(app: &TestApp, user_id: Uuid) {
         .unwrap()
         .unwrap();
     let mut am: entity::user::ActiveModel = user.into();
-    am.role = Set("admin".into());
+    am.role = Set(entity::user::UserRole::Admin);
     am.update(&db).await.unwrap();
 }
 
@@ -154,6 +154,7 @@ async fn seed_library_and_scan_run(app: &TestApp, state: &str) -> (Uuid, String,
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&db)
     .await
@@ -520,6 +521,7 @@ async fn create_on_disk_library(app: &TestApp, root: &Path) -> Uuid {
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&db)
     .await

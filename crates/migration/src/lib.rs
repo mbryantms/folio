@@ -141,6 +141,7 @@ mod m20271024_000001_resolve_base_barcode_findings;
 mod m20271026_000001_user_ui_prefs;
 mod m20271031_000001_library_backup_stats;
 mod m20271031_000001_user_reader_display_prefs;
+mod m20271101_000001_library_auto_search_new_series;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -290,6 +291,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271026_000001_user_ui_prefs::Migration),
             Box::new(m20271031_000001_library_backup_stats::Migration),
             Box::new(m20271031_000001_user_reader_display_prefs::Migration),
+            Box::new(m20271101_000001_library_auto_search_new_series::Migration),
         ]
     }
 }

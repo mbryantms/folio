@@ -37,6 +37,14 @@ pub struct ScanStats {
     #[serde(default)]
     pub files_hash_deferred: u64,
     pub series_created: u64,
+    /// Ids of the series this scan created (identity resolution returned
+    /// `Created`; re-homed or renamed series are not in it), in creation
+    /// order. In-process only — not persisted to `scan_runs.stats` nor
+    /// part of the API shape. `finalize_run` hands it to
+    /// [`super::auto_search`] for the per-library
+    /// `auto_search_new_series` opt-in (audit 2026-11 N-M9).
+    #[serde(skip)]
+    pub created_series_ids: Vec<uuid::Uuid>,
     pub series_skipped_unchanged: u64,
     pub series_removed: u64,
     pub issues_removed: u64,
@@ -167,6 +175,7 @@ impl ScanStats {
         self.files_converted += other.files_converted;
         self.files_hash_deferred += other.files_hash_deferred;
         self.series_created += other.series_created;
+        self.created_series_ids.extend(other.created_series_ids);
         self.series_skipped_unchanged += other.series_skipped_unchanged;
         self.series_removed += other.series_removed;
         self.issues_removed += other.issues_removed;

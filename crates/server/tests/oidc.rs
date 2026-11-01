@@ -460,7 +460,8 @@ async fn callback_happy_path_upserts_user_and_sets_cookies() {
     assert_eq!(oidc_user.email.as_deref(), Some("happy@example.com"));
     assert!(oidc_user.email_verified);
     assert_eq!(
-        oidc_user.role, "admin",
+        oidc_user.role,
+        entity::user::UserRole::Admin,
         "first OIDC-created user should still receive first-admin bootstrap"
     );
 }
@@ -504,11 +505,20 @@ async fn concurrent_first_oidc_signups_create_only_one_admin() {
         .unwrap();
     assert_eq!(users.len(), 4);
     assert_eq!(
-        users.iter().filter(|u| u.role == "admin").count(),
+        users
+            .iter()
+            .filter(|u| u.role == entity::user::UserRole::Admin)
+            .count(),
         1,
         "exactly one concurrent OIDC signup should receive first-admin bootstrap"
     );
-    assert_eq!(users.iter().filter(|u| u.role == "user").count(), 3);
+    assert_eq!(
+        users
+            .iter()
+            .filter(|u| u.role == entity::user::UserRole::User)
+            .count(),
+        3
+    );
 }
 
 #[tokio::test]
@@ -646,7 +656,7 @@ async fn callback_auto_links_local_user_when_opt_in_enabled() {
     );
     assert_eq!(linked.email.as_deref(), Some("link-me@example.com"));
     // First registered user is admin; the role survives the link.
-    assert_eq!(linked.role, "admin");
+    assert_eq!(linked.role, entity::user::UserRole::Admin);
 }
 
 #[tokio::test]

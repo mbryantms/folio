@@ -442,6 +442,81 @@ type docstrings. The alternative (`entity_id_uuid UUID NULL` +
 `entity_id_text TEXT NULL` + a CHECK constraint enforcing exactly
 one) would clutter every query; we chose the wart.
 
+## Typed discriminator columns (AR-7)
+
+Discriminator columns (`role`, `state`, `kind`, …) are stored as `TEXT`
+holding a small closed set of strings. The entity field should carry a
+Rust enum, not a `String`, so a typo is a compile error and an
+`if user.role == "admin"` comparison cannot drift from the stored value.
+
+**Template:** `entity::user::{UserRole, UserState}` (audit 2026-11 B8).
+
+- `#[derive(EnumIter, DeriveActiveEnum, Serialize, Deserialize, utoipa::ToSchema)]`
+  with `#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]`
+  and one `#[sea_orm(string_value = "...")]` per variant. The column
+  stays `TEXT` and the stored strings stay exactly what they were, so
+  the conversion ships **without a migration**. No Postgres `ENUM` type.
+- The serde rename produces the same string as `string_value`, so the
+  JSON wire format is unchanged. The OpenAPI schema narrows from
+  `string` to a string enum; oasdiff may report that as breaking on
+  response fields even though no new value appears.
+- Define the enum once, in `entity`, and re-export it where a DTO
+  already used a query-param twin (`api::admin_users` re-exports the
+  user enums). Pin the DB strings with a unit test that round-trips
+  every variant through `to_value` / `try_from_value` and serde.
+- **Unknown stored strings fail loudly.** sea-orm returns a `DbErr` when
+  a row holds a string outside the enum; it is never coerced to a
+  default. For `users`, the request extractor, `/auth/me`, the admin
+  routes and login turn that into a 500
+  (`crates/server/tests/auth.rs::unknown_role_in_db_fails_loudly`);
+  lookups that already discard errors (the password-reset request) fail
+  closed. Either way a hand-edited `role = 'superuser'` row can sign in
+  neither as a reader nor as an admin. Add a `CHECK` constraint only as its own migration
+  (`needs-migration-review`).
+- Raw SQL (`Statement::from_sql_and_values`, `FromQueryResult` rows)
+  still binds and reads plain strings; those sites keep working and can
+  be typed later.
+
+**E4 backlog** — the remaining stringly `role` / `state` / `kind`
+entity fields, as of `main` at the B8 merge:
+
+| Column | Entity field |
+|---|---|
+| `issues.state` | `crates/entity/src/issue.rs:28` |
+| `issue_covers.kind` | `crates/entity/src/issue_cover.rs:16` |
+| `issue_credits.role` | `crates/entity/src/issue_credit.rs:12` |
+| `library_health_issues.kind` | `crates/entity/src/library_health_issue.rs:26` |
+| `log_widgets.kind` | `crates/entity/src/log_widget.rs:22` |
+| `markers.kind` | `crates/entity/src/marker.rs:26` |
+| `saved_views.kind` | `crates/entity/src/saved_view.rs:26` |
+| `scan_batches.kind` | `crates/entity/src/scan_batch.rs:16` |
+| `scan_batches.state` | `crates/entity/src/scan_batch.rs:30` |
+| `scan_runs.state` | `crates/entity/src/scan_run.rs:11` |
+| `scan_runs.kind` | `crates/entity/src/scan_run.rs:21` |
+| `series_covers.kind` | `crates/entity/src/series_cover.rs:15` |
+| `series_credits.role` | `crates/entity/src/series_credit.rs:13` |
+| `series_external_relationships.kind` | `crates/entity/src/series_external_relationship.rs:22` |
+| `series_relationships.kind` | `crates/entity/src/series_relationship.rs:29` |
+| `series_relationship_suggestions.kind` | `crates/entity/src/series_relationship_suggestion.rs:32` |
+| `user_sidebar_entries.kind` | `crates/entity/src/user_sidebar_entry.rs:19` |
+
+The two credit `role` columns hold the canonical credit-role table
+(`metadata::provider::canonical_credit_role`); check whether any
+non-canonical value is still stored before closing that set.
+
+Beyond `role` / `state` / `kind`, the same shape fits the `status`,
+`scope`, `source`, `set_by` and `severity` discriminators
+(`metadata_run.rs:15,31`, `metadata_batch.rs:21,27`,
+`metadata_match_outcome.rs:24`, `metadata_run_candidate.rs:24`,
+`external_id.rs:29,37`, `field_provenance.rs:34`,
+`library_event.rs:37,53`, `library_health_issue.rs:29`,
+`series.rs:33`, `series_external_relationship.rs:28,40`,
+`series_provider_range.rs:23,48`, `series_relationship.rs:31`,
+`series_relationship_suggestion.rs:38,43`, `saved_view_group.rs:17`,
+`saved_view_group_item.rs:20`, `app_password.rs:23`,
+`cbl_refresh_log.rs:15`). `audit_log.action` and
+`library_event.action` are open-ended dotted names and stay strings.
+
 ## Migration rollback
 
 The `down()` path reverses every backfill in reverse order:
