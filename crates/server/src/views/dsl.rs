@@ -179,6 +179,8 @@ pub enum Op {
     Contains,
     NotContains,
     StartsWith,
+    /// Suffix match (`LIKE '%value'`), the mirror of [`Op::StartsWith`].
+    EndsWith,
     // text + enum + number
     Equals,
     NotEquals,

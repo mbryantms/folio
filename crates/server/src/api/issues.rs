@@ -639,8 +639,8 @@ async fn build_issue_junction_lists(app: &AppState, issue_id: &str) -> IssueJunc
 ///
 /// Every field is optional. For nullable columns the body distinguishes:
 ///   - field absent     → leave column untouched
-///   - field present, null → clear column, mark as user-edited
-///   - field present, set  → write column, mark as user-edited
+///   - field present, null → clear column, pin it (`set_by='user'`)
+///   - field present, set  → write column, pin it (`set_by='user'`)
 ///
 /// `additional_links` is replace-all: send the full desired array, or `[]`
 /// to clear. Empty / whitespace-only `url` entries are rejected.

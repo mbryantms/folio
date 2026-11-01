@@ -642,6 +642,39 @@ async fn not_contains_excludes_matching_text() {
     );
 }
 
+/// UX-8: `ends_with` matches a suffix only — not a prefix, not an
+/// interior substring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ends_with_matches_suffix_only() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "endsw@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_lib, _series) = seed_series_with_genre(
+        &app,
+        "endsw-lib",
+        "Action",
+        &[
+            "Batman Annual",
+            "Annual Heroes",
+            "The Annual Saga",
+            "Hawkeye",
+        ],
+    )
+    .await;
+
+    let mut names = run_filter_for_names(
+        &app,
+        &auth,
+        "Annuals",
+        "name",
+        "ends_with",
+        serde_json::json!("Annual"),
+    )
+    .await;
+    names.sort();
+    assert_eq!(names, vec!["Batman Annual".to_owned()], "names: {names:?}");
+}
+
 // ─── library-filters-richer-1.0 M2 / M3 / M4 fixtures ────────────────
 
 /// Seed one series with `n` issues, all `sort_number = 1.0 + i`.
