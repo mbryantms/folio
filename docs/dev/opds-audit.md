@@ -96,6 +96,7 @@ UI advertises Chunky, KyBook, Panels, Kavita-mobile ([AppPasswordsCard.tsx:148](
 | Recent | `opds.rs::recent_feed_paginates_at_50`, `opds_v2.rs::recent_paginates_in_json`, `recent_feed_entries_render_full_metadata_from_the_projection`, `recent_feed_hides_removed_and_inactive_issues`; projection guard `perf_regressions.rs::opds_recent_feed_is_projected_and_paged` |
 | Search | none |
 | Collections | `opds.rs::collection_acq_hides_removed_targets`, `opds_v2.rs::collection_acq_hides_removed_targets` — entries go through `collections::visible_{series,issues}_select` (removed series / issues and issues of a removed series never render; Up Next is picked from the visible rows) |
+| CBL lists, continue / on-deck / history, issue views | `opds.rs::cbl_list_acq_hides_removed_matches` — `fetch_visible_issues_preserving_order` hydrates through `access::visible_issues_select`, so a removed issue or an issue of a removed series drops out |
 | `?page=` clamp | `opds.rs::paged_feeds_clamp_an_absurd_page`, `opds_v2.rs::paged_feeds_clamp_an_absurd_page` — every paged feed (series, series detail, browse, history, by-creator, search, entity indexes and feeds) reads the page through `opds::page_number` |
 | Download | none |
 | ACL gate | none |

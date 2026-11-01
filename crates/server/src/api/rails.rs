@@ -458,6 +458,7 @@ async fn progress_cards(
               {extra_where}
               AND i.state     = 'active'
               AND i.removed_at IS NULL
+              AND s.removed_at IS NULL
               {acl_clause}{cap_clause}
               AND (d.dismissed_at IS NULL OR p.updated_at > d.dismissed_at)
             ORDER BY p.updated_at DESC
@@ -673,6 +674,7 @@ pub async fn on_this_day(
               JOIN series s ON s.id = i.series_id
              WHERE i.state = 'active'
                AND i.removed_at IS NULL
+               AND s.removed_at IS NULL
                AND i.month = $1 AND i.day = $2
                {acl_clause}{cap_clause}
              ORDER BY i.year ASC NULLS LAST, s.name ASC, i.sort_number ASC NULLS LAST, i.id ASC
@@ -848,6 +850,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
             JOIN series s ON s.id = i.series_id
             WHERE i.state = 'active'
               AND i.removed_at IS NULL
+              AND s.removed_at IS NULL
               {acl_clause}{cap_clause}
               {keyset}
             ORDER BY i.created_at DESC, i.id DESC
@@ -1010,6 +1013,7 @@ pub(crate) async fn compute_on_deck(
                  AND d.target_kind = 'series'
                  AND d.target_id = s.id::text
                 WHERE started.series_id NOT IN (SELECT series_id FROM in_progress)
+                  AND s.removed_at IS NULL
                   {acl_clause}{cap_clause}
                   AND (d.dismissed_at IS NULL OR started.last_activity > d.dismissed_at)
                 ORDER BY started.last_activity DESC

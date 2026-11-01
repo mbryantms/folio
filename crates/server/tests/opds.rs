@@ -3020,3 +3020,42 @@ async fn paged_feeds_clamp_an_absurd_page() {
         assert_eq!(resp.status(), StatusCode::OK, "{path}");
     }
 }
+
+/// E7: the CBL list feed (and every feed hydrated through
+/// `fetch_visible_issues_preserving_order`) drops a match to a soft-removed
+/// issue or to an issue of a removed series.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbl_list_acq_hides_removed_matches() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cbl-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let live_series = seed_series(&db, lib_id, "Live").await;
+    let gone_series = seed_series(&db, lib_id, "Gone").await;
+    let live =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("a.cbz"), b"a").await;
+    let removed =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("b.cbz"), b"b").await;
+    let orphan =
+        seed_issue_with_file(&db, lib_id, gone_series, &tmp.path().join("c.cbz"), b"c").await;
+    mark_removed(&db, "issues", &removed).await;
+    mark_removed(&db, "series", &gone_series.to_string()).await;
+
+    let list_id = seed_cbl_list(&db, Some(auth.user_id), "Removed matches").await;
+    seed_cbl_entry(&db, list_id, 0, Some(&removed)).await;
+    seed_cbl_entry(&db, list_id, 1, Some(&orphan)).await;
+    seed_cbl_entry(&db, list_id, 2, Some(&live)).await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/lists/{list_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 1, "{body}");
+    assert!(body.contains(&format!("urn:issue:{live}")));
+}

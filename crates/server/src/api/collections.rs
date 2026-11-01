@@ -1042,7 +1042,6 @@ pub async fn add_entry(
     // The echo goes through the same visibility pass as the list; a
     // target the caller cannot see hydrates to nothing and the bare
     // entry row is returned instead.
-    let acl = access::for_user(&app, &user).await;
     let hydrated = hydrate_entries(&app, vec![entry], &acl, user.id).await;
     let first = hydrated.into_iter().next().unwrap_or(CollectionEntryView {
         id: entry_id.to_string(),

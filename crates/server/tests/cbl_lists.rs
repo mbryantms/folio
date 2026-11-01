@@ -1649,6 +1649,19 @@ async fn entries_hide_card_of_removed_matched_issue() {
     );
     assert_eq!(detail["stats"]["total"], stats_before["total"]);
 
+    // A manual match cannot point at the removed issue either: it answers
+    // like an unknown id instead of writing a row that reads as missing.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/entries/{gone_entry_id}/match"),
+        Some(&auth),
+        Some(serde_json::json!({ "issue_id": gone_issue_id })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["message"], "issue not found");
+
     // The issues feed behind Continue / offline downloads drops it too.
     let (status, body) = http(
         &app,

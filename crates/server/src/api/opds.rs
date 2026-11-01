@@ -3654,14 +3654,15 @@ pub(crate) async fn fetch_visible_issues_preserving_order(
     if ids.is_empty() {
         return Vec::new();
     }
-    let rows = issue::Entity::find()
+    // `access::visible_issues_select`: a soft-removed issue, or one of a
+    // removed series, drops out of every personal feed (CBL lists,
+    // continue / on-deck / history, issue views) like it does on the web.
+    let by_id: HashMap<String, OpdsIssueRow> = access::visible_issues_select(visible)
         .filter(issue::Column::Id.is_in(ids.to_vec()))
         .into_partial_model::<OpdsIssueRow>()
         .all(&app.db)
         .await
-        .unwrap_or_default();
-    let by_id: HashMap<String, OpdsIssueRow> = access::filter_issues(app, visible, rows)
-        .await
+        .unwrap_or_default()
         .into_iter()
         .map(|i| (i.id.clone(), i))
         .collect();

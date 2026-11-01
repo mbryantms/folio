@@ -1474,35 +1474,23 @@ async fn create_list_from_parsed(
         tracing::error!(error = %e, "cbl_lists: insert failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
-    let summary =
-        match import::apply_parsed(&app.db, id, parsed, xml, None, RefreshTrigger::Manual).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "cbl_lists: apply_parsed failed");
-                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
+    if let Err(e) =
+        import::apply_parsed(&app.db, id, parsed, xml, None, RefreshTrigger::Manual).await
+    {
+        tracing::error!(error = %e, "cbl_lists: apply_parsed failed");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
     // Re-read the freshly-written row + stats so the response shape
     // mirrors the regular GET.
     let row = match cbl_list::Entity::find_by_id(id).one(&app.db).await {
         Ok(Some(r)) => r,
         _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    let stats = CblStatsView {
-        total: i64::from(summary.matched + summary.ambiguous + summary.missing + summary.manual),
-        // `matched` is "resolved to an issue" — auto-match + preserved
-        // user overrides — to match `stats_for` semantics. The strict
-        // auto-only count is `matched - manual` for any caller that
-        // needs it.
-        matched: i64::from(summary.matched + summary.manual),
-        ambiguous: i64::from(summary.ambiguous),
-        missing: i64::from(summary.missing),
-        manual: i64::from(summary.manual),
-        // Freshly-uploaded list — the user can't have progress on
-        // anything yet. Subsequent reads call `stats_for` which
-        // populates this against `progress_records`.
-        read_count: 0,
-    };
+    // `stats_for`, not the import summary, so the create response counts
+    // exactly what every later read counts (live matches only).
+    let stats = stats_for(&app.db, id, owner.unwrap_or_default())
+        .await
+        .unwrap_or_default();
     (StatusCode::CREATED, Json(list_to_view(&row, stats))).into_response()
 }
 
@@ -1867,13 +1855,17 @@ pub async fn manual_match(
         Ok(_) => return error(StatusCode::NOT_FOUND, "not_found", "entry"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    // Validate the issue exists.
-    let issue_exists = entity::issue::Entity::find_by_id(req.issue_id.clone())
-        .one(&app.db)
+    // Validate the issue exists and the caller can open it: a removed issue
+    // (or one of a removed series) would read back as `missing` at once
+    // (`dead_match`), and an issue outside the grant must answer exactly
+    // like an unknown id.
+    use sea_orm::PaginatorTrait;
+    let acl = crate::library::access::for_user(&app, &user).await;
+    let issue_exists = crate::library::access::visible_issues_select(&acl)
+        .filter(entity::issue::Column::Id.eq(req.issue_id.clone()))
+        .count(&app.db)
         .await
-        .ok()
-        .flatten()
-        .is_some();
+        .is_ok_and(|n| n > 0);
     if !issue_exists {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,

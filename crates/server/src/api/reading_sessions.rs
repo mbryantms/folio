@@ -1008,7 +1008,7 @@ async fn compute_totals(app: &AppState, filter: &StatsFilter<'_>) -> Result<Tota
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "", filter);
+    append_scope(&mut sql, &mut params, "", filter);
     match TotalsRow::find_by_statement(Statement::from_sql_and_values(filter.backend, &sql, params))
         .one(&app.db)
         .await
@@ -1045,7 +1045,7 @@ async fn compute_per_day(
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into(), tz.name().to_string().into()];
-    append_scope(&mut sql, &mut params, 3, "", filter);
+    append_scope(&mut sql, &mut params, "", filter);
     sql.push_str(" GROUP BY 1 ORDER BY 1 ASC");
     let rows = match DayRow::find_by_statement(Statement::from_sql_and_values(
         filter.backend,
@@ -1119,7 +1119,7 @@ async fn compute_top_series_ranking(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "rs.", filter);
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(" GROUP BY s.id, s.name ORDER BY active_ms DESC, sessions DESC LIMIT 10");
 
     #[derive(FromQueryResult)]
@@ -1166,7 +1166,7 @@ async fn compute_top_publishers_ranking(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "rs.", filter);
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(
         " AND COALESCE(NULLIF(s.publisher,''), NULLIF(i.publisher,'')) IS NOT NULL \
          GROUP BY 1 ORDER BY active_ms DESC, sessions DESC LIMIT 10",
@@ -1224,34 +1224,22 @@ struct StreakRow {
 /// to a SQL builder, mutating `params` to include any newly-bound values.
 /// `prefix` is the table alias to prepend to the column references — `""`
 /// for the non-joined queries (totals + per-day) and `"rs."` for the top-N
-/// queries that join through `reading_sessions rs`. `start_idx` must be
-/// `params.len() + 1`.
-fn append_scope(
-    sql: &mut String,
-    params: &mut Vec<Value>,
-    start_idx: usize,
-    prefix: &str,
-    filter: &StatsFilter<'_>,
-) -> usize {
-    debug_assert_eq!(start_idx, params.len() + 1);
+/// queries that join through `reading_sessions rs`. Placeholders continue
+/// from `params.len()`, so the caller binds its own values first.
+fn append_scope(sql: &mut String, params: &mut Vec<Value>, prefix: &str, filter: &StatsFilter<'_>) {
     append_visibility(sql, params, prefix, filter.acl);
-    let mut idx = params.len() + 1;
     if let Some(s) = filter.since {
-        sql.push_str(&format!(" AND {prefix}started_at >= ${idx}"));
         params.push((*s).into());
-        idx += 1;
+        sql.push_str(&format!(" AND {prefix}started_at >= ${}", params.len()));
     }
     if let Some(iss) = filter.issue_filter {
-        sql.push_str(&format!(" AND {prefix}issue_id = ${idx}"));
         params.push(iss.to_string().into());
-        idx += 1;
+        sql.push_str(&format!(" AND {prefix}issue_id = ${}", params.len()));
     }
     if let Some(sid) = filter.series_filter {
-        sql.push_str(&format!(" AND {prefix}series_id = ${idx}"));
         params.push((*sid).into());
-        idx += 1;
+        sql.push_str(&format!(" AND {prefix}series_id = ${}", params.len()));
     }
-    idx
 }
 
 /// Sessions count only while their issue is visible to the viewer
@@ -1311,7 +1299,7 @@ async fn top_column_with_alias(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "rs.", filter);
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(" AND NULLIF(TRIM(COALESCE(");
     sql.push_str(column_expr);
     sql.push_str(
@@ -1359,7 +1347,7 @@ async fn compute_top_creators(app: &AppState, filter: &StatsFilter<'_>) -> Vec<T
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut inner, &mut params, 2, "rs.", filter);
+    append_scope(&mut inner, &mut params, "rs.", filter);
     inner.push_str(" GROUP BY sc.role, sc.person");
 
     let sql = format!(
@@ -1411,7 +1399,7 @@ async fn compute_dow_hour(app: &AppState, filter: &StatsFilter<'_>, tz: Tz) -> V
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into(), tz.name().to_string().into()];
-    append_scope(&mut sql, &mut params, 3, "", filter);
+    append_scope(&mut sql, &mut params, "", filter);
     sql.push_str(" GROUP BY 1, 2 ORDER BY 1, 2");
 
     #[derive(FromQueryResult)]
@@ -1471,7 +1459,7 @@ async fn compute_pace_series(app: &AppState, filter: &StatsFilter<'_>) -> Vec<Pa
          WHERE user_id = $1 AND distinct_pages_read >= 3 AND active_ms > 0",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "", filter);
+    append_scope(&mut sql, &mut params, "", filter);
     sql.push_str(" ORDER BY started_at ASC LIMIT 1000");
 
     #[derive(FromQueryResult)]
@@ -1519,7 +1507,7 @@ async fn compute_reread_top_issues(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "rs.", filter);
+    append_scope(&mut sql, &mut params, "rs.", filter);
     // L-4 (WP-6.3): bound, not interpolated.
     params.push(Value::from(limit));
     sql.push_str(&format!(
@@ -1585,7 +1573,7 @@ async fn compute_reread_top_series(
         series_filter: None,
         ..*filter
     };
-    append_scope(&mut sql, &mut params, 2, "rs.", &all_scope);
+    append_scope(&mut sql, &mut params, "rs.", &all_scope);
     sql.push_str(
         " GROUP BY s.id, s.name \
          ORDER BY reads DESC, active_ms DESC LIMIT 10",
@@ -1634,7 +1622,7 @@ async fn compute_completion(app: &AppState, filter: &StatsFilter<'_>) -> Complet
            WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "rs.", filter);
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(
         " ), max_page AS ( \
            SELECT rs.issue_id AS issue_id, MAX(rs.furthest_page) AS furthest \
@@ -1700,7 +1688,7 @@ async fn compute_first_last(
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "", filter);
+    append_scope(&mut sql, &mut params, "", filter);
 
     #[derive(FromQueryResult)]
     struct Row {
@@ -1740,7 +1728,7 @@ async fn top_csv_column(
          WHERE rs.user_id = $1 AND TRIM(g.name) <> ''",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "rs.", filter);
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(" GROUP BY TRIM(g.name) ORDER BY active_ms DESC, sessions DESC LIMIT 10");
 
     #[derive(FromQueryResult)]

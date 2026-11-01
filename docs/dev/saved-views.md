@@ -308,6 +308,9 @@ reappears in the list if the target becomes visible again.
 Creating a dismissal applies the same selects: a target the list would
 omit (soft-removed, non-active issue, outside the grant, over the cap)
 answers the same 404 as a missing one and stores nothing.
+The rails themselves (Continue reading, Recently read, On this day,
+Recently added, On Deck series) also skip issues of a removed series, so
+nothing a rail shows is undismissable.
 
 ## Visibility on the other personal surfaces
 
@@ -320,6 +323,9 @@ answers the same 404 as a missing one and stores nothing.
   `?status=matched` leaves it out and `?status=missing` (the Resolution
   tab) lists it, and the entry view says `match_status: "missing"` while
   keeping `matched_issue_id`, so the match returns with the file.
+  A manual match to such an issue (or one outside the grant) answers
+  like an unknown id, and the create response reads its counts through
+  the same `stats_for`.
 - **Markers**: list, count, search and the tag index use
   `access::visible_issues_select` / its SQL twin `access::visible_issues_sql`,
   so a removed parent series hides its issues' markers too.
