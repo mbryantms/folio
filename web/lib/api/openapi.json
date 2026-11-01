@@ -25122,7 +25122,8 @@
           "metadata_publisher_blacklist",
           "filename_ignore_leading_numbers",
           "filename_assume_issue_one",
-          "metadata_auto_apply_strong_matches"
+          "metadata_auto_apply_strong_matches",
+          "auto_search_new_series"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -25151,6 +25152,10 @@
           "auto_convert_cbr_on_scan": {
             "type": "boolean",
             "description": "When true AND `allow_archive_writeback` is also true, the scanner\nconverts each `.cbr` it finds into a sibling `.cbz` in place (keeping\nthe original as `.cbr.bak`) and ingests the `.cbz`. Default false."
+          },
+          "auto_search_new_series": {
+            "type": "boolean",
+            "description": "When true, a library scan that creates new series enqueues a\nprovider search (`trigger_kind = scanner`) for each unmatched one,\nat most 50 per library per 24 h. Spends provider quota; with\n`metadata_auto_apply_strong_matches` on a writeback library a\nstrong match rewrites the archives. Audit 2026-11 N-M9."
           },
           "cbr_convert_confirmed_at": {
             "type": [
@@ -35499,6 +35504,13 @@
               "null"
             ],
             "description": "When true, the scanner converts each `.cbr` it finds into a sibling\n`.cbz` in place (keeping the original as `.cbr.bak`) and ingests the\n`.cbz`. Requires `allow_archive_writeback=true` — enabling it while\nthe master toggle resolves false returns 422."
+          },
+          "auto_search_new_series": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Toggle the scan-time provider search for newly created series\n(audit 2026-11 N-M9). Changing it writes an\n`admin.library.auto_search_new_series.set` audit row."
           },
           "dedupe_by_content": {
             "type": [
