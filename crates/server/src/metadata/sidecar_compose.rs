@@ -82,6 +82,14 @@ pub struct ComposeContext<'a> {
     /// 2026-11 N-M2: reading the columns split a cached
     /// `"Mike Deodato, Jr."` into two creators in the written XML.
     pub issue_junctions: &'a IssueJunctions,
+    /// The apply runs in `fill_missing` mode (audit 2026-11 N-M4). The
+    /// caller has already blanked every provider value the issue has a
+    /// value for ([`fill_missing_payload`]), so the composer's ordinary
+    /// "provider, else DB" fallback keeps those; the one field that needs
+    /// the flag itself is `<Notes>`, which a provider apply otherwise
+    /// replaces with the Folio audit line whatever the issue carried.
+    /// `false` for provider-wins applies and every DB-only compose.
+    pub fill_missing: bool,
 }
 
 impl ComposeContext<'_> {
@@ -208,6 +216,167 @@ pub fn series_payload_for_issue(
         upstream_modified_at: series.upstream_modified_at,
         ..Default::default()
     }
+}
+
+/// The `fill_missing` apply mode on the sidecar path (audit 2026-11
+/// N-M4, owner decision D-5): blank every provider value for a field the
+/// issue already has, so the composer's "provider, else the issue's own
+/// value" fallback keeps the current value and takes the provider's only
+/// where the issue is empty — the DB-direct matrix (`apply::should_apply`)
+/// applied to the payload. Because a masked field carries no provider
+/// value, the apply's provenance loop (which skips provider-empty fields)
+/// stamps provider rows only for the fields actually filled. `replace_all`
+/// never calls this, so provider-wins output is unchanged.
+///
+/// "Has a value" is judged from what the composer would otherwise write
+/// from the DB:
+///
+/// - **issue scalars** the composer writes (title, number, summary, store
+///   date, page count, language, format, age rating, community rating,
+///   scan information, web URL): the issue column is non-blank. The cover
+///   date counts as present only when year, month and day form a valid
+///   date — the test the DB-direct apply and the preview pane make, so a
+///   year-only date is filled. Notes count when they are a value, not a
+///   tagger trace ([`notes_are_a_value`]). Deck, FOC date, price and SKU
+///   reach neither sidecar, so they are not masked.
+/// - **series-shaped fields** (series name, sort name, type, start / end
+///   year, volume, publisher, imprint): the series row's column, plus the
+///   archive's own `<Volume>` for the volume (the composer carries it
+///   through). The series name is never empty, so in this mode the
+///   provider's series name never replaces the issue's `<Series>`.
+/// - **junctions** (credits, characters, teams, locations, story arcs,
+///   genres, tags, universes, reprints): the issue has junction rows; a
+///   row whose junctions were never derived falls back to its read-cache
+///   column, and such a column carrying tagger ids (`"John Doe [15487]"`)
+///   counts as missing, as it does for the DB-direct apply.
+///
+/// Identifiers, variants and the primary cover are not values the
+/// archive's sidecars hold and pass through untouched (external ids are
+/// additive under their own conflict rule; covers follow the overwrite
+/// policy).
+pub fn fill_missing_payload(
+    mut provider: GenericMetadata,
+    issue: &issue::Model,
+    series: &series::Model,
+    junctions: &IssueJunctions,
+) -> GenericMetadata {
+    use crate::library::scanner::metadata_rollup::csv_has_tagger_id;
+    fn has(v: Option<&str>) -> bool {
+        v.is_some_and(|s| !s.trim().is_empty())
+    }
+    fn keep<T>(slot: &mut Option<T>, present: bool) {
+        if present {
+            *slot = None;
+        }
+    }
+    fn keep_list<T>(list: &mut Vec<T>, present: bool) {
+        if present {
+            list.clear();
+        }
+    }
+    // A never-derived row's read-cache column: non-blank and free of
+    // tagger ids.
+    let clean_column =
+        |csv: Option<&str>| csv.is_some_and(|c| has(Some(c)) && !csv_has_tagger_id(c));
+    let refs_present =
+        |rows: &[JunctionRef], csv: Option<&str>| !rows.is_empty() || clean_column(csv);
+    let values_present = |rows: &[String], csv: Option<&str>| !rows.is_empty() || clean_column(csv);
+
+    // Issue scalars.
+    keep(&mut provider.title, has(issue.title.as_deref()));
+    keep(&mut provider.issue_number, has(issue.number_raw.as_deref()));
+    keep(&mut provider.description, has(issue.summary.as_deref()));
+    keep(&mut provider.notes, notes_are_a_value(issue));
+    let full_cover_date = issue
+        .year
+        .zip(issue.month)
+        .zip(issue.day)
+        .and_then(|((y, m), d)| chrono::NaiveDate::from_ymd_opt(y, m as u32, d as u32));
+    keep(&mut provider.cover_date, full_cover_date.is_some());
+    keep(&mut provider.store_date, issue.store_date.is_some());
+    keep(&mut provider.page_count, issue.page_count.is_some());
+    keep(
+        &mut provider.language_code,
+        has(issue.language_code.as_deref()),
+    );
+    keep(&mut provider.format, has(issue.format.as_deref()));
+    keep(&mut provider.age_rating, has(issue.age_rating.as_deref()));
+    keep(
+        &mut provider.community_rating,
+        issue.community_rating.is_some(),
+    );
+    keep(
+        &mut provider.scan_information,
+        has(issue.scan_information.as_deref()),
+    );
+    // The composer writes the provider's page URL into `<Web>`.
+    keep(&mut provider.source_url, has(issue.web_url.as_deref()));
+
+    // Series-shaped fields the composer reads from the series row.
+    keep(&mut provider.series_name, !series.name.trim().is_empty());
+    keep(
+        &mut provider.series_sort_name,
+        has(series.sort_name.as_deref()),
+    );
+    keep(
+        &mut provider.series_type,
+        has(series.series_type.as_deref()),
+    );
+    keep(&mut provider.year_began, series.year.is_some());
+    keep(&mut provider.year_end, series.year_end.is_some());
+    keep(
+        &mut provider.volume,
+        series.volume.is_some()
+            || comic_info_raw_i32(&issue.comic_info_raw, "volume", "Volume").is_some(),
+    );
+    keep(&mut provider.publisher, has(series.publisher.as_deref()));
+    keep(&mut provider.imprint, has(series.imprint.as_deref()));
+
+    // Junctions.
+    let credit_columns = [
+        issue.writer.as_deref(),
+        issue.penciller.as_deref(),
+        issue.inker.as_deref(),
+        issue.colorist.as_deref(),
+        issue.letterer.as_deref(),
+        issue.cover_artist.as_deref(),
+        issue.editor.as_deref(),
+        issue.translator.as_deref(),
+    ];
+    let credits_present = !junctions.credits.is_empty()
+        || (credit_columns.iter().any(|c| has(*c))
+            && !credit_columns
+                .iter()
+                .any(|c| c.is_some_and(csv_has_tagger_id)));
+    keep_list(&mut provider.credits, credits_present);
+    keep_list(
+        &mut provider.characters,
+        refs_present(&junctions.characters, issue.characters.as_deref()),
+    );
+    keep_list(
+        &mut provider.teams,
+        refs_present(&junctions.teams, issue.teams.as_deref()),
+    );
+    keep_list(
+        &mut provider.locations,
+        refs_present(&junctions.locations, issue.locations.as_deref()),
+    );
+    keep_list(
+        &mut provider.story_arcs,
+        refs_present(&junctions.story_arcs, issue.story_arc.as_deref()),
+    );
+    keep_list(
+        &mut provider.genres,
+        values_present(&junctions.genres, issue.genre.as_deref()),
+    );
+    keep_list(
+        &mut provider.tags,
+        values_present(&junctions.tags, issue.tags.as_deref()),
+    );
+    // No read-cache column for these two: the junction is all there is.
+    keep_list(&mut provider.universes, !junctions.universes.is_empty());
+    keep_list(&mut provider.reprints, !junctions.reprints.is_empty());
+    provider
 }
 
 // ───────── public composers ─────────
@@ -780,6 +949,11 @@ pub fn compose_metroninfo(ctx: &ComposeContext) -> MetronInfo {
 ///     existing notes (e.g. ComicTagger's "Tagged with … [Issue ID n]"
 ///     line that Mylar3 reads) are still accurate; pre-WP-6.4 a hand
 ///     edit of any other field silently deleted them.
+///   - **Fill-missing provider apply** with notes that are not a tagger
+///     trace ([`notes_are_a_value`]): preserve them, like every other field
+///     the issue already has. A trace is bookkeeping, not a value: keeping
+///     it would leave a stale `[CVDB n]` beside the re-matched ids, so it is
+///     replaced as below.
 ///   - **Provider apply**: drop `issue.notes` entirely (stale historical
 ///     tracer). Emit a fresh Folio audit-trail line; append provider
 ///     notes content (if any) below.
@@ -796,7 +970,13 @@ fn compose_notes(ctx: &ComposeContext) -> Option<String> {
             .filter(|s| !s.trim().is_empty())
             .map(str::to_owned);
     }
-    if ctx.source().is_none() {
+    // DB-only compose: nothing was re-tagged. Fill-missing apply: notes
+    // that are a value (not a tagger trace) are kept like every other
+    // non-empty field (the provider's notes were masked by
+    // `fill_missing_payload`); empty notes or a stale trace get the fresh
+    // Folio audit line, as in provider-wins.
+    let keep_own = ctx.source().is_none() || (ctx.fill_missing && notes_are_a_value(ctx.issue));
+    if keep_own {
         return ctx
             .issue
             .notes
@@ -867,6 +1047,25 @@ fn folio_audit_line(ctx: &ComposeContext) -> Option<String> {
     } else {
         Some(format!("{body}  {tokens}"))
     }
+}
+
+/// Whether the issue's `<Notes>` is text the fill-missing mode must keep:
+/// non-blank and not a tagger's audit trace (`Tagged with …` from Folio or
+/// ComicTagger, or one carrying tagger ids such as `[CVDB n]`). The trace
+/// describes the last tagging run, so a new apply replaces it.
+pub fn notes_are_a_value(issue: &issue::Model) -> bool {
+    let Some(notes) = issue
+        .notes
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return false;
+    };
+    let trace = notes.to_ascii_lowercase().contains("tagged with")
+        || parsers::comicinfo::ids_from_tagger_notes(notes)
+            != parsers::comicinfo::TaggerNoteIds::default();
+    !trace
 }
 
 fn prefer_user_opt_str(
@@ -1765,6 +1964,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         assert_eq!(
             compose_comicinfo(&ctx).series.as_deref(),
@@ -1833,6 +2033,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
 
         let ci = compose_comicinfo(&ctx);
@@ -1872,6 +2073,7 @@ mod tests {
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.title.as_deref(), Some("My Custom Title"));
@@ -1897,6 +2099,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.title.as_deref(), Some("DB Title"));
@@ -1921,6 +2124,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci
@@ -1954,6 +2158,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.unwrap();
@@ -1985,6 +2190,7 @@ mod tests {
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(
@@ -2023,6 +2229,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.unwrap();
@@ -2069,6 +2276,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         let notes = ci.notes.unwrap();
@@ -2102,6 +2310,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.comicvine_id, Some(12345));
@@ -2131,6 +2340,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(
@@ -2176,6 +2386,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.main_character_or_team.as_deref(), Some("Alana"));
@@ -2233,6 +2444,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(mi.raw.get("MangaVolume").map(String::as_str), Some("3"));
@@ -2287,6 +2499,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let mi = compose_metroninfo(&ctx);
         // Issue-level CV ID lands in MetronInfo.
@@ -2318,6 +2531,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(mi.title.as_deref(), Some("The Boy from Mars"));
@@ -2356,6 +2570,7 @@ mod tests {
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(
@@ -2395,6 +2610,7 @@ mod tests {
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.writer.as_deref(), Some("My Pinned Writer"));
@@ -2420,6 +2636,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         let xml = parsers::comicinfo::serialize(&ci);
@@ -2446,6 +2663,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         // No notes anywhere — no provider notes, no DB notes, GCD source.
@@ -2557,6 +2775,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         assert_eq!(compose_comicinfo(&ctx).notes, issue.notes);
         assert_eq!(compose_metroninfo(&ctx).notes, issue.notes);
@@ -2582,6 +2801,7 @@ mod tests {
             issue_user_pins: &pins,
             series_user_pins: &pins,
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         assert_eq!(compose_comicinfo(&ctx).volume, Some(2021));
 
@@ -2614,6 +2834,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(mi.writer().as_deref(), Some("Wanda Writer, Second Scribe"));
@@ -2660,6 +2881,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.summary.as_deref(), Some("Own summary."));
@@ -2729,6 +2951,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &junctions,
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.writer.as_deref(), Some("Wanda Writer"));
@@ -2780,6 +3003,7 @@ mod tests {
             issue_user_pins: &pins,
             series_user_pins: &empty_pins(),
             issue_junctions: &junctions,
+            fill_missing: false,
         };
         let ci = compose_comicinfo(&ctx);
         assert_eq!(ci.writer.as_deref(), Some("Hand-fixed Writer"));
@@ -2808,6 +3032,7 @@ mod tests {
             issue_user_pins: &empty_pins(),
             series_user_pins: &empty_pins(),
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         let mi = compose_metroninfo(&ctx);
         assert_eq!(
@@ -2838,6 +3063,69 @@ mod tests {
         assert_eq!(junctions.credits_for_role("CoverArtist"), ["Cover Carl"]);
         assert_eq!(junctions.credits_for_role("cover_artist"), ["Cover Carl"]);
         assert!(junctions.credits_for_role("").is_empty());
+    }
+
+    /// `fill_missing_payload` (audit 2026-11 N-M4): the issue's and the
+    /// series row's own values blank the provider's; gaps keep it. A
+    /// year-only cover date and a never-derived credit column carrying
+    /// tagger ids count as gaps, as on the DB-direct path.
+    #[test]
+    fn fill_missing_payload_masks_only_what_the_issue_has() {
+        let series = make_series("Saga");
+        let mut issue = make_issue("Own title");
+        issue.summary = None;
+        issue.month = None;
+        issue.day = None;
+        issue.writer = Some("John Doe [15487]".into());
+        let junctions = IssueJunctions {
+            characters: vec![named("Marko")],
+            ..Default::default()
+        };
+        let masked = fill_missing_payload(make_provider(), &issue, &series, &junctions);
+
+        // Kept: the issue / series already have these.
+        assert_eq!(masked.title, None);
+        assert_eq!(masked.issue_number, None);
+        assert_eq!(masked.series_name, None);
+        assert_eq!(masked.publisher, None, "series row has a publisher");
+        assert_eq!(masked.volume, None, "series row has a volume");
+        assert_eq!(masked.year_began, None, "series row has a year");
+        assert_eq!(masked.page_count, None);
+        assert!(masked.characters.is_empty(), "junction rows exist");
+        // Filled: gaps.
+        assert_eq!(
+            masked.description.as_deref(),
+            Some("An interplanetary love story.")
+        );
+        assert!(masked.cover_date.is_some(), "year-only date is a gap");
+        assert_eq!(masked.credits.len(), 2, "tagger-id column is a gap");
+        assert_eq!(masked.tags.len(), 2);
+        assert_eq!(masked.age_rating.as_deref(), Some("Mature 17+"));
+        assert_eq!(masked.series_type.as_deref(), Some("ongoing"));
+        // Untouched: not archive values.
+        assert_eq!(masked.source_provider, Some(Source::ComicVine));
+        assert_eq!(masked.source_external_id.as_deref(), Some("4000-12345"));
+
+        // Composed with the flag, the issue keeps its own notes.
+        issue.notes = Some("Scanned by Somebody".into());
+        let masked = fill_missing_payload(make_provider(), &issue, &series, &junctions);
+        let (ids, pins) = (empty_ids(), empty_pins());
+        let ctx = ComposeContext {
+            provider: &masked,
+            issue: &issue,
+            series: &series,
+            issue_external_ids: &ids,
+            series_external_ids: &ids,
+            issue_user_pins: &pins,
+            series_user_pins: &pins,
+            issue_junctions: &junctions,
+            fill_missing: true,
+        };
+        let ci = compose_comicinfo(&ctx);
+        assert_eq!(ci.notes.as_deref(), Some("Scanned by Somebody"));
+        assert_eq!(ci.title.as_deref(), Some("Own title"));
+        assert_eq!(ci.characters.as_deref(), Some("Marko"));
+        assert_eq!(ci.writer.as_deref(), Some("Brian K. Vaughan"));
     }
 }
 
@@ -2877,6 +3165,7 @@ mod archive_series_name_tests {
             issue_user_pins: &pins,
             series_user_pins: &pins,
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         assert_eq!(
             compose_comicinfo(&ctx).series.as_deref(),
@@ -2907,6 +3196,7 @@ mod archive_series_name_tests {
             issue_user_pins: &pins,
             series_user_pins: &pins,
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         assert_eq!(
             compose_comicinfo(&ctx).series.as_deref(),
@@ -2924,6 +3214,7 @@ mod archive_series_name_tests {
             issue_user_pins: &pins,
             series_user_pins: &pinned,
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         assert_eq!(compose_comicinfo(&ctx).series.as_deref(), Some("Firestorm"));
         // A mere variant of the series name normalises to it.
@@ -2937,6 +3228,7 @@ mod archive_series_name_tests {
             issue_user_pins: &pins,
             series_user_pins: &pins,
             issue_junctions: &IssueJunctions::default(),
+            fill_missing: false,
         };
         assert_eq!(compose_comicinfo(&ctx).series.as_deref(), Some("Firestorm"));
     }

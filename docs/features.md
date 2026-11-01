@@ -270,7 +270,9 @@ hash exists.
 Applying metadata is never a blind overwrite:
 
 - A **preview diff** shows every field's current value against the
-  proposed one — fill, replace, or no change — and you apply per-field.
+  proposed one — fill, replace, or no change — and you apply per-field,
+  in *Fill missing* mode (only fields the issue lacks, writeback libraries
+  included) or *Replace all*.
 - Every applied field records **provenance**: hover a field and see
   "set by Metron, 2 days ago."
 - Any field you've edited by hand is **never silently overwritten** by a

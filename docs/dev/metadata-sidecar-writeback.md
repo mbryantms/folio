@@ -331,8 +331,9 @@ takes pre-serialized XML strings and performs the atomic swap:
    apply.
 10. **Deferred metadata-only writes** (`job.post_apply`, applied by
     `apply_post_rewrite_writes`): the per-field `field_provenance` rows,
-    the variant-cover rows, and the `last_metadata_sync_at` stamp the
-    apply decided on. These are the metadata-only rows the XML schemas
+    the variant-cover and reprint rows, the provider primary cover
+    (`primary_cover`: fetched now, stored via `writers::apply_cover`), and
+    the `last_metadata_sync_at` stamp the apply decided on. These are the metadata-only rows the XML schemas
     can't carry, and they land **only after the XML is actually in the
     archive** — a failed rewrite (open error, validation abort) writes
     none of them, so the DB never attributes provider values that never
@@ -383,18 +384,68 @@ composing (`mask_unselected_issue_fields`): an unticked row is blanked so
 the composer keeps the issue's own value for it. An absent or empty
 `selected_fields` (legacy clients, one-click apply) composes everything,
 as before. The composite path's merged payload already carries only the
-kept fields. `mode` (fill-missing vs replace-all) is still not consulted
-by the composer — a ticked field is written even when the issue already
-has a value (remediation WP A6).
+kept fields. The mask covers every row the preview pane shows (the
+`merge::scope_fields` issue set: title, deck, description, age rating,
+page count, SKU, cover date, the seven junctions, primary and variant
+covers). Fields with no preview row — number, notes, web URL, language,
+format, publisher / imprint / volume, community rating, scan
+information, store date, universes, the series identity, and reprints by
+design — can't be unticked; `mode` governs them.
 
-**Primary cover (open gap, remediation WP A6).** The sidecar apply path
-does not apply the primary cover: `apply_cover` is honoured only by the
-DB-direct path (`apply.rs`, the `// Cover.` block after
-`bump_issue_sync`), and `PostRewriteWrites` carries provenance, variant
-covers, reprints and the sync stamp only. On a writeback library "Apply
-cover" therefore changes nothing for the primary cover today; WP A6 rides
-it on `PostRewriteWrites` so it lands with the other metadata-only rows
-after the rewrite has succeeded.
+**Apply mode (audit 2026-11 N-M4, decision D-5).** `fill_missing` is
+honoured on the sidecar path. Before composing,
+`sidecar_compose::fill_missing_payload` blanks every provider value for a
+field the issue already has, so the composer's "provider, else the
+issue's own value" fallback keeps it and takes the provider's value only
+where the issue is empty — the DB-direct `should_apply` matrix applied to
+the payload. "Has a value" is what the composer would otherwise write
+from the DB: a non-blank issue column for scalars (the cover date only
+when year, month and day form a valid date, as in the DB-direct apply
+and the preview); the series row for the series-shaped fields (series name, sort
+name, type, years, volume, publisher, imprint — so the provider's series
+name never replaces `<Series>` in this mode); junction rows for credits,
+characters, teams, locations, story arcs, genres, tags, universes and
+reprints, with the read-cache column standing in only for a row whose
+junctions were never derived, and such a column carrying tagger ids
+counting as empty. Credits are one field: existing credits are kept
+whole, never merged per role. `<Notes>` keeps the archive's own text
+(`ComposeContext::fill_missing`) instead of being replaced by the Folio
+audit line — unless that text is a tagger trace (`Tagged with …`, or
+tagger ids such as `[CVDB n]`; `sidecar_compose::notes_are_a_value`),
+which is bookkeeping about the last tagging run and is replaced, so a
+stale id never sits beside the re-matched ones. Deck, FOC date, price
+and SKU reach neither sidecar in either mode. Because the masked fields carry no provider value,
+the provenance loop (which skips provider-empty fields) stamps provider
+rows only for the fields actually filled; a kept value keeps its
+file-tier (or user) row. User pins win in both modes. The preview pane locks a *Has value* row
+in fill-missing mode (`rowIsToggleable`), since neither apply path would
+write it; *Replace all* is how to overwrite one. `replace_all`
+never calls the mask and is provider-wins as before. The series fan-out
+masks each issue's payload the same way, before a range's series
+identity is overlaid. Identifiers, variant covers and the primary cover
+are not masked (external ids are additive under their own conflict
+rule; covers follow the overwrite policy). Tests:
+`crates/server/tests/writeback_fill_missing_cover.rs`.
+
+**Primary cover (audit 2026-11 N-M3).** With `apply_cover` and a
+candidate cover URL, the issue-scope sidecar apply adds a
+`PrimaryCoverWrite` (URL, provider, the provider's issue identifier, the
+apply's `cover_overwrite_policy`) to `PostRewriteWrites`, and the
+outcome reports `cover_deferred`. After the rewrite has succeeded, step
+10 fetches it through the shared provider-cover path
+(`writers::fetch_cover_bytes`: https only, SSRF-vetted, magic-sniffed —
+every provider's `fetch_cover` is that call) and stores it with
+`writers::apply_cover`, the writer the DB-direct path uses: an active
+`issue_cover` primary row plus its file under `data_path`, pHash / dHash
+/ aHash computed at write time (soft-fail on decode). The cover never
+goes into the archive — pages stay byte-identical, exactly as on a
+DB-direct library. A failed or refused rewrite fetches and writes
+nothing; a retry that lands writes it. The job payload carries the URL,
+not the bytes (Redis), so the fetch happens in the job; a fetch failure
+or a host behind a bot challenge is logged, not retried, as on the
+DB-direct path. The cover follows `apply_cover`, not the preview
+selection (the single-candidate preview has no cover row), matching
+`write_issue_fields`. A series-scope apply has no issue covers.
 
 **Stuck issues from before the fix.** An issue applied on an affected
 release has the provider value in its archive and the old one in its
@@ -624,13 +675,16 @@ solicitation.)
   shared, not user-pinned) plus incomplete issues; **All issues**
   (`scope=all`) also works. That queues one issue-scope search per
   active issue (cap `REFRESH_BATCH_CAP` = 200 per click) under one
-  `metadata_batch`; then the toast's *Review* link
-  (`/admin/metadata?tab=review&batch=<id>`) → **Accept all strong**
-  and, for needs-review rows, **Fill missing**
-  (`POST /api/metadata/batch/{id}/apply`, also capped at 200 with a
-  `remainder` to re-trigger). In a writeback library the composer writes
-  each picked issue description whatever the mode (see "Rescan ingest of
-  provider values"), and with #970 the rescan ingests it. Quota per
+  `metadata_batch`; then apply in **replace-all** mode: the fetch
+  dialog's **Replace all** (strong rows with their candidate, needs-review
+  rows with the merge, both `replace_all`; `POST
+  /api/metadata/batch/{id}/apply`, capped at 200 with a `remainder` to
+  re-trigger), or the Review tab's needs-review **Replace all**. Not
+  **Fill missing** and not **Accept all strong** (which sends the default
+  `fill_missing`): the leaked description is a value the issue has, so
+  fill-missing keeps it (audit 2026-11 N-M4; before that fix the writeback
+  composer ignored the mode). In replace-all mode the composer writes each
+  picked issue description and, with #970, the rescan ingests it. Quota per
   issue and enabled provider: with the series' provider series known
   (coverage accepted / applied), one issue-detail fetch and no search —
   the batch looks the issue up in the cached issue list (see

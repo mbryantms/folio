@@ -1529,7 +1529,8 @@ async fn apply_issue_with_writeback_writes_provider_field_provenance() {
     apply_issue_inline(
         &app.state(),
         &issue_id,
-        args(run_id, ordinal, ApplyMode::FillMissing, false),
+        // Replace-all: the seeded title is non-empty, which fill_missing keeps.
+        args(run_id, ordinal, ApplyMode::ReplaceAll, false),
     )
     .await
     .expect("apply_issue");
@@ -1686,7 +1687,8 @@ async fn apply_issue_writeback_override_retires_user_pin() {
     apply_issue_inline(
         &app.state(),
         &issue_id,
-        args(run_id, ordinal, ApplyMode::FillMissing, true),
+        // Replace-all: the seeded title is non-empty, which fill_missing keeps.
+        args(run_id, ordinal, ApplyMode::ReplaceAll, true),
     )
     .await
     .expect("apply_issue");
