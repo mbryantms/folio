@@ -3074,6 +3074,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -3660,6 +3663,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -4412,6 +4418,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -4456,6 +4465,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -5649,6 +5661,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -6753,6 +6768,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -6771,7 +6789,10 @@
           }
         ],
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "collection write rate limit"
+          }
         }
       },
       "patch": {
@@ -6805,6 +6826,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -6883,6 +6907,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -6911,7 +6938,10 @@
           "required": true
         },
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "collection reorder rate limit"
+          }
         }
       }
     },
@@ -6937,7 +6967,10 @@
           }
         ],
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "collection write rate limit"
+          }
         }
       }
     },
@@ -7008,6 +7041,9 @@
           },
           "404": {
             "description": "collection not found"
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -7051,6 +7087,9 @@
           },
           "404": {
             "description": "collection not found"
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -7244,6 +7283,9 @@
           },
           "400": {
             "description": "validation"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -7872,6 +7914,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -9661,6 +9706,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -9820,6 +9868,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -9982,6 +10033,9 @@
           },
           "422": {
             "description": "validation error (field-level `details`)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10728,6 +10782,9 @@
           },
           "404": {
             "description": "series not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -13361,6 +13418,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }

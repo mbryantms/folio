@@ -234,6 +234,39 @@ where
     }
 }
 
+/// The user id of a valid JWT access token on `headers` — `Authorization:
+/// Bearer <jwt>`, else the session cookie — with the same precedence as
+/// [`CurrentUser`]. Signature, issuer, audience and expiry are checked; the
+/// `users` row (`token_version`, disabled state) is not, because this runs
+/// before the handler without a DB round-trip. So it answers "whose token is
+/// this", never "may this request proceed": the per-user rate-limit key
+/// ([`crate::middleware::rate_limit::UserKey`]) uses it, and the handler's
+/// extractor still authenticates. App-password and Basic credentials give
+/// `None` (their check is an argon2 verify, too slow for a key extractor).
+pub fn access_token_subject(
+    headers: &axum::http::HeaderMap,
+    keys: &super::jwt::JwtKeys,
+) -> Option<Uuid> {
+    let jar;
+    let authorization = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    // Same order as `extract_token`: Bearer wins, Basic is app-password
+    // only, any other header falls through to the cookie.
+    let token = if let Some(rest) = authorization.and_then(|v| v.strip_prefix("Bearer ")) {
+        rest.trim()
+    } else if authorization.is_some_and(|v| v.starts_with("Basic ")) {
+        return None;
+    } else {
+        jar = CookieJar::from_headers(headers);
+        jar.get(SESSION_COOKIE)?.value()
+    };
+    if super::app_password::looks_like_app_password(token) {
+        return None;
+    }
+    keys.verify_access(token).ok()?.sub.parse().ok()
+}
+
 fn extract_token(parts: &Parts) -> Option<String> {
     if let Some(v) = parts
         .headers
