@@ -34,10 +34,17 @@ use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
+use crate::util::search::{SQL_LIKE_ESCAPE, prefix_pattern};
 use server_macros::handler;
 
 const DEFAULT_LIMIT: i64 = 100;
 const MAX_LIMIT: i64 = 200;
+
+/// `?q=` prefix → bound `lower(col) LIKE` pattern. The prefix is escaped
+/// (E9) so `x_` or `100%` narrows to values literally starting with it.
+fn q_prefix_param(prefix: &str) -> Value {
+    Value::from(prefix_pattern(&prefix.to_lowercase()))
+}
 
 const CREDIT_ROLES: &[&str] = &[
     "writer",
@@ -379,8 +386,11 @@ async fn fetch_distinct_lookup(
     sql.push_str(&visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        params.push(Value::from(format!("{}%", prefix.to_lowercase())));
-        sql.push_str(&format!(" AND lower(l.name) LIKE ${}", params.len()));
+        params.push(q_prefix_param(prefix));
+        sql.push_str(&format!(
+            " AND lower(l.name) LIKE ${}{SQL_LIKE_ESCAPE}",
+            params.len()
+        ));
     }
     if let Some(after) = after {
         params.push(Value::from(after));
@@ -480,8 +490,11 @@ async fn fetch_distinct_issue_csv(
     ));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        params.push(Value::from(format!("{}%", prefix.to_lowercase())));
-        sql.push_str(&format!(" AND lower(trim(piece)) LIKE ${}", params.len()));
+        params.push(q_prefix_param(prefix));
+        sql.push_str(&format!(
+            " AND lower(trim(piece)) LIKE ${}{SQL_LIKE_ESCAPE}",
+            params.len()
+        ));
     }
 
     sql.push_str(" GROUP BY lower(trim(piece))");
@@ -571,8 +584,11 @@ async fn fetch_distinct_series_column(
     sql.push_str(&visible.raw_cap_clause("library_id", "age_rating", &mut params));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        params.push(Value::from(format!("{}%", prefix.to_lowercase())));
-        sql.push_str(&format!(" AND lower({column}) LIKE ${}", params.len()));
+        params.push(q_prefix_param(prefix));
+        sql.push_str(&format!(
+            " AND lower({column}) LIKE ${}{SQL_LIKE_ESCAPE}",
+            params.len()
+        ));
     }
 
     if let Some(after) = after {
@@ -696,8 +712,11 @@ async fn fetch_distinct(
     sql.push_str(&visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params));
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        params.push(Value::from(format!("{}%", prefix.to_lowercase())));
-        sql.push_str(&format!(" AND lower(j.{value_col}) LIKE ${}", params.len()));
+        params.push(q_prefix_param(prefix));
+        sql.push_str(&format!(
+            " AND lower(j.{value_col}) LIKE ${}{SQL_LIKE_ESCAPE}",
+            params.len()
+        ));
     }
 
     if let Some(after) = after {

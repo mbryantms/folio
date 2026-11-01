@@ -512,6 +512,42 @@ async fn audit_log_filters_by_action_prefix() {
     }
 }
 
+/// E9 (audit-2026-11): the `prefix.*` filter matches the prefix literally.
+/// Action names carry `_`, which an unescaped `LIKE` read as "any one
+/// character", so `admin.lib_x.*` also returned `admin.libXx.…` rows.
+#[tokio::test]
+async fn audit_log_prefix_filter_matches_underscore_literally() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    for action in ["admin.lib_x.set", "admin.libXx.set"] {
+        server::audit::record(
+            &db,
+            server::audit::AuditEntry {
+                actor_id: uuid::Uuid::now_v7(),
+                action,
+                target_type: None,
+                target_id: None,
+                payload: serde_json::json!({}),
+                ip: None,
+                user_agent: None,
+            },
+        )
+        .await;
+    }
+
+    let resp = admin_get(&app, &admin, "/api/admin/audit?action=admin.lib_x.*").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let actions: Vec<&str> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions, vec!["admin.lib_x.set"]);
+}
+
 #[tokio::test]
 async fn audit_log_requires_admin() {
     let app = TestApp::spawn().await;

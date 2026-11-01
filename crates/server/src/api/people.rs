@@ -25,6 +25,7 @@ use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::middleware::rate_limit;
 use crate::state::AppState;
+use crate::util::search::{SQL_LIKE_ESCAPE, contains_pattern};
 use server_macros::handler;
 
 const MAX_QUERY_LEN: usize = 200;
@@ -100,9 +101,12 @@ pub async fn list(
     let visible = access::for_user(&app, &user).await;
 
     // Param ordering: $1 is the (lowercased) query string used for
-    // similarity ranking + ILIKE substring. Subsequent params are
-    // the library-allowlist UUIDs when the caller is restricted.
-    let mut params: Vec<Value> = vec![Value::from(text.to_lowercase())];
+    // similarity ranking; $2 is the same string as an escaped `%…%`
+    // substring pattern (E9: `_` / `%` / `\` match literally). Subsequent
+    // params are the library-allowlist UUIDs when the caller is restricted.
+    let lowered = text.to_lowercase();
+    let substring = contains_pattern(&lowered);
+    let mut params: Vec<Value> = vec![Value::from(lowered), Value::from(substring)];
 
     // Library-allowlist clause appended into the inner CTE when the
     // caller is restricted. Empty allowlist → empty response (no
@@ -166,7 +170,7 @@ pub async fn list(
                   ARRAY_AGG(DISTINCT role ORDER BY role) AS roles, \
                   COUNT(DISTINCT ref_id)::bigint AS credit_count \
              FROM all_credits \
-            WHERE (person % $1 OR lower(person) LIKE '%' || $1 || '%') \
+            WHERE (person % $1 OR lower(person) LIKE $2{SQL_LIKE_ESCAPE}) \
             GROUP BY person \
          ) \
          SELECT a.person, a.roles, a.credit_count, p.slug \

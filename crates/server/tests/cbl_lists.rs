@@ -1017,6 +1017,32 @@ async fn entries_endpoint_paginates_via_cursor_and_returns_total_on_first_page()
     assert_eq!(dedup.len(), 269, "no entry returned twice across pages");
 }
 
+/// E9 (audit-2026-11): the "Search this list" box matches `%` / `_` / `\`
+/// literally. Unescaped, `?q=%` and `?q=_` were `ILIKE '%%%'` /
+/// `'%_%'` and returned every entry; none of the sample's entries carry
+/// those characters.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entries_search_matches_like_metacharacters_literally() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "like-esc@example.com").await;
+    let _lib = seed_matchable_issues(&app).await;
+    let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    let list_id = view["id"].as_str().unwrap();
+
+    for q in ["%25", "_", "%5C"] {
+        let (status, body) = http(
+            &app,
+            Method::GET,
+            &format!("/api/me/cbl-lists/{list_id}/entries?q={q}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "q={q}: {body}");
+        assert_eq!(body["total"].as_i64(), Some(0), "q={q}: {body}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn entries_status_filter_narrows_results() {
     let app = TestApp::spawn().await;

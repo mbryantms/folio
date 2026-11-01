@@ -43,9 +43,9 @@ from the compiler.
 
 | Op | Builder label | Field kinds | SQL |
 | --- | --- | --- | --- |
-| `contains` / `not_contains` | contains / does not contain | text | `col [NOT] LIKE '%v%'` |
-| `starts_with` | starts with | text | `col LIKE 'v%'` |
-| `ends_with` (UX-8) | ends with | text | `col LIKE '%v'` |
+| `contains` / `not_contains` | contains / does not contain | text | `col [NOT] LIKE '%v%' ESCAPE '\'` |
+| `starts_with` | starts with | text | `col LIKE 'v%' ESCAPE '\'` |
+| `ends_with` (UX-8) | ends with | text | `col LIKE '%v' ESCAPE '\'` |
 | `equals` / `not_equals` | equals / does not equal | text, number | `col = v` / `col <> v` |
 | `is` / `is_not` | is / is not | enum | `col = v` / `col <> v` |
 | `in` / `not_in` | is one of / is not one of | enum | `col [NOT] IN (…)` |
@@ -60,8 +60,12 @@ from the compiler.
 
 The three text-pattern ops are offered on exactly the same fields (every
 text field) and compile the same way: a plain, **case-sensitive** `LIKE`
-on the raw column, the value bound as a parameter. `%` / `_` in the value
-are not escaped, so they act as wildcards. None of the columns these ops
+on the raw column, the value bound as a parameter. The value matches
+literally: `%`, `_` and `\` in it are escaped (`util::search::escape_like`)
+under an explicit `ESCAPE '\'`, so `contains "X_Men"` never matches
+"X-Men". (Before E9 of audit-2026-11 they were unescaped wildcards; a view
+saved with `%` / `_` meant as wildcards now matches those characters
+literally.) None of the columns these ops
 read carries a trigram or `text_pattern_ops` index (the trigram indexes
 sit on `series.normalized_name` and the people / entity lookup names), so
 all three filter rows already narrowed by the library ACL, and `ends_with`
