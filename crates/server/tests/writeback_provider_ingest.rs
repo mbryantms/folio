@@ -401,6 +401,9 @@ async fn run_pipeline(f: &Fixture) {
     }
 }
 
+/// `replace_all`: the fixture archive already carries a summary, title and
+/// notes, which `fill_missing` keeps (audit 2026-11 N-M4); these tests are
+/// about a picked provider value reaching the archive and the DB.
 async fn apply_single(f: &Fixture, run_id: Uuid, ordinal: i32, selected: &[&str]) {
     let row = issue_row(f).await;
     post(
@@ -412,7 +415,7 @@ async fn apply_single(f: &Fixture, run_id: Uuid, ordinal: i32, selected: &[&str]
         json!({
             "run_id": run_id,
             "ordinal": ordinal,
-            "mode": "fill_missing",
+            "mode": "replace_all",
             "apply_cover": false,
             "cover_overwrite_policy": "when_missing",
             "override_user_edits": false,
@@ -435,7 +438,7 @@ async fn apply_composite(f: &Fixture, run_id: Uuid, field_sources: serde_json::V
             "run_id": run_id,
             "field_sources": field_sources,
             "included": [0, 1],
-            "mode": "fill_missing",
+            "mode": "replace_all",
             "apply_cover": false,
             "cover_overwrite_policy": "when_missing",
             "override_user_edits": false,

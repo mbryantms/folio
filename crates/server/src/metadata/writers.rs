@@ -154,7 +154,8 @@ pub async fn fetch_field_provenance_tiers<C: ConnectionTrait>(
 // Cover overwrite policy.
 // ─────────────────────────────────────────────────────────────────
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CoverOverwritePolicy {
     Never,
     WhenMissing,
@@ -2627,6 +2628,12 @@ impl From<CoverFetchError> for crate::metadata::provider::ProviderError {
 /// [`CoverFetchError::Blocked`] — no request, no retry — and the first
 /// challenged response marks it ([`crate::metadata::cover_block`]).
 pub async fn fetch_cover_bytes(url: &str) -> Result<Vec<u8>, CoverFetchError> {
+    #[cfg(debug_assertions)]
+    if let Some(bytes) = test_cover_stub(url) {
+        return sniff_cover(&bytes)
+            .map(|_| bytes)
+            .ok_or(CoverFetchError::NotAnImage);
+    }
     if let Some(host) = crate::metadata::cover_block::blocked_host(url) {
         return Err(CoverFetchError::Blocked { host });
     }
@@ -2651,6 +2658,30 @@ pub async fn fetch_cover_bytes(url: &str) -> Result<Vec<u8>, CoverFetchError> {
         return Err(CoverFetchError::NotAnImage);
     }
     Ok(fetched.bytes)
+}
+
+/// Debug-build test seam for [`fetch_cover_bytes`]: integration tests
+/// can't serve https from a public address, which the SSRF-vetted fetch
+/// requires. Bytes registered here for an exact URL are returned instead of
+/// a network fetch (still magic-sniffed). Not compiled into release builds.
+#[cfg(debug_assertions)]
+static TEST_COVER_STUBS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Register `bytes` as the body [`fetch_cover_bytes`] returns for `url`.
+/// Debug builds only; for integration tests. Use a URL unique to the test.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn stub_cover_fetch_for_tests(url: &str, bytes: Vec<u8>) {
+    if let Ok(mut stubs) = TEST_COVER_STUBS.lock() {
+        stubs.insert(url.to_owned(), bytes);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn test_cover_stub(url: &str) -> Option<Vec<u8>> {
+    TEST_COVER_STUBS.lock().ok()?.get(url).cloned()
 }
 
 /// Relative path (under `data_path`) a cover is stored at. Shared with

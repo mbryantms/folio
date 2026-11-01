@@ -49,6 +49,7 @@ vi.mock("@/components/folio/tooltip", () => ({
 import {
   MetadataPreviewPane,
   defaultSelectedFields,
+  rowIsToggleable,
 } from "@/components/library/MetadataPreviewPane";
 
 function baseDiff(overrides: Partial<DiffResp> = {}): DiffResp {
@@ -268,6 +269,22 @@ describe("<MetadataPreviewPane>", () => {
     expect(html).toMatch(
       /<input[^>]*disabled[^>]*type="checkbox"|<input[^>]*type="checkbox"[^>]*disabled/,
     );
+  });
+});
+
+describe("rowIsToggleable", () => {
+  // Audit 2026-11 N-M4: Fill missing keeps a field that already has a
+  // value on both apply paths (DB-direct and writeback), so ticking a
+  // "Has value" row would silently do nothing — the row is locked; Replace
+  // all is how to overwrite it.
+  it("locks Fill missing's Has value rows and leaves fill / replace rows open", () => {
+    expect(
+      rowIsToggleable({ decision: "skipped_fill_missing_has_value" }, true),
+    ).toBe(false);
+    expect(rowIsToggleable({ decision: "would_fill" }, false)).toBe(true);
+    expect(rowIsToggleable({ decision: "would_replace" }, false)).toBe(true);
+    expect(rowIsToggleable({ decision: "blocked_by_user" }, true)).toBe(true);
+    expect(rowIsToggleable({ decision: "blocked_by_user" }, false)).toBe(false);
   });
 });
 

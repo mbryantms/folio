@@ -146,11 +146,18 @@ function decisionBadge(decision: string) {
 }
 
 /** True when the user could conceivably opt this row into the apply
- *  set. False for rows where the candidate has no value or the field
- *  is admin-overridable but the caller isn't an admin. */
-function rowIsToggleable(row: ScalarDiffRow, canOverride: boolean): boolean {
+ *  set. False for rows where the candidate has no value, where Fill
+ *  missing keeps the current value whatever is ticked (both apply paths
+ *  skip a field that already has one; switch to Replace all to overwrite
+ *  it), or where the field is admin-overridable but the caller isn't an
+ *  admin. */
+export function rowIsToggleable(
+  row: Pick<ScalarDiffRow, "decision">,
+  canOverride: boolean,
+): boolean {
   if (row.decision === "no_incoming_value") return false;
   if (row.decision === "no_change") return false;
+  if (row.decision === "skipped_fill_missing_has_value") return false;
   if (row.decision === "blocked_by_user" && !canOverride) return false;
   return true;
 }
