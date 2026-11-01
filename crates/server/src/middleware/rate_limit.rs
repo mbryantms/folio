@@ -210,6 +210,16 @@ pub const NOTES_EXPORT: Bucket = Bucket {
     burst: 6,
 };
 
+/// `GET /me/holdings.csv` — same budget as [`USER_EXPORT`] (6/min/IP +
+/// burst 6), in its own bucket. The CSV streams the caller's whole
+/// visible catalogue in keyset batches, so a retry loop should trip
+/// early; a person downloads it a handful of times at most.
+pub const HOLDINGS_EXPORT: Bucket = Bucket {
+    name: "holdings_export",
+    period: Duration::from_secs(10),
+    burst: 6,
+};
+
 /// Marker writes — `POST /me/markers`, `PATCH` / `DELETE
 /// /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST
 /// /me/markers/restore` (WP-5.3, audit SE-5; burst cut in WP-8.4).

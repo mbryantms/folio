@@ -3330,6 +3330,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/holdings.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["holdings_export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/issues/bulk-metadata": {
         parameters: {
             query?: never;
@@ -4696,7 +4712,16 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Lock one field of an issue against provider updates without editing
+         *     it: writes the same `set_by='user'` pin an edit of the field writes,
+         *     for the value the field holds now. A provider apply (DB-direct or
+         *     sidecar) and a rescan then leave the field alone until it is unlocked
+         *     through the sibling `DELETE`. The value is unchanged, so a writeback
+         *     library needs no sidecar rewrite: the archive already carries it, and
+         *     the composer keeps the DB value for a pinned field on the next apply.
+         */
+        put: operations["issues_lock_field"];
         post?: never;
         delete: operations["issues_clear_field_pin"];
         options?: never;
@@ -6177,12 +6202,12 @@ export interface components {
             email?: string | null;
             excluded_from_aggregates: boolean;
             last_active_at?: string | null;
-            role: string;
+            role: components["schemas"]["UserRole"];
             /** Format: int64 */
             sessions_30d: number;
             /** Format: int64 */
             sessions_all_time: number;
-            state: string;
+            state: components["schemas"]["UserState"];
             top_series_name?: string | null;
             user_id: string;
         };
@@ -6199,8 +6224,8 @@ export interface components {
              *     always reported as 0 since admins implicitly see every library.
              */
             library_count: number;
-            role: string;
-            state: string;
+            role: components["schemas"]["UserRole"];
+            state: components["schemas"]["UserState"];
         };
         /** @description Where this issue maps in one provider, plus its current match state. */
         AlternateProviderSeries: {
@@ -8428,12 +8453,12 @@ export interface components {
                 email?: string | null;
                 excluded_from_aggregates: boolean;
                 last_active_at?: string | null;
-                role: string;
+                role: components["schemas"]["UserRole"];
                 /** Format: int64 */
                 sessions_30d: number;
                 /** Format: int64 */
                 sessions_all_time: number;
-                state: string;
+                state: components["schemas"]["UserState"];
                 top_series_name?: string | null;
                 user_id: string;
             }[];
@@ -9814,6 +9839,17 @@ export interface components {
             /** Format: int64 */
             issues: number;
         };
+        /** @description Response for `PUT …/field-provenance/{field}`. */
+        FieldLockResp: {
+            /** @description The locked `MetadataField` key. */
+            field: string;
+            /**
+             * @description Every `field_provenance` key the lock wrote a user row under: the
+             *     field itself plus the issue columns that roll up into it (a
+             *     `credits` lock also pins `writer`, `penciller`, …). Sorted.
+             */
+            pinned_keys: string[];
+        };
         /**
          * @description One field's provenance: which source set it, when, and (for provider
          *     sources) which external record it came from.
@@ -10665,6 +10701,14 @@ export interface components {
              */
             auto_convert_cbr_on_scan: boolean;
             /**
+             * @description When true, a library scan that creates new series enqueues a
+             *     provider search (`trigger_kind = scanner`) for each unmatched one,
+             *     at most 50 per library per 24 h. Spends provider quota; with
+             *     `metadata_auto_apply_strong_matches` on a writeback library a
+             *     strong match rewrites the archives. Audit 2026-11 N-M9.
+             */
+            auto_search_new_series: boolean;
+            /**
              * @description RFC3339 timestamp of the operator's first acknowledgement of the
              *     CBR→CBZ conversion for this library, or `null` if they haven't
              *     acknowledged yet. The page editor uses this to decide whether to
@@ -11329,7 +11373,7 @@ export interface components {
              * @description M6a: minimum distinct pages before a session is recorded.
              */
             reading_min_pages: number;
-            role: string;
+            role: components["schemas"]["UserRole"];
             /**
              * @description Markers M8: when true, /settings renders a count badge on the
              *     Bookmarks sidebar row. Default false.
@@ -11458,6 +11502,23 @@ export interface components {
             last_metadata_sync_at?: string | null;
             last_rewrite_at?: string | null;
             last_rewrite_kind?: string | null;
+            /**
+             * @description `MetadataField` keys the per-field lock accepts
+             *     (`PUT …/field-provenance/{field}`), in display order.
+             */
+            lockable_fields: string[];
+            /**
+             * @description The subset of `lockable_fields` currently locked — a provider
+             *     apply and a rescan leave these values alone.
+             */
+            locked_fields: string[];
+            /**
+             * @description User pins outside the lockable set (`sort_number`,
+             *     `black_and_white`, `cover_page_index`, an external id, a series-level
+             *     field pinned on the issue, …) — still honoured, so the UI lists them
+             *     as locked and can release them through the same `DELETE`. Sorted.
+             */
+            other_locked_fields: string[];
             provenance: components["schemas"]["FieldProvenanceRow"][];
             source_files: components["schemas"]["SourceFilesView"];
             /**
@@ -15130,6 +15191,12 @@ export interface components {
              */
             auto_convert_cbr_on_scan?: boolean | null;
             /**
+             * @description Toggle the scan-time provider search for newly created series
+             *     (audit 2026-11 N-M9). Changing it writes an
+             *     `admin.library.auto_search_new_series.set` audit row.
+             */
+            auto_search_new_series?: boolean | null;
+            /**
              * @description When true (default), a second copy of an already-ingested file in
              *     this library is skipped with a `DuplicateContent` health row. When
              *     false, every copy is ingested as its own issue and the Duplicates
@@ -15558,14 +15625,14 @@ export interface components {
             version: number;
         };
         /**
-         * @description Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query
-         *     params + the matching fields on `UpdateUserReq`. Serde rejects bad
-         *     values at deserialize time so handlers never see strings they can't
-         *     trust.
+         * @description A user's role: `admin` | `user`.
          * @enum {string}
          */
         UserRole: "admin" | "user";
-        /** @enum {string} */
+        /**
+         * @description A user account's state: `pending_verification` | `active` | `disabled`.
+         * @enum {string}
+         */
         UserState: "pending_verification" | "active" | "disabled";
         ViewGroupListView: {
             groups: components["schemas"]["ViewGroupView"][];
@@ -22277,6 +22344,57 @@ export interface operations {
             };
         };
     };
+    holdings_export: {
+        parameters: {
+            query?: {
+                /** @description `series` (default) or `issues`; anything else is a 400 */
+                scope?: string;
+                /** @description Library slug; omit for every library the caller can see */
+                library?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description UTF-8 CSV with a byte-order mark, streamed; `Content-Disposition: attachment; filename="folio-holdings-<scope>-<date>.csv"`. Admins get a trailing folder / file path column. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": unknown;
+                };
+            };
+            /** @description unknown scope */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library slug unknown or not visible to the caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     issues_bulk_metadata: {
         parameters: {
             query?: never;
@@ -25016,6 +25134,51 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issues_lock_field: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+                /** @description A `MetadataOverviewView.lockable_fields` key — e.g. `title`, `credits`, `cover_date` */
+                field: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldLockResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the field cannot be locked (unknown, a cover, or an external id) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

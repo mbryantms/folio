@@ -14,6 +14,7 @@
 //! merging, and post-scan thumbnail/search workers (`crate::jobs::post_scan`)
 //! are all wired and exercised end-to-end.
 
+pub mod auto_search;
 pub mod cbr_convert;
 pub mod enumerate;
 pub mod folder_checks;
@@ -794,6 +795,17 @@ async fn finalize_run(
         }
     }
     events.flush(&state.db).await;
+
+    // Audit 2026-11 N-M9: opt-in provider search for the series this scan
+    // created (the helper re-reads the library flag and applies the rolling
+    // per-library budget; see `auto_search`). After the terminal WS event
+    // and the manifest flush, so the enqueues never delay the live UI. A
+    // failed scan's created series are real rows a rescan won't create
+    // again, so they qualify; a cancelled scan queues nothing — the admin
+    // asked the work to stop, and an unmatched-scope refresh picks them up.
+    if !cancelled {
+        auto_search::enqueue_for_created_series(state, lib.id, &stats.created_series_ids).await;
+    }
 
     let lib_label = library_id.to_string();
     let result_label = if cancelled {
@@ -2398,6 +2410,7 @@ async fn process_planned_folder(
         .await?;
         if resolved.was_created() {
             stats.series_created += 1;
+            stats.created_series_ids.push(resolved.id());
             let e = events
                 .build(
                     Category::Series,

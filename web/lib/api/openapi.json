@@ -7176,6 +7176,47 @@
         }
       }
     },
+    "/api/me/holdings.csv": {
+      "get": {
+        "operationId": "holdings_export",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`series` (default) or `issues`; anything else is a 400",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "description": "Library slug; omit for every library the caller can see",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UTF-8 CSV with a byte-order mark, streamed; `Content-Disposition: attachment; filename=\"folio-holdings-<scope>-<date>.csv\"`. Admins get a trailing folder / file path column.",
+            "content": {
+              "text/csv": {}
+            }
+          },
+          "400": {
+            "description": "unknown scope"
+          },
+          "401": {},
+          "404": {
+            "description": "library slug unknown or not visible to the caller"
+          },
+          "429": {}
+        }
+      }
+    },
     "/api/me/issues/bulk-metadata": {
       "patch": {
         "summary": "Bulk-update a per-field patch across a list of issue ids.",
@@ -10243,6 +10284,57 @@
       }
     },
     "/api/series/{series_slug}/issues/{issue_slug}/field-provenance/{field}": {
+      "put": {
+        "summary": "Lock one field of an issue against provider updates without editing\nit: writes the same `set_by='user'` pin an edit of the field writes,\nfor the value the field holds now. A provider apply (DB-direct or\nsidecar) and a rescan then leave the field alone until it is unlocked\nthrough the sibling `DELETE`. The value is unchanged, so a writeback\nlibrary needs no sidecar rewrite: the archive already carries it, and\nthe composer keeps the DB value for a pinned field on the next apply.",
+        "operationId": "issues_lock_field",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field",
+            "in": "path",
+            "description": "A `MetadataOverviewView.lockable_fields` key — e.g. `title`, `credits`, `cover_date`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldLockResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          },
+          "422": {
+            "description": "the field cannot be locked (unknown, a cover, or an external id)"
+          }
+        }
+      },
       "delete": {
         "operationId": "issues_clear_field_pin",
         "parameters": [
@@ -14263,7 +14355,7 @@
             ]
           },
           "role": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserRole"
           },
           "sessions_30d": {
             "type": "integer",
@@ -14274,7 +14366,7 @@
             "format": "int64"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserState"
           },
           "top_series_name": {
             "type": [
@@ -14329,10 +14421,10 @@
             "description": "Count of `library_user_access` rows for this user. For admins this is\nalways reported as 0 since admins implicitly see every library."
           },
           "role": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserRole"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserState"
           }
         }
       },
@@ -19440,7 +19532,7 @@
                   ]
                 },
                 "role": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/UserRole"
                 },
                 "sessions_30d": {
                   "type": "integer",
@@ -19451,7 +19543,7 @@
                   "format": "int64"
                 },
                 "state": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/UserState"
                 },
                 "top_series_name": {
                   "type": [
@@ -23353,6 +23445,27 @@
           }
         }
       },
+      "FieldLockResp": {
+        "type": "object",
+        "description": "Response for `PUT …/field-provenance/{field}`.",
+        "required": [
+          "field",
+          "pinned_keys"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The locked `MetadataField` key."
+          },
+          "pinned_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every `field_provenance` key the lock wrote a user row under: the\nfield itself plus the issue columns that roll up into it (a\n`credits` lock also pins `writer`, `penciller`, …). Sorted."
+          }
+        }
+      },
       "FieldProvenanceRow": {
         "type": "object",
         "description": "One field's provenance: which source set it, when, and (for provider\nsources) which external record it came from.",
@@ -25260,7 +25373,8 @@
           "metadata_publisher_blacklist",
           "filename_ignore_leading_numbers",
           "filename_assume_issue_one",
-          "metadata_auto_apply_strong_matches"
+          "metadata_auto_apply_strong_matches",
+          "auto_search_new_series"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -25289,6 +25403,10 @@
           "auto_convert_cbr_on_scan": {
             "type": "boolean",
             "description": "When true AND `allow_archive_writeback` is also true, the scanner\nconverts each `.cbr` it finds into a sibling `.cbz` in place (keeping\nthe original as `.cbr.bak`) and ingests the `.cbz`. Default false."
+          },
+          "auto_search_new_series": {
+            "type": "boolean",
+            "description": "When true, a library scan that creates new series enqueues a\nprovider search (`trigger_kind = scanner`) for each unmatched one,\nat most 50 per library per 24 h. Spends provider quota; with\n`metadata_auto_apply_strong_matches` on a writeback library a\nstrong match rewrites the archives. Audit 2026-11 N-M9."
           },
           "cbr_convert_confirmed_at": {
             "type": [
@@ -26711,7 +26829,7 @@
             "description": "M6a: minimum distinct pages before a session is recorded."
           },
           "role": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserRole"
           },
           "show_marker_count": {
             "type": "boolean",
@@ -26966,6 +27084,9 @@
           "external_ids",
           "provenance",
           "user_pinned_fields",
+          "lockable_fields",
+          "locked_fields",
+          "other_locked_fields",
           "alternate_provider_series"
         ],
         "properties": {
@@ -27009,6 +27130,27 @@
               "string",
               "null"
             ]
+          },
+          "lockable_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`MetadataField` keys the per-field lock accepts\n(`PUT …/field-provenance/{field}`), in display order."
+          },
+          "locked_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The subset of `lockable_fields` currently locked — a provider\napply and a rescan leave these values alone."
+          },
+          "other_locked_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "User pins outside the lockable set (`sort_number`,\n`black_and_white`, `cover_page_index`, an external id, a series-level\nfield pinned on the issue, …) — still honoured, so the UI lists them\nas locked and can release them through the same `DELETE`. Sorted."
           },
           "provenance": {
             "type": "array",
@@ -35638,6 +35780,13 @@
             ],
             "description": "When true, the scanner converts each `.cbr` it finds into a sibling\n`.cbz` in place (keeping the original as `.cbr.bak`) and ingests the\n`.cbz`. Requires `allow_archive_writeback=true` — enabling it while\nthe master toggle resolves false returns 422."
           },
+          "auto_search_new_series": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Toggle the scan-time provider search for newly created series\n(audit 2026-11 N-M9). Changing it writes an\n`admin.library.auto_search_new_series.set` audit row."
+          },
           "dedupe_by_content": {
             "type": [
               "boolean",
@@ -36490,7 +36639,7 @@
       },
       "UserRole": {
         "type": "string",
-        "description": "Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query\nparams + the matching fields on `UpdateUserReq`. Serde rejects bad\nvalues at deserialize time so handlers never see strings they can't\ntrust.",
+        "description": "A user's role: `admin` | `user`.",
         "enum": [
           "admin",
           "user"
@@ -36498,6 +36647,7 @@
       },
       "UserState": {
         "type": "string",
+        "description": "A user account's state: `pending_verification` | `active` | `disabled`.",
         "enum": [
           "pending_verification",
           "active",

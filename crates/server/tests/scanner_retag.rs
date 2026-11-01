@@ -91,6 +91,7 @@ async fn create_library(app: &TestApp, root: &Path) -> Uuid {
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&db)
     .await
@@ -110,8 +111,8 @@ async fn seed_user(db_url: &str) -> Uuid {
         email_verified: Set(true),
         password_hash: Set(Some("x".into())),
         totp_secret: Set(None),
-        state: Set("active".into()),
-        role: Set("user".into()),
+        state: Set(entity::user::UserState::Active),
+        role: Set(entity::user::UserRole::User),
         token_version: Set(0),
         created_at: Set(now),
         updated_at: Set(now),

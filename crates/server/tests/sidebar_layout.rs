@@ -95,7 +95,7 @@ async fn demote_to_user(app: &TestApp, user_id: Uuid) {
         .unwrap()
         .unwrap();
     let mut am: entity::user::ActiveModel = user.into();
-    am.role = Set("user".into());
+    am.role = Set(entity::user::UserRole::User);
     am.update(&db).await.unwrap();
 }
 
@@ -169,6 +169,7 @@ async fn seed_library(app: &TestApp, name: &str) -> Uuid {
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&db)
     .await

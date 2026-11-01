@@ -17,6 +17,7 @@
 //! `total` on the first page only. Manual `same_universe` edges are
 //! ordinary relationships and stay in `GET /series/{slug}/relationships`.
 
+use entity::user::UserRole;
 use std::collections::HashMap;
 
 use axum::{
@@ -178,7 +179,7 @@ pub async fn same_universe(
 
     let visible = access::for_user(&app, &user).await;
     let mut params: Vec<Value> = vec![Value::from(s.id)];
-    let include_removed = user.role == "admin";
+    let include_removed = user.role == UserRole::Admin;
     let Some(svis) =
         super::entity_pages::series_visible_sql_for(&visible, &mut params, include_removed)
     else {

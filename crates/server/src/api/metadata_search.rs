@@ -19,6 +19,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use entity::user::UserRole;
 use entity::{
     issue, library_user_access, metadata_batch, metadata_match_outcome, metadata_run, series,
 };
@@ -3617,7 +3618,7 @@ async fn user_can_see_batch(
     user: &CurrentUser,
     batch: &metadata_batch::Model,
 ) -> bool {
-    if user.role == "admin" || batch.created_by == Some(user.id) {
+    if user.role == UserRole::Admin || batch.created_by == Some(user.id) {
         return true;
     }
     match batch.library_id {
@@ -3853,7 +3854,7 @@ pub async fn batch_status(
 pub async fn list_batches(State(app): State<AppState>, user: CurrentUser) -> Response {
     // Admins see every batch; others only the ones they triggered.
     let mut q = metadata_batch::Entity::find();
-    if user.role != "admin" {
+    if user.role != UserRole::Admin {
         q = q.filter(metadata_batch::Column::CreatedBy.eq(user.id));
     }
     let rows = q
@@ -4272,7 +4273,7 @@ pub async fn batch_apply(
 }
 
 async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == "admin" {
+    if user.role == UserRole::Admin {
         return true;
     }
     let row = library_user_access::Entity::find()

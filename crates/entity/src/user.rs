@@ -1,6 +1,88 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+// Storage contract (AR-7, audit 2026-11): `users.role` / `users.state` stay
+// `TEXT` columns holding exactly these strings (no Postgres enum type, no
+// data migration). `string_value` is the DB form and the serde rename is the
+// JSON wire form; the two are the same string, pinned by the tests below.
+//
+// A row holding any other string fails to load with a `DbErr` instead of
+// being coerced to a default: an unknown role must never quietly become
+// either an admin or a reader. The auth extractor and login map that error
+// to a 500.
+//
+// The remaining stringly discriminators in this crate follow the same
+// shape; the backlog is in `docs/dev/schema-restructure.md`.
+
+/// A user's role: `admin` | `user`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    #[sea_orm(string_value = "admin")]
+    Admin,
+    #[sea_orm(string_value = "user")]
+    User,
+}
+
+impl UserRole {
+    /// The stored / wire string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::User => "user",
+        }
+    }
+}
+
+/// A user account's state: `pending_verification` | `active` | `disabled`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum UserState {
+    #[sea_orm(string_value = "pending_verification")]
+    PendingVerification,
+    #[sea_orm(string_value = "active")]
+    Active,
+    #[sea_orm(string_value = "disabled")]
+    Disabled,
+}
+
+impl UserState {
+    /// The stored / wire string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PendingVerification => "pending_verification",
+            Self::Active => "active",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
 // `PartialEq` only (no `Eq`): `reader_brightness` / `reader_sepia` are
 // `f64`, like `issue::Model`'s numeric columns.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -31,11 +113,11 @@ pub struct Model {
     #[sea_orm(nullable)]
     pub totp_secret: Option<String>,
 
-    /// `pending_verification` | `active` | `disabled`
-    pub state: String,
+    /// `pending_verification` | `active` | `disabled` (see [`UserState`]).
+    pub state: UserState,
 
-    /// `admin` | `user`
-    pub role: String,
+    /// `admin` | `user` (see [`UserRole`]).
+    pub role: UserRole,
 
     /// Bumped on logout-all / password reset / admin revoke (§17.2).
     pub token_version: i64,
@@ -199,3 +281,55 @@ pub struct Model {
 pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{ActiveEnum, Iterable};
+
+    /// The DB strings are a storage contract with every existing row: a
+    /// rename here would orphan them. Pin them, and pin that the JSON wire
+    /// form is the same string.
+    #[test]
+    fn role_round_trips_exact_db_strings() {
+        for (role, s) in [(UserRole::Admin, "admin"), (UserRole::User, "user")] {
+            assert_eq!(role.to_value(), s);
+            assert_eq!(role.as_str(), s);
+            assert_eq!(UserRole::try_from_value(&s.to_owned()).unwrap(), role);
+            assert_eq!(serde_json::to_value(role).unwrap(), s);
+            assert_eq!(
+                serde_json::from_value::<UserRole>(serde_json::json!(s)).unwrap(),
+                role
+            );
+        }
+        assert_eq!(UserRole::iter().count(), 2);
+    }
+
+    #[test]
+    fn state_round_trips_exact_db_strings() {
+        for (state, s) in [
+            (UserState::PendingVerification, "pending_verification"),
+            (UserState::Active, "active"),
+            (UserState::Disabled, "disabled"),
+        ] {
+            assert_eq!(state.to_value(), s);
+            assert_eq!(state.as_str(), s);
+            assert_eq!(UserState::try_from_value(&s.to_owned()).unwrap(), state);
+            assert_eq!(serde_json::to_value(state).unwrap(), s);
+            assert_eq!(
+                serde_json::from_value::<UserState>(serde_json::json!(s)).unwrap(),
+                state
+            );
+        }
+        assert_eq!(UserState::iter().count(), 3);
+    }
+
+    /// An unknown stored string is an error, never a silent default.
+    #[test]
+    fn unknown_db_strings_are_rejected() {
+        assert!(UserRole::try_from_value(&"superuser".to_owned()).is_err());
+        assert!(UserRole::try_from_value(&"Admin".to_owned()).is_err());
+        assert!(UserRole::try_from_value(&String::new()).is_err());
+        assert!(UserState::try_from_value(&"banned".to_owned()).is_err());
+    }
+}
