@@ -41,8 +41,9 @@ use server_macros::handler;
 pub fn routes() -> OpenApiRouter<AppState> {
     // Per-user buckets (E3, audit N-A5) in their own sub-routers so the
     // `route_layer` stays off the sibling routes: the two free-text
-    // searches share one `SEARCH` budget, the issue PATCH and the
-    // bulk-metadata PATCH one `METADATA_WRITE` budget.
+    // searches share one `SEARCH` budget; the issue PATCH, the
+    // bulk-metadata PATCH and the field-provenance clear / lock (E12) one
+    // `METADATA_WRITE` budget.
     let search = OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(search))
@@ -50,13 +51,13 @@ pub fn routes() -> OpenApiRouter<AppState> {
     let writes = OpenApiRouter::new()
         .routes(routes!(bulk_metadata))
         .routes(routes!(update))
+        .routes(routes!(clear_field_pin, lock_field))
         .route_layer(rate_limit::METADATA_WRITE.build_per_user());
     OpenApiRouter::new()
         .merge(search)
         .merge(writes)
         .routes(routes!(get_one))
         .routes(routes!(metadata_overview))
-        .routes(routes!(clear_field_pin, lock_field))
         .routes(routes!(scan_issue))
         .routes(routes!(next_in_series))
         .routes(routes!(prev_in_series))
@@ -1185,6 +1186,7 @@ fn default_true() -> bool {
         (status = 200, description = "pin cleared (or no-op when none existed)"),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -1266,6 +1268,7 @@ pub struct FieldLockResp {
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
         (status = 422, description = "the field cannot be locked (unknown, a cover, or an external id)"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]

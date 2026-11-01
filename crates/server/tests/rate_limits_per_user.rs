@@ -1,5 +1,7 @@
 //! E3 (audit 2026-11 N-A5) — per-user rate limits on free-text search,
-//! metadata PATCH, collection writes and collection reorder.
+//! metadata PATCH, collection writes and collection reorder; E12 adds the
+//! saved-view PATCH / DELETE and the admin metadata writes (field
+//! provenance, cover pick, external ids).
 //!
 //! For one representative route of each group: driving one user past the
 //! bucket gives a 429 in the canonical envelope, and a second user (same
@@ -138,6 +140,26 @@ async fn drain(
         }
     }
     panic!("{method} {uri}: bucket never tripped");
+}
+
+/// After a [`drain`], whether another route on the same instance answers
+/// 429. The bucket refills while this runs, so a token can appear between
+/// the trip and the request; a shared store still answers 429 within a few
+/// immediate requests, while a separate one would let all of them through.
+async fn shares_drained_bucket(
+    app: &TestApp,
+    auth: &Authed,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> bool {
+    for _ in 0..20 {
+        let (s, _, _) = http(app, method.clone(), uri, auth, body.clone()).await;
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            return true;
+        }
+    }
+    false
 }
 
 fn assert_envelope(body: &Value, bucket: &str) {
@@ -315,4 +337,153 @@ async fn collection_reorder_bucket_is_per_user() {
     )
     .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "writes have their own bucket");
+}
+
+/// E12: `PATCH`/`DELETE /me/saved-views/{id}` also edit and delete
+/// collection rows, so they get the collection-write budget in a sibling
+/// `saved_view_write` bucket.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn saved_view_write_bucket_is_per_user() {
+    let (app, a, b) = two_users().await;
+    // Missing view: 404 before the trip, so no row is ever written.
+    let uri = format!("/api/me/saved-views/{}", Uuid::now_v7());
+    let patch = Some(json!({"name": "renamed"}));
+    let body = drain(&app, &a, Method::PATCH, &uri, patch.clone(), 60).await;
+    assert_envelope(&body, "saved_view_write");
+
+    assert!(
+        shares_drained_bucket(&app, &a, Method::DELETE, &uri, None).await,
+        "the saved-view DELETE shares the PATCH's bucket"
+    );
+
+    let (s, _, _) = http(&app, Method::PATCH, &uri, &b, patch).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "second user reaches the handler");
+
+    // The list on the same router is outside the bucket, and the
+    // collections instance keeps its own budget.
+    let (s, _, _) = http(&app, Method::GET, "/api/me/saved-views", &a, None).await;
+    assert_eq!(s, StatusCode::OK, "saved-view reads are not bucketed");
+    let (s, _, _) = http(
+        &app,
+        Method::DELETE,
+        &format!("/api/me/collections/{}", Uuid::now_v7()),
+        &a,
+        None,
+    )
+    .await;
+    assert_eq!(
+        s,
+        StatusCode::NOT_FOUND,
+        "collection writes have their own bucket"
+    );
+}
+
+/// E12: the issue field-provenance lock shares the issue PATCH's
+/// `metadata_write` instance; the GETs on the same router are untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn field_provenance_lock_is_metadata_bucketed() {
+    let (app, a, b) = two_users().await;
+    let issue = "/api/series/does-not-exist/issues/nope";
+    let uri = format!("{issue}/field-provenance/title");
+    let body = drain(&app, &a, Method::PUT, &uri, None, 30).await;
+    assert_envelope(&body, "metadata_write");
+    // The pin clear, the issue PATCH and the bulk PATCH spend the same
+    // budget.
+    let siblings = [
+        (Method::DELETE, uri.clone(), None),
+        (
+            Method::PATCH,
+            issue.to_owned(),
+            Some(json!({"summary": "x"})),
+        ),
+        (
+            Method::PATCH,
+            "/api/me/issues/bulk-metadata".to_owned(),
+            Some(json!({"issue_ids": []})),
+        ),
+    ];
+    for (method, sibling, body) in siblings {
+        assert!(
+            shares_drained_bucket(&app, &a, method.clone(), &sibling, body).await,
+            "{method} {sibling} shares the lock's bucket"
+        );
+    }
+
+    let (s, _, _) = http(&app, Method::PUT, &uri, &b, None).await;
+    assert_ne!(
+        s,
+        StatusCode::TOO_MANY_REQUESTS,
+        "second user is not throttled"
+    );
+    let (s, _, _) = http(&app, Method::GET, issue, &a, None).await;
+    assert_ne!(
+        s,
+        StatusCode::TOO_MANY_REQUESTS,
+        "issue GET is not bucketed"
+    );
+    let (s, _, _) = http(
+        &app,
+        Method::GET,
+        &format!("{issue}/metadata-overview"),
+        &a,
+        None,
+    )
+    .await;
+    assert_ne!(
+        s,
+        StatusCode::TOO_MANY_REQUESTS,
+        "metadata overview is not bucketed"
+    );
+}
+
+/// E12: the cover picks and the external-id writes each have a
+/// `metadata_write` instance of their own (draining one leaves the other
+/// its full burst), and the external-id list stays unbucketed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cover_pick_and_external_id_writes_are_metadata_bucketed() {
+    let (app, a, _b) = two_users().await;
+    let cover = "/api/series/does-not-exist/issues/nope/cover";
+    let pick = Some(json!({"page_index": 0}));
+    let body = drain(&app, &a, Method::PATCH, cover, pick, 30).await;
+    assert_envelope(&body, "metadata_write");
+    let variant = format!("{cover}/variant/{}", Uuid::now_v7());
+    let cover_siblings = [
+        (Method::POST, variant, None),
+        (Method::DELETE, format!("{cover}/variant"), None),
+        (
+            Method::PATCH,
+            "/api/series/does-not-exist/cover".to_owned(),
+            Some(json!({"issue_id": Uuid::now_v7()})),
+        ),
+    ];
+    for (method, sibling, body) in cover_siblings {
+        assert!(
+            shares_drained_bucket(&app, &a, method.clone(), &sibling, body).await,
+            "{method} {sibling} shares the cover pick's bucket"
+        );
+    }
+
+    let ids = "/api/series/does-not-exist/external-ids";
+    let add = Some(json!({"source": "comicvine", "external_id": "4050-1"}));
+    let body = drain(&app, &a, Method::POST, ids, add.clone(), 30).await;
+    assert_envelope(&body, "metadata_write");
+    let issue_ids = "/api/series/does-not-exist/issues/nope/external-ids";
+    let id_siblings = [
+        (Method::DELETE, format!("{ids}/comicvine"), None),
+        (Method::POST, issue_ids.to_owned(), add),
+        (Method::DELETE, format!("{issue_ids}/comicvine"), None),
+    ];
+    for (method, sibling, body) in id_siblings {
+        assert!(
+            shares_drained_bucket(&app, &a, method.clone(), &sibling, body).await,
+            "{method} {sibling} shares the external-id add's bucket"
+        );
+    }
+
+    let (s, _, _) = http(&app, Method::GET, ids, &a, None).await;
+    assert_ne!(
+        s,
+        StatusCode::TOO_MANY_REQUESTS,
+        "external-id list is not bucketed"
+    );
 }

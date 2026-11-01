@@ -318,15 +318,21 @@ pub const SEARCH: Bucket = Bucket {
     burst: 60,
 };
 
-/// Metadata edits — per user (E3), 1/s sustained with a burst of 30: `PATCH
-/// /series/{slug}` in one instance, `PATCH
-/// /series/{series_slug}/issues/{issue_slug}` and `PATCH
-/// /me/issues/bulk-metadata` sharing another. Every UI save is one
-/// request: the issue drawer and the series editor send one PATCH per
-/// save, and the bulk "Edit metadata" dialog sends the whole selection
-/// (up to its 500-id cap) in a single PATCH. A person saving issue after
-/// issue manages a few a minute; a writeback library turns each save
-/// into an archive rewrite job, so a script stops at 60 a minute.
+/// Metadata edits — per user (E3), 1/s sustained with a burst of 30. One
+/// instance per module: `PATCH /series/{slug}`; `PATCH
+/// /series/{series_slug}/issues/{issue_slug}`, `PATCH
+/// /me/issues/bulk-metadata` and the issue field-provenance clear / lock
+/// (`DELETE`/`PUT …/field-provenance/{field}`) sharing one; the cover
+/// picks (`PATCH …/issues/{issue_slug}/cover`, `POST`/`DELETE
+/// …/cover/variant[/{variant_id}]`, `PATCH /series/{slug}/cover`); and
+/// the external-id add / unlink on series and issues (E12). Every UI save
+/// is one request: the issue drawer and the series editor send one PATCH
+/// per save, and the bulk "Edit metadata" dialog sends the whole selection
+/// (up to its 500-id cap) in a single PATCH. Locks, pin releases, cover
+/// picks and id edits are one click each, with the control disabled while
+/// the request is in flight. A person saving issue after issue manages a
+/// few a minute; a writeback library turns each save into an archive
+/// rewrite job, so a script stops at 60 a minute on each instance.
 pub const METADATA_WRITE: Bucket = Bucket {
     name: "metadata_write",
     period: Duration::from_secs(1),
@@ -342,6 +348,20 @@ pub const COLLECTION_WRITE: Bucket = Bucket {
     name: "collection_write",
     period: Duration::from_millis(200),
     burst: 60,
+};
+
+/// Saved-view writes — per user (E12), the same 5/s sustained and burst of
+/// 60 as [`COLLECTION_WRITE`]: `PATCH` and `DELETE /me/saved-views/{id}`,
+/// which accept collection rows as well as filter views and CBL lists.
+/// A sibling bucket rather than the collections instance itself, because
+/// every `build_per_user()` is its own token store and the two modules
+/// build their routers separately; its own telemetry name also tells the
+/// denial counter which surface tripped. The web edits a view with one
+/// PATCH per save (rename, filter change, description) and deletes with
+/// one DELETE behind a confirm.
+pub const SAVED_VIEW_WRITE: Bucket = Bucket {
+    name: "saved_view_write",
+    ..COLLECTION_WRITE
 };
 
 /// Collection reorder — per user (E3), 4/s sustained with a burst of 30:

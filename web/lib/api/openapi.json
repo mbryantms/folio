@@ -8976,7 +8976,10 @@
           }
         ],
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "saved-view write rate limit"
+          }
         }
       },
       "patch": {
@@ -9010,6 +9013,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "saved-view write rate limit"
           }
         }
       }
@@ -10075,6 +10081,9 @@
           },
           "422": {
             "description": "issue_id is not an active issue of this series"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10290,6 +10299,9 @@
           },
           "422": {
             "description": "page_index outside the archive"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10331,6 +10343,9 @@
           },
           "404": {
             "description": "issue not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10385,6 +10400,9 @@
           },
           "422": {
             "description": "the variant has no image to use, or it is not a recognised image"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           },
           "502": {
             "description": "the variant image could not be downloaded"
@@ -10517,6 +10535,9 @@
           },
           "422": {
             "description": "the field cannot be locked (unknown, a cover, or an external id)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       },
@@ -10558,6 +10579,9 @@
           },
           "404": {
             "description": "issue not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11154,6 +11178,9 @@
           },
           "422": {
             "description": "unknown source or empty external_id (field-level `details`)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11191,6 +11218,9 @@
           },
           "404": {
             "description": "series / link not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11408,6 +11438,9 @@
           },
           "422": {
             "description": "unknown source or empty external_id (field-level `details`)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11453,6 +11486,9 @@
           },
           "404": {
             "description": "issue / link not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
