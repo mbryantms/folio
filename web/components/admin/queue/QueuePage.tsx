@@ -98,6 +98,7 @@ const QUEUE_LABELS: { key: string; label: string }[] = [
   { key: "relationship_suggest", label: "Relationship suggestions" },
   { key: "provider_coverage", label: "Provider coverage" },
   { key: "entity_enrich", label: "Entity profiles" },
+  { key: "sidecar_reemit", label: "Sidecar re-emit" },
 ];
 
 function queueLabel(key: string): string {

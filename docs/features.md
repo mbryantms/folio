@@ -298,7 +298,9 @@ database is rebuilt *from the archive*.
 The result matters to anyone who's been burned by a metadata silo: your
 files are the canonical record. Point ComicTagger, Komga, Mylar3, or
 KOReader at the same folder and they see exactly what Folio sees. Delete
-Folio tomorrow and you lose nothing.
+Folio tomorrow and you lose nothing. When an upgrade improves what Folio writes, one
+**Rewrite metadata files** action per library brings every existing
+archive up to date, in the background and throttled.
 
 ### Series boundaries, the eternal argument
 

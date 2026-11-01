@@ -55,6 +55,7 @@ const DEAD_QUEUES: &[&str] = &[
     "relationship_suggest",
     "provider_coverage",
     "entity_enrich",
+    "sidecar_reemit",
 ];
 
 /// One queue's outstanding jobs, split by where they are held.
@@ -99,6 +100,8 @@ pub struct QueueDepthView {
     pub provider_coverage: i64,
     /// Entity profile fetches (character / team / location / arc pages).
     pub entity_enrich: i64,
+    /// Library-wide sidecar re-emit ticks (one chain per running run).
+    pub sidecar_reemit: i64,
     /// Sum across all queues — convenient for the topbar pill.
     pub total: i64,
     /// Of `total`, the jobs a worker has fetched (executing or prefetched).
@@ -130,8 +133,8 @@ pub enum QueueClearTarget {
     Scans,
     Thumbnails,
     /// Provider metadata work: series / issue searches and applies, sidecar
-    /// rewrites and coverage analyses. Their pending runs close as
-    /// `cancelled` and their batches finish.
+    /// rewrites, library-wide sidecar re-emit runs and coverage analyses.
+    /// Their pending runs close as `cancelled` and their batches finish.
     Metadata,
 }
 
@@ -618,6 +621,7 @@ fn dead_keys(app: &AppState, queue: &str) -> Option<DeadKeys> {
         "relationship_suggest" => keys!(j.relationship_suggest_storage),
         "provider_coverage" => keys!(j.provider_coverage_storage),
         "entity_enrich" => keys!(j.entity_enrich_storage),
+        "sidecar_reemit" => keys!(j.sidecar_reemit_storage),
         _ => None,
     }
 }
@@ -771,6 +775,7 @@ async fn retry_one(app: &AppState, queue: &str, task_id: &str) -> anyhow::Result
         "relationship_suggest" => try_retry!(app.jobs.relationship_suggest_storage),
         "provider_coverage" => try_retry!(app.jobs.provider_coverage_storage),
         "entity_enrich" => try_retry!(app.jobs.entity_enrich_storage),
+        "sidecar_reemit" => try_retry!(app.jobs.sidecar_reemit_storage),
         _ => return Ok(false),
     };
     if !pushed {
@@ -840,6 +845,7 @@ pub(crate) async fn queue_depth_counts(app: &AppState) -> anyhow::Result<QueueDe
         relationship_suggest: of("relationship_suggest"),
         provider_coverage: of("provider_coverage"),
         entity_enrich: of("entity_enrich"),
+        sidecar_reemit: of("sidecar_reemit"),
         total: counts
             .iter()
             .map(crate::jobs::QueueCount::outstanding)
@@ -872,6 +878,8 @@ fn clear_patterns(target: QueueClearTarget) -> &'static [&'static str] {
             "*server::jobs::metadata_apply::ApplyIssueJob*",
             "*server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob*",
             "*server::jobs::provider_coverage::ProviderCoverageJob*",
+            "*server::jobs::sidecar_reemit::SidecarReemitJob*",
+            "sidecar_reemit:*",
         ],
         QueueClearTarget::Metadata => &[
             "*server::jobs::metadata_search::SearchSeriesJob*",
@@ -880,6 +888,8 @@ fn clear_patterns(target: QueueClearTarget) -> &'static [&'static str] {
             "*server::jobs::metadata_apply::ApplyIssueJob*",
             "*server::jobs::rewrite_sidecars::RewriteIssueSidecarsJob*",
             "*server::jobs::provider_coverage::ProviderCoverageJob*",
+            "*server::jobs::sidecar_reemit::SidecarReemitJob*",
+            "sidecar_reemit:*",
         ],
         QueueClearTarget::Scans => &[
             "*server::jobs::scan::Job*",

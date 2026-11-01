@@ -32,6 +32,7 @@ import { apiFetch, getCsrfToken } from "./auth-refresh";
 import { queryKeys, type SeriesMetadataIssueFilters } from "./query-keys";
 import type {
   HashBackfillView,
+  SidecarReemitStatusView,
   ActivityKind,
   ActivityListView,
   AppearancesView,
@@ -1135,6 +1136,31 @@ export function useHashBackfill(
     refetchInterval: (query) => {
       const data = query.state.data as HashBackfillView | undefined;
       return data && data.pending > 0 ? intervalMs : false;
+    },
+  });
+}
+
+/**
+ * Latest library-wide sidecar re-emit run (`GET
+ * /libraries/{slug}/sidecar-reemit`). Polls while the run is live so the
+ * settings card's counts move; idle once it finished or none exists.
+ */
+export function useSidecarReemit(
+  librarySlug: string,
+  opts?: { enabled?: boolean; intervalMs?: number },
+) {
+  const { enabled = true, intervalMs = 3_000 } = opts ?? {};
+  return useQuery({
+    queryKey: queryKeys.sidecarReemit(librarySlug),
+    queryFn: () =>
+      jsonFetch<SidecarReemitStatusView>(
+        `/libraries/${librarySlug}/sidecar-reemit`,
+      ),
+    enabled: !!librarySlug && enabled,
+    refetchInterval: (query) => {
+      const data = query.state.data as SidecarReemitStatusView | undefined;
+      const status = data?.run?.status;
+      return status === "running" || status === "draining" ? intervalMs : false;
     },
   });
 }

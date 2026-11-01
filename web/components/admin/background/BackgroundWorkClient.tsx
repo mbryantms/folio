@@ -41,6 +41,7 @@ import type {
   BackgroundWorkView,
   LibraryWorkView,
   MetadataBatchWorkView,
+  SidecarReemitWorkView,
 } from "@/lib/api/types";
 
 const n = (v: number) => v.toLocaleString("en-US");
@@ -420,6 +421,7 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
   const rows = otherWork(view);
   const batches = view.metadata_batches;
   const tasks = view.tasks;
+  const reemits = view.sidecar_reemits;
   const libraryName = new Map(view.libraries.map((l) => [l.id, l.name]));
   const now = Date.parse(view.generated_at);
   return (
@@ -432,7 +434,10 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        {rows.length === 0 && batches.length === 0 && tasks.length === 0 ? (
+        {rows.length === 0 &&
+        batches.length === 0 &&
+        tasks.length === 0 &&
+        reemits.length === 0 ? (
           <p className="text-muted-foreground text-sm">Nothing queued.</p>
         ) : null}
         {rows.length > 0 ? (
@@ -482,6 +487,18 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
             ))}
           </ul>
         ) : null}
+        {reemits.length > 0 ? (
+          <div className="space-y-2">
+            <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              Metadata file rewrites
+            </h3>
+            <ul className="space-y-3">
+              {reemits.map((r) => (
+                <ReemitRow key={r.run.run_id} reemit={r} />
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {batches.length > 0 ? (
           <div className="space-y-2">
             <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
@@ -496,6 +513,53 @@ function OtherWorkCard({ view }: { view: BackgroundWorkView }) {
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+const REEMIT_STATUS: Record<string, string> = {
+  running: "queueing rewrites",
+  draining: "finishing the last rewrites",
+  completed: "done",
+  aborted: "stopped",
+};
+
+/** One library-wide sidecar re-emit run: progress plus the outcome counts. */
+function ReemitRow({ reemit }: { reemit: SidecarReemitWorkView }) {
+  const r = reemit.run;
+  const done = r.rewritten + r.failed + r.skipped_refused + r.skipped_gone;
+  const live = r.status === "running" || r.status === "draining";
+  return (
+    <li className="space-y-1">
+      <div className="flex items-baseline justify-between gap-2 text-xs">
+        <span className="truncate text-sm">
+          {reemit.library_name || "Library"}
+          <span
+            className={cn(
+              "ml-2 text-xs",
+              r.stalled ? statusToneText("warning") : "text-muted-foreground",
+            )}
+          >
+            {r.stalled
+              ? "stalled — start it again from the library settings"
+              : (REEMIT_STATUS[r.status] ?? r.status)}
+          </span>
+        </span>
+        <span className="shrink-0 tabular-nums">
+          {n(done)} / {n(r.total)}
+        </span>
+      </div>
+      {live ? (
+        <Progress
+          value={pct(done, r.total)}
+          aria-label="Metadata file rewrite progress"
+        />
+      ) : null}
+      <p className="text-muted-foreground text-xs tabular-nums">
+        {n(r.enqueued)} queued · {n(r.rewritten)} rewritten ·{" "}
+        {n(r.skipped_refused)} skipped (format) · {n(r.failed)} failed
+        {r.note ? ` · ${r.note}` : ""}
+      </p>
+    </li>
   );
 }
 

@@ -108,6 +108,12 @@ pub struct RewriteIssueSidecarsJob {
     /// pre-upgrade payloads.
     #[serde(default)]
     pub post_apply: Option<PostRewriteWrites>,
+    /// Set by the library-wide sidecar re-emit
+    /// ([`crate::jobs::sidecar_reemit`]): the rewrite reports its terminal
+    /// state back so the run can count it and queue the series rescan once
+    /// the series' last rewrite is done. `None` everywhere else.
+    #[serde(default)]
+    pub reemit: Option<crate::jobs::sidecar_reemit::ReemitTag>,
 }
 
 /// One `field_provenance` upsert deferred until the rewrite succeeds.
@@ -278,6 +284,19 @@ pub async fn handle(
             // actually is. What happens next depends on the error:
             let disposition = FailureDisposition::for_error(e, attempt.current());
             audit_writeback(&state, &job, &outcome, Some(disposition)).await;
+            if let Some(tag) = &job.reemit {
+                use crate::jobs::sidecar_reemit::{RewriteEnd, on_rewrite_finished};
+                match disposition {
+                    FailureDisposition::Refused => {
+                        on_rewrite_finished(&state, tag, &job.issue_id, RewriteEnd::Refused).await;
+                    }
+                    FailureDisposition::Final { .. } => {
+                        on_rewrite_finished(&state, tag, &job.issue_id, RewriteEnd::Failed).await;
+                    }
+                    // apalis runs it again; not terminal yet.
+                    FailureDisposition::Retrying { .. } => {}
+                }
+            }
             let message = format!("sidecar writeback for {}: {e}", job.issue_id);
             return match disposition {
                 FailureDisposition::Refused => Ok(()),
@@ -339,6 +358,16 @@ pub async fn handle(
         apply_post_rewrite_writes(&state, &job.issue_id, post, result.rewritten_at).await;
     }
 
+    if let Some(tag) = &job.reemit {
+        crate::jobs::sidecar_reemit::on_rewrite_finished(
+            &state,
+            tag,
+            &job.issue_id,
+            crate::jobs::sidecar_reemit::RewriteEnd::Rewritten,
+        )
+        .await;
+    }
+
     Ok(())
 }
 
@@ -369,6 +398,15 @@ async fn requeue_busy(state: &AppState, job: &RewriteIssueSidecarsJob) -> Result
     let Requeue::Exhausted { attempts } = outcome else {
         return Ok(());
     };
+    if let Some(tag) = &job.reemit {
+        crate::jobs::sidecar_reemit::on_rewrite_finished(
+            state,
+            tag,
+            &job.issue_id,
+            crate::jobs::sidecar_reemit::RewriteEnd::Failed,
+        )
+        .await;
+    }
     if let Ok(Some(row)) = issue::Entity::find_by_id(job.issue_id.clone())
         .one(&state.db)
         .await

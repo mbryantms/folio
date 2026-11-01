@@ -94,6 +94,9 @@ page_count       # GET /issues/{id}/archive/page-count — read-only live page c
 # ── library_hash_backfill.rs ────────────────────────────────
 hash_backfill_status  # GET /libraries/{slug}/hash-backfill — read-only progress counts
 
+# ── sidecar_reemit.rs ───────────────────────────────────────
+sidecar_reemit_status  # GET /libraries/{slug}/sidecar-reemit — read-only run counts
+
 # ── library_stats.rs ────────────────────────────────────────
 library_stats_all  # GET /admin/libraries/stats — read-only per-library counts + disk usage
 library_stats_one  # GET /admin/libraries/{slug}/stats — read-only, one library's figures
