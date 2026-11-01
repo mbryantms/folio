@@ -23,6 +23,7 @@ import { useMe } from "@/lib/api/queries";
 import { useUpdateAccount, useUpdatePreferences } from "@/lib/api/mutations";
 
 import { DataExportCard } from "./DataExportCard";
+import { DeleteAccountCard } from "./DeleteAccountCard";
 import { HoldingsExportCard } from "./HoldingsExportCard";
 import { SessionsCard } from "./SessionsCard";
 import { SettingsSection } from "./SettingsSection";
@@ -89,6 +90,7 @@ export function AccountForm() {
       <SessionsCard />
       <DataExportCard />
       <HoldingsExportCard />
+      <DeleteAccountCard me={me.data} />
     </div>
   );
 }

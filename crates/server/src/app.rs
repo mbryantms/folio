@@ -134,6 +134,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(auth::local::routes())
         .merge(auth::ws_ticket::routes())
         .merge(api::account::routes())
+        .merge(api::account_delete::routes())
         .merge(api::account_export::routes())
         .merge(api::holdings_export::routes())
         .merge(api::libraries::routes())

@@ -1377,6 +1377,7 @@ All admin and security-sensitive actions written to `audit_log` (§5.9). Reads a
 ### 17.10 Data subject rights (self-served)
 - `GET /me/export` (re-auth required: re-enter password / OIDC popup) returns a JSON archive containing the user's progress, bookmarks, ratings, reviews, collections, reading lists, app passwords (hashes redacted), audit-log rows where the user is the actor.
 - `DELETE /me` cascade-deletes user-owned content with explicit options at request time: `reviews_action: 'delete' | 'anonymize'`. Admin notified via audit log + system notification. 7-day soft-delete window (recoverable by admin); after 7 days, hard-deleted.
+  - **As shipped (audit 2026-11 F5):** `DELETE /me` re-authenticates (password for local accounts; identity-provider accounts type their email, since Folio has no step-up OIDC flow yet), refuses the last active admin with 409, and hard-deletes in one transaction — there are no reviews, no soft-delete window and no separate notification; the `account.self_delete` audit row (email stored as a SHA-256) is the admin's record. The user's older audit rows are kept with the actor detached. Table-by-table policy: `crates/server/src/api/account_delete.rs`.
 
 ### 17.11 SSRF defense (forward-looking)
 Outbound HTTP from the server (when ComicVine/Metron enrichment lands in Phase 7+) routes through a single `crates/server/http_outbound::SafeClient`:

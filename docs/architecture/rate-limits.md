@@ -32,6 +32,7 @@ Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the reve
 | `GET /me/export` | 6 / min | — | 6 |
 | `GET /me/markers/export` | 6 / min | — | 6 |
 | `GET /me/holdings.csv` (bucket `holdings_export`) | 6 / min | — | 6 |
+| `DELETE /me` (bucket `account_delete`; wrong passwords also count as failed auth) | 1 / min | — | 5 |
 | Marker writes (`POST /me/markers`, `PATCH`/`DELETE /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST /me/markers/restore`), one shared bucket | 10 / s | — | 60 |
 
 ## Per-user web-app buckets

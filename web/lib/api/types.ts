@@ -221,6 +221,7 @@ export type RereadSeriesEntry = Schemas["RereadSeriesEntry"];
 export type CompletionView = Schemas["CompletionView"];
 export type ClearHistoryResp = Schemas["ClearHistoryResp"];
 export type AccountReq = Schemas["AccountReq"];
+export type DeleteAccountReq = Schemas["DeleteAccountReq"];
 export type UserExport = Schemas["UserExport"];
 export type UserExportSections = Schemas["ExportSections"]; // renamed in codegen as ExportSections
 export type HealthIssueView = Schemas["HealthIssueView"];

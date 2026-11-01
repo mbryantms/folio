@@ -284,6 +284,16 @@ pub const HOLDINGS_EXPORT: Bucket = Bucket {
     burst: 6,
 };
 
+/// `DELETE /me` — 1/min/IP + burst 5. A person deletes their account once;
+/// the burst covers a few mistyped passwords. Wrong passwords also count
+/// against the failed-auth lockout ([`crate::auth::failed_auth`]), so a
+/// stolen session can't use this endpoint as a password oracle.
+pub const ACCOUNT_DELETE: Bucket = Bucket {
+    name: "account_delete",
+    period: Duration::from_secs(60),
+    burst: 5,
+};
+
 /// Marker writes — `POST /me/markers`, `PATCH` / `DELETE
 /// /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST
 /// /me/markers/restore` (WP-5.3, audit SE-5; burst cut in WP-8.4).

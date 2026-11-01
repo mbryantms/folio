@@ -78,6 +78,16 @@ pub fn clear(name: &'static str, path: &'static str) -> Cookie<'static> {
     c
 }
 
+/// Expire every auth cookie on `jar` — session, CSRF, refresh and the
+/// legacy refresh name. The one list both sign-out and account deletion
+/// clear, so a cookie added here is cleared by both.
+pub fn clear_auth(jar: axum_extra::extract::CookieJar) -> axum_extra::extract::CookieJar {
+    jar.remove(clear(SESSION_COOKIE, "/"))
+        .remove(clear(CSRF_COOKIE, "/"))
+        .remove(clear(REFRESH_COOKIE, REFRESH_PATH))
+        .remove(clear(LEGACY_REFRESH_COOKIE, REFRESH_PATH))
+}
+
 fn time_from_std(d: Duration) -> time::Duration {
     time::Duration::seconds(d.as_secs().min(i64::MAX as u64) as i64)
 }

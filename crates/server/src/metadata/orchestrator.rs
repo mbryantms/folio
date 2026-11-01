@@ -170,8 +170,11 @@ pub struct StartRunArgs<'a> {
     pub batch_id: Option<Uuid>,
 }
 
-pub async fn start_run<C: ConnectionTrait>(
-    db: &C,
+/// Takes the pool, not a generic connection: the deleted-user fallback
+/// below retries the insert after an FK error, which a Postgres transaction
+/// would refuse (the first failure aborts it).
+pub async fn start_run(
+    db: &DatabaseConnection,
     args: StartRunArgs<'_>,
 ) -> Result<Uuid, sea_orm::DbErr> {
     let id = Uuid::now_v7();
@@ -212,8 +215,33 @@ pub async fn start_run<C: ConnectionTrait>(
         ))),
         partial_results: Set(None),
     };
-    am.insert(db).await?;
-    Ok(id)
+    match am.clone().insert(db).await {
+        Ok(_) => Ok(id),
+        // The admin who queued this search deleted their account
+        // (`DELETE /me`) before a job got to it — a bulk fan-out or a
+        // parked run resuming. The run is still wanted; it just has no
+        // one to attribute it to, exactly as `ON DELETE SET NULL` leaves
+        // runs that existed at deletion time.
+        Err(e) if args.triggered_by.is_some() && is_triggered_by_fk_violation(&e) => {
+            tracing::info!(
+                run_id = %id,
+                "metadata run: triggering user no longer exists; recording the run unattributed",
+            );
+            let mut am = am;
+            am.triggered_by = Set(None);
+            am.insert(db).await?;
+            Ok(id)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn is_triggered_by_fk_violation(e: &sea_orm::DbErr) -> bool {
+    matches!(
+        e.sql_err(),
+        Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(msg))
+            if msg.contains("metadata_run_triggered_by_fkey")
+    )
 }
 
 pub async fn mark_searching<C: ConnectionTrait>(
