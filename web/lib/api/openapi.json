@@ -9092,6 +9092,83 @@
         }
       }
     },
+    "/api/me/series/{series_id}/completion-prefs": {
+      "get": {
+        "summary": "Whether annuals and specials count toward this series' completion for\nthe caller.",
+        "operationId": "series_completion_prefs_get",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesCompletionPrefsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set (`include` / `exclude`) or clear (`inherit`) the caller's override\nfor this series.",
+        "operationId": "series_completion_prefs_put",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeriesCompletionPrefsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesCompletionPrefsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "422": {
+            "description": "unknown value"
+          }
+        }
+      }
+    },
     "/api/me/series/{series_id}/reader-prefs": {
       "get": {
         "summary": "The caller's reader overrides for a series (empty object when none).",
@@ -17469,6 +17546,8 @@
         "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so without provider data interior `missing` numbers are\n*inferred* by interpolating the integer run between the lowest and highest\nowned issue (`expected_source = \"series_total\"`). When the series has\naccepted provider coverage and those providers' issue lists are cached,\nthe expected set comes from them instead\n([`crate::metadata::issue_manifest`], `expected_source =\n\"provider_manifest\"`): `missing` is what every such provider lists and\nno local issue carries, `possibly_missing` what only some list.",
         "required": [
           "total_owned",
+          "counted_owned",
+          "specials_counted",
           "completeness_state",
           "main_run",
           "specials",
@@ -17487,6 +17566,11 @@
           "completeness_state": {
             "type": "string",
             "description": "`\"complete\"` | `\"incomplete\"` | `\"unknown\"` — same vocabulary and CASE\nsemantics as the `collection_completeness` saved-view predicate."
+          },
+          "counted_owned": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The owned issues that count toward completion for the caller: the\nmain run (`special_type IS NULL`), plus the tagged specials when\n[`Self::specials_counted`]. `completeness_state` and\n`completeness_pct` compare this with `total_expected` — the same\nrule as the saved-view `collection_completeness` filter (active,\nnon-removed issues, `aic.main_count` + `aic.special_count`)."
           },
           "expected_source": {
             "type": "string",
@@ -17520,6 +17604,10 @@
             },
             "description": "Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —\nlisted but excluded from the integer gap math."
           },
+          "specials_counted": {
+            "type": "boolean",
+            "description": "Whether annuals / specials count toward completion for the caller\non this series (per-series override, else the account setting; B9)."
+          },
           "total_expected": {
             "type": [
               "integer",
@@ -17531,7 +17619,7 @@
           "total_owned": {
             "type": "integer",
             "format": "int64",
-            "description": "Active (non-removed) issues owned. Matches the saved-view\n`collection_completeness` `active_count`, so this report and the\nSeriesCard collection dot never disagree."
+            "description": "Every active (non-removed) issue owned — main run, specials, point\nand unnumbered issues alike. The Collection tab's metadata bars\ncount over this set."
           }
         }
       },
@@ -26366,7 +26454,8 @@
           "language",
           "exclude_from_aggregates",
           "show_marker_count",
-          "max_rails_per_page"
+          "max_rails_per_page",
+          "count_specials_in_completeness"
         ],
         "properties": {
           "accent_color": {
@@ -26394,6 +26483,10 @@
                 "type": "null"
               }
             ]
+          },
+          "count_specials_in_completeness": {
+            "type": "boolean",
+            "description": "Count annuals / one-shots / specials / TPBs toward a series'\ncollection completeness (remediation B9). Default false: only the\nmain run is compared with the publisher total. A per-series\noverride (`PUT /me/series/{series_id}/completion-prefs`) wins."
           },
           "csrf_token": {
             "type": "string"
@@ -28146,6 +28239,13 @@
                 "type": "null"
               }
             ]
+          },
+          "count_specials_in_completeness": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Count annuals and specials toward series completion (B9)."
           },
           "default_cover_solo": {
             "type": [
@@ -32271,6 +32371,36 @@
           }
         }
       },
+      "SeriesCompletionPrefsReq": {
+        "type": "object",
+        "required": [
+          "count_specials"
+        ],
+        "properties": {
+          "count_specials": {
+            "$ref": "#/components/schemas/SpecialsCompletion",
+            "description": "`inherit` clears the override. An unknown value is a 422 at\ndeserialisation."
+          }
+        }
+      },
+      "SeriesCompletionPrefsView": {
+        "type": "object",
+        "description": "The caller's choice for one series and what it resolves to.",
+        "required": [
+          "count_specials",
+          "effective"
+        ],
+        "properties": {
+          "count_specials": {
+            "$ref": "#/components/schemas/SpecialsCompletion",
+            "description": "`inherit` | `include` | `exclude`."
+          },
+          "effective": {
+            "type": "boolean",
+            "description": "The resolved setting: true when this series' annuals and specials\ncount toward its completion for the caller."
+          }
+        }
+      },
       "SeriesCount": {
         "type": "object",
         "required": [
@@ -33398,6 +33528,8 @@
           "slug",
           "status",
           "language_code",
+          "specials_count_toward_completion",
+          "specials_completion",
           "created_at",
           "updated_at"
         ],
@@ -33650,6 +33782,14 @@
             ],
             "format": "int64",
             "description": "Non-removed annuals / one-shots / specials / TPBs (`special_type`\nset). Rendered as \"+N specials\" next to the main-run count."
+          },
+          "specials_completion": {
+            "$ref": "#/components/schemas/SpecialsCompletion",
+            "description": "The caller's per-series choice behind\n[`Self::specials_count_toward_completion`]: `inherit` (follow the\naccount setting), `include` or `exclude`."
+          },
+          "specials_count_toward_completion": {
+            "type": "boolean",
+            "description": "Viewer-scoped (remediation B9): true when this series' specials\ncount toward its collection completeness for the caller — the\nper-series override, else the account's\n`count_specials_in_completeness`. When true the owned figure the\ncompleteness verdict compares with `total_issues` is\n`main_issue_count + special_issue_count`; otherwise the main run\nalone. Same rule as the `collection_completeness` filter and the\ncollection report."
           },
           "status": {
             "type": "string"
@@ -34243,6 +34383,15 @@
             "description": "Spec §6.5 tag (`\"Annual\"`, `\"OneShot\"`, `\"TPB\"`, `\"Special\"`) when the\nscanner classified it; `None` for plain point/unnumbered issues."
           }
         }
+      },
+      "SpecialsCompletion": {
+        "type": "string",
+        "description": "The caller's per-series choice. `inherit` (no stored row) follows the\naccount setting; `include` / `exclude` override it for this series.",
+        "enum": [
+          "inherit",
+          "include",
+          "exclude"
+        ]
       },
       "SuggestionBucket": {
         "type": "string",

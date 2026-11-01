@@ -88,6 +88,7 @@ pub mod user;
 pub mod user_issue_note;
 pub mod user_page;
 pub mod user_rating;
+pub mod user_series_completion_prefs;
 pub mod user_series_progress;
 pub mod user_series_reader_prefs;
 pub mod user_sidebar_entry;
@@ -164,6 +165,7 @@ pub mod prelude {
     pub use super::user_issue_note::Entity as UserIssueNote;
     pub use super::user_page::Entity as UserPage;
     pub use super::user_rating::Entity as UserRating;
+    pub use super::user_series_completion_prefs::Entity as UserSeriesCompletionPrefs;
     pub use super::user_series_progress::Entity as UserSeriesProgress;
     pub use super::user_series_reader_prefs::Entity as UserSeriesReaderPrefs;
     pub use super::user_sidebar_entry::Entity as UserSidebarEntry;

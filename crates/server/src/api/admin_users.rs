@@ -334,6 +334,7 @@ pub async fn create(
         reader_warmth: Set(None),
         reader_contrast: Set(None),
         reader_zoom_persist: Set(None),
+        count_specials_in_completeness: Set(false),
     };
 
     let inserted = match am.insert(&app.db).await {

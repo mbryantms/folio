@@ -275,6 +275,13 @@ pub struct Model {
     /// "Keep zoom between pages" (WP-4.2).
     #[sea_orm(nullable)]
     pub reader_zoom_persist: Option<bool>,
+
+    /// Count annuals / one-shots / specials / TPBs (`issues.special_type`
+    /// set) toward a series' collection completeness (remediation B9).
+    /// Default false: only the main run is compared with
+    /// `series.total_issues`. A per-series row in
+    /// `user_series_completion_prefs` overrides it either way.
+    pub count_specials_in_completeness: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

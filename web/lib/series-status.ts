@@ -5,13 +5,12 @@ export type CollectionStatus = "complete" | "incomplete";
 type CountFields = Pick<
   SeriesView,
   "issue_count" | "main_issue_count" | "special_issue_count" | "total_issues"
->;
+> &
+  Partial<Pick<SeriesView, "specials_count_toward_completion">>;
 
 /**
- * Issues that count toward the publisher's `total_issues`: the main run
- * (`main_issue_count`). Annuals / one-shots / specials / TPBs are extras
- * on top of the run, never a substitute for a missing numbered issue.
- * Falls back to `issue_count` for a payload that predates the split.
+ * The main run (`main_issue_count`) on the shelf. Falls back to
+ * `issue_count` for a payload that predates the split.
  */
 export function ownedMainCount(series: CountFields): number {
   return series.main_issue_count ?? series.issue_count ?? 0;
@@ -22,11 +21,34 @@ export function ownedSpecialCount(series: CountFields): number {
   return series.special_issue_count ?? 0;
 }
 
-/** "+1 special" / "+3 specials" — or `null` when there are none. */
+/** Whether this viewer counts the series' annuals / specials toward its
+ *  completion (the account setting or the per-series override — the
+ *  server resolves it into `specials_count_toward_completion`, B9). */
+export function specialsCounted(series: CountFields): boolean {
+  return series.specials_count_toward_completion === true;
+}
+
+/**
+ * Issues that count toward the publisher's `total_issues`: the main run,
+ * plus the annuals / one-shots / specials / TPBs when the viewer counts
+ * them ({@link specialsCounted}). By default the extras sit on top of the
+ * run and never stand in for a missing numbered issue.
+ */
+export function ownedCompletionCount(series: CountFields): number {
+  return (
+    ownedMainCount(series) +
+    (specialsCounted(series) ? ownedSpecialCount(series) : 0)
+  );
+}
+
+/** "+1 special" / "+3 specials" — or `null` when there are none. When
+ *  the viewer counts specials toward completion they are already in the
+ *  owned figure, so the suffix reads "incl. 1 special" instead. */
 export function formatSpecialsSuffix(series: CountFields): string | null {
   const n = ownedSpecialCount(series);
   if (n <= 0) return null;
-  return `+${n} ${n === 1 ? "special" : "specials"}`;
+  const noun = n === 1 ? "special" : "specials";
+  return specialsCounted(series) ? `incl. ${n} ${noun}` : `+${n} ${noun}`;
 }
 
 /**
@@ -35,8 +57,9 @@ export function formatSpecialsSuffix(series: CountFields): string | null {
  * `total_issues` for this series — most often because nothing in the
  * series has a ComicInfo `<Count>` yet).
  *
- * Only the **main run** is compared — see {@link ownedMainCount}. A
- * 4-of-5 run with an annual on the shelf is still incomplete.
+ * Compares {@link ownedCompletionCount}: the main run, plus the specials
+ * when the viewer counts them. By default a 4-of-5 run with an annual on
+ * the shelf is still incomplete.
  *
  * Comparison uses **`>=`**, never `===`. Real libraries routinely
  * have more numbered files than `Count` claims (Issue #0 / variants /
@@ -46,12 +69,12 @@ export function formatSpecialsSuffix(series: CountFields): string | null {
 export function collectionStatus(series: CountFields): CollectionStatus | null {
   const total = series.total_issues;
   if (total == null || total <= 0) return null;
-  return ownedMainCount(series) >= total ? "complete" : "incomplete";
+  return ownedCompletionCount(series) >= total ? "complete" : "incomplete";
 }
 
 /** Tooltip text shared by the detail badge and the card dot. */
 export function collectionTooltip(series: CountFields): string {
-  const have = ownedMainCount(series);
+  const have = ownedCompletionCount(series);
   const total = series.total_issues ?? 0;
   const base =
     collectionStatus(series) === "complete"

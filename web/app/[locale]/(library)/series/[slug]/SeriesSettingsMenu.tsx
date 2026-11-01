@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Images,
   Link2,
+  ListChecks,
   Loader2,
   Pencil,
   RefreshCw,
@@ -34,6 +35,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
@@ -43,12 +46,13 @@ import {
   useGenerateSeriesPageMap,
   useRegenerateSeriesCover,
   useRemoveCollectionEntry,
+  useSetSeriesSpecialsCompletion,
   useTriggerSeriesScan,
   useUpsertSeriesProgress,
 } from "@/lib/api/mutations";
 import { useCollections, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
-import type { IssueSummaryView } from "@/lib/api/types";
+import type { IssueSummaryView, SpecialsCompletion } from "@/lib/api/types";
 import { readerUrl, seriesUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
 
@@ -77,6 +81,7 @@ export function SeriesSettingsMenu({
   libraryId,
   firstIssue,
   readIncognitoHref,
+  specialsCompletion = "inherit",
   onEdit,
   onForceRecreatePageMap,
 }: {
@@ -92,6 +97,9 @@ export function SeriesSettingsMenu({
    *  same target as the primary Read button, `+incognito=1`. `null` when
    *  the series has nothing to resume. */
   readIncognitoHref: string | null;
+  /** The viewer's per-series choice for counting annuals / specials
+   *  toward completion (`SeriesView.specials_completion`, B9). */
+  specialsCompletion?: SpecialsCompletion;
   /** Called when the user picks "Edit series" — the parent owns the
    *  edit-drawer state because the menu auto-closes on item select. */
   onEdit?: () => void;
@@ -108,6 +116,16 @@ export function SeriesSettingsMenu({
   const scan = useTriggerSeriesScan(seriesSlug, libraryId);
   const regenerateCover = useRegenerateSeriesCover(seriesSlug, libraryId);
   const generatePageMap = useGenerateSeriesPageMap(seriesSlug, libraryId);
+  const setCompletion = useSetSeriesSpecialsCompletion(seriesId);
+  const accountCountsSpecials =
+    me.data?.count_specials_in_completeness === true;
+  const changeCompletion = (next: string) => {
+    if (next !== "inherit" && next !== "include" && next !== "exclude") return;
+    if (next === specialsCompletion) return;
+    // The series page is server-rendered: refresh it so the Collection
+    // badge and Issues card pick up the new figures.
+    setCompletion.mutate(next, { onSuccess: () => router.refresh() });
+  };
 
   // Want to Read is the per-user auto-seeded collection (system_key='want_to_read').
   // The sidebar fetch of /me/collections seeds it on first load; by the time the
@@ -193,6 +211,7 @@ export function SeriesSettingsMenu({
     scan.isPending ||
     regenerateCover.isPending ||
     generatePageMap.isPending ||
+    setCompletion.isPending ||
     addToWtr.isPending;
 
   return (
@@ -283,6 +302,27 @@ export function SeriesSettingsMenu({
                 Copy link
               </DropdownMenuItem>
             )}
+            <DropdownMenuResponsiveSub
+              icon={<ListChecks className="mr-2 size-4" />}
+              label="Specials in completion"
+            >
+              <DropdownMenuRadioGroup
+                value={specialsCompletion}
+                onValueChange={changeCompletion}
+              >
+                <DropdownMenuRadioItem value="inherit">
+                  {accountCountsSpecials
+                    ? "Use my setting (count them)"
+                    : "Use my setting (main run only)"}
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="include">
+                  Count annuals and specials
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="exclude">
+                  Main run only
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuResponsiveSub>
             {/* The fetch actions (refresh, match, per-issue batches) live on
                 the series' Metadata tab with everything else administrative;
                 this item only takes you there. */}

@@ -782,6 +782,7 @@ pub async fn callback(
                 reader_warmth: Set(None),
                 reader_contrast: Set(None),
                 reader_zoom_persist: Set(None),
+                count_specials_in_completeness: Set(false),
             };
             let inserted = match am.insert(&txn).await {
                 Ok(m) => m,

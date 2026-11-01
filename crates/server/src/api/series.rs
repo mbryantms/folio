@@ -26,6 +26,7 @@ const MAX_QUERY_LEN: usize = 200;
 use super::error;
 use crate::api::issue_card::IssueCardRow;
 use crate::api::libraries::{ScanMode, ScanResp};
+use crate::api::series_completion_prefs::CompletionPrefs;
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
 use crate::middleware::RequestContext;
@@ -828,6 +829,19 @@ pub struct SeriesView {
     /// Non-removed annuals / one-shots / specials / TPBs (`special_type`
     /// set). Rendered as "+N specials" next to the main-run count.
     pub special_issue_count: Option<i64>,
+    /// Viewer-scoped (remediation B9): true when this series' specials
+    /// count toward its collection completeness for the caller — the
+    /// per-series override, else the account's
+    /// `count_specials_in_completeness`. When true the owned figure the
+    /// completeness verdict compares with `total_issues` is
+    /// `main_issue_count + special_issue_count`; otherwise the main run
+    /// alone. Same rule as the `collection_completeness` filter and the
+    /// collection report.
+    pub specials_count_toward_completion: bool,
+    /// The caller's per-series choice behind
+    /// [`Self::specials_count_toward_completion`]: `inherit` (follow the
+    /// account setting), `include` or `exclude`.
+    pub specials_completion: crate::api::series_completion_prefs::SpecialsCompletion,
     /// URL of the first issue's cover thumbnail. Null when no active issue exists.
     pub cover_url: Option<String>,
     /// Set when the scanner soft-deleted this series (its folder vanished
@@ -1002,6 +1016,8 @@ impl From<series::Model> for SeriesView {
             issue_count: None,
             main_issue_count: None,
             special_issue_count: None,
+            specials_count_toward_completion: false,
+            specials_completion: Default::default(),
             cover_url: None,
             removed_at: m.removed_at.map(|t| t.to_rfc3339()),
             created_at: m.created_at.to_rfc3339(),
@@ -2516,7 +2532,13 @@ pub(crate) async fn hydrate_series(
     // Per-viewer read progress for the card hover preview — one grouped
     // query over the page, shared with `get_one` so the numbers match.
     let page_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
-    let progress = fetch_progress_summaries(app, viewer, &page_ids).await;
+    // Whether specials count toward completion for this viewer (B9) — one
+    // account lookup + one override query for the page, run alongside the
+    // progress rollup.
+    let (progress, completion) = tokio::join!(
+        fetch_progress_summaries(app, viewer, &page_ids),
+        CompletionPrefs::load(&app.db, viewer, &page_ids),
+    );
 
     rows.into_iter()
         .map(|s| {
@@ -2525,6 +2547,8 @@ pub(crate) async fn hydrate_series(
             if let Some(c) = counts.get(&series_id) {
                 c.apply_to(&mut v);
             }
+            v.specials_count_toward_completion = completion.counts_specials(series_id);
+            v.specials_completion = completion.mode(series_id);
             v.cover_url = covers
                 .get(&series_id)
                 .map(|id| format!("/issues/{id}/pages/0/thumb"));
@@ -2965,10 +2989,20 @@ where
 /// no local issue carries, `possibly_missing` what only some list.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CollectionReportView {
-    /// Active (non-removed) issues owned. Matches the saved-view
-    /// `collection_completeness` `active_count`, so this report and the
-    /// SeriesCard collection dot never disagree.
+    /// Every active (non-removed) issue owned — main run, specials, point
+    /// and unnumbered issues alike. The Collection tab's metadata bars
+    /// count over this set.
     pub total_owned: i64,
+    /// The owned issues that count toward completion for the caller: the
+    /// main run (`special_type IS NULL`), plus the tagged specials when
+    /// [`Self::specials_counted`]. `completeness_state` and
+    /// `completeness_pct` compare this with `total_expected` — the same
+    /// rule as the saved-view `collection_completeness` filter (active,
+    /// non-removed issues, `aic.main_count` + `aic.special_count`).
+    pub counted_owned: i64,
+    /// Whether annuals / specials count toward completion for the caller
+    /// on this series (per-series override, else the account setting; B9).
+    pub specials_counted: bool,
     /// Publisher-claimed total from `series.total_issues`. `None` when the
     /// scanner couldn't resolve a count.
     pub total_expected: Option<i32>,
@@ -3119,8 +3153,16 @@ fn collection_state(total_owned: i64, total_expected: Option<i32>) -> &'static s
 fn build_collection_report(
     rows: Vec<CollectionNumberRow>,
     total_expected: Option<i32>,
+    count_specials: bool,
 ) -> CollectionReportView {
     let total_owned = rows.len() as i64;
+    // What counts toward completion: the untagged issues (the main run,
+    // as `SeriesView.main_issue_count` counts it), plus the tagged
+    // specials when the caller counts them (B9).
+    let counted_owned = rows
+        .iter()
+        .filter(|r| count_specials || r.special_type.is_none())
+        .count() as i64;
     let mut specials: Vec<SpecialEntry> = Vec::new();
     // Integer-numbered, untagged rows keyed by their integer; several rows
     // may share one (duplicate rips), and the input is not assumed ordered.
@@ -3179,9 +3221,14 @@ fn build_collection_report(
         (Some(lo), Some(hi)) => hi - lo + 1,
         _ => 0,
     };
+    // When the caller counts tagged specials toward the total (B9), they
+    // also account for part of it.
     let counted_extras = specials
         .iter()
-        .filter(|s| s.special_type.is_none() && s.sort_number.is_some())
+        .filter(|s| {
+            (s.special_type.is_none() && s.sort_number.is_some())
+                || (count_specials && s.special_type.is_some())
+        })
         .count() as i64;
     let trailing_missing = match total_expected {
         Some(t) => ((t as i64) - run_span - counted_extras).max(0),
@@ -3192,15 +3239,17 @@ fn build_collection_report(
         if t <= 0 {
             0.0
         } else {
-            ((total_owned as f64 / t as f64) * 100.0).min(100.0)
+            ((counted_owned as f64 / t as f64) * 100.0).min(100.0)
         }
     });
 
     CollectionReportView {
         total_owned,
+        counted_owned,
+        specials_counted: count_specials,
         total_expected,
         completeness_pct,
-        completeness_state: collection_state(total_owned, total_expected).to_owned(),
+        completeness_state: collection_state(counted_owned, total_expected).to_owned(),
         main_run: MainRunReport {
             present,
             present_labels,
@@ -3405,8 +3454,8 @@ pub async fn collection_report(
     }
     // No `.limit()` — the whole run must be visible for gap detection. The
     // three-column projection keeps this cheap even at 1000+ issues. Filter
-    // matches `active_issue_count_subquery` so `total_owned` lines up with the
-    // saved-view `collection_completeness` count.
+    // matches `active_issue_count_subquery` so `counted_owned` lines up with
+    // the saved-view `collection_completeness` count.
     let rows = match issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.id))
         .filter(issue::Column::State.eq("active"))
@@ -3434,7 +3483,10 @@ pub async fn collection_report(
         .filter_map(|r| r.number_raw.as_deref())
         .map(crate::metadata::matcher::issue_number_compare_key)
         .collect();
-    let mut report = build_collection_report(rows, row.total_issues);
+    let count_specials = CompletionPrefs::load(&app.db, user.id, std::slice::from_ref(&row.id))
+        .await
+        .counts_specials(row.id);
+    let mut report = build_collection_report(rows, row.total_issues, count_specials);
     match crate::metadata::issue_manifest::for_series(&app.db, &app.jobs.redis, row.id, &owned)
         .await
     {
@@ -3604,6 +3656,14 @@ pub async fn get_one(
     if let Some(c) = counts {
         c.apply_to(&mut v);
     }
+    let completion = CompletionPrefs::load(
+        &app.db,
+        user.id,
+        std::slice::from_ref(&series_id_for_lookups),
+    )
+    .await;
+    v.specials_count_toward_completion = completion.counts_specials(series_id_for_lookups);
+    v.specials_completion = completion.mode(series_id_for_lookups);
     v.cover_url = cover_issue_id.map(|id| format!("/issues/{id}/pages/0/thumb"));
     v.writers = metadata_facets.credits_for("writer");
     v.pencillers = metadata_facets.credits_for("penciller");
@@ -4126,7 +4186,7 @@ mod tests {
         // Own #1, #2, #4 with a publisher total of 6 → #3 missing, +2 trailing.
         let mut rows = main_run(&[1, 2, 4]);
         rows.reverse(); // builder must not assume input ordering
-        let r = build_collection_report(rows, Some(6));
+        let r = build_collection_report(rows, Some(6), false);
         assert_eq!(r.total_owned, 3);
         assert_eq!(r.total_expected, Some(6));
         assert_eq!(r.main_run.missing, vec![3]);
@@ -4137,10 +4197,52 @@ mod tests {
         assert_eq!(r.completeness_pct, Some(50.0));
     }
 
+    /// B9: by default a tagged annual is owned but doesn't count toward
+    /// the publisher total; when the viewer counts specials it does, and
+    /// it also accounts for part of the total beyond the run.
+    #[test]
+    fn counted_owned_follows_the_specials_setting() {
+        let mut rows = main_run(&[1, 2, 3, 4]);
+        rows.push(row(Some(1.0), Some("Annual 1"), Some("Annual")));
+
+        let r = build_collection_report(rows, Some(5), false);
+        assert_eq!(r.total_owned, 5);
+        assert_eq!(r.counted_owned, 4);
+        assert!(!r.specials_counted);
+        assert_eq!(r.completeness_state, "incomplete");
+        assert_eq!(r.completeness_pct, Some(80.0));
+        assert_eq!(r.main_run.trailing_missing, 1);
+
+        let mut rows = main_run(&[1, 2, 3, 4]);
+        rows.push(row(Some(1.0), Some("Annual 1"), Some("Annual")));
+        let r = build_collection_report(rows, Some(5), true);
+        assert_eq!(r.total_owned, 5);
+        assert_eq!(r.counted_owned, 5);
+        assert!(r.specials_counted);
+        assert_eq!(r.completeness_state, "complete");
+        assert_eq!(r.completeness_pct, Some(100.0));
+        assert_eq!(r.main_run.trailing_missing, 0);
+        // The annual is still listed apart from the run either way.
+        assert_eq!(r.specials.len(), 1);
+        assert_eq!(r.main_run.present.len(), 4);
+    }
+
+    /// Untagged point issues count toward completion in both modes — the
+    /// same set `SeriesView.main_issue_count` counts.
+    #[test]
+    fn untagged_point_issue_counts_in_both_modes() {
+        let mut rows = main_run(&[1, 2]);
+        rows.push(row(Some(2.5), Some("2.5"), None));
+        assert_eq!(
+            build_collection_report(rows, Some(3), false).counted_owned,
+            3
+        );
+    }
+
     #[test]
     fn issue_zero_is_part_of_the_main_run() {
         // #0 is a legit prelude; it anchors the run and is gap-detected from.
-        let r = build_collection_report(main_run(&[0, 1, 3]), None);
+        let r = build_collection_report(main_run(&[0, 1, 3]), None, false);
         assert_eq!(r.main_run.min, Some(0.0));
         assert_eq!(r.main_run.missing, vec![2]);
         assert!(r.specials.is_empty());
@@ -4152,7 +4254,7 @@ mod tests {
         // under specials, excluded from the integer run.
         let mut rows = main_run(&[1, 2, 3]);
         rows.push(row(Some(2.5), Some("2.5"), None));
-        let r = build_collection_report(rows, None);
+        let r = build_collection_report(rows, None, false);
         assert!(r.main_run.missing.is_empty());
         assert_eq!(r.specials.len(), 1);
         assert_eq!(r.specials[0].sort_number, Some(2.5));
@@ -4164,7 +4266,7 @@ mod tests {
         // collide with main-run #1.
         let mut rows = main_run(&[1, 2]);
         rows.push(row(Some(1.0), Some("Annual 1"), Some("Annual")));
-        let r = build_collection_report(rows, None);
+        let r = build_collection_report(rows, None, false);
         assert_eq!(r.main_run.present.len(), 2);
         assert_eq!(r.specials.len(), 1);
         assert_eq!(r.specials[0].special_type.as_deref(), Some("Annual"));
@@ -4176,7 +4278,7 @@ mod tests {
             row(None, Some("Preview"), None),
             row(Some(1.0), Some("1"), None),
         ];
-        let r = build_collection_report(rows, None);
+        let r = build_collection_report(rows, None, false);
         assert_eq!(r.main_run.present, vec![1.0]);
         assert_eq!(r.specials.len(), 1);
         assert!(r.main_run.missing.is_empty());
@@ -4184,7 +4286,7 @@ mod tests {
 
     #[test]
     fn no_total_yields_unknown_state() {
-        let r = build_collection_report(main_run(&[1, 2, 3]), None);
+        let r = build_collection_report(main_run(&[1, 2, 3]), None, false);
         assert_eq!(r.completeness_state, "unknown");
         assert_eq!(r.completeness_pct, None);
         assert_eq!(r.main_run.trailing_missing, 0);
@@ -4193,7 +4295,7 @@ mod tests {
     #[test]
     fn over_collection_is_complete_and_capped() {
         // Own more than the publisher claim → complete, pct capped at 100.
-        let r = build_collection_report(main_run(&[1, 2, 3, 4, 5]), Some(4));
+        let r = build_collection_report(main_run(&[1, 2, 3, 4, 5]), Some(4), false);
         assert_eq!(r.completeness_state, "complete");
         assert_eq!(r.completeness_pct, Some(100.0));
         assert_eq!(r.main_run.trailing_missing, 0);
@@ -4205,7 +4307,7 @@ mod tests {
         // run ends at #247; the stunt number is listed, not interpolated to.
         let mut rows = main_run(&[0, 1, 2, 247, 1_000_000]);
         rows.reverse();
-        let r = build_collection_report(rows, Some(250));
+        let r = build_collection_report(rows, Some(250), false);
         assert_eq!(r.main_run.max, Some(247.0));
         assert_eq!(r.main_run.off_run, vec![1_000_000]);
         assert_eq!(r.main_run.missing.len(), 244);
@@ -4222,7 +4324,7 @@ mod tests {
     #[test]
     fn everything_after_the_first_wide_jump_is_off_run() {
         // Once the run has ended, a contiguous tail doesn't restart it.
-        let r = build_collection_report(main_run(&[1, 2, 5000, 5001]), None);
+        let r = build_collection_report(main_run(&[1, 2, 5000, 5001]), None, false);
         assert_eq!(r.main_run.max, Some(2.0));
         assert_eq!(r.main_run.off_run, vec![5000, 5001]);
         assert!(r.main_run.missing.is_empty());
@@ -4234,7 +4336,7 @@ mod tests {
         // #70 → #500 is a real publisher jump (Fantastic Four); it stays in
         // the run and the gap is interpolated (the provider manifest, when
         // present, replaces it with the exact list).
-        let r = build_collection_report(main_run(&[69, 70, 500, 501]), None);
+        let r = build_collection_report(main_run(&[69, 70, 500, 501]), None, false);
         assert!(r.main_run.off_run.is_empty());
         assert_eq!(r.main_run.max, Some(501.0));
         assert_eq!(r.main_run.missing.len(), 429);
@@ -4245,12 +4347,12 @@ mod tests {
         // Own #0–#4 and #½ with a provider total of 6 → the total is met.
         let mut rows = main_run(&[0, 1, 2, 3, 4]);
         rows.push(row(Some(0.5), Some("½"), None));
-        let r = build_collection_report(rows, Some(6));
+        let r = build_collection_report(rows, Some(6), false);
         assert_eq!(r.main_run.trailing_missing, 0);
         // A tagged annual is a separate volume to the provider: not counted.
         let mut rows = main_run(&[1, 2, 3, 4]);
         rows.push(row(Some(1.0), Some("Annual 1"), Some("Annual")));
-        let r = build_collection_report(rows, Some(6));
+        let r = build_collection_report(rows, Some(6), false);
         assert_eq!(r.main_run.trailing_missing, 2);
     }
 
