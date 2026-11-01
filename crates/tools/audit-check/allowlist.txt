@@ -173,7 +173,3 @@ coverage         # GET /admin/metadata/coverage — read-only snapshot
 
 # ── characters.rs / teams.rs / locations.rs / arcs.rs ───────
 refresh_profile  # POST /<kind>/{slug}/profile/refresh — delegate: entity_pages::refresh_profile_handler records admin.entity.refresh_profile
-
-# ── metadata_search.rs (audit 2026-11 E16: apply is admin-only) ──
-apply_series     # POST /series/{slug}/metadata/apply — enqueues ApplySeriesJob; the job writes audit_log (admin.series.metadata_apply[_force]) with the admin as actor
-apply_issue      # POST /series/{slug}/issues/{issue_slug}/metadata/apply — enqueues ApplyIssueJob; the job writes audit_log (admin.issue.metadata_apply[_force]) with the admin as actor

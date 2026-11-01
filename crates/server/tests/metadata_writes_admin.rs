@@ -9,7 +9,8 @@
 //! writes succeed and record their audit rows.
 //!
 //! The apalis workers don't run here, so the queued apply only enqueues
-//! (its audit row is written by the job, covered in the job tests).
+//! and records its request-time `…metadata_apply_queued` row (the job's own
+//! row is covered in the job tests).
 
 mod common;
 
@@ -434,7 +435,8 @@ async fn metadata_writes_require_admin_reads_stay_open() {
     )
     .await;
     assert_eq!(st, StatusCode::ACCEPTED, "admin refresh");
-    // The single apply only enqueues; the job writes its audit row.
+    // The single apply only enqueues: it records the request-time row and
+    // the job (not running here) adds its own.
     let (st, _) = send(
         app,
         &f.admin,
@@ -452,6 +454,7 @@ async fn metadata_writes_require_admin_reads_stay_open() {
         "admin.metadata_batch.create",
         "admin.metadata_batch.apply",
         "admin.library.metadata_refresh",
+        "admin.series.metadata_apply_queued",
     ] {
         assert!(actions.iter().any(|a| a == want), "{want} in {actions:?}");
     }

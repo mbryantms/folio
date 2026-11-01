@@ -21,8 +21,8 @@
 //! (SE-3a previously gated only the `override_user_edits` force flag via
 //! [`AdminGatedOverride`]; the apply bodies still parse through it, so
 //! the flag keeps its own structural gate.) Every gated write records an
-//! `audit_log` row: in the handler, or — for the queued single / batch
-//! apply — in the apply job, which runs with the admin as actor.
+//! `audit_log` row in the handler; the queued single / batch applies add
+//! the apply job's own row once it runs, with the admin as actor.
 
 use axum::{
     Extension, Json,
@@ -1877,6 +1877,38 @@ pub async fn proposed_diff_series(
 
 // ───────── /series/{slug}/metadata/apply ─────────
 
+/// The request-time audit row for a queued single apply (E16). The job
+/// writes its own `admin.{series,issue}.metadata_apply[_force]` row once
+/// it runs; this one records that the admin asked, which also covers a job
+/// that is later cancelled or never claims the mutex.
+fn apply_queued_audit_entry(
+    ctx: &RequestContext,
+    actor_id: Uuid,
+    scope: &'static str,
+    entity_id: String,
+    req: &ApplyRequest,
+) -> crate::audit::AuditEntry<'static> {
+    crate::audit::AuditEntry {
+        actor_id,
+        action: if scope == "series" {
+            "admin.series.metadata_apply_queued"
+        } else {
+            "admin.issue.metadata_apply_queued"
+        },
+        target_type: Some(scope),
+        target_id: Some(entity_id),
+        payload: serde_json::json!({
+            "run_id": req.run_id,
+            "ordinal": req.ordinal,
+            "mode": req.mode,
+            "override_user_edits": req.override_user_edits,
+            "override_external_id_sources": req.override_external_id_sources,
+        }),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    }
+}
+
 #[utoipa::path(
     operation_id = "metadata_apply_series",    post,
     path = "/series/{slug}/metadata/apply",
@@ -1893,8 +1925,8 @@ pub async fn proposed_diff_series(
 #[handler]
 pub async fn apply_series(
     State(app): State<AppState>,
-    // E16: admin-only. The queued apply job records the audit row
-    // (`admin.series.metadata_apply[_force]`) with this admin as actor.
+    // E16: admin-only. Records `admin.series.metadata_apply_queued`; the
+    // job adds `admin.series.metadata_apply[_force]` with this admin as actor.
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
@@ -1977,6 +2009,11 @@ pub async fn apply_series(
             "queue push failed",
         );
     }
+    crate::audit::record(
+        &app.db,
+        apply_queued_audit_entry(&ctx, user.id, "series", s.id.to_string(), &req),
+    )
+    .await;
 
     (
         StatusCode::ACCEPTED,
@@ -2228,8 +2265,8 @@ pub async fn composite_diff_issue(
 #[handler]
 pub async fn apply_issue(
     State(app): State<AppState>,
-    // E16: admin-only. The queued apply job records the audit row
-    // (`admin.issue.metadata_apply[_force]`) with this admin as actor.
+    // E16: admin-only. Records `admin.issue.metadata_apply_queued`; the
+    // job adds `admin.issue.metadata_apply[_force]` with this admin as actor.
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
@@ -2309,6 +2346,11 @@ pub async fn apply_issue(
             "queue push failed",
         );
     }
+    crate::audit::record(
+        &app.db,
+        apply_queued_audit_entry(&ctx, user.id, "issue", i.id.clone(), &req),
+    )
+    .await;
 
     (
         StatusCode::ACCEPTED,
@@ -2408,42 +2450,45 @@ pub async fn refresh_library_metadata(
         Some(user.id),
     )
     .await;
-    match issue_refresh {
-        Ok(issue_refresh) => {
-            crate::audit::record(
-                &app.db,
-                crate::audit::AuditEntry {
-                    actor_id: user.id,
-                    action: "admin.library.metadata_refresh",
-                    target_type: Some("library"),
-                    target_id: Some(lib.id.to_string()),
-                    payload: serde_json::json!({
-                        "scope": scope.as_str(),
-                        "series_eligible": series.series_eligible,
-                        "jobs_enqueued": series.jobs_enqueued,
-                        "jobs_coalesced": series.jobs_coalesced,
-                        "jobs_failed": series.jobs_failed,
-                        "issue_refresh": &issue_refresh,
-                    }),
-                    ip: ctx.ip_string(),
-                    user_agent: ctx.user_agent.clone(),
+    // The series jobs are already queued, so the row is written even when
+    // the issue-level fan-out failed (its error lands in the payload).
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id: user.id,
+            action: "admin.library.metadata_refresh",
+            target_type: Some("library"),
+            target_id: Some(lib.id.to_string()),
+            payload: serde_json::json!({
+                "scope": scope.as_str(),
+                "series_eligible": series.series_eligible,
+                "jobs_enqueued": series.jobs_enqueued,
+                "jobs_coalesced": series.jobs_coalesced,
+                "jobs_failed": series.jobs_failed,
+                "issue_refresh": match &issue_refresh {
+                    Ok(o) => serde_json::json!(o),
+                    Err(e) => serde_json::json!({ "error": e.to_string() }),
                 },
-            )
-            .await;
-            (
-                StatusCode::ACCEPTED,
-                Json(RefreshLibraryResp {
-                    library_id: lib.id,
-                    scope: scope.as_str().to_owned(),
-                    series_eligible: series.series_eligible,
-                    jobs_enqueued: series.jobs_enqueued,
-                    jobs_coalesced: series.jobs_coalesced,
-                    jobs_failed: series.jobs_failed,
-                    issue_refresh,
-                }),
-            )
-                .into_response()
-        }
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    match issue_refresh {
+        Ok(issue_refresh) => (
+            StatusCode::ACCEPTED,
+            Json(RefreshLibraryResp {
+                library_id: lib.id,
+                scope: scope.as_str().to_owned(),
+                series_eligible: series.series_eligible,
+                jobs_enqueued: series.jobs_enqueued,
+                jobs_coalesced: series.jobs_coalesced,
+                jobs_failed: series.jobs_failed,
+                issue_refresh,
+            }),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(error = %e, library_id = %lib.id, "metadata refresh fan-out failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
@@ -4013,7 +4058,7 @@ pub struct RunOrdinal {
 }
 
 /// Which batch children to apply.
-#[derive(Copy, Clone, Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchApplyFilter {
     /// Every child with a `single_good` outcome whose top high candidate
@@ -4125,11 +4170,7 @@ pub async fn batch_apply(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     }
-    let filter_name = match req.filter {
-        BatchApplyFilter::AllStrong => "all_strong",
-        BatchApplyFilter::Ordinals => "ordinals",
-        BatchApplyFilter::AllNeedsReview => "all_needs_review",
-    };
+    let filter = req.filter;
 
     // Child runs of this batch, keyed by id.
     let runs: std::collections::HashMap<Uuid, metadata_run::Model> = metadata_run::Entity::find()
@@ -4356,7 +4397,7 @@ pub async fn batch_apply(
             target_type: Some("metadata_batch"),
             target_id: Some(batch_id.to_string()),
             payload: serde_json::json!({
-                "filter": filter_name,
+                "filter": filter,
                 "mode": req.mode,
                 "override_user_edits": req.override_user_edits,
                 "enqueued": enqueued,
@@ -4562,5 +4603,42 @@ fn build_match_outcome_view(rows: &[entity::metadata_run_candidate::Model]) -> M
         kind: kind.to_owned(),
         top_hamming,
         matched_via_alternate,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The apply handlers are `RequireAdmin` since E16, so the reader-facing
+    /// tests can no longer tell the force-flag gate from the handler gate.
+    /// Pin what `AdminGatedOverride` treats as an override instead.
+    #[test]
+    fn override_flag_covers_force_and_external_id_overrides() {
+        let run = Uuid::now_v7();
+        let apply =
+            |body: serde_json::Value| -> ApplyRequest { serde_json::from_value(body).unwrap() };
+        assert!(!apply(serde_json::json!({"run_id": run, "ordinal": 0})).override_user_edits());
+        assert!(
+            apply(serde_json::json!({"run_id": run, "ordinal": 0, "override_user_edits": true}))
+                .override_user_edits()
+        );
+        assert!(
+            apply(serde_json::json!({
+                "run_id": run, "ordinal": 0, "override_external_id_sources": ["comicvine"],
+            }))
+            .override_user_edits()
+        );
+        let composite: CompositeApplyRequest = serde_json::from_value(serde_json::json!({
+            "run_id": run, "field_sources": [], "included": [0],
+            "override_external_id_sources": ["metron"],
+        }))
+        .unwrap();
+        assert!(composite.override_user_edits());
+        let batch: BatchApplyReq = serde_json::from_value(serde_json::json!({
+            "filter": "all_strong", "override_user_edits": true,
+        }))
+        .unwrap();
+        assert!(batch.override_user_edits());
     }
 }

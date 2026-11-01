@@ -63,30 +63,19 @@ export function MatchOutcomeBanner({
               Strong match: {topName}
               {altBadge}
             </p>
-            {canApply ? (
-              <p className="text-muted-foreground text-xs">
-                Apply now to write every field. Use{" "}
-                <button
-                  type="button"
-                  onClick={onShowDetails}
-                  className="underline underline-offset-2"
-                >
-                  Show details
-                </button>{" "}
-                to pick fields first.
-              </p>
-            ) : (
-              <p className="text-muted-foreground text-xs">
-                <button
-                  type="button"
-                  onClick={onShowDetails}
-                  className="underline underline-offset-2"
-                >
-                  Show details
-                </button>{" "}
-                to see what it would change. Only an admin can apply it.
-              </p>
-            )}
+            <p className="text-muted-foreground text-xs">
+              {canApply ? <>Apply now to write every field. Use </> : null}
+              <button
+                type="button"
+                onClick={onShowDetails}
+                className="underline underline-offset-2"
+              >
+                Show details
+              </button>{" "}
+              {canApply
+                ? "to pick fields first."
+                : "to see what it would change. Only an admin can apply it."}
+            </p>
           </div>
           {canApply && (
             <Button size="sm" onClick={onOneClickApply} disabled={isApplying}>

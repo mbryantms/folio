@@ -1908,8 +1908,6 @@ pub async fn bulk_metadata(
 
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
-    // Admin-only (E16): admins see every library, so nothing is filtered.
-    let forbidden: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
     let mut sidecar_rewrites: u32 = 0;
@@ -1996,7 +1994,6 @@ pub async fn bulk_metadata(
                 "requested": requested,
                 "updated": updated,
                 "skipped": skipped,
-                "forbidden": forbidden,
                 "sidecar_rewrites": sidecar_rewrites,
                 "not_found": not_found,
             }),
@@ -2009,7 +2006,8 @@ pub async fn bulk_metadata(
     Json(BulkMetadataResp {
         updated,
         skipped,
-        forbidden,
+        // Admin-only (E16): admins see every library, nothing is filtered.
+        forbidden: 0,
         not_found,
         failed,
         first_error,

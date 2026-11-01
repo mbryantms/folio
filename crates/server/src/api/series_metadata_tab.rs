@@ -17,8 +17,8 @@
 //!   endpoint (audit 2026-11 E16).
 //!
 //! The two GETs read and serve any caller who can see the series; the
-//! fetch actions on the tab are the existing (admin-only) batch / refresh /
-//! match endpoints.
+//! fetch actions on the tab are the existing batch / refresh / match
+//! endpoints (their writes are admin-only, the match search is not).
 
 use std::collections::{BTreeMap, HashMap};
 
