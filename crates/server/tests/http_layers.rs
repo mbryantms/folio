@@ -12,9 +12,16 @@
 //!   private, max-age=300` plus a strong digest `ETag`, with `If-None-Match`
 //!   answered by a bodiless 304 that keeps both headers.
 //! - The bare group as a whole is untouched (`/healthz` stays identity).
+//! - The page-image upload (`POST /api/uploads`) sits outside the JSON
+//!   layers (E8): its body may take longer than the JSON deadline to
+//!   arrive, a client that goes silent mid-body is still dropped at the
+//!   per-frame idle timeout, and it is never compressed. JSON routes, and
+//!   the CBL file import, still 408 at the JSON deadline.
 //!
-//! The timeout is exercised at the unit level in `app::tests` with a tiny
-//! deadline; wall-clocking a 60 s timeout here would be pointless.
+//! The JSON timeout is exercised at the unit level in `app::tests` with a
+//! tiny deadline. The group-membership guards here build the real router
+//! through `app::router_with_timeouts` with short test deadlines, since
+//! wall-clocking a 60 s timeout would be pointless.
 
 mod common;
 
@@ -24,7 +31,9 @@ use axum::{
 };
 use common::TestApp;
 use common::seed::{seed_issue, seed_library, seed_series};
+use server::app::{JSON_ROUTE_TIMEOUT, RouteTimeouts};
 use std::io::Write;
+use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 const PNG_HEADER: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -70,6 +79,11 @@ fn decodable_cbz_bytes() -> Vec<u8> {
 }
 
 async fn register_admin(app: &TestApp) -> String {
+    register_admin_authed(app).await.0
+}
+
+/// Registers the first-user admin; returns `(session, csrf)` cookie values.
+async fn register_admin_authed(app: &TestApp) -> (String, String) {
     let resp = app
         .router
         .clone()
@@ -86,17 +100,23 @@ async fn register_admin(app: &TestApp) -> String {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    resp.headers()
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .find(|c| c.starts_with("__Host-comic_session="))
-        .expect("session cookie")
-        .split(';')
-        .next()
-        .unwrap()
-        .trim_start_matches("__Host-comic_session=")
-        .to_owned()
+    let cookie = |prefix: &str| -> String {
+        resp.headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|c| c.starts_with(prefix))
+            .expect(prefix)
+            .split(';')
+            .next()
+            .unwrap()
+            .trim_start_matches(prefix)
+            .to_owned()
+    };
+    (
+        cookie("__Host-comic_session="),
+        cookie("__Host-comic_csrf="),
+    )
 }
 
 async fn get(
@@ -361,6 +381,207 @@ async fn bare_group_is_not_wrapped_by_the_json_layers() {
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert!(body.len() > 32, "precondition: body above the size floor");
     serde_json::from_slice::<serde_json::Value>(&body).expect("identity JSON body");
+}
+
+// ───────── E8: long-body uploads run outside the JSON deadline ─────────
+
+/// Short deadlines for the group-membership guards below: the JSON group
+/// gives up well before [`BODY_STALL`], the long-body group (whole request
+/// and per frame) well after.
+const TEST_TIMEOUTS: RouteTimeouts = RouteTimeouts {
+    json: Duration::from_millis(500),
+    long_body: Duration::from_secs(30),
+    long_body_idle: Duration::from_secs(10),
+};
+/// How long the slow client pauses mid-body.
+const BODY_STALL: Duration = Duration::from_millis(1500);
+const BOUNDARY: &str = "folio-http-layers-boundary";
+
+/// `bytes` streamed in two chunks with a [`BODY_STALL`] pause between them
+/// and no `Content-Length`, like a slow phone upload.
+fn stalled_body(bytes: Vec<u8>) -> Body {
+    use futures::StreamExt;
+    let tail = axum::body::Bytes::from(bytes);
+    let head = tail.slice(..tail.len() / 2);
+    let tail = tail.slice(tail.len() / 2..);
+    let stream = futures::stream::once(async move { Ok::<_, std::io::Error>(head) }).chain(
+        futures::stream::once(async move {
+            tokio::time::sleep(BODY_STALL).await;
+            Ok(tail)
+        }),
+    );
+    Body::from_stream(stream)
+}
+
+fn multipart_file(file_name: &str, content_type: &str, bytes: &[u8]) -> Vec<u8> {
+    let mut body = format!(
+        "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; \
+         filename=\"{file_name}\"\r\nContent-Type: {content_type}\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    body
+}
+
+fn page_upload_body() -> Vec<u8> {
+    let mut image = PNG_HEADER.to_vec();
+    image.resize(4096, 0);
+    multipart_file("page.png", "image/png", &image)
+}
+
+/// POST a stalled body through the real router built with `timeouts`;
+/// returns the response and how long it took.
+async fn post_stalled(
+    app: &TestApp,
+    auth: &(String, String),
+    timeouts: RouteTimeouts,
+    uri: &str,
+    content_type: &str,
+    body: Vec<u8>,
+) -> (axum::response::Response, Duration) {
+    let router = server::app::router_with_timeouts(app.state(), timeouts);
+    let (session, csrf) = auth;
+    let started = Instant::now();
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::CONTENT_TYPE, content_type)
+                .header(header::ACCEPT_ENCODING, "gzip, deflate, br, zstd")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}"),
+                )
+                .header("X-CSRF-Token", csrf)
+                .body(stalled_body(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    (resp, started.elapsed())
+}
+
+fn multipart_type() -> String {
+    format!("multipart/form-data; boundary={BOUNDARY}")
+}
+
+/// The served router gives the page upload minutes, not the JSON minute:
+/// a 32 MiB page has to land at well under 1 Mbit/s, while a client that
+/// goes silent is still dropped within the old JSON hold.
+#[test]
+fn production_timeouts_give_uploads_the_long_deadline() {
+    let t = RouteTimeouts::PRODUCTION;
+    assert_eq!(t.json, JSON_ROUTE_TIMEOUT);
+    assert!(t.long_body >= Duration::from_secs(10 * 60), "{t:?}");
+    assert!(t.long_body_idle <= JSON_ROUTE_TIMEOUT, "{t:?}");
+}
+
+#[tokio::test]
+async fn page_upload_outlasts_the_json_deadline_and_is_not_compressed() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin_authed(&app).await;
+
+    let (resp, elapsed) = post_stalled(
+        &app,
+        &auth,
+        TEST_TIMEOUTS,
+        "/api/uploads",
+        &multipart_type(),
+        page_upload_body(),
+    )
+    .await;
+    assert!(
+        elapsed >= BODY_STALL && BODY_STALL > TEST_TIMEOUTS.json,
+        "precondition: the body arrived after the JSON deadline ({elapsed:?})"
+    );
+    assert_eq!(
+        resp.status(),
+        StatusCode::CREATED,
+        "the upload route must run under the long-body deadline, not the JSON one"
+    );
+    assert_eq!(
+        content_encoding(&resp),
+        None,
+        "the upload route sits outside the CompressionLayer"
+    );
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert!(body.len() > 32, "precondition: body above the size floor");
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("identity JSON body");
+    assert_eq!(v["content_type"], "image/png");
+}
+
+/// A client that goes silent mid-body is dropped at the per-frame idle
+/// timeout, long before the whole-request deadline, with the 408 envelope
+/// and no staged leftovers.
+#[tokio::test]
+async fn page_upload_drops_a_stalled_client_at_the_idle_timeout() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin_authed(&app).await;
+    let timeouts = RouteTimeouts {
+        long_body_idle: Duration::from_millis(300),
+        ..TEST_TIMEOUTS
+    };
+
+    let (resp, elapsed) = post_stalled(
+        &app,
+        &auth,
+        timeouts,
+        "/api/uploads",
+        &multipart_type(),
+        page_upload_body(),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::REQUEST_TIMEOUT);
+    assert!(elapsed < BODY_STALL, "cut off mid-stall ({elapsed:?})");
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&body).expect("JSON envelope");
+    assert_eq!(v["error"]["code"], "request_timeout", "{v}");
+    let staged = app.state().cfg().data_path.join("uploads");
+    let leftovers: Vec<_> = std::fs::read_dir(&staged)
+        .map(|d| d.filter_map(Result::ok).map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "staged leftovers: {leftovers:?}");
+}
+
+/// JSON routes, and the CBL file import that deliberately stays in the
+/// JSON group (its handler does the DB matching inline), are still cut
+/// off at the JSON deadline when the body stalls.
+#[tokio::test]
+async fn json_group_routes_are_still_cut_off_at_the_json_deadline() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin_authed(&app).await;
+
+    let cases = [
+        (
+            "/api/me/cbl-lists",
+            "application/json".to_owned(),
+            br#"{"name":"Slow JSON","xml":"<ReadingList/>"}"#.to_vec(),
+        ),
+        (
+            "/api/me/cbl-lists/upload",
+            multipart_type(),
+            multipart_file(
+                "slow.cbl",
+                "application/xml",
+                b"<ReadingList><Name>Slow link</Name><Books/></ReadingList>",
+            ),
+        ),
+    ];
+    for (uri, content_type, body) in cases {
+        let (resp, elapsed) =
+            post_stalled(&app, &auth, TEST_TIMEOUTS, uri, &content_type, body).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::REQUEST_TIMEOUT,
+            "{uri}: a body stalling past the JSON deadline must 408"
+        );
+        assert!(
+            elapsed < BODY_STALL,
+            "{uri}: cut off at the JSON deadline, before the body resumed ({elapsed:?})"
+        );
+    }
 }
 
 // ───────── WP-6.3 / security-audit M-1: deny-by-default CORS ─────────
