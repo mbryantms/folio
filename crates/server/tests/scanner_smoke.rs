@@ -426,8 +426,8 @@ async fn requested_scan_run_id_is_persisted() {
         .expect("scan run row should use requested id");
     assert_eq!(row.id, requested);
     assert_eq!(row.library_id, lib_id);
-    assert_eq!(row.kind, "library");
-    assert_eq!(row.state, "complete");
+    assert_eq!(row.kind, entity::scan_run::ScanRunKind::Library);
+    assert_eq!(row.state, entity::scan_run::ScanRunState::Complete);
 }
 
 #[tokio::test]

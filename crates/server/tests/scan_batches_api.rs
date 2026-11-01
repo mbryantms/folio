@@ -79,13 +79,13 @@ async fn scan_batches_list_and_detail() {
     let now = chrono::Utc::now().fixed_offset();
     BatchAM {
         id: Set(batch_id),
-        kind: Set("scan_all".into()),
+        kind: Set(entity::scan_batch::ScanBatchKind::ScanAll),
         actor_id: Set(None),
         force: Set(false),
         started_at: Set(now),
         ended_at: Set(Some(now)),
         library_count: Set(1),
-        state: Set("complete".into()),
+        state: Set(entity::scan_batch::ScanBatchState::Complete),
     }
     .insert(&db)
     .await
@@ -95,7 +95,7 @@ async fn scan_batches_list_and_detail() {
     ScanRunAM {
         id: Set(run_id),
         library_id: Set(lib),
-        state: Set("complete".into()),
+        state: Set(entity::scan_run::ScanRunState::Complete),
         started_at: Set(now),
         ended_at: Set(Some(now)),
         stats: Set(serde_json::to_value(ScanStats {
@@ -105,7 +105,7 @@ async fn scan_batches_list_and_detail() {
         })
         .unwrap()),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(Some(batch_id)),

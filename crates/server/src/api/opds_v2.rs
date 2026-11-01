@@ -1628,7 +1628,7 @@ async fn page_acq(
         let Some(v) = view_by_id.get(&pin.view_id) else {
             continue;
         };
-        let (urn, href) = match v.kind.as_str() {
+        let (urn, href) = match v.kind {
             KIND_CBL => match v.cbl_list_id {
                 Some(list_id) => (
                     format!("urn:cbl:{list_id}"),

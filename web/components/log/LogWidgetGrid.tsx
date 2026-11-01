@@ -20,7 +20,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 import { useReorderLogWidgets } from "@/lib/api/mutations";
-import type { LogWidgetKind, LogWidgetView } from "@/lib/api/types";
+import type { LogWidgetView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
 import { WIDGET_REGISTRY } from "./widgets";
@@ -147,7 +147,7 @@ function SortableWidget({
   widget: LogWidgetView;
   scope: LogScope;
 }) {
-  const def = WIDGET_REGISTRY[widget.kind as LogWidgetKind];
+  const def = WIDGET_REGISTRY[widget.kind];
   const {
     attributes,
     listeners,

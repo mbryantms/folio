@@ -505,6 +505,60 @@
         }
       }
     },
+    "/api/admin/libraries/stats": {
+      "get": {
+        "operationId": "admin_library_stats_all",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryStatsView"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/libraries/{slug}/stats": {
+      "get": {
+        "operationId": "admin_library_stats_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryStatsView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
     "/api/admin/libraries/{slug}/thumbnails": {
       "delete": {
         "operationId": "admin_thumbs_delete_all",
@@ -10186,6 +10240,104 @@
         }
       }
     },
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant": {
+      "delete": {
+        "summary": "Revert a chosen variant cover: the issue's cover is its archive cover\npage again (and the provider primary the pick displaced is restored).",
+        "operationId": "cover_pick_clear_issue_variant_cover",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueVariantCoverClearResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant/{variant_id}": {
+      "post": {
+        "summary": "Make one of the issue's provider variant covers its primary cover.",
+        "operationId": "cover_pick_set_issue_variant_cover",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "variant_id",
+            "in": "path",
+            "description": "`issue_cover` id of an active variant of this issue",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueVariantCoverResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue or variant not found"
+          },
+          "422": {
+            "description": "the variant has no image to use, or it is not a recognised image"
+          },
+          "502": {
+            "description": "the variant image could not be downloaded"
+          }
+        }
+      }
+    },
     "/api/series/{series_slug}/issues/{issue_slug}/duplicate-decision": {
       "put": {
         "operationId": "duplicates_set_decision",
@@ -14050,7 +14202,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanRunKind",
             "description": "`library` | `series` | `issue`."
           },
           "phase": {
@@ -14068,7 +14220,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanRunState",
             "description": "`queued` | `running`."
           },
           "total": {
@@ -20007,7 +20159,7 @@
                   "type": "string"
                 },
                 "kind": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/LogWidgetKind"
                 },
                 "position": {
                   "type": "integer",
@@ -20201,7 +20353,7 @@
                   "type": "string"
                 },
                 "kind": {
-                  "type": "string",
+                  "$ref": "#/components/schemas/ScanBatchKind",
                   "description": "Trigger discriminator — today always `scan_all`."
                 },
                 "library_count": {
@@ -20217,7 +20369,7 @@
                   "type": "string"
                 },
                 "state": {
-                  "type": "string",
+                  "$ref": "#/components/schemas/ScanBatchState",
                   "description": "`running` | `complete` | `partial_failed` | `failed`."
                 }
               }
@@ -20288,8 +20440,8 @@
                   "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
                 },
                 "kind": {
-                  "type": "string",
-                  "description": "`library` | `series` | `issue` — drives the History tab filter chips."
+                  "$ref": "#/components/schemas/ScanRunKind",
+                  "description": "`library` | `series` | `issue` drive the History tab filter chips;\n`deep_validate` runs have no chip."
                 },
                 "series_id": {
                   "type": [
@@ -20309,7 +20461,7 @@
                   "type": "string"
                 },
                 "state": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ScanRunState"
                 },
                 "stats": {}
               }
@@ -22836,7 +22988,7 @@
             "format": "uuid"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/SavedViewKind",
             "description": "`\"filter_series\"`, `\"filter_issues\"` or `\"cbl\"`."
           },
           "match_mode": {
@@ -22980,8 +23132,8 @@
         ],
         "properties": {
           "kind": {
-            "type": "string",
-            "description": "`builtin` / `library` / `view` / `header` / `spacer`."
+            "$ref": "#/components/schemas/SidebarEntryKind",
+            "description": "`builtin` / `library` / `view` / `page` / `header` / `spacer`."
           },
           "label": {
             "type": [
@@ -23053,11 +23205,15 @@
             "format": "uuid"
           },
           "view_kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SavedViewKind",
+                "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "view_name": {
             "type": [
@@ -24170,7 +24326,8 @@
         "required": [
           "issue_id",
           "covers",
-          "fallback_primary_url"
+          "fallback_primary_url",
+          "variant_cover_chosen"
         ],
         "properties": {
           "covers": {
@@ -24185,6 +24342,10 @@
           },
           "issue_id": {
             "type": "string"
+          },
+          "variant_cover_chosen": {
+            "type": "boolean",
+            "description": "`true` when the primary cover is a variant an admin chose (\"Use as\ncover\"); `DELETE /series/{s}/issues/{i}/cover/variant` returns the\nissue to its archive cover page."
           }
         }
       },
@@ -25094,6 +25255,41 @@
           }
         }
       },
+      "IssueVariantCoverClearResp": {
+        "type": "object",
+        "required": [
+          "reverted",
+          "thumbnail_enqueued"
+        ],
+        "properties": {
+          "reverted": {
+            "type": "boolean",
+            "description": "`false` when the issue had no chosen variant cover (nothing changed)."
+          },
+          "thumbnail_enqueued": {
+            "type": "boolean",
+            "description": "`true` when a cover-thumbnail regeneration job was queued."
+          }
+        }
+      },
+      "IssueVariantCoverResp": {
+        "type": "object",
+        "required": [
+          "cover_id",
+          "thumbnail_enqueued"
+        ],
+        "properties": {
+          "cover_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Id of the new primary `issue_cover` row (a copy of the variant)."
+          },
+          "thumbnail_enqueued": {
+            "type": "boolean",
+            "description": "`true` when a cover-thumbnail regeneration job was queued (the\nlibrary has thumbnails enabled and no identical job was pending)."
+          }
+        }
+      },
       "LatestReleaseView": {
         "type": "object",
         "required": [
@@ -25293,6 +25489,86 @@
           "without_metron": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "LibraryStatsView": {
+        "type": "object",
+        "description": "Counts and disk usage for one library.",
+        "required": [
+          "library_id",
+          "slug",
+          "series_count",
+          "active_issue_count",
+          "removed_issue_count",
+          "archive_bytes",
+          "backup_stale"
+        ],
+        "properties": {
+          "active_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Readable issues still on disk (`state = 'active'`, not removed).\nEncrypted or malformed archives count in neither this nor\n`removed_issue_count`.",
+            "minimum": 0
+          },
+          "archive_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of the stored file size of the active issues, in bytes. Removed\nand unreadable issues are left out, so this is the readable\ncollection's size, not every byte under the root.",
+            "minimum": 0
+          },
+          "backup_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes of `.bak` / `.bak.N` archive backups from the stored tally;\n`null` until the daily backup sweep (or the health page) has\ncounted this library.",
+            "minimum": 0
+          },
+          "backup_counted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 — when the backup tally was counted."
+          },
+          "backup_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "backup_stale": {
+            "type": "boolean",
+            "description": "A scan changed the library since the tally was counted, so the\nbackup figures may be behind until the next recount (the health\npage or the daily sweep). `false` when there is no tally."
+          },
+          "last_scan_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 — when the library's last full, completed scan finished\n(`libraries.last_scan_at`; scoped and cancelled scans leave it)."
+          },
+          "library_id": {
+            "type": "string"
+          },
+          "removed_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Soft-removed issues (`removed_at` set, confirmed or not): the file\nleft the disk, or a duplicate copy was removed from the catalogue.",
+            "minimum": 0
+          },
+          "series_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series still on disk (`removed_at IS NULL`).",
+            "minimum": 0
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },
@@ -25892,6 +26168,24 @@
           }
         }
       },
+      "LogWidgetKind": {
+        "type": "string",
+        "description": "Which widget a `/log` page slot renders.",
+        "enum": [
+          "chrono_feed",
+          "stats_hero",
+          "heatmap",
+          "top_creators",
+          "top_publishers",
+          "top_imprints",
+          "series_finishes",
+          "pace_chart",
+          "time_of_day",
+          "recent_bookmarks",
+          "currently_reading",
+          "note"
+        ]
+      },
       "LogWidgetView": {
         "type": "object",
         "required": [
@@ -25911,7 +26205,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/LogWidgetKind"
           },
           "position": {
             "type": "integer",
@@ -31687,6 +31981,17 @@
           }
         }
       },
+      "SavedViewKind": {
+        "type": "string",
+        "description": "What a saved view is: a filter over series or issues, a CBL reading\nlist, a built-in system rail, or a user collection.",
+        "enum": [
+          "filter_series",
+          "filter_issues",
+          "cbl",
+          "system",
+          "collection"
+        ]
+      },
       "SavedViewListView": {
         "type": "object",
         "required": [
@@ -31766,7 +32071,7 @@
             "description": "True for system views (`user_id IS NULL`)."
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/SavedViewKind"
           },
           "match_mode": {
             "type": [
@@ -32010,6 +32315,23 @@
           }
         ]
       },
+      "ScanBatchKind": {
+        "type": "string",
+        "description": "What triggered a batch. Today only the admin \"Scan all\" action.",
+        "enum": [
+          "scan_all"
+        ]
+      },
+      "ScanBatchState": {
+        "type": "string",
+        "description": "A batch's state, derived from its member runs as they finish: all\n`complete` → `complete`, none → `failed`, a mix → `partial_failed`.",
+        "enum": [
+          "running",
+          "complete",
+          "partial_failed",
+          "failed"
+        ]
+      },
       "ScanBatchView": {
         "type": "object",
         "required": [
@@ -32041,7 +32363,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanBatchKind",
             "description": "Trigger discriminator — today always `scan_all`."
           },
           "library_count": {
@@ -32057,7 +32379,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanBatchState",
             "description": "`running` | `complete` | `partial_failed` | `failed`."
           }
         }
@@ -32085,7 +32407,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ScanRunState"
           }
         }
       },
@@ -32119,9 +32441,13 @@
             "minimum": 0
           },
           "last_scan_state": {
-            "type": [
-              "string",
-              "null"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScanRunState"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "mode": {
@@ -32198,6 +32524,27 @@
           }
         }
       },
+      "ScanRunKind": {
+        "type": "string",
+        "description": "What triggered a scan run. `library` is the legacy default for rows\nthat existed before the kind column; `deep_validate` is the opt-in\npage-decode probe (`library::deep_validate`), which the History tab's\nfilter chips do not offer.",
+        "enum": [
+          "library",
+          "series",
+          "issue",
+          "deep_validate"
+        ]
+      },
+      "ScanRunState": {
+        "type": "string",
+        "description": "A scan run's lifecycle state.",
+        "enum": [
+          "queued",
+          "running",
+          "complete",
+          "failed",
+          "cancelled"
+        ]
+      },
       "ScanRunView": {
         "type": "object",
         "required": [
@@ -32238,8 +32585,8 @@
             "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
           },
           "kind": {
-            "type": "string",
-            "description": "`library` | `series` | `issue` — drives the History tab filter chips."
+            "$ref": "#/components/schemas/ScanRunKind",
+            "description": "`library` | `series` | `issue` drive the History tab filter chips;\n`deep_validate` runs have no chip."
           },
           "series_id": {
             "type": [
@@ -32259,7 +32606,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ScanRunState"
           },
           "stats": {}
         }
@@ -34225,6 +34572,18 @@
           "series_group"
         ]
       },
+      "SidebarEntryKind": {
+        "type": "string",
+        "description": "What a sidebar entry points at; decides what `ref_id` means.",
+        "enum": [
+          "builtin",
+          "library",
+          "view",
+          "page",
+          "header",
+          "spacer"
+        ]
+      },
       "SidebarEntryView": {
         "type": "object",
         "required": [
@@ -34244,7 +34603,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/SidebarEntryKind"
           },
           "label": {
             "type": "string"

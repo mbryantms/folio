@@ -172,7 +172,7 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
     saved_view::ActiveModel {
         id: Set(wtr_id),
         user_id: Set(Some(user_id)),
-        kind: Set("collection".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Collection),
         system_key: Set(Some("want_to_read".into())),
         name: Set("Want to Read".into()),
         description: Set(None),
@@ -200,7 +200,7 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
     saved_view::ActiveModel {
         id: Set(view_id),
         user_id: Set(Some(user_id)),
-        kind: Set("filter_series".into()),
+        kind: Set(entity::saved_view::SavedViewKind::FilterSeries),
         system_key: Set(None),
         name: Set("Unread Marvel".into()),
         description: Set(None),
@@ -274,7 +274,7 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
     // sidebar override
     user_sidebar_entry::ActiveModel {
         user_id: Set(user_id),
-        kind: Set("builtin".into()),
+        kind: Set(entity::user_sidebar_entry::SidebarEntryKind::Builtin),
         ref_id: Set("bookmarks".into()),
         visible: Set(true),
         position: Set(2),

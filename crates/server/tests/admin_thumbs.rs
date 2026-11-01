@@ -1060,12 +1060,12 @@ async fn background_work_joins_scans_thumbnails_and_queues() {
         entity::scan_run::ActiveModel {
             id: Set(Uuid::now_v7()),
             library_id: Set(lib_id),
-            state: Set(state.into()),
+            state: Set(entity::scan_run::ScanRunState::parse(state).unwrap()),
             started_at: Set(now),
             ended_at: Set(None),
             stats: Set(stats),
             error: Set(None),
-            kind: Set(kind.into()),
+            kind: Set(entity::scan_run::ScanRunKind::parse(kind).unwrap()),
             series_id: Set(None),
             issue_id: Set(None),
             batch_id: Set(None),
@@ -1177,13 +1177,13 @@ async fn scan_batch_detail_reports_thumbnail_work_that_outlives_the_scans() {
     let batch_id = Uuid::now_v7();
     entity::scan_batch::ActiveModel {
         id: Set(batch_id),
-        kind: Set("scan_all".into()),
+        kind: Set(entity::scan_batch::ScanBatchKind::ScanAll),
         actor_id: Set(None),
         force: Set(false),
         started_at: Set(now),
         ended_at: Set(Some(now)),
         library_count: Set(1),
-        state: Set("complete".into()),
+        state: Set(entity::scan_batch::ScanBatchState::Complete),
     }
     .insert(&st.db)
     .await
@@ -1191,12 +1191,12 @@ async fn scan_batch_detail_reports_thumbnail_work_that_outlives_the_scans() {
     entity::scan_run::ActiveModel {
         id: Set(Uuid::now_v7()),
         library_id: Set(lib_id),
-        state: Set("complete".into()),
+        state: Set(entity::scan_run::ScanRunState::Complete),
         started_at: Set(now),
         ended_at: Set(Some(now)),
         stats: Set(serde_json::json!({})),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(Some(batch_id)),
@@ -1241,13 +1241,13 @@ async fn scan_batch_detail_reports_thumbnail_work_that_outlives_the_scans() {
     // thumbnail work.
     entity::scan_batch::ActiveModel {
         id: Set(Uuid::now_v7()),
-        kind: Set("scan_all".into()),
+        kind: Set(entity::scan_batch::ScanBatchKind::ScanAll),
         actor_id: Set(None),
         force: Set(false),
         started_at: Set(now + chrono::Duration::seconds(60)),
         ended_at: Set(None),
         library_count: Set(0),
-        state: Set("running".into()),
+        state: Set(entity::scan_batch::ScanBatchState::Running),
     }
     .insert(&st.db)
     .await

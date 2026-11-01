@@ -557,7 +557,7 @@ async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cb
         saved_view::ActiveModel {
             id: Set(Uuid::now_v7()),
             user_id: Set(None),
-            kind: Set("cbl".into()),
+            kind: Set(entity::saved_view::SavedViewKind::Cbl),
             system_key: Set(None),
             name: Set(format!("CBL {i} view")),
             description: Set(None),

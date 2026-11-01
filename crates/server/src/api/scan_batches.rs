@@ -16,7 +16,9 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::{DateTime, FixedOffset};
-use entity::{library_event, scan_batch, scan_run};
+use entity::library_event;
+use entity::scan_batch::{self, ScanBatchKind, ScanBatchState};
+use entity::scan_run::{self, ScanRunState};
 use sea_orm::{
     ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
@@ -52,14 +54,13 @@ pub struct BatchRunTally {
 }
 
 impl BatchRunTally {
-    fn bump(&mut self, state: &str) {
+    fn bump(&mut self, state: ScanRunState) {
         match state {
-            "queued" => self.queued += 1,
-            "running" => self.running += 1,
-            "complete" => self.complete += 1,
-            "failed" => self.failed += 1,
-            "cancelled" => self.cancelled += 1,
-            _ => {}
+            ScanRunState::Queued => self.queued += 1,
+            ScanRunState::Running => self.running += 1,
+            ScanRunState::Complete => self.complete += 1,
+            ScanRunState::Failed => self.failed += 1,
+            ScanRunState::Cancelled => self.cancelled += 1,
         }
     }
 }
@@ -68,7 +69,7 @@ impl BatchRunTally {
 pub struct ScanBatchView {
     pub id: String,
     /// Trigger discriminator — today always `scan_all`.
-    pub kind: String,
+    pub kind: ScanBatchKind,
     pub actor_id: Option<String>,
     pub force: bool,
     pub started_at: String,
@@ -76,7 +77,7 @@ pub struct ScanBatchView {
     /// Number of runs that adopted the batch (newly-enqueued libraries).
     pub library_count: i32,
     /// `running` | `complete` | `partial_failed` | `failed`.
-    pub state: String,
+    pub state: ScanBatchState,
     /// Live per-state breakdown of the member runs.
     pub runs: BatchRunTally,
 }
@@ -221,7 +222,7 @@ async fn tally_runs(app: &AppState, batch_ids: &[Uuid]) -> HashMap<Uuid, BatchRu
         .unwrap_or_default();
     for r in runs {
         if let Some(b) = r.batch_id {
-            out.entry(b).or_default().bump(&r.state);
+            out.entry(b).or_default().bump(r.state);
         }
     }
     out
@@ -263,14 +264,16 @@ pub async fn scan_batches_list(
 
     let state_filter = match q.state.as_deref() {
         None | Some("") | Some("all") => None,
-        Some(s @ ("running" | "complete" | "partial_failed" | "failed")) => Some(s.to_owned()),
-        Some(_) => {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation.state",
-                "state must be one of: running, complete, partial_failed, failed, all",
-            );
-        }
+        Some(s) => match ScanBatchState::parse(s) {
+            Some(state) => Some(state),
+            None => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation.state",
+                    "state must be one of: running, complete, partial_failed, failed, all",
+                );
+            }
+        },
     };
 
     let cursor: Option<(DateTime<FixedOffset>, Uuid)> = match q.cursor.as_deref() {
@@ -282,7 +285,7 @@ pub async fn scan_batches_list(
     };
 
     let mut query = scan_batch::Entity::find();
-    if let Some(state) = state_filter.as_deref() {
+    if let Some(state) = state_filter {
         query = query.filter(scan_batch::Column::State.eq(state));
     }
     if let Some((c_at, c_id)) = cursor {
@@ -391,7 +394,7 @@ pub async fn scan_batch_detail(
     let mut tally = BatchRunTally::default();
     let mut totals = BatchTotals::default();
     for r in &runs {
-        tally.bump(&r.state);
+        tally.bump(r.state);
         if let Ok(stats) = serde_json::from_value::<ScanStats>(r.stats.clone()) {
             totals.add(&stats);
         }

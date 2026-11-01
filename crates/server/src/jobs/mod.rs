@@ -58,7 +58,9 @@
 use crate::state::AppState;
 use apalis::prelude::{AbortError, Attempt, BoxDynError, Data};
 use apalis_redis::{Config as RedisConfig, RedisStorage, connect};
-use entity::scan_run::{ActiveModel as ScanRunAM, Entity as ScanRunEntity};
+use entity::scan_run::{
+    ActiveModel as ScanRunAM, Entity as ScanRunEntity, ScanRunKind, ScanRunState,
+};
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
@@ -277,8 +279,15 @@ impl JobRuntime {
         let _: () = conn
             .set_ex(&in_flight_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
             .await?;
-        self.insert_queued_scan_run(library_id, scan_id, "library", None, None, batch_id)
-            .await?;
+        self.insert_queued_scan_run(
+            library_id,
+            scan_id,
+            ScanRunKind::Library,
+            None,
+            None,
+            batch_id,
+        )
+        .await?;
         // Push to apalis last; if push fails the in_flight key is stale, but
         // the next request will see no apalis backlog and overwrite cleanly.
         use apalis::prelude::TaskSink;
@@ -329,7 +338,7 @@ impl JobRuntime {
             let _: () = conn
                 .set_ex(&in_flight_key, new_id.to_string(), SCAN_COALESCE_TTL_SECS)
                 .await?;
-            self.insert_queued_scan_run(library_id, new_id, "library", None, None, None)
+            self.insert_queued_scan_run(library_id, new_id, ScanRunKind::Library, None, None, None)
                 .await?;
             use apalis::prelude::TaskSink;
             let mut storage = self.scan_storage.clone();
@@ -639,9 +648,9 @@ impl JobRuntime {
         }
 
         let scan_id = Uuid::now_v7();
-        let kind_str = match kind {
-            scan_series::JobKind::Series => "series",
-            scan_series::JobKind::Issue => "issue",
+        let run_kind = match kind {
+            scan_series::JobKind::Series => ScanRunKind::Series,
+            scan_series::JobKind::Issue => ScanRunKind::Issue,
         };
         let issue_for_run = issue_id
             .clone()
@@ -649,7 +658,7 @@ impl JobRuntime {
         self.insert_queued_scan_run(
             library_id,
             scan_id,
-            kind_str,
+            run_kind,
             Some(series_id),
             issue_for_run.clone(),
             None,
@@ -697,7 +706,7 @@ impl JobRuntime {
         &self,
         library_id: Uuid,
         scan_id: Uuid,
-        kind: &str,
+        kind: ScanRunKind,
         series_id: Option<Uuid>,
         issue_id: Option<String>,
         batch_id: Option<Uuid>,
@@ -713,14 +722,14 @@ impl JobRuntime {
         ScanRunAM {
             id: Set(scan_id),
             library_id: Set(library_id),
-            state: Set("queued".to_owned()),
+            state: Set(ScanRunState::Queued),
             started_at: Set(now),
             ended_at: Set(None),
             stats: Set(serde_json::to_value(
                 crate::library::scanner::ScanStats::default(),
             )?),
             error: Set(None),
-            kind: Set(kind.to_owned()),
+            kind: Set(kind),
             series_id: Set(series_id),
             issue_id: Set(issue_id),
             batch_id: Set(batch_id),

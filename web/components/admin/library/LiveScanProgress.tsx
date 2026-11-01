@@ -1067,7 +1067,7 @@ function statusFromRun(run?: ScanRunView): Status {
   if (!run) return "idle";
   if (run.state === "running") return "running";
   if (run.state === "queued") return "queued";
-  if (run.state === "complete" || run.state === "completed") return "completed";
+  if (run.state === "complete") return "completed";
   if (run.state === "failed") return "failed";
   // Operator-initiated cancels are a distinct terminal state — a red
   // FAILED pill for a deliberate action trains admins to ignore red.

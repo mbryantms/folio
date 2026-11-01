@@ -22,7 +22,8 @@ import { useScanRuns } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { ScanRunKind, ScanRunView } from "@/lib/api/types";
 
-type Filter = "all" | ScanRunKind;
+// `deep_validate` runs have no chip (the server 422s it as a filter).
+type Filter = "all" | Exclude<ScanRunKind, "deep_validate">;
 
 const FILTERS: { value: Filter; label: string }[] = [
   { value: "all", label: "All" },
@@ -288,11 +289,13 @@ function KindCell({ run }: { run: ScanRunView }) {
       ? "Library"
       : run.kind === "series"
         ? "Series"
-        : "Issue";
+        : run.kind === "issue"
+          ? "Issue"
+          : "Deep validate";
   return (
     <div className="flex flex-col gap-1">
       <Badge
-        variant={kindVariant(run.kind as ScanRunKind)}
+        variant={kindVariant(run.kind)}
         className="w-fit text-[10px] uppercase"
       >
         {label}

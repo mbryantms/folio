@@ -465,7 +465,8 @@ per-list opt-out to preserve curated orders).
   refresh-token rotation; a replayed refresh token is rejected.
 - **App passwords** per device/app, individually revocable, with
   last-used tracking.
-- A complete admin area: users, libraries, scan monitoring with live
+- A complete admin area: users, libraries (each with its series and issue
+  counts, archive size and `.bak` backup footprint), scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every
   admin action (kept forever by default; an optional retention exports old
   entries to NDJSON in the data volume before trimming them), runtime
@@ -547,6 +548,9 @@ coalesce into one run.
   bytes actually changed.
 - Each cover is decoded **once** and reused for the thumbnail, the small
   variant, and all three perceptual hashes.
+- An admin can choose an issue's cover: any archive page, or one of the
+  provider's variant covers ("Use as cover" in the issue's Covers tab),
+  which later provider applies keep and "Use page cover" undoes.
 - Cold-cache thumbnail requests are generated inline behind a semaphore
   sized to browser connection bursts, so a fresh page of 40 covers
   backfills gracefully instead of stampeding the server.

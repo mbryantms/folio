@@ -1273,8 +1273,13 @@ pub(crate) async fn apply_issue_via_sidecar(
     // image and the archive's pages stay byte-identical, so — exactly like
     // the DB-direct apply — the provider cover becomes an `issue_cover`
     // row through `writers::apply_cover` (hashes computed at write time).
-    // The job fetches and writes it only after the rewrite landed.
-    let primary_cover = cover_url.map(|url| {
+    // The job fetches and writes it only after the rewrite landed. A
+    // primary an admin chose ("Use as cover", a `cover.primary` user pin)
+    // is kept unless `override_user_edits` (which empties the pin set);
+    // the writer enforces the same rule when the job runs.
+    let cover_pinned = issue_user_pins.contains(&MetadataField::CoverPrimary.key());
+    let cover_skipped_reason = (cover_pinned && cover_url.is_some()).then(|| "user_pinned".into());
+    let primary_cover = cover_url.filter(|_| !cover_pinned).map(|url| {
         let cover_source = match resolver.resolve(&MetadataField::CoverPrimary.key()).set_by {
             SetBy::Provider(s) => s,
             _ => source,
@@ -1287,6 +1292,7 @@ pub(crate) async fn apply_issue_via_sidecar(
                 .cloned(),
             url,
             policy: args.cover_overwrite_policy,
+            override_user_edits: args.override_user_edits,
         }
     });
     let cover_deferred = primary_cover.is_some();
@@ -1341,6 +1347,7 @@ pub(crate) async fn apply_issue_via_sidecar(
         suppressed_user_pins,
         variants_written,
         cover_deferred,
+        cover_skipped_reason,
         ..Default::default()
     };
     bump_run_counts(&state.db, args.run_id, &outcome).await?;
@@ -1933,8 +1940,16 @@ pub(crate) async fn write_issue_fields(
 
     bump_issue_sync(&state.db, &entity_id_str).await?;
 
-    // Cover.
+    // Cover. A primary an admin chose ("Use as cover", a `cover.primary`
+    // user pin) is kept unless `override_user_edits`; `apply_cover`
+    // enforces the same rule, this just skips the download.
+    let cover_pinned =
+        user_pinned(&provenance, MetadataField::CoverPrimary) && !args.override_user_edits;
+    if args.apply_cover && cover_pinned && detail.cover_image_url.is_some() {
+        outcome.cover_skipped_reason = Some("user_pinned".into());
+    }
     if args.apply_cover
+        && !cover_pinned
         && let Some(url) = detail.cover_image_url.as_deref()
     {
         match cover_provider.fetch_cover(url).await {
@@ -1955,6 +1970,7 @@ pub(crate) async fn write_issue_fields(
                     bytes: &bytes,
                     width: None,
                     height: None,
+                    override_user_pin: args.override_user_edits,
                 };
                 match writers::apply_cover(
                     &state.db,

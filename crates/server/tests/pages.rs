@@ -360,7 +360,7 @@ async fn delete_custom_page_cascades_pin_rows() {
     SavedViewAM {
         id: Set(view_id),
         user_id: Set(Some(user.user_id)),
-        kind: Set("filter_series".into()),
+        kind: Set(entity::saved_view::SavedViewKind::FilterSeries),
         system_key: Set(None),
         name: Set("Cascade Test".into()),
         description: Set(None),

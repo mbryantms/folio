@@ -230,8 +230,8 @@ async fn inotify_thousand_file_copy_triggers_exactly_one_scoped_scan() {
 
     let runs = scan_runs_for(&app, lib).await;
     assert_eq!(runs.len(), 1, "exactly one scan run: {runs:?}");
-    assert_eq!(runs[0].state, "queued");
-    assert_eq!(runs[0].kind, "library");
+    assert_eq!(runs[0].state, entity::scan_run::ScanRunState::Queued);
+    assert_eq!(runs[0].kind, entity::scan_run::ScanRunKind::Library);
     assert_eq!(Some(runs[0].id), status.last_scan_id);
 
     let jobs = queued_scan_payloads(&app).await;

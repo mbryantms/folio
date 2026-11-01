@@ -163,12 +163,12 @@ async fn seed_library_and_scan_run(app: &TestApp, state: &str) -> (Uuid, String,
     scan_run::ActiveModel {
         id: Set(scan_id),
         library_id: Set(lib_id),
-        state: Set(state.into()),
+        state: Set(entity::scan_run::ScanRunState::parse(state).unwrap()),
         started_at: Set(now),
         ended_at: Set(None),
         stats: Set(serde_json::json!({})),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(None),
@@ -205,7 +205,7 @@ async fn cancel_flips_running_scan_to_cancelled() {
         .await
         .unwrap()
         .expect("row");
-    assert_eq!(row.state, "cancelled");
+    assert_eq!(row.state, entity::scan_run::ScanRunState::Cancelled);
     assert!(row.ended_at.is_some());
     assert_eq!(row.error.as_deref(), Some("Cancelled by admin"));
     assert_eq!(row.library_id, lib_id);
@@ -338,12 +338,12 @@ async fn admin_latest_per_library_returns_one_row_per_library() {
     scan_run::ActiveModel {
         id: Set(scan_a_new),
         library_id: Set(lib_a),
-        state: Set("complete".into()),
+        state: Set(entity::scan_run::ScanRunState::Complete),
         started_at: Set(later),
         ended_at: Set(Some(later)),
         stats: Set(serde_json::json!({})),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(None),
@@ -414,12 +414,12 @@ async fn scan_runs_list_paginates_past_the_first_page() {
         scan_run::ActiveModel {
             id: Set(Uuid::now_v7()),
             library_id: Set(lib_id),
-            state: Set("complete".into()),
+            state: Set(entity::scan_run::ScanRunState::Complete),
             started_at: Set(base - chrono::Duration::seconds(i)),
             ended_at: Set(None),
             stats: Set(serde_json::json!({})),
             error: Set(None),
-            kind: Set("library".into()),
+            kind: Set(entity::scan_run::ScanRunKind::Library),
             series_id: Set(None),
             issue_id: Set(None),
             batch_id: Set(None),
@@ -459,6 +459,61 @@ async fn scan_runs_list_paginates_past_the_first_page() {
         "every run should be reachable across pages (no cap)"
     );
     assert!(pages >= 3, "6 rows at limit=2 should span at least 3 pages");
+}
+
+/// AR-7: `scan_runs.kind` is a typed column that also holds
+/// `deep_validate`. Such a row lists with its own kind, the History
+/// `?kind=` filter keeps rejecting it (no chip exists), and a stored
+/// string outside the enum fails the list loudly instead of being coerced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deep_validate_kind_lists_but_is_not_a_filter_and_unknown_kind_fails_loudly() {
+    use sea_orm::ConnectionTrait;
+
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin-kind-filter@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_lib_id, slug, scan_id) = seed_library_and_scan_run(&app, "complete").await;
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = scan_run::Entity::find_by_id(scan_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: scan_run::ActiveModel = row.into();
+    am.kind = Set(scan_run::ScanRunKind::DeepValidate);
+    am.update(&db).await.unwrap();
+
+    let list = format!("/api/libraries/{slug}/scan-runs");
+    let (status, body) = http(&app, Method::GET, &list, &auth).await;
+    assert_eq!(status, StatusCode::OK, "body: {body:#?}");
+    assert_eq!(body["items"][0]["kind"], "deep_validate");
+    assert_eq!(body["items"][0]["state"], "complete");
+
+    for path in [
+        format!("{list}?kind=deep_validate"),
+        "/api/admin/scan-runs?kind=deep_validate".to_owned(),
+    ] {
+        let (status, body) = http(&app, Method::GET, &path, &auth).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{path}: {body:#?}"
+        );
+        assert_eq!(body["error"]["code"], "validation.kind");
+    }
+    let (status, body) = http(&app, Method::GET, &format!("{list}?kind=library"), &auth).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["items"].as_array().unwrap().is_empty());
+
+    db.execute_unprepared(&format!(
+        "UPDATE scan_runs SET kind = 'bogus' WHERE id = '{scan_id}'"
+    ))
+    .await
+    .unwrap();
+    let (status, body) = http(&app, Method::GET, &list, &auth).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "body: {body:#?}");
+    assert_eq!(body["error"]["code"], "internal");
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -584,12 +639,12 @@ async fn cancelled_scan_skips_reconcile_and_preserves_series() {
     scan_run::ActiveModel {
         id: Set(cancelled_id),
         library_id: Set(lib_id),
-        state: Set("cancelled".into()),
+        state: Set(entity::scan_run::ScanRunState::Cancelled),
         started_at: Set(Utc::now().fixed_offset()),
         ended_at: Set(None),
         stats: Set(serde_json::json!({})),
         error: Set(Some("Cancelled by admin".into())),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(None),
@@ -617,7 +672,7 @@ async fn cancelled_scan_skips_reconcile_and_preserves_series() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.state, "cancelled");
+    assert_eq!(row.state, entity::scan_run::ScanRunState::Cancelled);
     assert!(row.ended_at.is_some(), "finalize stamps ended_at");
 
     // (b) last_scan_at is unchanged — a cancelled pass is not a completed scan.

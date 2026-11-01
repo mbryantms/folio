@@ -26,7 +26,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use entity::log_widget;
+use entity::log_widget::{self, LogWidgetKind};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
     QueryOrder, TransactionTrait, Unchanged,
@@ -56,7 +56,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LogWidgetView {
     pub id: String,
-    pub kind: String,
+    pub kind: LogWidgetKind,
     pub position: i32,
     pub config: serde_json::Value,
     pub created_at: String,
@@ -109,52 +109,42 @@ pub struct ReorderReq {
 
 // ───────── Widget kinds + config schemas ─────────
 
-/// Every widget kind the server accepts. Adding a new kind:
-/// (1) extend this list, (2) add a typed config struct + a match arm
-/// in `validate_config`, (3) ship a renderer + Zod schema on the web
-/// side. Default seeding is independent — see [`DEFAULT_LAYOUT`].
-const WIDGET_KINDS: &[&str] = &[
-    "chrono_feed",
-    "stats_hero",
-    "heatmap",
-    "top_creators",
-    "top_publishers",
-    "top_imprints",
-    "series_finishes",
-    "pace_chart",
-    "time_of_day",
-    "recent_bookmarks",
-    "currently_reading",
-    "note",
-];
-
+/// Every widget kind the server accepts is a [`LogWidgetKind`] variant
+/// (AR-7: it is the `log_widgets.kind` column type). Adding a new kind:
+/// (1) add the variant in `entity::log_widget`, (2) add a typed config
+/// struct + a match arm in `validate_config`, (3) ship a renderer + Zod
+/// schema on the web side. Default seeding is independent — see
+/// [`DEFAULT_LAYOUT`].
+///
 /// Validate a `kind` + `config` blob pair. Returns `Ok` when the
-/// kind is known AND the config shape round-trips through the
-/// matching schema. Returns `Err(message)` otherwise — the caller
-/// emits a 400 with `code: "validation"`.
-fn validate_config(kind: &str, config: &serde_json::Value) -> Result<(), String> {
-    if !WIDGET_KINDS.contains(&kind) {
-        return Err(format!("unknown widget kind: {kind}"));
-    }
+/// config shape round-trips through the kind's schema. Returns
+/// `Err(message)` otherwise — the caller emits a 422 with
+/// `code: "validation"`.
+fn validate_config(kind: LogWidgetKind, config: &serde_json::Value) -> Result<(), String> {
     // `serde_json::from_value` borrows the input by clone, so we pay
     // one allocation per validation. Configs are tiny (< 1 KB) so
     // the cost is below the noise floor of the request handler.
     let v = config.clone();
     let result: Result<(), serde_json::Error> = match kind {
-        "chrono_feed" => serde_json::from_value::<ChronoFeedConfig>(v).map(|_| ()),
-        "stats_hero" => serde_json::from_value::<StatsHeroConfig>(v).map(|_| ()),
-        "heatmap" => serde_json::from_value::<HeatmapConfig>(v).map(|_| ()),
-        "top_creators" => serde_json::from_value::<TopCreatorsConfig>(v).map(|_| ()),
-        "top_publishers" | "top_imprints" => serde_json::from_value::<RankingConfig>(v).map(|_| ()),
-        "series_finishes" => serde_json::from_value::<RankingConfig>(v).map(|_| ()),
-        "pace_chart" => serde_json::from_value::<PaceChartConfig>(v).map(|_| ()),
-        "time_of_day" => serde_json::from_value::<EmptyConfig>(v).map(|_| ()),
-        "recent_bookmarks" => serde_json::from_value::<RecentBookmarksConfig>(v).map(|_| ()),
-        "currently_reading" => serde_json::from_value::<CurrentlyReadingConfig>(v).map(|_| ()),
-        "note" => serde_json::from_value::<NoteConfig>(v).map(|_| ()),
-        _ => unreachable!("WIDGET_KINDS guard above covers all known kinds"),
+        LogWidgetKind::ChronoFeed => serde_json::from_value::<ChronoFeedConfig>(v).map(|_| ()),
+        LogWidgetKind::StatsHero => serde_json::from_value::<StatsHeroConfig>(v).map(|_| ()),
+        LogWidgetKind::Heatmap => serde_json::from_value::<HeatmapConfig>(v).map(|_| ()),
+        LogWidgetKind::TopCreators => serde_json::from_value::<TopCreatorsConfig>(v).map(|_| ()),
+        LogWidgetKind::TopPublishers | LogWidgetKind::TopImprints => {
+            serde_json::from_value::<RankingConfig>(v).map(|_| ())
+        }
+        LogWidgetKind::SeriesFinishes => serde_json::from_value::<RankingConfig>(v).map(|_| ()),
+        LogWidgetKind::PaceChart => serde_json::from_value::<PaceChartConfig>(v).map(|_| ()),
+        LogWidgetKind::TimeOfDay => serde_json::from_value::<EmptyConfig>(v).map(|_| ()),
+        LogWidgetKind::RecentBookmarks => {
+            serde_json::from_value::<RecentBookmarksConfig>(v).map(|_| ())
+        }
+        LogWidgetKind::CurrentlyReading => {
+            serde_json::from_value::<CurrentlyReadingConfig>(v).map(|_| ())
+        }
+        LogWidgetKind::Note => serde_json::from_value::<NoteConfig>(v).map(|_| ()),
     };
-    result.map_err(|e| format!("invalid config for {kind}: {e}"))
+    result.map_err(|e| format!("invalid config for {}: {e}", kind.as_str()))
 }
 
 /// Catch-all "no fields" schema. `#[serde(default, deny_unknown_fields)]`
@@ -300,12 +290,12 @@ struct NoteConfig {
 /// the right rail. Listed in render order so the
 /// `position`-by-index assignment makes the seeded result match the
 /// M2 visual.
-const DEFAULT_LAYOUT: &[(&str, &str)] = &[
-    ("chrono_feed", r#"{}"#),
-    ("stats_hero", r#"{}"#),
-    ("heatmap", r#"{"weeks": 52}"#),
+const DEFAULT_LAYOUT: &[(LogWidgetKind, &str)] = &[
+    (LogWidgetKind::ChronoFeed, r#"{}"#),
+    (LogWidgetKind::StatsHero, r#"{}"#),
+    (LogWidgetKind::Heatmap, r#"{"weeks": 52}"#),
     (
-        "top_creators",
+        LogWidgetKind::TopCreators,
         r#"{"role":"writer","range":"30d","limit":5}"#,
     ),
 ];
@@ -318,7 +308,7 @@ async fn seed_defaults<C: ConnectionTrait>(db: &C, user_id: Uuid) -> Result<(), 
         log_widget::ActiveModel {
             id: Set(Uuid::now_v7()),
             user_id: Set(user_id),
-            kind: Set(kind.to_string()),
+            kind: Set(*kind),
             position: Set(position as i32),
             config: Set(config),
             created_at: Set(now),
@@ -395,7 +385,16 @@ pub async fn add(
     let config = req
         .config
         .unwrap_or(serde_json::Value::Object(Default::default()));
-    if let Err(msg) = validate_config(&req.kind, &config) {
+    // `kind` stays a free string on the request so an unknown value keeps
+    // its 422 + message instead of becoming a body-deserialize error.
+    let Some(kind) = LogWidgetKind::parse(&req.kind) else {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            &format!("unknown widget kind: {}", req.kind),
+        );
+    };
+    if let Err(msg) = validate_config(kind, &config) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", &msg);
     }
     // Next position = current max + 1. Done inside a transaction so
@@ -419,7 +418,7 @@ pub async fn add(
     let am = log_widget::ActiveModel {
         id: Set(id),
         user_id: Set(user.id),
-        kind: Set(req.kind),
+        kind: Set(kind),
         position: Set(next_position),
         config: Set(config),
         created_at: Set(now),
@@ -457,7 +456,7 @@ pub async fn update(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if let Err(msg) = validate_config(&existing.kind, &req.config) {
+    if let Err(msg) = validate_config(existing.kind, &req.config) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", &msg);
     }
     let now = Utc::now().fixed_offset();
@@ -597,7 +596,7 @@ pub async fn reorder(
         let am = log_widget::ActiveModel {
             id: Unchanged(row.id),
             user_id: Unchanged(row.user_id),
-            kind: Unchanged(row.kind.clone()),
+            kind: Unchanged(row.kind),
             position: Set(i as i32),
             config: Unchanged(row.config.clone()),
             created_at: Unchanged(row.created_at),

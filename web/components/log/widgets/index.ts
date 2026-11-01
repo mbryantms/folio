@@ -42,7 +42,7 @@ import type { LogWidgetKind } from "@/lib/api/types";
 
 /** Renderer registry. The page resolves each `LogWidgetView.kind` to
  *  an entry here; adding a new kind = one line plus a renderer file
- *  plus a server-side entry in `WIDGET_KINDS` + a config struct.
+ *  plus a server-side `LogWidgetKind` variant + a config struct.
  *
  *  Cast to `LogWidgetDef<Record<string, unknown>>` keeps the registry
  *  homogeneous after the per-kind generic narrowing; the renderers
