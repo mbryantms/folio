@@ -1238,7 +1238,7 @@ async fn fetch_markers(
             is_hidden,
             raw: CandidateRaw::Marker {
                 marker_id: r.id,
-                marker_kind: r.kind,
+                marker_kind: r.kind.as_str().to_owned(),
                 page_index: r.page_index,
                 tags: r.tags,
                 body: r.body,

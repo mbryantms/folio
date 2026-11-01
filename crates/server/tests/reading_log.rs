@@ -412,7 +412,7 @@ async fn insert_marker(
         series_id: Set(series_id),
         issue_id: Set(issue_id.into()),
         page_index: Set(0),
-        kind: Set(kind.into()),
+        kind: Set(marker::MarkerKind::parse(kind).expect("marker kind")),
         is_favorite: Set(false),
         tags: Set(Vec::new()),
         region: Set(None),

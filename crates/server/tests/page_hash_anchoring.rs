@@ -192,7 +192,14 @@ async fn markers(app: &TestApp, issue_id: &str) -> Vec<(String, i32, Vec<String>
         .await
         .unwrap()
         .into_iter()
-        .map(|m| (m.kind, m.page_index, m.tags, m.page_hash))
+        .map(|m| {
+            (
+                m.kind.as_str().to_owned(),
+                m.page_index,
+                m.tags,
+                m.page_hash,
+            )
+        })
         .collect();
     rows.sort();
     rows
@@ -219,7 +226,7 @@ async fn insert_legacy_marker(app: &TestApp, user: Uuid, issue_id: &str, page: i
         series_id: Set(row.series_id),
         issue_id: Set(issue_id.to_owned()),
         page_index: Set(page),
-        kind: Set("favorite".into()),
+        kind: Set(marker::MarkerKind::Favorite),
         is_favorite: Set(false),
         tags: Set(vec![]),
         region: Set(None),

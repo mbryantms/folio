@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub series_id: Uuid,
-    /// One of: `writer`, `penciller`, `inker`, `colorist`, `letterer`,
-    /// `cover_artist`, `editor`, `translator`. Source of truth lives in the
-    /// scanner's role enum (`scanner::metadata_rollup::CreditRole`).
+    /// Copied from `issue_credits.role` by the series rollup: usually one
+    /// of `writer`, `penciller`, `inker`, `colorist`, `letterer`,
+    /// `cover_artist`, `editor`, `translator` (the scanner's
+    /// `scanner::metadata_rollup::CreditRole`), but an open set — a
+    /// provider role outside those is kept, so this stays a `String`.
     #[sea_orm(primary_key, auto_increment = false)]
     pub role: String,
     #[sea_orm(primary_key, auto_increment = false)]
