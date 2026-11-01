@@ -11,6 +11,11 @@ import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/folio/slider";
 import { Switch } from "@/components/ui/switch";
 import {
+  FILTER_RANGES,
+  type FilterRange,
+  isDefaultFilters,
+} from "@/lib/reader/filters";
+import {
   hasSeriesOverrides,
   clearSeriesOverrides,
 } from "@/lib/reader/series-overrides";
@@ -75,6 +80,10 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   const chromeAutoHide = useReaderStore((s) => s.chromeAutoHide);
   const brightness = useReaderStore((s) => s.brightness);
   const sepia = useReaderStore((s) => s.sepia);
+  const grayscale = useReaderStore((s) => s.grayscale);
+  const invert = useReaderStore((s) => s.invert);
+  const warmth = useReaderStore((s) => s.warmth);
+  const contrast = useReaderStore((s) => s.contrast);
   const coverSolo = useReaderStore((s) => s.coverSolo);
   const markersHidden = useReaderStore((s) => s.markersHidden);
   const zoomPersist = useReaderStore((s) => s.zoomPersist);
@@ -85,6 +94,11 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   const setChromeAutoHide = useReaderStore((s) => s.setChromeAutoHide);
   const setBrightness = useReaderStore((s) => s.setBrightness);
   const setSepia = useReaderStore((s) => s.setSepia);
+  const setGrayscale = useReaderStore((s) => s.setGrayscale);
+  const setInvert = useReaderStore((s) => s.setInvert);
+  const setWarmth = useReaderStore((s) => s.setWarmth);
+  const setContrast = useReaderStore((s) => s.setContrast);
+  const resetFilters = useReaderStore((s) => s.resetFilters);
   const setCoverSolo = useReaderStore((s) => s.setCoverSolo);
   const setMarkersHidden = useReaderStore((s) => s.setMarkersHidden);
   const setZoomPersist = useReaderStore((s) => s.setZoomPersist);
@@ -184,51 +198,62 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
       <Separator className="bg-neutral-800" />
 
       <Section title="Vision">
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs text-neutral-300">
-            <span>Brightness</span>
-            <span className="text-neutral-400">
-              {Math.round(brightness * 100)}%
-            </span>
-          </div>
-          <Slider
-            value={[brightness]}
-            min={0.5}
-            max={1.5}
-            step={0.05}
-            onValueChange={([next]) =>
-              typeof next === "number" ? setBrightness(next) : undefined
-            }
-            thumbLabel="Brightness"
-          />
-        </div>
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs text-neutral-300">
-            <span>Sepia</span>
-            <span className="text-neutral-400">{Math.round(sepia * 100)}%</span>
-          </div>
-          <Slider
-            value={[sepia]}
-            min={0}
-            max={1}
-            step={0.05}
-            onValueChange={([next]) =>
-              typeof next === "number" ? setSepia(next) : undefined
-            }
-            thumbLabel="Sepia"
-          />
-        </div>
-        {brightness !== 1 || sepia !== 0 ? (
+        <SwitchRow
+          label="Night mode"
+          description="Invert the page colours: black on white becomes white on black."
+          checked={invert}
+          onChange={setInvert}
+        />
+        <FilterSlider
+          label="Brightness"
+          value={brightness}
+          display={`${Math.round(brightness * 100)}%`}
+          range={FILTER_RANGES.brightness}
+          onChange={setBrightness}
+        />
+        <FilterSlider
+          label="Contrast"
+          value={contrast}
+          display={`${contrast}%`}
+          range={FILTER_RANGES.contrast}
+          onChange={setContrast}
+        />
+        <FilterSlider
+          label="Grayscale"
+          value={grayscale}
+          display={`${grayscale}%`}
+          range={FILTER_RANGES.grayscale}
+          onChange={setGrayscale}
+        />
+        <FilterSlider
+          label="Sepia"
+          value={sepia}
+          display={`${Math.round(sepia * 100)}%`}
+          range={FILTER_RANGES.sepia}
+          onChange={setSepia}
+        />
+        <FilterSlider
+          label="Warmth"
+          value={warmth}
+          display={warmthLabel(warmth)}
+          range={FILTER_RANGES.warmth}
+          onChange={setWarmth}
+        />
+        {!isDefaultFilters({
+          brightness,
+          sepia,
+          grayscale,
+          invert,
+          warmth,
+          contrast,
+        }) ? (
           <button
             type="button"
-            onClick={() => {
-              setBrightness(1);
-              setSepia(0);
-            }}
+            onClick={resetFilters}
             className="inline-flex items-center gap-2 text-xs text-neutral-400 underline-offset-4 hover:text-neutral-200 hover:underline"
           >
             <RotateCcw className="size-3" />
-            Reset vision
+            Reset filters
           </button>
         ) : null}
       </Section>
@@ -278,6 +303,49 @@ function Field({
     <div className="flex items-center justify-between gap-3">
       <span className="text-xs text-neutral-300">{label}</span>
       <div className="flex justify-end">{children}</div>
+    </div>
+  );
+}
+
+/** "Warmer +20" / "Cooler −20" / "Neutral": the sign alone reads badly
+ *  next to a percentage column. */
+export function warmthLabel(warmth: number): string {
+  if (warmth === 0) return "Neutral";
+  return warmth > 0 ? `Warmer +${warmth}` : `Cooler −${-warmth}`;
+}
+
+/** One colour-filter row: visible label + current value, and a slider
+ *  whose thumb carries the same label (the `Slider` wrapper names the
+ *  thumb; the visible text is for sighted users). */
+function FilterSlider({
+  label,
+  value,
+  display,
+  range,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  display: string;
+  range: FilterRange;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs text-neutral-300">
+        <span>{label}</span>
+        <span className="text-neutral-400">{display}</span>
+      </div>
+      <Slider
+        value={[value]}
+        min={range.min}
+        max={range.max}
+        step={range.step}
+        onValueChange={([next]) =>
+          typeof next === "number" ? onChange(next) : undefined
+        }
+        thumbLabel={label}
+      />
     </div>
   );
 }

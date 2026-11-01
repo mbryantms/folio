@@ -222,14 +222,66 @@ construction; ctrl+wheel falls through to the browser there).
   `prefers-reduced-motion` has nothing to disable.
 - **Keep zoom between pages.** Off by default: zoom resets to 1× on
   every page turn. With **Reader settings → Display → Keep zoom
-  between pages** on (persisted globally in localStorage as
-  `reader.v1:zoomPersist:_default`), a page turn keeps the zoom level
-  and lands on the new page's reading-order start corner — top-left in
-  LTR, top-right in RTL. Changing fit mode, view mode, or entering a
-  marker-selection mode always resets to 1×.
+  between pages** on (cached in localStorage as
+  `reader.v1:zoomPersist:_default` and following the account as
+  `reader_zoom_persist` — see *Colour filters* below for the sync
+  rules), a page turn keeps the zoom level and lands on the new page's
+  reading-order start corner — top-left in LTR, top-right in RTL.
+  Changing fit mode, view mode, or entering a marker-selection mode
+  always resets to 1×.
 - Math lives in [`zoom.ts`](../../web/lib/reader/zoom.ts)
   (`zoomAboutPoint`, `clampZoomPan`, `zoomAfterPageTurn`), with unit
   tests in `web/tests/reader/zoom.test.ts`.
+
+### Colour filters
+
+**Reader settings → Vision** (audit 2026-11 §5 items 22 and 24,
+remediation F6 + F7). No keyboard shortcuts: the reader keymap has no
+free, consistent slot for six analogue controls, and the sheet is one
+`t` + gear away.
+
+| Control | Range | CSS |
+|---|---|---|
+| Night mode | on / off | `invert(1)` |
+| Brightness | 50–150 % (step 5) | `brightness(x)` |
+| Contrast | 50–150 % (step 5) | `contrast(x)` |
+| Grayscale | 0–100 % (step 5) | `grayscale(x)` |
+| Sepia | 0–100 % (step 5) | `sepia(x)` |
+| Warmth | −50 (cool) … +50 (warm) | warm: `sepia(w)`; cool: `invert(1) sepia(w) invert(1)` |
+
+- One composed `filter` is published by the view wrapper as the
+  `--reader-filter` custom property and read by the page `<img>`s
+  (`PageImage` and the page-turn exit frame, `filter: var(--reader-filter,)`),
+  so it lands on the page bitmap only — marker overlays, the webtoon
+  footer and the chrome keep their own colours, and no wrapper becomes a
+  containing block for `position: fixed` children. The composition and
+  the clamps live in [`filters.ts`](../../web/lib/reader/filters.ts)
+  (`composeFilter`, `FILTER_RANGES`, `DEFAULT_FILTERS`,
+  `READER_FILTER_PROPERTY` / `READER_FILTER_VAR`); only non-default parts
+  are emitted and the property is absent at the defaults. Order is fixed — `invert` first so brightness still brightens
+  and a warm tint still reads warm on an inverted page; warmth last. Cool
+  is a sepia tint between two inversions, which shifts toward blue while
+  leaving every other hue in place (`hue-rotate` would turn reds green).
+- **Reset filters** (shown only when something is off the default) puts
+  all six back in one write.
+- **They follow the account** together with *Keep zoom between pages*
+  ([`account-prefs-sync.ts`](../../web/lib/reader/account-prefs-sync.ts),
+  `reader_brightness` / `reader_sepia` / `reader_grayscale` /
+  `reader_invert` / `reader_warmth` / `reader_contrast` /
+  `reader_zoom_persist` on `/auth/me` and `PATCH /me/preferences`). The
+  rules mirror the per-series slices in `series-prefs-sync.ts`: on open,
+  a slice the account has set overwrites the browser's localStorage copy;
+  a slice the account has never set (`null`) keeps the browser's value and
+  is adopted — folded into the PATCH — on the **first change** made in
+  that session, never on read, so a browser that already had a brightness
+  keeps it and nobody's setting is overwritten by a default. Writes are
+  coalesced (400 ms) into one PATCH per burst of slider changes and
+  failures are swallowed: localStorage is the offline cache and the next
+  online open adopts what changed. There is no per-series layer for these
+  (there never was). Tests: `web/tests/reader/filters.test.ts`,
+  `web/tests/dom/reader-settings-filters.test.tsx`,
+  `web/tests/dom/reader-store-account-prefs.test.ts`,
+  `crates/server/tests/preferences.rs`.
 
 ### iOS standalone edge-back guard
 

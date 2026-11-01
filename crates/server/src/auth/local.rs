@@ -202,6 +202,23 @@ pub struct MeResp {
     /// previous hard-coded `MAX_PIN_COUNT = 12` constant. Range
     /// 1..=50 enforced by DB CHECK + PATCH validation. Default 12.
     pub max_rails_per_page: i32,
+    /// Reader display preferences that follow the account (audit 2026-11
+    /// F6/F7). Each is `null` until the account has set it; while `null`
+    /// the reader keeps the browser's own stored value and adopts it on
+    /// the first change. CSS `brightness()` multiplier, 0.5..=1.5.
+    pub reader_brightness: Option<f64>,
+    /// CSS `sepia()` amount, 0..=1.
+    pub reader_sepia: Option<f64>,
+    /// CSS `grayscale()` percent, 0..=100.
+    pub reader_grayscale: Option<i32>,
+    /// Night mode: the page surface is colour-inverted.
+    pub reader_invert: Option<bool>,
+    /// Colour temperature, -50 (cool) ..= 50 (warm); 0 is neutral.
+    pub reader_warmth: Option<i32>,
+    /// CSS `contrast()` percent, 50..=150.
+    pub reader_contrast: Option<i32>,
+    /// "Keep zoom between pages" in the reader.
+    pub reader_zoom_persist: Option<bool>,
 }
 
 /// `PATCH /me/preferences` request body. Every field is optional; when a key
@@ -260,6 +277,27 @@ pub struct PreferencesReq {
     /// side and at the DB CHECK constraint. Default 12 preserves
     /// the prior behaviour for users who never touch this.
     pub max_rails_per_page: Option<i32>,
+    /// Reader display preferences (audit 2026-11 F6/F7). Absent leaves the
+    /// stored value; `null` clears it so the reader falls back to its
+    /// browser value / built-in default. Ranges: brightness 0.5..=1.5.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub reader_brightness: Option<Option<f64>>,
+    /// 0..=1.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub reader_sepia: Option<Option<f64>>,
+    /// 0..=100.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub reader_grayscale: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub reader_invert: Option<Option<bool>>,
+    /// -50..=50.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub reader_warmth: Option<Option<i32>>,
+    /// 50..=150.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub reader_contrast: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub reader_zoom_persist: Option<Option<bool>>,
 }
 
 /// `serde` helper: distinguish "absent" (None) from "explicit null"
@@ -271,6 +309,39 @@ where
     D: serde::Deserializer<'de>,
 {
     Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// Range check for the reader display preferences (F6/F7). The bounds are
+/// the reader's slider ranges and the DB CHECK constraints; checking here
+/// turns a bad value into a 422 with the field named instead of a 500 from
+/// the constraint. `None` when every present value is in range.
+fn reader_display_range_error(req: &PreferencesReq) -> Option<&'static str> {
+    if let Some(Some(v)) = req.reader_brightness
+        && !(v.is_finite() && (0.5..=1.5).contains(&v))
+    {
+        return Some("reader_brightness must be between 0.5 and 1.5");
+    }
+    if let Some(Some(v)) = req.reader_sepia
+        && !(v.is_finite() && (0.0..=1.0).contains(&v))
+    {
+        return Some("reader_sepia must be between 0 and 1");
+    }
+    if let Some(Some(v)) = req.reader_grayscale
+        && !(0..=100).contains(&v)
+    {
+        return Some("reader_grayscale must be between 0 and 100");
+    }
+    if let Some(Some(v)) = req.reader_warmth
+        && !(-50..=50).contains(&v)
+    {
+        return Some("reader_warmth must be between -50 and 50");
+    }
+    if let Some(Some(v)) = req.reader_contrast
+        && !(50..=150).contains(&v)
+    {
+        return Some("reader_contrast must be between 50 and 150");
+    }
+    None
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -455,6 +526,13 @@ pub async fn register(
         opds_wtr_reorder: Set(true),
         opds_progress_glyphs: Set(true),
         max_rails_per_page: Set(12),
+        reader_brightness: Set(None),
+        reader_sepia: Set(None),
+        reader_grayscale: Set(None),
+        reader_invert: Set(None),
+        reader_warmth: Set(None),
+        reader_contrast: Set(None),
+        reader_zoom_persist: Set(None),
     };
 
     let inserted = match am.insert(&txn).await {
@@ -1075,6 +1153,9 @@ pub async fn update_preferences(
             "max_rails_per_page must be between 1 and 50",
         );
     }
+    if let Some(msg) = reader_display_range_error(&req) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", msg);
+    }
 
     let row = match UserEntity::find_by_id(user.id).one(&app.db).await {
         Ok(Some(r)) => r,
@@ -1146,6 +1227,27 @@ pub async fn update_preferences(
     }
     if let Some(v) = req.max_rails_per_page {
         am.max_rails_per_page = Set(v);
+    }
+    if let Some(v) = req.reader_brightness {
+        am.reader_brightness = Set(v);
+    }
+    if let Some(v) = req.reader_sepia {
+        am.reader_sepia = Set(v);
+    }
+    if let Some(v) = req.reader_grayscale {
+        am.reader_grayscale = Set(v);
+    }
+    if let Some(v) = req.reader_invert {
+        am.reader_invert = Set(v);
+    }
+    if let Some(v) = req.reader_warmth {
+        am.reader_warmth = Set(v);
+    }
+    if let Some(v) = req.reader_contrast {
+        am.reader_contrast = Set(v);
+    }
+    if let Some(v) = req.reader_zoom_persist {
+        am.reader_zoom_persist = Set(v);
     }
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     let updated = match am.update(&app.db).await {
@@ -1720,6 +1822,13 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         exclude_from_aggregates: row.exclude_from_aggregates,
         show_marker_count: row.show_marker_count,
         max_rails_per_page: row.max_rails_per_page,
+        reader_brightness: row.reader_brightness,
+        reader_sepia: row.reader_sepia,
+        reader_grayscale: row.reader_grayscale,
+        reader_invert: row.reader_invert,
+        reader_warmth: row.reader_warmth,
+        reader_contrast: row.reader_contrast,
+        reader_zoom_persist: row.reader_zoom_persist,
     }
 }
 
@@ -1759,6 +1868,13 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             exclude_from_aggregates: false,
             show_marker_count: false,
             max_rails_per_page: 12,
+            reader_brightness: None,
+            reader_sepia: None,
+            reader_grayscale: None,
+            reader_invert: None,
+            reader_warmth: None,
+            reader_contrast: None,
+            reader_zoom_persist: None,
         }
     }
 }

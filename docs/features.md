@@ -62,8 +62,11 @@ a meaningful share of pages are flagged as spreads or the pages are
 landscape, single otherwise. Your manual choice always wins and is
 remembered per series.
 
-Fit modes (fit-width / fit-height / original), a brightness slider, a sepia
-toggle, and auto-hiding chrome round out the settings popover.
+Fit modes (fit-width / fit-height / original), colour filters — brightness,
+contrast, grayscale, sepia, warmth and a night mode that inverts the page —
+and auto-hiding chrome round out the settings popover. The filters and
+"keep zoom between pages" follow your account to every device; a browser
+that already had a setting keeps it until you change it.
 
 ### Manga done properly
 
