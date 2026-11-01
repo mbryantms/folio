@@ -148,6 +148,44 @@ series-level probe is served by `markers_user_series_kind_idx`
 (`m20270307`); the favourite flag arm filters within the same
 `(user_id, series_id)` prefix.
 
+### Collection completeness and specials (B9)
+
+`collection_completeness` (`complete` / `incomplete` / `unknown`)
+compares the owned count with `series.total_issues`. The owned count is
+the active main run (`aic.main_count`, `special_type IS NULL` — point
+issues included) plus, only when the **viewer** counts specials, the
+series' tagged annuals / one-shots / specials / TPBs
+(`aic.special_count`). Whether they count is
+`COALESCE(cpo.count_specials, cpu.count_specials_in_completeness, FALSE)`:
+
+- `cpu` — the caller's `users` row, LEFT JOINed once on its PK
+  (`users.count_specials_in_completeness`, default false, the account
+  setting from `PATCH /me/preferences`);
+- `cpo` — the caller's `user_series_completion_prefs` row for the series,
+  LEFT JOINed on the `(user_id, series_id)` PK (written by
+  `PUT /me/series/{id}/completion-prefs`: `include` = true, `exclude` =
+  false, `inherit` deletes the row).
+
+Both joins are emitted only when a condition references
+`collection_completeness` (`needs_completion_pref_join`), like the `aic`
+aggregate — no per-row subquery. The same rule, resolved in Rust by
+`api::series_completion_prefs::CompletionPrefs`, drives
+`SeriesView.specials_count_toward_completion` (series cards and the
+series page via `hydrate_series` / `get_one`; the web helper
+`ownedCompletionCount` in `web/lib/series-status.ts` adds
+`special_issue_count` when it is true) and the collection report's
+`counted_owned` / `completeness_state` / `completeness_pct`
+(`GET /series/{slug}/collection`; `total_owned` stays every owned issue).
+A shared system view evaluates per viewer, so two users can get different
+"Incomplete collections" results from the same view.
+
+Surfaces deliberately left out: the reading-progress rollups
+(`read_status`, `unread_issues`, "Caught up") count every active issue
+and are about reading, not collecting; admin dashboards
+(`/admin/stats`, the metadata coverage pages) have no per-user
+completeness figure; OPDS shows no completeness of its own (its
+saved-view feeds go through this compiler and so follow the setting).
+
 ## The compiler
 
 `crates/server/src/views/compile.rs` has two roots:

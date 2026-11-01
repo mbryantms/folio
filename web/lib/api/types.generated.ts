@@ -4246,6 +4246,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/series/{series_id}/completion-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether annuals and specials count toward this series' completion for
+         *     the caller.
+         */
+        get: operations["series_completion_prefs_get"];
+        /**
+         * Set (`include` / `exclude`) or clear (`inherit`) the caller's override
+         *     for this series.
+         */
+        put: operations["series_completion_prefs_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/series/{series_id}/reader-prefs": {
         parameters: {
             query?: never;
@@ -7740,6 +7764,16 @@ export interface components {
              */
             completeness_state: string;
             /**
+             * Format: int64
+             * @description The owned issues that count toward completion for the caller: the
+             *     main run (`special_type IS NULL`), plus the tagged specials when
+             *     [`Self::specials_counted`]. `completeness_state` and
+             *     `completeness_pct` compare this with `total_expected` — the same
+             *     rule as the saved-view `collection_completeness` filter (active,
+             *     non-removed issues, `aic.main_count` + `aic.special_count`).
+             */
+            counted_owned: number;
+            /**
              * @description `"series_total"` (count-only; `missing` interpolated) or
              *     `"provider_manifest"` (`missing` from the providers' issue lists —
              *     see [`Self::manifest`]).
@@ -7761,6 +7795,11 @@ export interface components {
              */
             specials: components["schemas"]["SpecialEntry"][];
             /**
+             * @description Whether annuals / specials count toward completion for the caller
+             *     on this series (per-series override, else the account setting; B9).
+             */
+            specials_counted: boolean;
+            /**
              * Format: int32
              * @description Publisher-claimed total from `series.total_issues`. `None` when the
              *     scanner couldn't resolve a count.
@@ -7768,9 +7807,9 @@ export interface components {
             total_expected?: number | null;
             /**
              * Format: int64
-             * @description Active (non-removed) issues owned. Matches the saved-view
-             *     `collection_completeness` `active_count`, so this report and the
-             *     SeriesCard collection dot never disagree.
+             * @description Every active (non-removed) issue owned — main run, specials, point
+             *     and unnumbered issues alike. The Collection tab's metadata bars
+             *     count over this set.
              */
             total_owned: number;
         };
@@ -11376,6 +11415,13 @@ export interface components {
             /** @description M6a: per-user opt-out for reading-activity capture. */
             activity_tracking_enabled: boolean;
             corner_radius?: components["schemas"]["CornerRadius"] | null;
+            /**
+             * @description Count annuals / one-shots / specials / TPBs toward a series'
+             *     collection completeness (remediation B9). Default false: only the
+             *     main run is compared with the publisher total. A per-series
+             *     override (`PUT /me/series/{series_id}/completion-prefs`) wins.
+             */
+            count_specials_in_completeness: boolean;
             csrf_token: string;
             /**
              * @description Default for the reader's "cover stands alone in double-page view"
@@ -12225,6 +12271,8 @@ export interface components {
             /** @description M6a: opt-out toggle. `false` disables the client tracker hook. */
             activity_tracking_enabled?: boolean | null;
             corner_radius?: components["schemas"]["CornerRadius"] | null;
+            /** @description Count annuals and specials toward series completion (B9). */
+            count_specials_in_completeness?: boolean | null;
             /** @description Default cover-solo toggle; absent leaves the prior value untouched. */
             default_cover_solo?: boolean | null;
             default_fit_mode?: components["schemas"]["FitMode"] | null;
@@ -13928,6 +13976,23 @@ export interface components {
             provider_splits: components["schemas"]["ChainSplitView"][];
             series: components["schemas"]["SeriesView"];
         };
+        SeriesCompletionPrefsReq: {
+            /**
+             * @description `inherit` clears the override. An unknown value is a 422 at
+             *     deserialisation.
+             */
+            count_specials: components["schemas"]["SpecialsCompletion"];
+        };
+        /** @description The caller's choice for one series and what it resolves to. */
+        SeriesCompletionPrefsView: {
+            /** @description `inherit` | `include` | `exclude`. */
+            count_specials: components["schemas"]["SpecialsCompletion"];
+            /**
+             * @description The resolved setting: true when this series' annuals and specials
+             *     count toward its completion for the caller.
+             */
+            effective: boolean;
+        };
         SeriesCount: {
             /** Format: int64 */
             count: number;
@@ -14498,6 +14563,23 @@ export interface components {
              *     set). Rendered as "+N specials" next to the main-run count.
              */
             special_issue_count?: number | null;
+            /**
+             * @description The caller's per-series choice behind
+             *     [`Self::specials_count_toward_completion`]: `inherit` (follow the
+             *     account setting), `include` or `exclude`.
+             */
+            specials_completion: components["schemas"]["SpecialsCompletion"];
+            /**
+             * @description Viewer-scoped (remediation B9): true when this series' specials
+             *     count toward its collection completeness for the caller — the
+             *     per-series override, else the account's
+             *     `count_specials_in_completeness`. When true the owned figure the
+             *     completeness verdict compares with `total_issues` is
+             *     `main_issue_count + special_issue_count`; otherwise the main run
+             *     alone. Same rule as the `collection_completeness` filter and the
+             *     collection report.
+             */
+            specials_count_toward_completion: boolean;
             status: string;
             summary?: string | null;
             tags?: string[];
@@ -14787,6 +14869,12 @@ export interface components {
              */
             special_type?: string | null;
         };
+        /**
+         * @description The caller's per-series choice. `inherit` (no stored row) follows the
+         *     account setting; `include` / `exclude` override it for this series.
+         * @enum {string}
+         */
+        SpecialsCompletion: "inherit" | "include" | "exclude";
         /**
          * @description Confidence bucket shown to reviewers (spec §5.7 "grouped by confidence").
          * @enum {string}
@@ -24362,6 +24450,87 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PinView"];
                 };
+            };
+        };
+    };
+    series_completion_prefs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesCompletionPrefsView"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_completion_prefs_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeriesCompletionPrefsReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesCompletionPrefsView"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown value */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

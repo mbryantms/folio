@@ -53,6 +53,8 @@ function issue(n: number) {
 function base(nums: number[]): CollectionReportView {
   return {
     total_owned: nums.length,
+    counted_owned: nums.length,
+    specials_counted: false,
     total_expected: null,
     completeness_pct: null,
     completeness_state: "unknown",

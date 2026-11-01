@@ -118,6 +118,28 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
         );
     }
 
+    // Remediation B9: whether the caller counts annuals / specials toward
+    // completion. One LEFT JOIN to the caller's `users` row (the account
+    // setting) and one to their per-series override, both on primary keys
+    // — never a per-row subquery. Only for `collection_completeness`.
+    if needs_completion_pref_join(input.dsl) {
+        q.join_as(
+            JoinType::LeftJoin,
+            Alias::new("users"),
+            completion_user_alias(),
+            Expr::cust_with_values("cpu.id = $1", [input.user_id]),
+        );
+        q.join_as(
+            JoinType::LeftJoin,
+            Alias::new("user_series_completion_prefs"),
+            completion_override_alias(),
+            Expr::cust_with_values(
+                "cpo.user_id = $1 AND cpo.series_id = series.id",
+                [input.user_id],
+            ),
+        );
+    }
+
     // Metadata-completeness aggregate (active_count + complete_count per
     // series). Same join-gating discipline: only emitted when a filter
     // references `metadata_completeness`, so baseline filters never pay for
@@ -784,6 +806,27 @@ fn active_issue_count_alias() -> Alias {
     Alias::new("aic")
 }
 
+/// Whether a filter references `collection_completeness` — gates the two
+/// completion-preference joins (remediation B9).
+fn needs_completion_pref_join(dsl: &FilterDsl) -> bool {
+    dsl.conditions.iter().any(|c| {
+        matches!(
+            registry::spec_for(c.field).source,
+            Some(Source::SeriesComputed("collection_completeness")),
+        )
+    })
+}
+
+/// The caller's `users` row (account-level `count_specials_in_completeness`).
+fn completion_user_alias() -> Alias {
+    Alias::new("cpu")
+}
+
+/// The caller's `user_series_completion_prefs` row for the series.
+fn completion_override_alias() -> Alias {
+    Alias::new("cpo")
+}
+
 /// Whether any filter references `metadata_completeness` — gates the
 /// metadata-completeness aggregate join (mirrors
 /// [`needs_active_issue_count_join`]).
@@ -848,12 +891,14 @@ fn metadata_completeness_subquery() -> SelectStatement {
 }
 
 /// `SELECT series_id, COUNT(*) AS active_count, COUNT(*) FILTER (WHERE
-/// special_type IS NULL) AS main_count FROM issues WHERE state = 'active'
-/// AND removed_at IS NULL GROUP BY series_id`. Joined LEFT so series with
-/// zero on-disk issues land as NULL → COALESCE'd to 0. `main_count` is the
-/// main run alone — what `series.total_issues` describes — so the
-/// completeness predicate ignores annuals / specials, matching
-/// `SeriesView.main_issue_count`.
+/// special_type IS NULL) AS main_count, COUNT(*) FILTER (WHERE
+/// special_type IS NOT NULL) AS special_count FROM issues WHERE state =
+/// 'active' AND removed_at IS NULL GROUP BY series_id`. Joined LEFT so
+/// series with zero on-disk issues land as NULL → COALESCE'd to 0.
+/// `main_count` is the main run alone — what `series.total_issues`
+/// describes — matching `SeriesView.main_issue_count`; the completeness
+/// predicate adds `special_count` only when the caller counts specials
+/// (B9).
 fn active_issue_count_subquery() -> SelectStatement {
     use entity::issue;
     Query::select()
@@ -865,6 +910,10 @@ fn active_issue_count_subquery() -> SelectStatement {
         .expr_as(
             Expr::cust("COUNT(*) FILTER (WHERE special_type IS NULL)"),
             Alias::new("main_count"),
+        )
+        .expr_as(
+            Expr::cust("COUNT(*) FILTER (WHERE special_type IS NOT NULL)"),
+            Alias::new("special_count"),
         )
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq("active"))
@@ -1206,12 +1255,18 @@ fn series_computed_predicate(
         "collection_completeness" => {
             // Evaluates against `series.total_issues` (canonical expected
             // count from ComicInfo) and `aic.main_count` (current on-disk
-            // main-run count — specials excluded, NULL when zero —
-            // COALESCE'd to 0).
+            // main-run count, NULL when zero — COALESCE'd to 0). The
+            // series' specials (`aic.special_count`) are added when the
+            // caller counts them (B9): their per-series override `cpo`,
+            // else their account setting `cpu`, else false.
             let lhs: SimpleExpr = Expr::cust(
                 "CASE \
                  WHEN series.total_issues IS NULL THEN 'unknown' \
-                 WHEN COALESCE(aic.main_count, 0) >= series.total_issues THEN 'complete' \
+                 WHEN COALESCE(aic.main_count, 0) \
+                   + CASE WHEN COALESCE(cpo.count_specials, \
+                       cpu.count_specials_in_completeness, FALSE) \
+                     THEN COALESCE(aic.special_count, 0) ELSE 0 END \
+                   >= series.total_issues THEN 'complete' \
                  ELSE 'incomplete' END",
             );
             Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
@@ -1774,6 +1829,48 @@ mod tests {
             "SQL: {sql}"
         );
         assert!(sql.contains("COALESCE"), "SQL: {sql}");
+    }
+
+    /// B9: `collection_completeness` joins the caller's `users` row and
+    /// per-series override once each (no per-row subquery), and the
+    /// specials only enter the count through the resolved flag.
+    #[test]
+    fn collection_completeness_joins_the_callers_completion_prefs() {
+        let d = dsl_all(vec![Condition {
+            group_id: 0,
+            field: Field::CollectionCompleteness,
+            op: Op::Is,
+            value: json!("complete"),
+        }]);
+        let sql = compile(&make(d)).unwrap().to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"LEFT JOIN "users" AS "cpu""#)
+                && sql.contains(r#"LEFT JOIN "user_series_completion_prefs" AS "cpo""#),
+            "SQL: {sql}"
+        );
+        assert!(
+            sql.contains("cpo.user_id = '") && sql.contains("cpo.series_id = series.id"),
+            "override joined on the caller's PK prefix: {sql}"
+        );
+        assert!(
+            sql.contains("COALESCE(cpo.count_specials,")
+                && sql.contains("THEN COALESCE(aic.special_count, 0) ELSE 0 END"),
+            "SQL: {sql}"
+        );
+        assert!(!sql.contains("(SELECT count_specials"), "SQL: {sql}");
+    }
+
+    #[test]
+    fn completion_pref_joins_absent_when_unreferenced() {
+        let d = dsl_all(vec![Condition {
+            group_id: 0,
+            field: Field::UnreadIssues,
+            op: Op::Gt,
+            value: json!(5),
+        }]);
+        let sql = compile(&make(d)).unwrap().to_string(PostgresQueryBuilder);
+        assert!(!sql.contains("user_series_completion_prefs"), "SQL: {sql}");
+        assert!(!sql.contains(r#""users""#), "SQL: {sql}");
     }
 
     #[test]

@@ -56,7 +56,9 @@ import {
   collectionStatus,
   collectionTooltip,
   formatSpecialsSuffix,
+  ownedCompletionCount,
   ownedMainCount,
+  ownedSpecialCount,
 } from "@/lib/series-status";
 import { type ReadState, readButtonLabel } from "@/lib/reading-state";
 import { statusTone } from "@/lib/ui/status-tone";
@@ -860,11 +862,16 @@ function formatYearRange(
   return `${lo}–${hi}`;
 }
 
-/** "4 / 4" — the main run against the publisher's total. Specials are
- *  reported separately by {@link formatCollectionHint}, never folded into
- *  the owned number (an annual must not turn 4-of-4 into "5 / 4"). */
+/** "4 / 4" — what counts toward completion against the publisher's
+ *  total: the main run, plus the specials only when the viewer counts
+ *  them (B9). Otherwise specials are reported separately by
+ *  {@link formatCollectionHint}, never folded into the owned number (an
+ *  annual must not turn 4-of-4 into "5 / 4"). */
 function formatIssueTotal(series: SeriesView): string | null {
-  const owned = series.main_issue_count ?? series.issue_count ?? null;
+  const owned =
+    series.main_issue_count != null || series.issue_count != null
+      ? ownedCompletionCount(series)
+      : null;
   const expected = series.total_issues ?? null;
   if (owned == null && expected == null) return null;
   if (owned != null && expected != null && expected > 0) {
@@ -987,12 +994,14 @@ function hasAny(...lists: (string[] | undefined)[]): boolean {
   return lists.some((l) => Array.isArray(l) && l.length > 0);
 }
 
-/** "4" or "4 + 1 special" — main run, then extras. */
+/** "4" or "4 + 1 special" — main run, then extras (what is on the
+ *  shelf, whatever counts toward completion). */
 function formatOwnedIssues(series: SeriesView): string | null {
   if (series.issue_count == null) return null;
-  const extras = formatSpecialsSuffix(series);
   const main = String(ownedMainCount(series));
-  return extras ? `${main} ${extras.replace(/^\+/, "+ ")}` : main;
+  const n = ownedSpecialCount(series);
+  if (n <= 0) return main;
+  return `${main} + ${n} ${n === 1 ? "special" : "specials"}`;
 }
 
 /** Renders a Complete / Incomplete badge derived from `total_issues`

@@ -54,6 +54,8 @@ describe("CollectionTab with an off-run number", () => {
     const owned = [...run, 1_000_000];
     report = {
       total_owned: owned.length,
+      counted_owned: owned.length,
+      specials_counted: false,
       total_expected: 250,
       completeness_pct: 2.4,
       completeness_state: "incomplete",

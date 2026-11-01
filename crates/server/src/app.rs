@@ -153,6 +153,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(api::series::routes())
         .merge(api::series_similar::routes())
         .merge(api::series_reader_prefs::routes())
+        .merge(api::series_completion_prefs::routes())
         .merge(api::issues::routes())
         .merge(api::appearances::routes())
         .merge(api::archive_edit::routes())
