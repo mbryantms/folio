@@ -737,6 +737,18 @@ impl TestApp {
         .await
     }
 
+    /// [`spawn_with_oidc_link_local`] plus the trust-unverified-email opt-in,
+    /// so an ID token without an `email_verified` claim still signs in.
+    pub async fn spawn_with_oidc_link_local_trusting_unverified(issuer: impl Into<String>) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            oidc_issuer: Some(issuer.into()),
+            oidc_link_local_by_verified_email: true,
+            oidc_trust_unverified_email: true,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Spawn with `GET /metrics` gated behind the given bearer token
     /// (metrics-observability M5). Used by `tests/metrics_endpoint.rs`.
     pub async fn spawn_with_metrics_token(token: impl Into<String>) -> Self {

@@ -889,13 +889,14 @@ enum Locked {
     /// The target row (locked) and every admin row (locked).
     Target(Box<user::Model>, LockedAdmins),
     NotFound,
-    /// The actor lost the admin role, or was disabled, after the extractor
-    /// ran — another admin changed them while this request was in flight.
+    /// The actor lost the admin role, or left the `active` state, after the
+    /// extractor ran — another admin changed them while this request was in
+    /// flight.
     ActorNotAdmin,
 }
 
 /// Lock every admin row (id order), re-check the actor is still an admin
-/// that `RequireAdmin` would admit (not disabled), then lock the target
+/// that `RequireAdmin` would admit (role admin, state active), then lock the target
 /// row. Admins-first is the order every last-admin path uses
 /// ([`crate::auth::last_admin`]).
 async fn lock_for_change(
@@ -906,7 +907,7 @@ async fn lock_for_change(
     let admins = LockedAdmins::lock(txn).await?;
     if admins
         .get(actor_id)
-        .is_none_or(|a| a.state == UserState::Disabled)
+        .is_none_or(|a| a.state != UserState::Active)
     {
         return Ok(Locked::ActorNotAdmin);
     }

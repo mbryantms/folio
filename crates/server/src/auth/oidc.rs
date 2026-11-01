@@ -615,6 +615,10 @@ pub async fn callback(
         }
     };
 
+    // Only the IdP's own claim proves the address; the trust-unverified
+    // opt-in lets a sign-in through but never verifies a pending account.
+    let idp_proved_email = claim_email_verified == Some(true);
+
     let user_row = if let Some(row) = existing {
         // Sync fields that may have changed at the issuer.
         let mut am: UserAM = row.clone().into();
@@ -623,13 +627,34 @@ pub async fn callback(
         am.display_name = Set(display_name.clone());
         am.last_login_at = Set(Some(now));
         am.updated_at = Set(now);
-        match am.update(&app.db).await {
+        let activated = activate_if_pending(&mut am, &row, idp_proved_email);
+        let synced = match am.update(&app.db).await {
             Ok(m) => m,
             Err(e) => {
                 tracing::error!(error = %e, "user upsert failed");
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
+        };
+        if activated {
+            super::local::revoke_sessions_for_user(&app.db, synced.id, None).await;
+            let _ = crate::audit::record(
+                &app.db,
+                crate::audit::AuditEntry {
+                    actor_id: synced.id,
+                    action: "auth.oidc.activate_pending",
+                    target_type: Some("user"),
+                    target_id: Some(synced.id.to_string()),
+                    payload: serde_json::json!({
+                        "issuer": issuer,
+                        "subject_hash": sha256_hex(&subject)[..12].to_owned(),
+                    }),
+                    ip: ctx.ip_string(),
+                    user_agent: ctx.user_agent.clone(),
+                },
+            )
+            .await;
         }
+        synced
     } else {
         // Collision check (audit M-4 / S-5): if a local user already owns
         // this email address, don't silently shadow them with a fresh OIDC
@@ -648,6 +673,19 @@ pub async fn callback(
                 .await
             && local.external_id.starts_with("local:")
         {
+            if app.cfg().oidc_link_local_by_verified_email
+                && local.state == UserState::PendingVerification
+                && !idp_proved_email
+            {
+                // Linking would leave a pending row the callback must refuse
+                // anyway, and re-key it off `local:` so resend-verification
+                // could no longer reach it. Refuse before touching the row.
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "auth.email_unverified",
+                    "verify your email first",
+                );
+            }
             if app.cfg().oidc_link_local_by_verified_email {
                 tracing::warn!(
                     target: "auth.oidc",
@@ -660,6 +698,7 @@ pub async fn callback(
                 am.external_id = Set(external_id.clone());
                 am.email = Set(email.clone());
                 am.email_verified = Set(email_verified);
+                let activated = activate_if_pending(&mut am, &local, idp_proved_email);
                 am.display_name = Set(display_name.clone());
                 am.last_login_at = Set(Some(now));
                 am.updated_at = Set(now);
@@ -670,6 +709,9 @@ pub async fn callback(
                         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
                     }
                 };
+                if activated {
+                    super::local::revoke_sessions_for_user(&app.db, linked.id, None).await;
+                }
                 let _ = crate::audit::record(
                     &app.db,
                     crate::audit::AuditEntry {
@@ -681,6 +723,7 @@ pub async fn callback(
                             "issuer": issuer,
                             "subject_hash": sha256_hex(&subject)[..12].to_owned(),
                             "prior_external_id": prior_external_id,
+                            "activated": activated,
                         }),
                         ip: ctx.ip_string(),
                         user_agent: ctx.user_agent.clone(),
@@ -799,8 +842,10 @@ pub async fn callback(
         }
     };
 
-    if user_row.state == UserState::Disabled {
-        return error(StatusCode::FORBIDDEN, "auth.disabled", "account disabled");
+    // Same account-state rule as `CurrentUser`: never mint a session the
+    // extractor would refuse.
+    if let Err(rejection) = super::extractor::admit_state(user_row.state) {
+        return rejection.into_response();
     }
 
     // Issue session cookies (mirrors auth/local.rs).
@@ -858,6 +903,25 @@ pub async fn callback(
     // Redirect to the requested location, defaulting to /.
     let target = state.redirect_after.unwrap_or_else(|| "/".to_string());
     (jar, Redirect::to(&target)).into_response()
+}
+
+/// `pending_verification` means "email not proven". When the IdP's own
+/// `email_verified = true` claim proves it (`idp_proved_email`), the row
+/// becomes `active` — the proof the verify-email link asks for. Whoever
+/// registered a pending local row never proved the address, so the local
+/// password they chose is dropped and every token they could hold is revoked
+/// (`token_version` bump here, refresh sessions by the caller once the row is
+/// written): activating must not hand the registrant the owner's account.
+/// Returns whether it activated. Other states are left alone (a disabled row
+/// stays disabled and `admit_state` refuses it).
+fn activate_if_pending(am: &mut UserAM, row: &user::Model, idp_proved_email: bool) -> bool {
+    if row.state != UserState::PendingVerification || !idp_proved_email {
+        return false;
+    }
+    am.state = Set(UserState::Active);
+    am.password_hash = Set(None);
+    am.token_version = Set(row.token_version + 1);
+    true
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> Response {

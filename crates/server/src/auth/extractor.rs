@@ -5,6 +5,16 @@
 //! Admin-only handlers should take [`RequireAdmin`] instead of `CurrentUser` —
 //! that extractor returns 403 if the resolved user's role isn't `UserRole::Admin`, so
 //! the check is structural and impossible to forget.
+//!
+//! **Account-state rule (one rule, every credential).** A request is admitted
+//! only for a user whose `state` is `active` ([`admit_state`]): `disabled` is
+//! 403 `auth.disabled`, `pending_verification` is 403 `auth.email_unverified`.
+//! It applies to the session cookie, a Bearer JWT, and an app-password
+//! (Bearer or OPDS Basic) alike, so `RequireAdmin` / `RequireProgressScope`
+//! inherit it. A pending user is never meant to hold a session — local login
+//! refuses them and registration issues none — so nothing a pending user needs
+//! sits behind `CurrentUser`: verify-email, resend-verification, the password
+//! reset pair and logout all authenticate by token or cookie on their own.
 
 use axum::{
     extract::{FromRef, FromRequestParts},
@@ -40,6 +50,7 @@ pub enum AuthRejection {
     Invalid,
     TokenVersionMismatch,
     UserDisabled,
+    EmailUnverified,
     Forbidden,
     Internal,
 }
@@ -59,6 +70,11 @@ impl IntoResponse for AuthRejection {
                 "Token revoked; please sign in again",
             ),
             Self::UserDisabled => (StatusCode::FORBIDDEN, "auth.disabled", "Account disabled"),
+            Self::EmailUnverified => (
+                StatusCode::FORBIDDEN,
+                "auth.email_unverified",
+                "Verify your email first",
+            ),
             Self::Forbidden => (
                 StatusCode::FORBIDDEN,
                 "auth.permission_denied",
@@ -108,9 +124,7 @@ where
             .map_err(|_| AuthRejection::Internal)?
             .ok_or(AuthRejection::Invalid)?;
 
-        if row.state == UserState::Disabled {
-            return Err(AuthRejection::UserDisabled);
-        }
+        admit_state(row.state)?;
         if row.token_version != claims.tv {
             return Err(AuthRejection::TokenVersionMismatch);
         }
@@ -122,6 +136,17 @@ where
             email: row.email,
             app_password_scope: None,
         })
+    }
+}
+
+/// The account-state rule every credential path applies (module docs): only
+/// `active` is admitted. Exhaustive on purpose, so a new [`UserState`] variant
+/// has to decide here whether it may authenticate.
+pub fn admit_state(state: UserState) -> Result<(), AuthRejection> {
+    match state {
+        UserState::Active => Ok(()),
+        UserState::Disabled => Err(AuthRejection::UserDisabled),
+        UserState::PendingVerification => Err(AuthRejection::EmailUnverified),
     }
 }
 
@@ -143,9 +168,7 @@ async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser
         .await
         .map_err(|_| AuthRejection::Internal)?
         .ok_or(AuthRejection::Invalid)?;
-    if row.state == UserState::Disabled {
-        return Err(AuthRejection::UserDisabled);
-    }
+    admit_state(row.state)?;
     Ok(CurrentUser {
         id: row.id,
         role: row.role,
@@ -206,7 +229,9 @@ where
 /// Admin-only wrapper around [`CurrentUser`]. Returns 403 with code
 /// `auth.permission_denied` when the resolved user's role isn't `UserRole::Admin`.
 /// Use this for every `/admin/*` handler so the role check is impossible to
-/// forget on a new route.
+/// forget on a new route. The account must also be `active`: that comes from
+/// [`CurrentUser`]'s state rule, so a `pending_verification` or `disabled`
+/// admin is refused before the role is looked at.
 #[derive(Clone, Debug)]
 pub struct RequireAdmin(pub CurrentUser);
 
@@ -237,7 +262,7 @@ where
 /// The user id named by a JWT access token on `headers`, chosen by the same
 /// [`credential`] rule as [`CurrentUser`]. The signature, issuer and audience
 /// are checked; expiry is not, and neither is the `users` row
-/// (`token_version`, disabled state), because this runs before the handler
+/// (`token_version`, account state), because this runs before the handler
 /// without a DB round-trip. So it answers "whose token is this", never "may
 /// this request proceed": the per-user rate-limit key
 /// ([`crate::middleware::rate_limit::UserKey`]) uses it, and the handler's

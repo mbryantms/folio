@@ -237,6 +237,13 @@ Default admin (first registered user becomes admin):
   [`crates/server/src/auth/extractor.rs`](crates/server/src/auth/extractor.rs)
   and returns 403 + canonical envelope before the handler body runs —
   the gate is structural, not body-level.
+  - **Account state** (E15): every credential path (cookie, Bearer JWT,
+    app-password Bearer/Basic, OIDC callback, `/ws/*`) admits only
+    `state = active` via `extractor::admit_state` — `disabled` → 403
+    `auth.disabled`, `pending_verification` → 403 `auth.email_unverified`
+    (`/auth/refresh` refuses non-active with 401 `auth.invalid`). So
+    `CurrentUser` and `RequireAdmin` both refuse a pending admin; pending users
+    never hold sessions, and the verify/resend/reset routes don't take `CurrentUser`.
   - **Inline `if user.role == UserRole::Admin` is reserved for ACL widening**
     (admin gets broader visibility on a handler users can also call):
     e.g. `series::get_one` lets admins open a soft-deleted series (readers

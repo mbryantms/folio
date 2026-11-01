@@ -659,6 +659,248 @@ async fn callback_auto_links_local_user_when_opt_in_enabled() {
     assert_eq!(linked.role, entity::user::UserRole::Admin);
 }
 
+/// Force a user row's state straight in the DB (the OIDC tests have no
+/// second admin to do it through the API).
+async fn force_state(app: &TestApp, id: uuid::Uuid, state: entity::user::UserState) {
+    use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
+    let row = entity::user::Entity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am = row.into_active_model();
+    am.state = Set(state);
+    am.update(&app.state().db).await.unwrap();
+}
+
+async fn user_row(app: &TestApp, id: uuid::Uuid) -> entity::user::Model {
+    use sea_orm::EntityTrait;
+    entity::user::Entity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+/// Register a local account and move it to `pending_verification`, the
+/// state an unverified registrant's row sits in. Returns its id.
+async fn pending_local_user(app: &TestApp, email: &str) -> uuid::Uuid {
+    use sea_orm::EntityTrait;
+    let reg = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(
+                    r#"{{"email":"{email}","password":"registrant-chosen-pw"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    let id = entity::user::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|u| u.email.as_deref() == Some(email))
+        .unwrap()
+        .id;
+    force_state(app, id, entity::user::UserState::PendingVerification).await;
+    id
+}
+
+async fn local_login_status(app: &TestApp, email: &str, password: &str) -> StatusCode {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "email": email, "password": password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn me_status(app: &TestApp, session: &str) -> StatusCode {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/auth/me")
+                .header(header::AUTHORIZATION, format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// Run one OIDC sign-in for `subject` / `email`; `verified` is the ID
+/// token's `email_verified` claim (`None` omits it).
+async fn oidc_sign_in(
+    app: &TestApp,
+    op: &MockOp,
+    subject: &str,
+    email: &str,
+    verified: Option<bool>,
+    code: &str,
+) -> Response<Body> {
+    let (state_cookie, state_param) = start_oidc_flow(app, None).await;
+    let nonce = parse_state_cookie_nonce(&state_cookie);
+    let mut claims =
+        IdTokenClaims::standard(&op.issuer(), "folio-test-client", subject, &nonce, email);
+    claims.email_verified = verified;
+    op.register_token_response_for_code(code, &sign_id_token(&claims))
+        .await;
+    callback_with(app, &state_cookie, &state_param, code).await
+}
+
+/// E15: auto-linking a `pending_verification` local account on the IdP's own
+/// verified-email claim activates it — the proof the verify-email link asks
+/// for — and drops the password whoever registered it chose, so the
+/// registrant can't sign in to the verified owner's account.
+#[tokio::test]
+async fn auto_link_activates_a_pending_local_user_and_drops_its_password() {
+    use sea_orm::EntityTrait;
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "pending-link@example.com";
+    let id = pending_local_user(&app, email).await;
+    let before = user_row(&app, id).await;
+    assert!(before.password_hash.is_some());
+
+    let resp = oidc_sign_in(&app, &op, "subject-pending-link", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
+
+    let linked = user_row(&app, id).await;
+    assert_eq!(linked.state, entity::user::UserState::Active);
+    assert!(linked.email_verified);
+    assert!(
+        linked.password_hash.is_none(),
+        "registrant's password dropped"
+    );
+    assert_eq!(linked.token_version, before.token_version + 1);
+    assert_eq!(me_status(&app, &session).await, StatusCode::OK);
+    assert_eq!(
+        local_login_status(&app, email, "registrant-chosen-pw").await,
+        StatusCode::UNAUTHORIZED,
+        "the registrant's password no longer signs in"
+    );
+
+    let audit = entity::audit_log::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.action == "auth.oidc.auto_link")
+        .expect("auto-link audit row");
+    assert_eq!(audit.payload["activated"], true, "{:?}", audit.payload);
+}
+
+/// E15: without the IdP's own claim (the trust-unverified opt-in), nothing
+/// proves the address, so a pending local account is neither linked nor
+/// activated, and no session is minted.
+#[tokio::test]
+async fn auto_link_refuses_a_pending_local_user_without_a_verified_claim() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local_trusting_unverified(op.issuer()).await;
+    let email = "pending-trust@example.com";
+    let id = pending_local_user(&app, email).await;
+    let before = user_row(&app, id).await;
+
+    let resp = oidc_sign_in(&app, &op, "subject-pending-trust", email, None, "c1").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_none());
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.email_unverified", "{body}");
+
+    let after = user_row(&app, id).await;
+    assert_eq!(after.state, entity::user::UserState::PendingVerification);
+    assert_eq!(after.external_id, before.external_id, "not linked");
+    assert_eq!(after.password_hash, before.password_hash);
+}
+
+/// E15: an OIDC account in `pending_verification` is refused by the callback
+/// while nothing proves its address, and activated by the IdP's own
+/// verified-email claim.
+#[tokio::test]
+async fn pending_oidc_user_is_refused_until_the_idp_verifies_the_email() {
+    use sea_orm::EntityTrait;
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), true).await;
+    let email = "pending-oidc@example.com";
+
+    let resp = oidc_sign_in(&app, &op, "subject-pending", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let id = entity::user::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()[0]
+        .id;
+    force_state(&app, id, entity::user::UserState::PendingVerification).await;
+
+    // Claim absent (trusted by policy only): refused, no session.
+    let resp = oidc_sign_in(&app, &op, "subject-pending", email, None, "c2").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_none());
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.email_unverified", "{body}");
+    assert_eq!(
+        user_row(&app, id).await.state,
+        entity::user::UserState::PendingVerification
+    );
+
+    // The IdP's own claim proves the address: activated and signed in.
+    let resp = oidc_sign_in(&app, &op, "subject-pending", email, Some(true), "c3").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
+    assert_eq!(
+        user_row(&app, id).await.state,
+        entity::user::UserState::Active
+    );
+    assert_eq!(me_status(&app, &session).await, StatusCode::OK);
+}
+
+/// E15: a disabled OIDC account stays disabled whatever the IdP says.
+#[tokio::test]
+async fn disabled_oidc_user_is_refused() {
+    use sea_orm::EntityTrait;
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let email = "disabled-oidc@example.com";
+    let resp = oidc_sign_in(&app, &op, "subject-disabled", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let id = entity::user::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()[0]
+        .id;
+    force_state(&app, id, entity::user::UserState::Disabled).await;
+
+    let resp = oidc_sign_in(&app, &op, "subject-disabled", email, Some(true), "c2").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.disabled", "{body}");
+    assert_eq!(
+        user_row(&app, id).await.state,
+        entity::user::UserState::Disabled
+    );
+}
+
 #[tokio::test]
 async fn logout_redirects_to_end_session_endpoint_for_oidc_session() {
     let op = MockOp::start().await;

@@ -24,14 +24,13 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use entity::user::{self, Entity as UserEntity};
-use entity::user::{UserRole, UserState};
+use entity::user::{self, Entity as UserEntity, UserRole};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
-use crate::auth::extractor::AuthRejection;
+use crate::auth::extractor::{AuthRejection, admit_state};
 use crate::auth::{CurrentUser, ws_ticket};
 use crate::state::AppState;
 use server_macros::handler;
@@ -106,8 +105,9 @@ pub async fn scan_events(
             return (StatusCode::INTERNAL_SERVER_ERROR, "internal").into_response();
         }
     };
-    if row.state == UserState::Disabled {
-        return super::error(StatusCode::FORBIDDEN, "auth.disabled", "Account disabled");
+    // Same account-state rule as `CurrentUser`: only `active` is admitted.
+    if let Err(rejection) = admit_state(row.state) {
+        return rejection.into_response();
     }
     if row.role != UserRole::Admin {
         return super::error(
