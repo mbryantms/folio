@@ -133,6 +133,13 @@ pub struct ApplyOutcome {
     /// variants.
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub variants_written: u32,
+    /// Writeback path only: `apply_cover` was set and the candidate has a
+    /// cover URL, so the primary cover rides the rewrite job's deferred
+    /// writes (`PostRewriteWrites::primary_cover`) and is fetched and
+    /// stored only once the XML has landed. `cover_replaced` stays false
+    /// here; the job logs the fetch / policy result.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cover_deferred: bool,
 }
 
 fn is_zero_u32(n: &u32) -> bool {
@@ -873,6 +880,17 @@ pub(crate) async fn apply_series_via_sidecar(
             issue_row,
             &issue_junctions,
         );
+        // Fill-missing (audit 2026-11 N-M4): the issue keeps every value it
+        // already has. Masked before the range overlay below, so a
+        // splitter's series identity still reaches the issues it covers.
+        if args.mode == ApplyMode::FillMissing {
+            provider_for_issue = crate::metadata::sidecar_compose::fill_missing_payload(
+                provider_for_issue,
+                issue_row,
+                series_row,
+                &issue_junctions,
+            );
+        }
         // No range covers this issue and its archive names a materially
         // different series (`Firestorm: The Nuclear Man` inside
         // `Firestorm (2004)`, before coverage has filed it): the main
@@ -928,6 +946,7 @@ pub(crate) async fn apply_series_via_sidecar(
             issue_user_pins: &issue_user_pins,
             series_user_pins: &series_user_pins,
             issue_junctions: &issue_junctions,
+            fill_missing: args.mode == ApplyMode::FillMissing,
         };
 
         let pins = crate::metadata::sidecar_compose::enumerate_suppressed_pins(&ctx);
@@ -1069,6 +1088,15 @@ pub(crate) async fn apply_issue_via_sidecar(
     detail: GenericMetadata,
     resolver: &ProvResolver<'_>,
 ) -> Result<ApplyOutcome, ApplyError> {
+    // The primary cover follows `apply_cover` + the overwrite policy, not
+    // the preview selection — the DB-direct `write_issue_fields` reads it
+    // the same way, and the single-candidate preview has no cover row, so
+    // the selection mask below would otherwise always drop it. A composite
+    // apply's merged payload carries a cover only when one was picked.
+    let cover_url = detail
+        .cover_image_url
+        .clone()
+        .filter(|u| args.apply_cover && !u.trim().is_empty());
     // The composer writes every provider value it is handed (unless the
     // field is user-pinned), so the preview pane's per-field opt-in has to
     // be applied to the payload itself — otherwise an unticked row still
@@ -1079,6 +1107,22 @@ pub(crate) async fn apply_issue_via_sidecar(
         .await?
     else {
         return Err(ApplyError::SeriesGone);
+    };
+    let issue_junctions =
+        crate::metadata::sidecar_compose::load_issue_junctions(&state.db, &row.id).await?;
+    // Fill-missing (audit 2026-11 N-M4, decision D-5): blank the provider
+    // values for every field the issue already has, so the composer keeps
+    // the current value and the provenance loop below — which skips
+    // provider-empty fields — stamps provider rows only for what it fills.
+    let detail = if args.mode == ApplyMode::FillMissing {
+        crate::metadata::sidecar_compose::fill_missing_payload(
+            detail,
+            row,
+            &series_row,
+            &issue_junctions,
+        )
+    } else {
+        detail
     };
 
     // Gather context — composer wants external_ids + user_pins on both
@@ -1120,9 +1164,6 @@ pub(crate) async fn apply_issue_via_sidecar(
         .await?
     };
 
-    let issue_junctions =
-        crate::metadata::sidecar_compose::load_issue_junctions(&state.db, &row.id).await?;
-
     let ctx = crate::metadata::sidecar_compose::ComposeContext {
         provider: &detail,
         issue: row,
@@ -1132,6 +1173,7 @@ pub(crate) async fn apply_issue_via_sidecar(
         issue_user_pins: &issue_user_pins,
         series_user_pins: &series_user_pins,
         issue_junctions: &issue_junctions,
+        fill_missing: args.mode == ApplyMode::FillMissing,
     };
 
     let comic_info = crate::metadata::sidecar_compose::compose_comicinfo(&ctx);
@@ -1227,6 +1269,27 @@ pub(crate) async fn apply_issue_via_sidecar(
         }
     };
     let reprints_prov = resolver.resolve(&MetadataField::Reprints.key());
+    // Primary cover (audit 2026-11 N-M3): neither schema carries a cover
+    // image and the archive's pages stay byte-identical, so — exactly like
+    // the DB-direct apply — the provider cover becomes an `issue_cover`
+    // row through `writers::apply_cover` (hashes computed at write time).
+    // The job fetches and writes it only after the rewrite landed.
+    let primary_cover = cover_url.map(|url| {
+        let cover_source = match resolver.resolve(&MetadataField::CoverPrimary.key()).set_by {
+            SetBy::Provider(s) => s,
+            _ => source,
+        };
+        crate::jobs::rewrite_sidecars::PrimaryCoverWrite {
+            identifier: detail
+                .identifiers
+                .iter()
+                .find(|i| i.source == cover_source)
+                .cloned(),
+            url,
+            policy: args.cover_overwrite_policy,
+        }
+    });
+    let cover_deferred = primary_cover.is_some();
     let post_apply = crate::jobs::rewrite_sidecars::PostRewriteWrites {
         provenance,
         variants,
@@ -1241,6 +1304,7 @@ pub(crate) async fn apply_issue_via_sidecar(
         // the scoped rescan can't set it — the job stamps it on success
         // (the DB-direct `apply_issue` does this via `bump_issue_sync`).
         bump_sync: true,
+        primary_cover,
     };
 
     use apalis::prelude::TaskSink;
@@ -1276,6 +1340,7 @@ pub(crate) async fn apply_issue_via_sidecar(
         enqueued_rewrite: true,
         suppressed_user_pins,
         variants_written,
+        cover_deferred,
         ..Default::default()
     };
     bump_run_counts(&state.db, args.run_id, &outcome).await?;

@@ -148,6 +148,28 @@ pub struct PostRewriteWrites {
     pub reprints_source: Option<crate::metadata::identifier::Source>,
     #[serde(default)]
     pub reprints_source_external_id: Option<String>,
+    /// Audit 2026-11 N-M3: the provider's primary cover when the apply ran
+    /// with `apply_cover`. Fetched and written through
+    /// `writers::apply_cover` (the DB-direct apply's writer, which computes
+    /// the perceptual hashes) only after the rewrite succeeded; a failed or
+    /// refused rewrite fetches nothing. `None` = leave the cover alone.
+    #[serde(default)]
+    pub primary_cover: Option<PrimaryCoverWrite>,
+}
+
+/// A provider primary cover deferred until the rewrite lands. Carries the
+/// URL, not the bytes: the job payload lives in Redis, and fetching after
+/// the rewrite means a failed rewrite never downloads anything.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PrimaryCoverWrite {
+    pub url: String,
+    /// The cover provider's issue identifier: the writer derives
+    /// `issue_cover.source_provider` / `source_external_id` from it, as on
+    /// the DB-direct path.
+    #[serde(default)]
+    pub identifier: Option<crate::metadata::identifier::Identifier>,
+    /// The apply's `cover_overwrite_policy`, enforced by the writer.
+    pub policy: crate::metadata::writers::CoverOverwritePolicy,
 }
 
 /// How the handler treated a failed rewrite. Decides the apalis return
@@ -510,6 +532,9 @@ pub async fn apply_post_rewrite_writes(
             tracing::warn!(issue_id, error = %e, "sidecar writeback: reprints write failed");
         }
     }
+    if let Some(cover) = &post.primary_cover {
+        write_primary_cover(state, issue_id, cover).await;
+    }
     if post.bump_sync {
         let am = issue::ActiveModel {
             id: Set(issue_id.to_owned()),
@@ -519,6 +544,82 @@ pub async fn apply_post_rewrite_writes(
         };
         if let Err(e) = am.update(&state.db).await {
             tracing::warn!(issue_id, error = %e, "sidecar writeback: last_metadata_sync_at stamp failed");
+        }
+    }
+}
+
+/// The deferred half of the sidecar apply's `apply_cover`: fetch through
+/// the shared provider-cover path (`writers::fetch_cover_bytes` — https
+/// only, SSRF-vetted, magic-sniffed; every provider's `fetch_cover` is that
+/// call) and store it with `writers::apply_cover` under the apply's
+/// overwrite policy, exactly as the DB-direct `write_issue_fields` does.
+/// Best-effort like the other deferred writes: the XML already landed, so a
+/// fetch or write failure is logged, not retried.
+async fn write_primary_cover(state: &AppState, issue_id: &str, cover: &PrimaryCoverWrite) {
+    use crate::metadata::writers::{self, CoverFetchError, CoverOverwritePolicy, CoverWrite};
+    use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter};
+    // The policy would refuse the write anyway: don't download for nothing.
+    if cover.policy != CoverOverwritePolicy::Always {
+        let has_primary = entity::issue_cover::Entity::find()
+            .filter(entity::issue_cover::Column::IssueId.eq(issue_id))
+            .filter(entity::issue_cover::Column::Kind.eq("primary"))
+            .filter(entity::issue_cover::Column::Ordinal.eq(0))
+            .filter(entity::issue_cover::Column::IsActive.eq(true))
+            .count(&state.db)
+            .await;
+        match has_primary {
+            Ok(0) => {}
+            Ok(_) => {
+                tracing::debug!(
+                    issue_id,
+                    "sidecar writeback: primary cover kept (overwrite policy)"
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(issue_id, error = %e, "sidecar writeback: primary cover lookup failed");
+                return;
+            }
+        }
+    }
+    let bytes = match writers::fetch_cover_bytes(&cover.url).await {
+        Ok(bytes) => bytes,
+        // A CDN behind a bot challenge (GCD): a clean skip, not a failure.
+        Err(CoverFetchError::Blocked { host }) => {
+            tracing::info!(
+                issue_id,
+                host,
+                "sidecar writeback: primary cover unavailable (host refuses server-side downloads)"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(issue_id, url = %cover.url, error = %e, "sidecar writeback: primary cover fetch failed");
+            return;
+        }
+    };
+    let write = CoverWrite {
+        issue_id,
+        kind: "primary",
+        ordinal: 0,
+        identifier: cover.identifier.as_ref(),
+        source_url: Some(&cover.url),
+        variant_label: None,
+        variant_artist_person_id: None,
+        bytes: &bytes,
+        width: None,
+        height: None,
+    };
+    match writers::apply_cover(&state.db, &state.cfg().data_path, write, cover.policy).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            tracing::debug!(
+                issue_id,
+                "sidecar writeback: primary cover kept (overwrite policy)"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(issue_id, error = %e, "sidecar writeback: primary cover write failed");
         }
     }
 }

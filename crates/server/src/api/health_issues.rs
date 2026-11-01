@@ -1031,6 +1031,7 @@ async fn enqueue_drift_flush_for_series(app: &AppState, series_ids: &[Uuid]) -> 
                 issue_user_pins: &issue_user_pins,
                 series_user_pins: &series_user_pins,
                 issue_junctions: &issue_junctions,
+                fill_missing: false,
             };
             let ci = crate::metadata::sidecar_compose::compose_comicinfo(&cctx);
             let mi = crate::metadata::sidecar_compose::compose_metroninfo(&cctx);
