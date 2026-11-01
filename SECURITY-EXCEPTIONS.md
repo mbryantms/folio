@@ -31,6 +31,30 @@ see `docs/dev/dependency-management.md`, "Accepted advisories".
 - **Delete when:** `deepmerge` ships a patched release, or `shadcn` /
   `@shadcn/registry` stops depending on it (`pnpm why deepmerge` empty).
 
+### GHSA-g3hv-75wg-m249 — `minimatch` <11.0.1 globParts amplification (moderate)
+
+- **Accepted:** 2026-11-01 (Dependabot alert 11), for the 3.x and 5.x copies
+  only.
+- **What:** with `optimizationLevel >= 2`, `firstPhasePreProcess()` clones
+  glob parts for every `**/../` and feeds them to a pairwise second phase, so
+  a crafted pattern costs quadratic CPU and memory. The fix shipped only on
+  the 11.x line.
+- **Remediated where it applies:** the 10.2.6 copy (eslint,
+  `@eslint/config-array`, `typescript-estree`, `@ts-morph/common`, glob) is the
+  only one carrying `firstPhasePreProcess()`, and it is overridden to 11.0.3 in
+  `pnpm-workspace.yaml`, together with glob 13 → 14.0.3 (GHSA-3g3m-2fjr-6pw4),
+  because glob 13 reads minimatch 10's RegExp sets.
+- **Why the rest stay:** minimatch 3.1.5 (`eslint-plugin-import`,
+  `eslint-plugin-jsx-a11y`, `eslint-plugin-react`) and 5.1.9
+  (`@redocly/openapi-core`) predate the v9 preprocessor, so the vulnerable
+  code isn't there, but the advisory's range covers them anyway. They can't
+  move to v11: their consumers `require("minimatch")(…)` as a bare function
+  and call `makeRe()`, and v11 has neither. They are lint / codegen tooling
+  only (`pnpm audit --prod` is clean) and match patterns from our own
+  config, never user input.
+- **Delete when:** `pnpm why minimatch` shows no copy below 11.0.1. Drop the
+  `minimatch` override at the same time.
+
 ## Resolved
 
 The `braces` <=3.0.3 stack-exhaustion advisory (GHSA-vfj7-8cjw-p6xm, high) was
