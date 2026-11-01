@@ -176,6 +176,11 @@ pub struct PrimaryCoverWrite {
     pub identifier: Option<crate::metadata::identifier::Identifier>,
     /// The apply's `cover_overwrite_policy`, enforced by the writer.
     pub policy: crate::metadata::writers::CoverOverwritePolicy,
+    /// The apply's admin-only `override_user_edits`: replace a primary an
+    /// admin chose ("Use as cover"). Without it the writer keeps the
+    /// choice, even one made after the apply was queued.
+    #[serde(default)]
+    pub override_user_edits: bool,
 }
 
 /// How the handler treated a failed rewrite. Decides the apalis return
@@ -647,13 +652,14 @@ async fn write_primary_cover(state: &AppState, issue_id: &str, cover: &PrimaryCo
         bytes: &bytes,
         width: None,
         height: None,
+        override_user_pin: cover.override_user_edits,
     };
     match writers::apply_cover(&state.db, &state.cfg().data_path, write, cover.policy).await {
         Ok(Some(_)) => {}
         Ok(None) => {
             tracing::debug!(
                 issue_id,
-                "sidecar writeback: primary cover kept (overwrite policy)"
+                "sidecar writeback: primary cover kept (overwrite policy or a chosen cover)"
             );
         }
         Err(e) => {

@@ -14,6 +14,7 @@ import {
 import { useTriggerScan } from "@/lib/api/mutations";
 import { validateCron } from "@/lib/api/cron";
 import { cn } from "@/lib/utils";
+import { LibraryStatsCard } from "./LibraryStatsCard";
 import { ScanModeMenu } from "./ScanModeMenu";
 
 /** Render the cron schedule as the actual next run time — the raw
@@ -97,6 +98,7 @@ export function LibraryOverview({ id }: { id: string }) {
           </Card>
         ))}
       </div>
+      <LibraryStatsCard librarySlug={id} />
       <Card>
         <CardContent className="grid gap-4 p-4 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div className="space-y-1">

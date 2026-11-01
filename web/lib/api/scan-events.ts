@@ -60,6 +60,9 @@ export function invalidationsForEvent(
         queryKeys.health(evt.library_id),
         queryKeys.adminHealthIssuesAll,
         queryKeys.removed(evt.library_id),
+        // The libraries list's figures; the overview card's per-library
+        // key sits under `library(id)` (and its slug alias) above.
+        queryKeys.libraryStatsAll,
         ["series"],
       ];
     case "scan.health_issue":

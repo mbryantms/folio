@@ -505,6 +505,60 @@
         }
       }
     },
+    "/api/admin/libraries/stats": {
+      "get": {
+        "operationId": "admin_library_stats_all",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryStatsView"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/libraries/{slug}/stats": {
+      "get": {
+        "operationId": "admin_library_stats_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryStatsView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
     "/api/admin/libraries/{slug}/thumbnails": {
       "delete": {
         "operationId": "admin_thumbs_delete_all",
@@ -10170,6 +10224,104 @@
           },
           "422": {
             "description": "page_index outside the archive"
+          }
+        }
+      }
+    },
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant": {
+      "delete": {
+        "summary": "Revert a chosen variant cover: the issue's cover is its archive cover\npage again (and the provider primary the pick displaced is restored).",
+        "operationId": "cover_pick_clear_issue_variant_cover",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueVariantCoverClearResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          }
+        }
+      }
+    },
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant/{variant_id}": {
+      "post": {
+        "summary": "Make one of the issue's provider variant covers its primary cover.",
+        "operationId": "cover_pick_set_issue_variant_cover",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "variant_id",
+            "in": "path",
+            "description": "`issue_cover` id of an active variant of this issue",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssueVariantCoverResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue or variant not found"
+          },
+          "422": {
+            "description": "the variant has no image to use, or it is not a recognised image"
+          },
+          "502": {
+            "description": "the variant image could not be downloaded"
           }
         }
       }
@@ -24155,7 +24307,8 @@
         "required": [
           "issue_id",
           "covers",
-          "fallback_primary_url"
+          "fallback_primary_url",
+          "variant_cover_chosen"
         ],
         "properties": {
           "covers": {
@@ -24170,6 +24323,10 @@
           },
           "issue_id": {
             "type": "string"
+          },
+          "variant_cover_chosen": {
+            "type": "boolean",
+            "description": "`true` when the primary cover is a variant an admin chose (\"Use as\ncover\"); `DELETE /series/{s}/issues/{i}/cover/variant` returns the\nissue to its archive cover page."
           }
         }
       },
@@ -25079,6 +25236,41 @@
           }
         }
       },
+      "IssueVariantCoverClearResp": {
+        "type": "object",
+        "required": [
+          "reverted",
+          "thumbnail_enqueued"
+        ],
+        "properties": {
+          "reverted": {
+            "type": "boolean",
+            "description": "`false` when the issue had no chosen variant cover (nothing changed)."
+          },
+          "thumbnail_enqueued": {
+            "type": "boolean",
+            "description": "`true` when a cover-thumbnail regeneration job was queued."
+          }
+        }
+      },
+      "IssueVariantCoverResp": {
+        "type": "object",
+        "required": [
+          "cover_id",
+          "thumbnail_enqueued"
+        ],
+        "properties": {
+          "cover_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Id of the new primary `issue_cover` row (a copy of the variant)."
+          },
+          "thumbnail_enqueued": {
+            "type": "boolean",
+            "description": "`true` when a cover-thumbnail regeneration job was queued (the\nlibrary has thumbnails enabled and no identical job was pending)."
+          }
+        }
+      },
       "LatestReleaseView": {
         "type": "object",
         "required": [
@@ -25278,6 +25470,86 @@
           "without_metron": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "LibraryStatsView": {
+        "type": "object",
+        "description": "Counts and disk usage for one library.",
+        "required": [
+          "library_id",
+          "slug",
+          "series_count",
+          "active_issue_count",
+          "removed_issue_count",
+          "archive_bytes",
+          "backup_stale"
+        ],
+        "properties": {
+          "active_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Readable issues still on disk (`state = 'active'`, not removed).\nEncrypted or malformed archives count in neither this nor\n`removed_issue_count`.",
+            "minimum": 0
+          },
+          "archive_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of the stored file size of the active issues, in bytes. Removed\nand unreadable issues are left out, so this is the readable\ncollection's size, not every byte under the root.",
+            "minimum": 0
+          },
+          "backup_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes of `.bak` / `.bak.N` archive backups from the stored tally;\n`null` until the daily backup sweep (or the health page) has\ncounted this library.",
+            "minimum": 0
+          },
+          "backup_counted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 — when the backup tally was counted."
+          },
+          "backup_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "backup_stale": {
+            "type": "boolean",
+            "description": "A scan changed the library since the tally was counted, so the\nbackup figures may be behind until the next recount (the health\npage or the daily sweep). `false` when there is no tally."
+          },
+          "last_scan_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 — when the library's last full, completed scan finished\n(`libraries.last_scan_at`; scoped and cancelled scans leave it)."
+          },
+          "library_id": {
+            "type": "string"
+          },
+          "removed_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Soft-removed issues (`removed_at` set, confirmed or not): the file\nleft the disk, or a duplicate copy was removed from the catalogue.",
+            "minimum": 0
+          },
+          "series_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series still on disk (`removed_at IS NULL`).",
+            "minimum": 0
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },

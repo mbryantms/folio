@@ -98,6 +98,7 @@ import type {
   EntityDetailView,
   EntityInsightsView,
   EntityListView,
+  LibraryStatsView,
   LibraryView,
   FsListResp,
   LogLevel,
@@ -873,6 +874,31 @@ export function useLibraryEventsInfinite(filters: {
       }>(`/admin/library-events${qs ? `?${qs}` : ""}`);
     },
     getNextPageParam: (page) => page.next_cursor ?? undefined,
+  });
+}
+
+/** Admin: series / issue counts and disk usage for every library
+ *  (`GET /admin/libraries/stats`). One row per library — bounded by the
+ *  library count, like `/libraries`, so no cursor. */
+export function useLibraryStatsAll({
+  enabled = true,
+}: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.libraryStatsAll,
+    queryFn: () => jsonFetch<LibraryStatsView[]>("/admin/libraries/stats"),
+    enabled,
+  });
+}
+
+/** Admin: the same figures for one library (overview tab). */
+export function useLibraryStats(libraryId: string) {
+  return useQuery({
+    queryKey: queryKeys.libraryStats(libraryId),
+    queryFn: () =>
+      jsonFetch<LibraryStatsView>(
+        `/admin/libraries/${encodeURIComponent(libraryId)}/stats`,
+      ),
+    enabled: !!libraryId,
   });
 }
 

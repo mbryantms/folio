@@ -865,7 +865,12 @@ export default async function IssuePage({
           </StackedTabsPanel>
 
           <StackedTabsPanel value="covers">
-            <CoverGallery issueId={issue.id} chrome="bare" />
+            <CoverGallery
+              issueId={issue.id}
+              chrome="bare"
+              seriesSlug={issue.series_slug}
+              issueSlug={issue.slug}
+            />
           </StackedTabsPanel>
 
           {hasAppearances && (

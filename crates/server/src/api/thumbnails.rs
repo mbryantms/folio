@@ -217,6 +217,37 @@ pub async fn thumb(
         _ => (ThumbFormat::default(), ThumbnailQuality::default()),
     };
 
+    // An admin-chosen cover ("Use as cover") renders instead of the
+    // archive page, exactly as the post-scan worker does it. A decode
+    // failure falls through to the archive page.
+    if matches!(variant, Variant::Cover | Variant::CoverSmall)
+        && let Some(bytes) =
+            thumbnails::chosen_cover_bytes(&app.db, &app.cfg().data_path, &row.id).await
+    {
+        let data_dir = app.cfg().data_path.clone();
+        let id_clone = row.id.clone();
+        let front_side = thumbnails::resolve_front_cover_side(&app.db, &row).await;
+        let r = tokio::task::spawn_blocking(move || {
+            thumbnails::encode_chosen_cover(
+                &data_dir, &id_clone, page_index, &bytes, variant, format, quality, front_side,
+            )
+        })
+        .await;
+        match r {
+            Ok(Ok(path)) => {
+                app.cache_thumb_path(cache_key, path.clone());
+                return serve_file(&path, &headers).await;
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(issue_id = %row.id, error = %e, "chosen cover thumb failed; using the archive page");
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "chosen cover thumb task failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    }
+
     let arc = match app
         .zip_lru
         .get_or_open(&row.id, std::path::Path::new(&row.file_path))
