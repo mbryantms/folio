@@ -38,7 +38,7 @@ import {
   useCreateSavedViewBatch,
 } from "@/lib/api/mutations";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
-import { useSavedViewResultsInfinite } from "@/lib/api/queries";
+import { useMe, useSavedViewResultsInfinite } from "@/lib/api/queries";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { SavedViewView } from "@/lib/api/types";
@@ -65,6 +65,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const results = useSavedViewResultsInfinite(view.id);
   const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
+  const isAdmin = useMe().data?.role === "admin";
 
   // Infinite-scroll sentinel — same shape as CblViewDetail / the creators
   // index. Depend on the three result fields (not the whole object) so the
@@ -221,14 +222,17 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
       <ViewHeader
         view={view}
         onEdit={() => setEditOpen(true)}
+        // Starts a metadata batch: admin-only (audit 2026-11 E16).
         extraMenuItems={
-          <DropdownMenuItem
-            onSelect={fetchViewMetadata}
-            disabled={createBatch.isPending}
-          >
-            <Sparkles className="mr-2 size-4" />
-            Fetch metadata for view
-          </DropdownMenuItem>
+          isAdmin ? (
+            <DropdownMenuItem
+              onSelect={fetchViewMetadata}
+              disabled={createBatch.isPending}
+            >
+              <Sparkles className="mr-2 size-4" />
+              Fetch metadata for view
+            </DropdownMenuItem>
+          ) : undefined
         }
         extraActions={
           <>

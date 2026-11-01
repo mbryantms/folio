@@ -511,6 +511,10 @@ function Actions({
     }
   };
   const createBatch = useCreateSeriesBatch(seriesSlug);
+  // Fetch (a batch) and the refresh wizard write; both are admin-only
+  // (E16). Readers keep "Match this series…" — search and candidates are
+  // readable, the dialog just has no Apply for them.
+  const isAdmin = useMe().data?.role === "admin";
   const fetchMetadata = (scope: "all" | "incomplete") => {
     createBatch.mutate(
       { scope },
@@ -558,7 +562,7 @@ function Actions({
           the chevron. With nothing to fetch there is no primary action, so
           a plain outline menu button replaces the split — never a dimmed
           amber face beside a lit chevron. */}
-      {incomplete != null && incomplete > 0 ? (
+      {!isAdmin ? null : incomplete != null && incomplete > 0 ? (
         <div className="inline-flex" role="group" aria-label="Fetch metadata">
           <Button
             type="button"
@@ -621,17 +625,19 @@ function Actions({
       >
         <Search className="mr-1.5 size-4" /> Match this series…
       </Button>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => {
-          setRefreshMounted(true);
-          setRefreshOpen(true);
-        }}
-      >
-        <ListChecks className="mr-1.5 size-4" /> Refresh this series…
-      </Button>
+      {isAdmin && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setRefreshMounted(true);
+            setRefreshOpen(true);
+          }}
+        >
+          <ListChecks className="mr-1.5 size-4" /> Refresh this series…
+        </Button>
+      )}
       {overview ? (
         <span className="text-muted-foreground text-xs sm:ml-auto">
           {last ? (
@@ -649,7 +655,7 @@ function Actions({
           </Link>
         </span>
       ) : null}
-      {refreshMounted && (
+      {isAdmin && refreshMounted && (
         <SeriesRefreshDialog
           open={refreshOpen}
           onOpenChange={setRefreshOpen}
@@ -1011,6 +1017,9 @@ function IssuesTable({
   const selectionBatch = useCreateSeriesSelectionBatch(seriesSlug);
   const accept = useAcceptSeriesIssues(seriesSlug);
   const router = useRouter();
+  // Both selection actions (fetch, mark complete) are admin-only (E16), so
+  // readers get the audit table without the selection column.
+  const isAdmin = useMe().data?.role === "admin";
 
   const fetchSelected = () => {
     const issue_ids = selectedRows.map((r) => r.id);
@@ -1147,7 +1156,7 @@ function IssuesTable({
         ))}
       </div>
 
-      {selectedRows.length > 0 ? (
+      {isAdmin && selectedRows.length > 0 ? (
         <div
           className="bg-secondary/60 border-border flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs"
           role="status"
@@ -1242,17 +1251,19 @@ function IssuesTable({
               >
                 <TableHeader className="bg-card sticky top-0 z-10">
                   <TableRow>
-                    <TableHead className="h-9 w-10">
-                      <Checkbox
-                        aria-label="Select all shown"
-                        checked={allSelected}
-                        onCheckedChange={() =>
-                          allSelected
-                            ? selection.clear()
-                            : selection.selectAll()
-                        }
-                      />
-                    </TableHead>
+                    {isAdmin && (
+                      <TableHead className="h-9 w-10">
+                        <Checkbox
+                          aria-label="Select all shown"
+                          checked={allSelected}
+                          onCheckedChange={() =>
+                            allSelected
+                              ? selection.clear()
+                              : selection.selectAll()
+                          }
+                        />
+                      </TableHead>
+                    )}
                     <TableHead className="h-9">Issue</TableHead>
                     <TableHead className="h-9">Cover date</TableHead>
                     <TableHead className="h-9">Tier</TableHead>
@@ -1268,6 +1279,7 @@ function IssuesTable({
                       key={r.id}
                       row={r}
                       seriesSlug={seriesSlug}
+                      selectable={isAdmin}
                       selected={selection.isSelected(r.id)}
                       onToggle={(ev) => selection.toggle(r.id, ev)}
                     />
@@ -1292,11 +1304,13 @@ function IssuesTable({
 function IssueRow({
   row,
   seriesSlug,
+  selectable,
   selected,
   onToggle,
 }: {
   row: SeriesMetadataIssueRow;
   seriesSlug: string;
+  selectable: boolean;
   selected: boolean;
   onToggle: (ev: { shiftKey?: boolean }) => void;
 }) {
@@ -1308,19 +1322,21 @@ function IssueRow({
       data-state={selected ? "selected" : undefined}
       className={cn(selected && "bg-secondary/40")}
     >
-      <TableCell className="py-1.5">
-        <Checkbox
-          aria-label={`Select ${row.label}`}
-          checked={selected}
-          onCheckedChange={() => onToggle({})}
-          onClick={(e) => {
-            if (e.shiftKey) {
-              e.preventDefault();
-              onToggle({ shiftKey: true });
-            }
-          }}
-        />
-      </TableCell>
+      {selectable && (
+        <TableCell className="py-1.5">
+          <Checkbox
+            aria-label={`Select ${row.label}`}
+            checked={selected}
+            onCheckedChange={() => onToggle({})}
+            onClick={(e) => {
+              if (e.shiftKey) {
+                e.preventDefault();
+                onToggle({ shiftKey: true });
+              }
+            }}
+          />
+        </TableCell>
+      )}
       <TableCell className="py-1.5">
         <Link href={issueUrl(seriesSlug, row.slug)} className="hover:underline">
           {row.label}

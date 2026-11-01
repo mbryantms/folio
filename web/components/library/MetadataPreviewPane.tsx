@@ -49,6 +49,10 @@ export type MetadataPreviewPaneProps = {
    *  Use theirs toggle (the server 403s `override_external_id_sources`
    *  from a non-admin: every conflict row is a user-pinned id). */
   canOverride: boolean;
+  /** `false` renders the diff read-only for readers: no Apply button
+   *  (the apply endpoints are admin-only, audit 2026-11 E16). Defaults
+   *  to `true`. */
+  canApply?: boolean;
   /** When set, BlockedByUser rows get a "Revert pin" button that
    *  clears the user pin via this callback. Returning a Promise lets
    *  the parent surface in-flight state on the button (greying out
@@ -176,6 +180,7 @@ export function MetadataPreviewPane({
   onApply,
   isApplying,
   canOverride,
+  canApply = true,
   onRevertPin,
 }: MetadataPreviewPaneProps) {
   // Per-row reverting state so the Revert-pin button can disable
@@ -450,6 +455,11 @@ export function MetadataPreviewPane({
         </div>
 
         <div className="flex items-center justify-end gap-2">
+          {!canApply && (
+            <p className="text-muted-foreground mr-auto text-xs">
+              Only an admin can apply metadata.
+            </p>
+          )}
           <Button
             variant="outline"
             onClick={onBack}
@@ -458,21 +468,23 @@ export function MetadataPreviewPane({
           >
             Cancel
           </Button>
-          <Button
-            onClick={onApply}
-            disabled={
-              isApplying || (selectedFields.size === 0 && newIdsCount === 0)
-            }
-            size="sm"
-          >
-            {isApplying ? (
-              <>
-                <Loader2 className="mr-1.5 size-4 animate-spin" /> Applying
-              </>
-            ) : (
-              `Apply ${selectedFields.size} ${selectedFields.size === 1 ? "change" : "changes"}`
-            )}
-          </Button>
+          {canApply && (
+            <Button
+              onClick={onApply}
+              disabled={
+                isApplying || (selectedFields.size === 0 && newIdsCount === 0)
+              }
+              size="sm"
+            >
+              {isApplying ? (
+                <>
+                  <Loader2 className="mr-1.5 size-4 animate-spin" /> Applying
+                </>
+              ) : (
+                `Apply ${selectedFields.size} ${selectedFields.size === 1 ? "change" : "changes"}`
+              )}
+            </Button>
+          )}
         </div>
       </div>
     </TooltipProvider>

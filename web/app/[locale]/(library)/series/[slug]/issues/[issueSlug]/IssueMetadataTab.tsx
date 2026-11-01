@@ -116,24 +116,27 @@ export function IssueMetadataTab({
             )}
             {/* Escape hatch (B4): a thin/unmatched issue can be marked complete
                 so it leaves the unmatched worklist. `accepted` is reversible
-                and never hides the gaps above. */}
+                and never hides the gaps above. Admin-only (E16): readers see
+                the state, not the toggle. */}
             {c.tier === "accepted" ? (
               <div className="space-y-1.5 pt-1">
                 <p className="text-muted-foreground text-xs">
                   Marked complete despite the gaps above — hidden from the
                   unmatched worklist.
                 </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={setAccepted.isPending}
-                  onClick={() => setAccepted.mutate(false)}
-                >
-                  <RotateCcw className="size-3.5" />
-                  Reopen for metadata
-                </Button>
+                {isAdmin && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={setAccepted.isPending}
+                    onClick={() => setAccepted.mutate(false)}
+                  >
+                    <RotateCcw className="size-3.5" />
+                    Reopen for metadata
+                  </Button>
+                )}
               </div>
-            ) : c.tier !== "complete" ? (
+            ) : c.tier !== "complete" && isAdmin ? (
               <div className="space-y-1.5 pt-1">
                 <p className="text-muted-foreground text-xs">
                   No usable provider match? Mark it complete to clear it from

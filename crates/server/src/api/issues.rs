@@ -1800,8 +1800,9 @@ pub struct BulkMetadataResp {
     /// AND `mode = "skip_if_set"`. (Counted once per issue, not per
     /// field.)
     pub skipped: u32,
-    /// Issues the caller doesn't have library access to. Filtered
-    /// silently; surfaced in the response for admin debugging.
+    /// Issues the caller doesn't have library access to. Always `0`
+    /// since the endpoint became admin-only (audit 2026-11 E16; admins see
+    /// every library); kept so the wire shape is unchanged.
     pub forbidden: u32,
     /// Issues whose id didn't resolve to an active row.
     pub not_found: u32,
@@ -1816,11 +1817,13 @@ pub struct BulkMetadataResp {
 
 /// Bulk-update a per-field patch across a list of issue ids.
 ///
-/// One transaction; batched by issue across the patch's fields. ACL
-/// is per-issue via the library access check. Skips per-field +
-/// per-issue when `mode = skip_if_set` AND the column is non-NULL.
-/// Emits one `admin.issue.bulk_metadata_update` audit row per call
-/// with `{ patch_keys, mode, updated_count, requested_count }`.
+/// One transaction; batched by issue across the patch's fields.
+/// Admin-only (audit 2026-11 E16): it writes the same columns and user
+/// pins as the admin-only issue PATCH, so it takes the same gate. The
+/// path keeps its historical `/me/` prefix to avoid an API break. Skips
+/// per-field + per-issue when `mode = skip_if_set` AND the column is
+/// non-NULL. Emits one `admin.issue.bulk_metadata_update` audit row per
+/// call with `{ patch_keys, mode, updated_count, requested_count }`.
 #[utoipa::path(
     operation_id = "issues_bulk_metadata",    patch,
     path = "/me/issues/bulk-metadata",
@@ -1828,13 +1831,14 @@ pub struct BulkMetadataResp {
     responses(
         (status = 200, body = BulkMetadataResp),
         (status = 400, description = "validation"),
+        (status = 403, description = "admin only"),
         (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
 pub async fn bulk_metadata(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Json(req): Json<BulkMetadataReq>,
 ) -> impl IntoResponse {
@@ -1904,18 +1908,14 @@ pub async fn bulk_metadata(
 
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
-    let mut forbidden: u32 = 0;
+    // Admin-only (E16): admins see every library, so nothing is filtered.
+    let forbidden: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
     let mut sidecar_rewrites: u32 = 0;
     let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
 
     for row in rows {
-        if !access::issue_visible(&app, &user, &row).await {
-            forbidden += 1;
-            continue;
-        }
-
         // Build the per-row active model, applying patch fields
         // conditionally on `mode`. Use helper closures so the
         // skip_if_set logic stays readable; the per-field touch

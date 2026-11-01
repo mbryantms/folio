@@ -129,6 +129,26 @@ describe("<MetadataCompareView>", () => {
     expect(html).toContain("From series coverage");
   });
 
+  it("renders the merge read-only for a reader (E16: composite apply is admin-only)", () => {
+    const html = renderToStaticMarkup(
+      createElement(MetadataCompareView, {
+        data: diff,
+        isLoading: false,
+        errorMessage: null,
+        fieldSources: defaultFieldSources(diff),
+        onRemoveColumn: noop,
+        onChangeFieldSource: noop,
+        onApply: noop,
+        onBack: noop,
+        isApplying: false,
+        canApply: false,
+      }),
+    );
+    expect(html).toContain("A space opera.");
+    expect(html).not.toContain("Apply merged");
+    expect(html).toContain("Only an admin can apply metadata.");
+  });
+
   it("calls onApply when the merged-apply button is clicked", () => {
     // renderToStaticMarkup can't dispatch events; assert the handler
     // wiring via a shallow prop check instead.

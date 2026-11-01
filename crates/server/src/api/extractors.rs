@@ -187,9 +187,12 @@ pub trait OverridesUserEdits {
 }
 
 /// JSON body whose `override_user_edits` flag is admin-gated **structurally**
-/// (SE-3, WP-6.3). The metadata apply endpoints serve every user with library
-/// access, so the handler can't take [`RequireAdmin`] outright — but the flag
-/// itself is admin-only. This extractor parses the body and, only when the
+/// (SE-3, WP-6.3). When this landed the metadata apply endpoints served every
+/// user with library access, so only the flag was admin-only. Since audit
+/// 2026-11 E16 the apply handlers take [`RequireAdmin`] themselves; they keep
+/// parsing through this extractor so the flag stays gated on its own (should
+/// an apply route ever open to readers again) and malformed bodies get the
+/// canonical envelope. This extractor parses the body and, only when the
 /// flag is set, runs the same [`RequireAdmin`] extractor the `/admin/*`
 /// handlers use; a non-admin gets its 403 (`auth.permission_denied`) before
 /// the handler body runs. Replaces the five inline

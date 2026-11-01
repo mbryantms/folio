@@ -13,10 +13,12 @@
 //!   whole series, like the Collection report — a series is domain-bounded.
 //! - `POST /series/{slug}/metadata/issues/accept` — the operator's
 //!   "metadata complete enough" acknowledgement over a selection (the
-//!   per-issue endpoint, batched).
+//!   per-issue endpoint, batched). Admin-only, like the per-issue
+//!   endpoint (audit 2026-11 E16).
 //!
-//! Everything here reads; the fetch actions on the tab are the existing
-//! batch / refresh / match endpoints.
+//! The two GETs read and serve any caller who can see the series; the
+//! fetch actions on the tab are the existing (admin-only) batch / refresh /
+//! match endpoints.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -37,7 +39,7 @@ use utoipa_axum::routes;
 
 use super::error;
 use super::external_ids::{ExternalIdRow, fetch_rows};
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
 use crate::metadata::completeness::CompletenessTier;
 use crate::metadata::tag_tool;
@@ -708,6 +710,7 @@ pub struct AcceptIssuesResp {
     request_body = AcceptIssuesReq,
     responses(
         (status = 200, body = AcceptIssuesResp),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
         (status = 422, description = "empty selection"),
     )
@@ -715,7 +718,7 @@ pub struct AcceptIssuesResp {
 #[handler]
 pub async fn accept_issues(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
     Json(req): Json<AcceptIssuesReq>,

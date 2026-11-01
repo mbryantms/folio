@@ -31,12 +31,16 @@ export function MatchOutcomeBanner({
   isApplying,
   onOneClickApply,
   onShowDetails,
+  canApply = true,
 }: {
   outcome: MatchOutcomeView;
   topCandidate: CandidateView | undefined;
   isApplying: boolean;
   onOneClickApply: () => void;
   onShowDetails: () => void;
+  /** `false` for readers: the strong-match banner keeps its copy but drops
+   *  the one-click Apply (admin-only, audit 2026-11 E16). */
+  canApply?: boolean;
 }) {
   if (outcome.kind === "no_match") {
     return null;
@@ -59,28 +63,43 @@ export function MatchOutcomeBanner({
               Strong match: {topName}
               {altBadge}
             </p>
-            <p className="text-muted-foreground text-xs">
-              Apply now to write every field. Use{" "}
-              <button
-                type="button"
-                onClick={onShowDetails}
-                className="underline underline-offset-2"
-              >
-                Show details
-              </button>{" "}
-              to pick fields first.
-            </p>
-          </div>
-          <Button size="sm" onClick={onOneClickApply} disabled={isApplying}>
-            {isApplying ? (
-              <>
-                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Applying
-              </>
+            {canApply ? (
+              <p className="text-muted-foreground text-xs">
+                Apply now to write every field. Use{" "}
+                <button
+                  type="button"
+                  onClick={onShowDetails}
+                  className="underline underline-offset-2"
+                >
+                  Show details
+                </button>{" "}
+                to pick fields first.
+              </p>
             ) : (
-              "Apply"
+              <p className="text-muted-foreground text-xs">
+                <button
+                  type="button"
+                  onClick={onShowDetails}
+                  className="underline underline-offset-2"
+                >
+                  Show details
+                </button>{" "}
+                to see what it would change. Only an admin can apply it.
+              </p>
             )}
-          </Button>
+          </div>
+          {canApply && (
+            <Button size="sm" onClick={onOneClickApply} disabled={isApplying}>
+              {isApplying ? (
+                <>
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                  Applying
+                </>
+              ) : (
+                "Apply"
+              )}
+            </Button>
+          )}
         </div>
       </div>
     );

@@ -22,7 +22,7 @@ import {
   usePauseMetadataSync,
   useResumeMetadataSync,
 } from "@/lib/api/mutations";
-import { useMetadataSyncStatus } from "@/lib/api/queries";
+import { useMe, useMetadataSyncStatus } from "@/lib/api/queries";
 
 export function MetadataSyncStatusCard({
   seriesSlug,
@@ -41,6 +41,8 @@ export function MetadataSyncStatusCard({
   chrome?: "card" | "bare";
 }) {
   const status = useMetadataSyncStatus(seriesSlug);
+  // Pause / resume is admin-only (audit 2026-11 E16): readers see the state.
+  const isAdmin = useMe().data?.role === "admin";
   const pause = usePauseMetadataSync(seriesSlug);
   const resume = useResumeMetadataSync(seriesSlug);
 
@@ -49,7 +51,7 @@ export function MetadataSyncStatusCard({
   const pending = pause.isPending || resume.isPending;
 
   const onToggle = (next: boolean) => {
-    if (next === paused || pending) return;
+    if (!isAdmin || next === paused || pending) return;
     if (next) pause.mutate(undefined);
     else resume.mutate(undefined);
   };
@@ -75,7 +77,7 @@ export function MetadataSyncStatusCard({
             aria-label={paused ? "Resume auto-sync" : "Pause auto-sync"}
             checked={!paused}
             onCheckedChange={(next) => onToggle(!next)}
-            disabled={pending || status.isLoading}
+            disabled={!isAdmin || pending || status.isLoading}
           />
         </div>
       </div>
