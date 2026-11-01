@@ -46,6 +46,7 @@ use crate::api::saved_views::{KIND_COLLECTION, SYSTEM_KEY_WANT_TO_READ, SavedVie
 use crate::api::series::{IssueSummaryView, SeriesView, hydrate_series};
 use crate::auth::CurrentUser;
 use crate::library::access;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -56,20 +57,30 @@ const ENTRY_KIND_SERIES: &str = "series";
 const ENTRY_KIND_ISSUE: &str = "issue";
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
-        .routes(routes!(list))
+    // Per-user buckets (E3, audit N-A5): every write shares
+    // `COLLECTION_WRITE`; the reorder gets its own `COLLECTION_REORDER` so
+    // a drag session can't starve adds and removes. Each sits in its own
+    // sub-router so the `route_layer` doesn't leak onto the reads.
+    let writes = OpenApiRouter::new()
         .routes(routes!(create))
         .routes(routes!(update))
         .routes(routes!(delete_one))
-        .routes(routes!(list_entries))
         .routes(routes!(add_entry))
         .routes(routes!(remove_entry))
-        .routes(routes!(reorder_entries))
         .routes(routes!(bulk_add_members))
         .routes(routes!(bulk_remove_members))
+        .route_layer(rate_limit::COLLECTION_WRITE.build_per_user());
+    let reorder = OpenApiRouter::new()
+        .routes(routes!(reorder_entries))
+        .route_layer(rate_limit::COLLECTION_REORDER.build_per_user());
+    OpenApiRouter::new()
+        .routes(routes!(list))
+        .routes(routes!(list_entries))
         .routes(routes!(export))
         .routes(routes!(next_up))
         .routes(routes!(reading_window))
+        .merge(writes)
+        .merge(reorder)
 }
 
 // ───── wire types ─────
@@ -347,7 +358,7 @@ fn to_view(
     SavedViewView {
         id: model.id.to_string(),
         user_id: model.user_id.map(|u| u.to_string()),
-        kind: model.kind.clone(),
+        kind: model.kind,
         name: model.name.clone(),
         description: model.description.clone(),
         custom_year_start: model.custom_year_start,
@@ -398,7 +409,7 @@ pub(crate) async fn ensure_want_to_read_seeded(
     let insert = saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(Some(user_id)),
-        kind: Set(KIND_COLLECTION.into()),
+        kind: Set(KIND_COLLECTION),
         system_key: Set(Some(SYSTEM_KEY_WANT_TO_READ.into())),
         name: Set("Want to Read".into()),
         description: Set(Some("Series and issues you want to read later.".into())),
@@ -532,7 +543,7 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
     operation_id = "collections_create",    post,
     path = "/me/collections",
     request_body = CreateCollectionReq,
-    responses((status = 201, body = SavedViewView))
+    responses((status = 201, body = SavedViewView), (status = 429, description = "collection write rate limit"))
 )]
 #[handler]
 pub async fn create(
@@ -552,7 +563,7 @@ pub async fn create(
     let saved = match (saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(Some(user.id)),
-        kind: Set(KIND_COLLECTION.into()),
+        kind: Set(KIND_COLLECTION),
         system_key: Set(None),
         name: Set(name.to_owned()),
         description: Set(description),
@@ -587,7 +598,7 @@ pub async fn create(
     path = "/me/collections/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateCollectionReq,
-    responses((status = 200, body = SavedViewView))
+    responses((status = 200, body = SavedViewView), (status = 429, description = "collection write rate limit"))
 )]
 #[handler]
 pub async fn update(
@@ -650,7 +661,7 @@ pub async fn update(
     operation_id = "collections_delete_one",    delete,
     path = "/me/collections/{id}",
     params(("id" = String, Path,)),
-    responses((status = 204))
+    responses((status = 204), (status = 429, description = "collection write rate limit"))
 )]
 #[handler]
 pub async fn delete_one(
@@ -909,7 +920,7 @@ pub async fn reading_window(
     path = "/me/collections/{id}/entries",
     params(("id" = String, Path,)),
     request_body = AddEntryReq,
-    responses((status = 201, body = CollectionEntryView))
+    responses((status = 201, body = CollectionEntryView), (status = 429, description = "collection write rate limit"))
 )]
 #[handler]
 pub async fn add_entry(
@@ -1057,6 +1068,7 @@ pub async fn add_entry(
         (status = 200, body = BulkAddMembersResp),
         (status = 403, description = "not owner"),
         (status = 404, description = "collection not found"),
+        (status = 429, description = "collection write rate limit"),
     )
 )]
 /// Multi-select Tranche M3: append many (entry_kind, ref_id) members
@@ -1281,6 +1293,7 @@ pub async fn bulk_add_members(
         (status = 200, body = BulkRemoveMembersResp),
         (status = 403, description = "not owner"),
         (status = 404, description = "collection not found"),
+        (status = 429, description = "collection write rate limit"),
     )
 )]
 /// Multi-select Tranche M4: drop many `(entry_kind, ref_id)` members
@@ -1394,7 +1407,7 @@ pub async fn bulk_remove_members(
     operation_id = "collections_remove_entry",    delete,
     path = "/me/collections/{id}/entries/{entry_id}",
     params(("id" = String, Path,), ("entry_id" = String, Path,)),
-    responses((status = 204))
+    responses((status = 204), (status = 429, description = "collection write rate limit"))
 )]
 #[handler]
 pub async fn remove_entry(
@@ -1429,7 +1442,7 @@ pub async fn remove_entry(
     path = "/me/collections/{id}/entries/reorder",
     params(("id" = String, Path,)),
     request_body = ReorderEntriesReq,
-    responses((status = 204))
+    responses((status = 204), (status = 429, description = "collection reorder rate limit"))
 )]
 #[handler]
 pub async fn reorder_entries(

@@ -120,7 +120,7 @@ async fn seed_view(app: &TestApp, owner: &Authed, name: &str) -> Uuid {
     SavedViewAM {
         id: Set(id),
         user_id: Set(Some(owner.user_id)),
-        kind: Set("filter_series".into()),
+        kind: Set(entity::saved_view::SavedViewKind::FilterSeries),
         system_key: Set(None),
         name: Set(name.into()),
         description: Set(None),

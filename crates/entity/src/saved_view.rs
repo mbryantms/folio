@@ -1,5 +1,64 @@
+use sea_orm::Iterable;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+
+// Storage contract (AR-7): `saved_views.kind` stays `TEXT`, pinned by
+// `saved_views_kind_chk` to exactly these strings; `string_value` and the
+// serde name are the same string (tests below). An unknown stored string
+// fails to load with a `DbErr`.
+
+/// What a saved view is: a filter over series or issues, a CBL reading
+/// list, a built-in system rail, or a user collection.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum SavedViewKind {
+    /// Inline filter DSL over series (M3).
+    #[sea_orm(string_value = "filter_series")]
+    FilterSeries,
+    /// The same DSL compiled over issues (WP-5.4).
+    #[sea_orm(string_value = "filter_issues")]
+    FilterIssues,
+    /// Wrapper around a `cbl_lists` row (M4).
+    #[sea_orm(string_value = "cbl")]
+    Cbl,
+    /// Global built-in rail; `system_key` set, `user_id IS NULL`.
+    #[sea_orm(string_value = "system")]
+    System,
+    /// User-owned manual list backed by `collection_entries`.
+    #[sea_orm(string_value = "collection")]
+    Collection,
+}
+
+impl SavedViewKind {
+    /// The stored / wire string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FilterSeries => "filter_series",
+            Self::FilterIssues => "filter_issues",
+            Self::Cbl => "cbl",
+            Self::System => "system",
+            Self::Collection => "collection",
+        }
+    }
+
+    /// The variant whose stored string is `s`, if any.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::iter().find(|v| v.as_str() == s)
+    }
+}
 
 /// Polymorphic saved view (saved-views M3). One row per view; `kind`
 /// discriminates between:
@@ -22,8 +81,8 @@ pub struct Model {
     #[sea_orm(nullable)]
     pub user_id: Option<Uuid>,
     /// `'filter_series'` (M3), `'filter_issues'` (WP-5.4), `'cbl'` (M4), `'system'` (built-in rail),
-    /// or `'collection'` (user-owned manual list).
-    pub kind: String,
+    /// or `'collection'` (user-owned manual list). See [`SavedViewKind`].
+    pub kind: SavedViewKind,
     /// Identifies the built-in rail when `kind = 'system'`
     /// (`'continue_reading'`, `'on_deck'`) or the per-user system
     /// collection when `kind = 'collection'` (`'want_to_read'`). NULL
@@ -94,3 +153,25 @@ impl Related<super::user::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enum_contract::assert_exact_strings;
+
+    #[test]
+    fn kind_round_trips_exact_db_strings() {
+        assert_exact_strings(
+            &[
+                (SavedViewKind::FilterSeries, "filter_series"),
+                (SavedViewKind::FilterIssues, "filter_issues"),
+                (SavedViewKind::Cbl, "cbl"),
+                (SavedViewKind::System, "system"),
+                (SavedViewKind::Collection, "collection"),
+            ],
+            SavedViewKind::as_str,
+            SavedViewKind::parse,
+            &["filter", "CBL", "page", ""],
+        );
+    }
+}

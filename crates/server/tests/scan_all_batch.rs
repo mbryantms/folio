@@ -46,12 +46,12 @@ async fn insert_run(
     ScanRunAM {
         id: Set(id),
         library_id: Set(library_id),
-        state: Set(state.to_owned()),
+        state: Set(entity::scan_run::ScanRunState::parse(state).unwrap()),
         started_at: Set(chrono::Utc::now().fixed_offset()),
         ended_at: Set(None),
         stats: Set(serde_json::json!({})),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(Some(batch_id)),
@@ -78,13 +78,13 @@ async fn scan_all_batch_finalizes_to_partial_failed() {
     let batch_id = Uuid::now_v7();
     BatchAM {
         id: Set(batch_id),
-        kind: Set("scan_all".into()),
+        kind: Set(entity::scan_batch::ScanBatchKind::ScanAll),
         actor_id: Set(None),
         force: Set(false),
         started_at: Set(chrono::Utc::now().fixed_offset()),
         ended_at: Set(None),
         library_count: Set(3),
-        state: Set("running".into()),
+        state: Set(entity::scan_batch::ScanBatchState::Running),
     }
     .insert(&db)
     .await
@@ -111,7 +111,8 @@ async fn scan_all_batch_finalizes_to_partial_failed() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        batch.state, "running",
+        batch.state,
+        entity::scan_batch::ScanBatchState::Running,
         "batch open while a member is queued"
     );
     assert!(batch.ended_at.is_none());
@@ -126,7 +127,10 @@ async fn scan_all_batch_finalizes_to_partial_failed() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(batch.state, "partial_failed");
+    assert_eq!(
+        batch.state,
+        entity::scan_batch::ScanBatchState::PartialFailed
+    );
     assert!(batch.ended_at.is_some());
 
     // The scanned runs carried the batch link through to completion.
@@ -136,5 +140,5 @@ async fn scan_all_batch_finalizes_to_partial_failed() {
         .unwrap()
         .unwrap();
     assert_eq!(run.batch_id, Some(batch_id));
-    assert_eq!(run.state, "complete");
+    assert_eq!(run.state, entity::scan_run::ScanRunState::Complete);
 }

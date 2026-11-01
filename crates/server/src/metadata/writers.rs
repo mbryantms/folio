@@ -2142,11 +2142,22 @@ pub struct CoverWrite<'a> {
     /// Width / height in pixels.
     pub width: Option<i32>,
     pub height: Option<i32>,
+    /// Provider writes of the primary slot only: replace a primary an
+    /// admin chose ("Use as cover", a `cover.primary` user pin). This is
+    /// the apply's admin-only `override_user_edits`; without it
+    /// [`apply_cover`] keeps the chosen cover. Ignored for other slots and
+    /// by [`set_user_primary_cover`].
+    pub override_user_pin: bool,
 }
 
 /// Persist a cover row + write the image bytes to disk. Honors
 /// [`CoverOverwritePolicy`] for `kind='primary' AND ordinal=0`;
 /// variants are always additive (the policy doesn't apply).
+///
+/// **User precedence.** A primary an admin chose
+/// ([`set_user_primary_cover`]) is never replaced unless
+/// [`CoverWrite::override_user_pin`] is set; then the chosen row and its
+/// pin go and the provider cover takes the slot.
 ///
 /// Slot uniqueness is a partial index — one **active** row per
 /// `(issue_id, kind, ordinal)`, any number of inactive ones (the
@@ -2179,16 +2190,20 @@ pub async fn apply_cover(
     // Policy gate applies only to the primary slot. The row lock
     // serializes concurrent replaces of the same slot.
     let mut replaced: Option<Uuid> = None;
+    // The admin-chosen primary an override replaces: deleted (not
+    // deactivated) so a later revert never restores it; its file goes
+    // once the swap committed.
+    let mut dropped_pick: Option<String> = None;
     if is_primary {
-        let existing_primary = issue_cover::Entity::find()
-            .filter(issue_cover::Column::IssueId.eq(write.issue_id))
-            .filter(issue_cover::Column::Kind.eq("primary"))
-            .filter(issue_cover::Column::Ordinal.eq(0))
-            .filter(issue_cover::Column::IsActive.eq(true))
-            .lock_exclusive()
-            .one(&txn)
+        let existing_primary = lock_active_primary(&txn, write.issue_id)
             .await
             .map_err(|e| cover_db_err("lookup", e))?;
+        let pinned = primary_cover_pinned(&txn, write.issue_id)
+            .await
+            .map_err(|e| cover_db_err("pin lookup", e))?;
+        if pinned && existing_primary.is_some() && !write.override_user_pin {
+            return Ok(None);
+        }
         if existing_primary.is_some()
             && matches!(
                 policy,
@@ -2197,7 +2212,21 @@ pub async fn apply_cover(
         {
             return Ok(None);
         }
-        replaced = existing_primary.map(|p| p.id);
+        if pinned {
+            // An override, or a pin left without an active primary: the
+            // provider cover takes the slot, so the pick and its pin go.
+            clear_primary_cover_pin(&txn, write.issue_id)
+                .await
+                .map_err(|e| cover_db_err("pin clear", e))?;
+            if let Some(prev) = existing_primary {
+                delete_cover_row(&txn, prev.id)
+                    .await
+                    .map_err(|e| cover_db_err("delete pick", e))?;
+                dropped_pick = Some(prev.local_path);
+            }
+        } else {
+            replaced = existing_primary.map(|p| p.id);
+        }
     }
 
     let cover_id = Uuid::now_v7();
@@ -2218,7 +2247,228 @@ pub async fn apply_cover(
         remove_cover_file(&on_disk);
         return Err(e);
     }
+    if dropped_pick.is_some() {
+        // The cover thumbnail was rendered from the pick; drop it so the
+        // next request renders the archive page again.
+        crate::library::thumbnails::wipe_issue_cover(data_path, write.issue_id);
+    }
+    remove_dropped_cover_file(data_path, dropped_pick.as_deref());
     Ok(Some(cover_id))
+}
+
+/// Make `write` the issue's primary cover as an **admin's choice** ("Use
+/// as cover" on a provider variant). Same storage as [`apply_cover`] — a
+/// new active `primary/0` row plus its file under `data_path`, pHash /
+/// dHash / aHash computed at write time — and, in the same transaction, a
+/// `cover.primary` user pin, so a later provider apply keeps the choice
+/// (user precedence, DB-direct and sidecar alike). Ignores the overwrite
+/// policy and [`CoverWrite::override_user_pin`].
+///
+/// The primary it displaces is **deactivated** when it was a provider or
+/// scanned row (so [`clear_user_primary_cover`] can restore it) and
+/// **deleted** with its file when it was an earlier pick, so an issue
+/// holds at most one chosen cover row. The pick never touches the
+/// archive: on a writeback library the primary cover is an `issue_cover`
+/// row too, so no sidecar rewrite follows.
+pub async fn set_user_primary_cover(
+    db: &sea_orm::DatabaseConnection,
+    data_path: &std::path::Path,
+    write: CoverWrite<'_>,
+) -> Result<Uuid, std::io::Error> {
+    if write.kind != "primary" || write.ordinal != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "a chosen cover always takes the primary slot",
+        ));
+    }
+    let kind = sniff_cover(write.bytes).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "cover bytes are not a recognised image (jpeg/png/gif/webp/avif/jxl)",
+        )
+    })?;
+
+    let txn = db.begin().await.map_err(|e| cover_db_err("begin", e))?;
+    let existing_primary = lock_active_primary(&txn, write.issue_id)
+        .await
+        .map_err(|e| cover_db_err("lookup", e))?;
+    let pinned = primary_cover_pinned(&txn, write.issue_id)
+        .await
+        .map_err(|e| cover_db_err("pin lookup", e))?;
+    let mut replaced: Option<Uuid> = None;
+    let mut dropped_pick: Option<String> = None;
+    if let Some(prev) = existing_primary {
+        if pinned {
+            delete_cover_row(&txn, prev.id)
+                .await
+                .map_err(|e| cover_db_err("delete pick", e))?;
+            dropped_pick = Some(prev.local_path);
+        } else {
+            replaced = Some(prev.id);
+        }
+    }
+
+    let cover_id = Uuid::now_v7();
+    let rel_path = cover_rel_path(write.issue_id, cover_id, kind.ext());
+    let on_disk = data_path.join(&rel_path);
+    if let Some(parent) = on_disk.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&on_disk, write.bytes)?;
+
+    let written = async {
+        insert_cover_row(&txn, &write, cover_id, rel_path, replaced).await?;
+        write_field_provenance(
+            &txn,
+            "issue",
+            write.issue_id,
+            crate::metadata::MetadataField::CoverPrimary,
+            SetBy::User,
+            None,
+        )
+        .await
+        .map_err(|e| cover_db_err("pin", e))?;
+        txn.commit().await.map_err(|e| cover_db_err("commit", e))
+    }
+    .await;
+    if let Err(e) = written {
+        // Rolled back: the displaced primary is still active and no row
+        // points at the file just written.
+        remove_cover_file(&on_disk);
+        return Err(e);
+    }
+    remove_dropped_cover_file(data_path, dropped_pick.as_deref());
+    Ok(cover_id)
+}
+
+/// Undo [`set_user_primary_cover`]: delete the chosen primary row (and its
+/// file) and its `cover.primary` pin, and reactivate the provider primary
+/// the pick displaced (the newest inactive `primary/0` row that is not the
+/// scanner's `archive_extracted` hash row), if there is one. The cover
+/// thumbnail then renders from the archive's cover page again. Returns
+/// `false`, changing nothing, when the issue has no chosen cover.
+pub async fn clear_user_primary_cover(
+    db: &sea_orm::DatabaseConnection,
+    data_path: &std::path::Path,
+    issue_id: &str,
+) -> Result<bool, DbErr> {
+    let txn = db.begin().await?;
+    let existing_primary = lock_active_primary(&txn, issue_id).await?;
+    if !primary_cover_pinned(&txn, issue_id).await? {
+        return Ok(false);
+    }
+    clear_primary_cover_pin(&txn, issue_id).await?;
+    let mut dropped_pick: Option<String> = None;
+    if let Some(prev) = existing_primary {
+        delete_cover_row(&txn, prev.id).await?;
+        dropped_pick = Some(prev.local_path);
+    }
+    let displaced = issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Ordinal.eq(0))
+        .filter(issue_cover::Column::IsActive.eq(false))
+        .filter(
+            sea_orm::Condition::any()
+                .add(issue_cover::Column::SourceProvider.is_null())
+                .add(issue_cover::Column::SourceProvider.ne("archive_extracted")),
+        )
+        .order_by_desc(issue_cover::Column::FetchedAt)
+        .one(&txn)
+        .await?;
+    if let Some(row) = displaced {
+        issue_cover::Entity::update_many()
+            .col_expr(
+                issue_cover::Column::IsActive,
+                sea_orm::sea_query::Expr::value(true),
+            )
+            .filter(issue_cover::Column::Id.eq(row.id))
+            .exec(&txn)
+            .await?;
+    }
+    txn.commit().await?;
+    remove_dropped_cover_file(data_path, dropped_pick.as_deref());
+    Ok(true)
+}
+
+/// The issue's admin-chosen primary cover (the active `primary/0` row
+/// under a `cover.primary` user pin) when its image is stored locally.
+/// The cover thumbnail (cards, the issue header, OPDS) renders from it
+/// instead of the archive's cover page; `None` means the archive page.
+pub async fn user_primary_cover<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+) -> Result<Option<issue_cover::Model>, DbErr> {
+    if !primary_cover_pinned(db, issue_id).await? {
+        return Ok(None);
+    }
+    issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Ordinal.eq(0))
+        .filter(issue_cover::Column::IsActive.eq(true))
+        .filter(issue_cover::Column::LocalPath.ne(""))
+        .one(db)
+        .await
+}
+
+/// `true` when the issue's primary cover carries a `cover.primary` user
+/// pin (an admin chose it).
+pub async fn primary_cover_pinned<C: ConnectionTrait>(
+    db: &C,
+    issue_id: &str,
+) -> Result<bool, DbErr> {
+    Ok(fetch_user_pinned_fields(db, "issue", issue_id)
+        .await?
+        .contains(&crate::metadata::MetadataField::CoverPrimary.key()))
+}
+
+async fn clear_primary_cover_pin<C: ConnectionTrait>(db: &C, issue_id: &str) -> Result<(), DbErr> {
+    clear_issue_user_pin(
+        db,
+        issue_id,
+        &crate::metadata::MetadataField::CoverPrimary.key(),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// The issue's active `primary/0` row. The issue row is locked first so
+/// every write of the slot serializes on it: locking only the cover row
+/// lets a second writer that waited on it see no active row once the
+/// first committed, and its insert would then break the one-active-row
+/// index.
+async fn lock_active_primary(
+    txn: &sea_orm::DatabaseTransaction,
+    issue_id: &str,
+) -> Result<Option<issue_cover::Model>, DbErr> {
+    issue::Entity::find_by_id(issue_id)
+        .select_only()
+        .column(issue::Column::Id)
+        .lock_exclusive()
+        .into_tuple::<String>()
+        .one(txn)
+        .await?;
+    issue_cover::Entity::find()
+        .filter(issue_cover::Column::IssueId.eq(issue_id))
+        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Ordinal.eq(0))
+        .filter(issue_cover::Column::IsActive.eq(true))
+        .lock_exclusive()
+        .one(txn)
+        .await
+}
+
+async fn delete_cover_row(txn: &sea_orm::DatabaseTransaction, id: Uuid) -> Result<(), DbErr> {
+    issue_cover::Entity::delete_by_id(id).exec(txn).await?;
+    Ok(())
+}
+
+/// Remove the file of a chosen cover row that a committed write deleted.
+fn remove_dropped_cover_file(data_path: &std::path::Path, rel: Option<&str>) {
+    if let Some(rel) = rel.filter(|r| !r.is_empty()) {
+        remove_cover_file(&data_path.join(rel));
+    }
 }
 
 fn cover_db_err(ctx: &str, e: DbErr) -> std::io::Error {

@@ -29,17 +29,28 @@ use crate::api::libraries::{ScanMode, ScanResp};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
 use crate::middleware::RequestContext;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
+    // Per-user buckets (E3, audit N-A5), each in its own sub-router so the
+    // `route_layer` stays off the sibling routes: the list (also the global
+    // search's series source) under `SEARCH`, the PATCH under
+    // `METADATA_WRITE`.
+    let search = OpenApiRouter::new()
         .routes(routes!(list))
+        .route_layer(rate_limit::SEARCH.build_per_user());
+    let writes = OpenApiRouter::new()
+        .routes(routes!(update_series))
+        .route_layer(rate_limit::METADATA_WRITE.build_per_user());
+    OpenApiRouter::new()
         .routes(routes!(get_one))
         .routes(routes!(collection_report))
-        .routes(routes!(update_series))
         .routes(routes!(scan_series))
         .routes(routes!(list_issues))
         .routes(routes!(resume))
+        .merge(search)
+        .merge(writes)
 }
 
 /// Resolve a series slug to its row. Standard 404 envelope on miss.
@@ -435,6 +446,7 @@ where
         (status = 200, body = SeriesView),
         (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -2219,7 +2231,7 @@ fn compute_next_series_cursor(
 #[utoipa::path(
     operation_id = "series_list",    get,
     path = "/series",
-    responses((status = 200, body = SeriesListView))
+    responses((status = 200, body = SeriesListView), (status = 429, description = "search rate limit"))
 )]
 #[handler]
 pub async fn list(

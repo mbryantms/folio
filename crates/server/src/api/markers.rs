@@ -134,13 +134,18 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(bulk_delete))
         .routes(routes!(restore))
         .route_layer(rate_limit::MARKER_WRITE.build());
+    // The global search's marker source: per-user `SEARCH` bucket (E3,
+    // audit N-A5).
+    let search = OpenApiRouter::new()
+        .routes(routes!(search))
+        .route_layer(rate_limit::SEARCH.build_per_user());
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(count))
-        .routes(routes!(search))
         .routes(routes!(tags_index))
         .routes(routes!(list_for_issue))
         .merge(writes)
+        .merge(search)
 }
 
 // ────────────── DTOs ──────────────
@@ -1115,7 +1120,7 @@ pub async fn count(State(app): State<AppState>, user: CurrentUser) -> impl IntoR
         ("q" = String, Query,),
         ("limit" = Option<u64>, Query,),
     ),
-    responses((status = 200, body = MarkerSearchView))
+    responses((status = 200, body = MarkerSearchView), (status = 429, description = "search rate limit"))
 )]
 #[handler]
 pub async fn search(

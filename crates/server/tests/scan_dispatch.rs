@@ -512,5 +512,5 @@ async fn returned_scan_id_is_used_by_worker_scan_run() {
         .expect("worker should persist scan_runs row with returned id");
     assert_eq!(row.id, scan_id);
     assert_eq!(row.library_id, library_id);
-    assert_eq!(row.state, "complete");
+    assert_eq!(row.state, entity::scan_run::ScanRunState::Complete);
 }

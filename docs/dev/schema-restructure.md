@@ -477,8 +477,28 @@ Rust enum, not a `String`, so a typo is a compile error and an
   still binds and reads plain strings; those sites keep working and can
   be typed later.
 
+**E4 batch 1** converted `scan_runs.{state,kind}`
+(`ScanRunState`, `ScanRunKind`), `scan_batch.{kind,state}`
+(`ScanBatchKind`, `ScanBatchState`), `saved_views.kind`
+(`SavedViewKind`), `log_widgets.kind` (`LogWidgetKind`) and
+`user_sidebar_entries.kind` (`SidebarEntryKind`, part of the composite
+primary key). Conventions it added:
+
+- Each enum has `as_str()` and `parse(&str) -> Option<Self>`; the unit
+  tests go through `entity::enum_contract::assert_exact_strings`, which
+  pins every variant both ways and rejects a list of unknown strings.
+- **Request bodies and query params keep `String`** and the handler
+  calls `parse`, so an unknown value keeps its existing 422 + message
+  (not a body-deserialize error) and the OpenAPI request side does not
+  narrow. Only response fields carry the enum.
+- Existing `KIND_*` constants (`api::saved_views`, `api::sidebar_layout`)
+  became typed aliases of the variants, so call sites and `match` arms
+  read as before.
+- `scan_runs.kind` also holds `deep_validate` (the page-decode probe);
+  the History filter still rejects it as a `?kind=` value.
+
 **E4 backlog** — the remaining stringly `role` / `state` / `kind`
-entity fields, as of `main` at the B8 merge:
+entity fields, after E4 batch 1:
 
 | Column | Entity field |
 |---|---|
@@ -486,19 +506,12 @@ entity fields, as of `main` at the B8 merge:
 | `issue_covers.kind` | `crates/entity/src/issue_cover.rs:16` |
 | `issue_credits.role` | `crates/entity/src/issue_credit.rs:12` |
 | `library_health_issues.kind` | `crates/entity/src/library_health_issue.rs:26` |
-| `log_widgets.kind` | `crates/entity/src/log_widget.rs:22` |
 | `markers.kind` | `crates/entity/src/marker.rs:26` |
-| `saved_views.kind` | `crates/entity/src/saved_view.rs:26` |
-| `scan_batches.kind` | `crates/entity/src/scan_batch.rs:16` |
-| `scan_batches.state` | `crates/entity/src/scan_batch.rs:30` |
-| `scan_runs.state` | `crates/entity/src/scan_run.rs:11` |
-| `scan_runs.kind` | `crates/entity/src/scan_run.rs:21` |
 | `series_covers.kind` | `crates/entity/src/series_cover.rs:15` |
 | `series_credits.role` | `crates/entity/src/series_credit.rs:13` |
 | `series_external_relationships.kind` | `crates/entity/src/series_external_relationship.rs:22` |
 | `series_relationships.kind` | `crates/entity/src/series_relationship.rs:29` |
 | `series_relationship_suggestions.kind` | `crates/entity/src/series_relationship_suggestion.rs:32` |
-| `user_sidebar_entries.kind` | `crates/entity/src/user_sidebar_entry.rs:19` |
 
 The two credit `role` columns hold the canonical credit-role table
 (`metadata::provider::canonical_credit_role`); check whether any

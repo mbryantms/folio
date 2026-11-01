@@ -477,7 +477,7 @@ pub struct ScanPreviewView {
     pub known_issue_count: u64,
     pub thumbnail_backlog: u64,
     pub last_scan_duration_ms: Option<u64>,
-    pub last_scan_state: Option<String>,
+    pub last_scan_state: Option<scan_run::ScanRunState>,
     pub watcher_status: String,
     pub reason: String,
 }
@@ -1075,13 +1075,13 @@ pub async fn scan_all(
     let now = chrono::Utc::now().fixed_offset();
     if let Err(e) = (scan_batch::ActiveModel {
         id: ActiveValue::Set(batch_id),
-        kind: ActiveValue::Set("scan_all".to_owned()),
+        kind: ActiveValue::Set(scan_batch::ScanBatchKind::ScanAll),
         actor_id: ActiveValue::Set(Some(actor.id)),
         force: ActiveValue::Set(req.force),
         started_at: ActiveValue::Set(now),
         ended_at: ActiveValue::Set(None),
         library_count: ActiveValue::Set(0),
-        state: ActiveValue::Set("running".to_owned()),
+        state: ActiveValue::Set(scan_batch::ScanBatchState::Running),
     }
     .insert(&app.db)
     .await)
@@ -1139,7 +1139,7 @@ pub async fn scan_all(
         ..Default::default()
     };
     if newly_enqueued == 0 {
-        batch_update.state = ActiveValue::Set("complete".to_owned());
+        batch_update.state = ActiveValue::Set(scan_batch::ScanBatchState::Complete);
         batch_update.ended_at = ActiveValue::Set(Some(chrono::Utc::now().fixed_offset()));
     }
     if let Err(e) = batch_update.update(&app.db).await {
@@ -1308,7 +1308,7 @@ pub async fn scan_preview(
         .as_ref()
         .and_then(|scan| scan.stats.get("elapsed_ms"))
         .and_then(serde_json::Value::as_u64);
-    let last_scan_state = last_scan.as_ref().map(|scan| scan.state.clone());
+    let last_scan_state = last_scan.as_ref().map(|scan| scan.state);
 
     let series_rows = series::Entity::find()
         .filter(series::Column::LibraryId.eq(row.id))

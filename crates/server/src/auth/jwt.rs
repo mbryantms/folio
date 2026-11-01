@@ -111,6 +111,23 @@ impl JwtKeys {
         Ok(decode::<AccessClaims>(token, &self.dec, &v)?.claims)
     }
 
+    /// The `sub` of an access token we signed, **expired or not**: the
+    /// signature, issuer and audience are checked, `exp` is not. Only for
+    /// attribution (the per-user rate-limit key), never for authentication;
+    /// an expired token still names its genuine user, so it is limited
+    /// against that user's own budget and the handler's 401 still reaches
+    /// the client that needs to refresh.
+    pub fn access_subject_ignoring_expiry(&self, token: &str) -> Option<String> {
+        let mut v = Validation::new(Algorithm::EdDSA);
+        v.set_audience(&[self.audience.as_str(), LEGACY_AUDIENCE]);
+        v.set_issuer(&[&self.issuer]);
+        v.validate_exp = false;
+        v.required_spec_claims.remove("exp");
+        decode::<AccessClaims>(token, &self.dec, &v)
+            .ok()
+            .map(|t| t.claims.sub)
+    }
+
     pub fn verify_refresh(&self, token: &str) -> anyhow::Result<RefreshClaims> {
         let mut v = Validation::new(Algorithm::EdDSA);
         v.validate_aud = false; // refresh tokens don't carry aud
@@ -171,5 +188,30 @@ mod tests {
         let claims = k.verify_refresh(&tok).unwrap();
         assert_eq!(claims.sub, uid.to_string());
         assert_eq!(claims.jti, sid.to_string());
+    }
+
+    /// The rate-limit key reads the subject of an expired token we signed,
+    /// but never of a token signed by another key or of a refresh token.
+    #[test]
+    fn access_subject_ignores_expiry_but_not_the_signature() {
+        let k = keys();
+        let uid = Uuid::now_v7();
+        let expired = k.issue_access(uid, "user", 1, Duration::hours(-2)).unwrap();
+        assert!(k.verify_access(&expired).is_err());
+        assert_eq!(
+            k.access_subject_ignoring_expiry(&expired),
+            Some(uid.to_string())
+        );
+
+        let foreign = keys()
+            .issue_access(uid, "user", 1, Duration::minutes(15))
+            .unwrap();
+        assert_eq!(k.access_subject_ignoring_expiry(&foreign), None);
+
+        let refresh = k
+            .issue_refresh(uid, Uuid::now_v7(), Duration::days(30))
+            .unwrap();
+        assert_eq!(k.access_subject_ignoring_expiry(&refresh), None);
+        assert_eq!(k.access_subject_ignoring_expiry("not-a-jwt"), None);
     }
 }
