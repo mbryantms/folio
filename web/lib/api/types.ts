@@ -41,6 +41,7 @@ type Schemas = components["schemas"];
 // the next `just openapi` when the Rust source moves. To change one of
 // these shapes, change the Rust DTO.
 export type LibraryView = Schemas["LibraryView"];
+export type LibraryStatsView = Schemas["LibraryStatsView"];
 export type CreateLibraryReq = Schemas["CreateLibraryReq"];
 export type UpdateLibraryReq = Schemas["UpdateLibraryReq"];
 export type HashBackfillView = Schemas["HashBackfillView"];
