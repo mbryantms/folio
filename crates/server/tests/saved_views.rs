@@ -675,6 +675,78 @@ async fn ends_with_matches_suffix_only() {
     assert_eq!(names, vec!["Batman Annual".to_owned()], "names: {names:?}");
 }
 
+/// E9 (audit-2026-11): the text ops match `%`, `_` and `\` in the value
+/// literally — a wildcard-looking value no longer matches more than it
+/// says — and stay case-sensitive. A plain value matches as before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn text_ops_match_like_metacharacters_literally() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "like-esc@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let all = [
+        "X_Men",
+        "X-Men",
+        "XxMen",
+        "100% Wolverine",
+        "1000 Days",
+        r"Back\",
+        "Back",
+        "x_men",
+    ];
+    let _ = seed_series_with_genre(&app, "like-esc-lib", "Action", &all).await;
+
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("contains", "X_Men", &["X_Men"]),
+        ("contains", "_", &["X_Men", "x_men"]),
+        ("contains", "%", &["100% Wolverine"]),
+        ("contains", r"\", &[r"Back\"]),
+        ("starts_with", "100%", &["100% Wolverine"]),
+        ("starts_with", "X_", &["X_Men"]),
+        ("ends_with", r"\", &[r"Back\"]),
+        ("ends_with", "_Men", &["X_Men"]),
+        // Plain values: unchanged substring / prefix / suffix behaviour,
+        // still case-sensitive (`x_men` is not an `X` prefix).
+        ("contains", "Men", &["X-Men", "X_Men", "XxMen"]),
+        ("starts_with", "X", &["X-Men", "X_Men", "XxMen"]),
+        ("ends_with", "Back", &["Back"]),
+    ];
+    for (op, value, want) in cases {
+        let mut got = run_filter_for_names(
+            &app,
+            &auth,
+            &format!("{op} {value}"),
+            "name",
+            op,
+            serde_json::json!(value),
+        )
+        .await;
+        got.sort();
+        let mut want: Vec<String> = want.iter().map(|s| (*s).to_owned()).collect();
+        want.sort();
+        assert_eq!(got, want, "{op} {value:?}");
+    }
+
+    // `not_contains` keeps everything but the literal match: `X-Men` and
+    // `XxMen` would have been dropped by an unescaped `%X_Men%`.
+    let mut got = run_filter_for_names(
+        &app,
+        &auth,
+        "not X_Men",
+        "name",
+        "not_contains",
+        serde_json::json!("X_Men"),
+    )
+    .await;
+    got.sort();
+    let mut want: Vec<String> = all
+        .iter()
+        .filter(|n| **n != "X_Men")
+        .map(|s| (*s).to_owned())
+        .collect();
+    want.sort();
+    assert_eq!(got, want);
+}
+
 // ─── library-filters-richer-1.0 M2 / M3 / M4 fixtures ────────────────
 
 /// Seed one series with `n` issues, all `sort_number = 1.0 + i`.

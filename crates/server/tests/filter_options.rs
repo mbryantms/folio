@@ -447,6 +447,49 @@ async fn prefix_filter_narrows_results() {
     assert_eq!(values, vec!["demon".to_owned()]);
 }
 
+/// E9 (audit-2026-11): `?q=` is a literal prefix — `_`, `%` and `\` in it
+/// are not LIKE wildcards / escapes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prefix_filter_matches_like_metacharacters_literally() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "admin@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+
+    seed_library_with_metadata(
+        &app,
+        "esc-lib",
+        "Escapes",
+        &["Horror"],
+        &["x_men", "xymen", "100%", "1000", r"a\b", "ab"],
+        &[],
+    )
+    .await;
+
+    // (encoded q, expected tags): `_` = %5F is sent raw, `%` = %25, `\` = %5C.
+    for (q, want) in [
+        ("x_", vec!["x_men"]),
+        ("100%25", vec!["100%"]),
+        ("a%5C", vec![r"a\b"]),
+        ("x", vec!["x_men", "xymen"]),
+    ] {
+        let (status, json) = http(
+            &app,
+            Method::GET,
+            &format!("/api/filter-options/tags?q={q}"),
+            Some(&auth),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "q={q}: {json:#?}");
+        let values: Vec<String> = json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(values, want, "q={q}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn credits_endpoint_filters_by_role() {
     let app = TestApp::spawn().await;
