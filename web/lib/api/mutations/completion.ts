@@ -6,10 +6,14 @@
  * change viewer-scoped figures on every series surface — card dots, the
  * series page's Collection badge and tab, and `collection_completeness`
  * filter results — so both hooks invalidate the same set.
+ *
+ * Deliberately not re-exported from the `mutations` barrel: the reader
+ * imports the barrel and its first-load budget has no room for this.
  */
 import { useQueryClient } from "@tanstack/react-query";
 
 import { queryKeys } from "../queries";
+import { queryKeyPrefixes } from "../query-key-prefixes";
 import type {
   MeView,
   SeriesCompletionPrefsView,
@@ -23,14 +27,7 @@ import { useApiMutation } from "./_core";
 export function invalidateCompletenessViews(
   qc: ReturnType<typeof useQueryClient>,
 ) {
-  for (const queryKey of [
-    queryKeys.seriesAll,
-    queryKeys.savedViewsAll,
-    queryKeys.railsAll,
-    queryKeys.collectionsAll,
-    queryKeys.entitiesAll,
-    queryKeys.similarAll,
-  ]) {
+  for (const queryKey of Object.values(queryKeyPrefixes)) {
     qc.invalidateQueries({ queryKey });
   }
 }

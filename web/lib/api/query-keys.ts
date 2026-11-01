@@ -155,10 +155,6 @@ export const queryKeys = {
   /** Cursor-paginated duplicate groups (WP-3.3); `kind` is a server param. */
   duplicates: (libraryId: string, kind: string) =>
     ["libraries", libraryId, "duplicates", kind] as const,
-  /** Prefix for every series query (detail, list, issues, collection
-   *  report) — invalidated when a viewer-scoped series figure changes,
-   *  e.g. the specials-completion preference (B9). */
-  seriesAll: ["series"] as const,
   series: (id: string) => ["series", id] as const,
   seriesList: (filters: SeriesListFilters) =>
     ["series", "list", filters] as const,
@@ -200,8 +196,6 @@ export const queryKeys = {
   /** "In your library" block (`/<kind>/{slug}/insights`). */
   entityInsights: (kind: EntityKindPath, slug: string) =>
     ["entities", kind, slug, "insights"] as const,
-  /** Prefix for every entity-page query (search, insights, grids). */
-  entitiesAll: ["entities"] as const,
   /** Entity landing-page grids (`/<kind>/{slug}/series|issues`). */
   entityItems: (
     kind: EntityKindPath,
@@ -478,8 +472,6 @@ export const queryKeys = {
    *  through `useReplaceViewGroupLayout`, which patches this cache
    *  optimistically. */
   viewGroups: (scope: ViewGroupScope) => ["view-groups", scope] as const,
-  /** Prefix for every saved-view query (index, detail, results). */
-  savedViewsAll: ["saved-views"] as const,
   savedView: (id: string) => ["saved-views", "detail", id] as const,
   savedViewResults: (id: string, cursor?: string) =>
     ["saved-views", "results", id, cursor ?? null] as const,
@@ -518,8 +510,6 @@ export const queryKeys = {
     opts?: { before?: number; after?: number; limit?: number },
   ) => ["cbl-lists", "window-infinite", id, opts ?? {}] as const,
   cblRefreshLog: (id: string) => ["cbl-lists", "refresh-log", id] as const,
-  /** Prefix for every collection query (list, detail, entries). */
-  collectionsAll: ["collections"] as const,
   /** Markers + Collections M2 — user collections (kind='collection') with
    *  Want to Read auto-seeded on first GET. */
   collections: ["collections", "list"] as const,
@@ -569,8 +559,6 @@ export const queryKeys = {
   markerCount: ["markers", "count"] as const,
   /** Distinct tag rollup — drives the /bookmarks tag filter chips. */
   markerTags: ["markers", "tags"] as const,
-  /** Prefix for every home-rail query. */
-  railsAll: ["rails"] as const,
   /** Continue-reading rail (`/me/continue-reading`). Invalidated by any
    *  progress mutation + rail dismissal mutation. */
   continueReading: ["rails", "continue-reading"] as const,
@@ -600,8 +588,6 @@ export const queryKeys = {
    *  `["similar"]` prefix so `invalidateRails` (hide / progress) drops it
    *  along with the home rail. */
   similarSeries: (slug: string) => ["similar", "series", slug] as const,
-  /** Prefix for both similar-series queries (series tab + home rail). */
-  similarAll: ["similar"] as const,
   /** WP-7.4 optional home rail (`/me/similar-series`) — "Because you
    *  read …", seeded from the latest read series. */
   similarRail: ["similar", "rail"] as const,

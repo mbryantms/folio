@@ -1,7 +1,7 @@
 "use client";
 
 import { Switch } from "@/components/ui/switch";
-import { useSetCountSpecialsInCompleteness } from "@/lib/api/mutations";
+import { useSetCountSpecialsInCompleteness } from "@/lib/api/mutations/completion";
 import { useMe } from "@/lib/api/queries";
 
 import { SettingsSection } from "./SettingsSection";

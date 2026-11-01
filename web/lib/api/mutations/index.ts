@@ -33,7 +33,6 @@ export * from "./markers";
 export { invalidateRails } from "./rails";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
-export * from "./completion";
 
 import type {
   CancelBatchResp,

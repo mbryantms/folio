@@ -46,10 +46,12 @@ import {
   useGenerateSeriesPageMap,
   useRegenerateSeriesCover,
   useRemoveCollectionEntry,
-  useSetSeriesSpecialsCompletion,
   useTriggerSeriesScan,
   useUpsertSeriesProgress,
 } from "@/lib/api/mutations";
+// Own module, not the barrel: the reader imports the barrel and must not
+// carry this (bundle budget).
+import { useSetSeriesSpecialsCompletion } from "@/lib/api/mutations/completion";
 import { useCollections, useMe } from "@/lib/api/queries";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { IssueSummaryView, SpecialsCompletion } from "@/lib/api/types";
