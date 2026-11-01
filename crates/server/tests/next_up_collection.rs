@@ -102,7 +102,7 @@ async fn demote_to_user(app: &TestApp, user_id: Uuid) {
     let db = Database::connect(&app.db_url).await.unwrap();
     entity::user::ActiveModel {
         id: Unchanged(user_id),
-        role: Set("user".into()),
+        role: Set(entity::user::UserRole::User),
         ..Default::default()
     }
     .update(&db)

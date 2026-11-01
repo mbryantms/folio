@@ -7,6 +7,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
+use entity::user::UserRole;
 use entity::{issue, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, FromQueryResult,
@@ -3488,7 +3489,7 @@ pub async fn get_one(
     // A soft-deleted series is gone for readers (its issues are hidden
     // everywhere already); only an admin can still open it, to restore or
     // confirm it from the Removed tab the page links to.
-    if row.removed_at.is_some() && user.role != "admin" {
+    if row.removed_at.is_some() && user.role != UserRole::Admin {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // `RemovedAt.is_null()` keeps soft-deleted and confirmed-removed issues

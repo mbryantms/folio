@@ -113,7 +113,7 @@ async fn promote_to_admin(app: &TestApp, user_id: Uuid) {
         .unwrap()
         .unwrap();
     let mut am: entity::user::ActiveModel = user.into();
-    am.role = Set("admin".into());
+    am.role = Set(entity::user::UserRole::Admin);
     am.update(&db).await.unwrap();
 }
 

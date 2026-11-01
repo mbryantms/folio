@@ -20,8 +20,10 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use chrono::Duration as ChronoDuration;
+use entity::user::{UserRole, UserState};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, Set,
+    TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -135,7 +137,7 @@ pub struct MeResp {
     /// True when `/me/account` accepts local password changes for this user.
     pub password_editable: bool,
     pub display_name: String,
-    pub role: String,
+    pub role: UserRole,
     pub csrf_token: String,
     /// Phase 3: per-user reader direction preference. `null` means "auto"
     /// (the reader still falls back to ComicInfo `Manga=YesAndRightToLeft`
@@ -481,12 +483,12 @@ pub async fn register(
     let user_count = UserEntity::find().count(&txn).await.unwrap_or(1);
     let (role, state) = if user_count == 0 {
         tracing::warn!("first_admin_bootstrap: granting admin role to first user");
-        ("admin", "active")
+        (UserRole::Admin, UserState::Active)
     } else if smtp_configured {
-        ("user", "pending_verification")
+        (UserRole::User, UserState::PendingVerification)
     } else {
         // No SMTP configured → no way to verify. Treat as active.
-        ("user", "active")
+        (UserRole::User, UserState::Active)
     };
 
     let am = UserAM {
@@ -494,11 +496,11 @@ pub async fn register(
         external_id: Set(format!("local:{}", user_id)),
         display_name: Set(display.clone()),
         email: Set(Some(email_lower.clone())),
-        email_verified: Set(state == "active"),
+        email_verified: Set(state == UserState::Active),
         password_hash: Set(Some(hash)),
         totp_secret: Set(None),
-        state: Set(state.into()),
-        role: Set(role.into()),
+        state: Set(state),
+        role: Set(role),
         token_version: Set(0),
         created_at: Set(now),
         updated_at: Set(now),
@@ -547,7 +549,7 @@ pub async fn register(
         return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
 
-    if inserted.state == "pending_verification" {
+    if inserted.state == UserState::PendingVerification {
         // Mint a 24h verification token and send the welcome+verify email.
         // Token issuance / send failure is logged but doesn't fail the
         // register — the user can request a resend.
@@ -652,12 +654,20 @@ pub async fn login(
         };
     }
 
-    let user_row = UserEntity::find()
+    // A lookup error (including a row whose `role` / `state` string is not
+    // a known `UserRole` / `UserState`) is a 500, not "user not found": an
+    // unreadable account must fail loudly rather than look like a typo.
+    let user_row = match UserEntity::find()
         .filter(user::Column::Email.eq(email_lower.clone()))
         .one(&app.db)
         .await
-        .ok()
-        .flatten();
+    {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::error!(error = %e, "login user lookup failed");
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
 
     let Some(row) = user_row else {
         // Constant-time login: run the full argon2id verify against a
@@ -686,13 +696,13 @@ pub async fn login(
         );
     };
 
-    if row.state == "disabled" {
+    if row.state == UserState::Disabled {
         super::failed_auth::record_failure_for(&app, &ctx).await;
         super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         tracing::info!(reason = "account_disabled", user_id = %row.id, "login rejected");
         return fail(StatusCode::FORBIDDEN, "auth.disabled", "account disabled");
     }
-    if row.state == "pending_verification" {
+    if row.state == UserState::PendingVerification {
         super::failed_auth::record_failure_for(&app, &ctx).await;
         super::failed_auth::record_failure_for_email(&app, &email_lower).await;
         tracing::info!(reason = "email_unverified", user_id = %row.id, "login rejected");
@@ -865,13 +875,17 @@ pub async fn refresh(
         .await
     {
         Ok(Some(u)) => u,
-        _ => return error(StatusCode::UNAUTHORIZED, "auth.invalid", "user gone"),
+        Ok(None) => return error(StatusCode::UNAUTHORIZED, "auth.invalid", "user gone"),
+        Err(e) => {
+            tracing::error!(error = %e, "refresh user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
     };
 
     // AUTH-2: a disabled account must not rotate a live refresh token into a
     // fresh access token. Returning here — before `txn.commit()` — rolls back
     // the rotation performed above, so the session stops rather than advancing.
-    if user_row.state == "disabled" {
+    if user_row.state == UserState::Disabled {
         return error(StatusCode::UNAUTHORIZED, "auth.invalid", "account disabled");
     }
 
@@ -949,8 +963,14 @@ pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::respon
             id_token_hint = sess.id_token_hint.clone();
             // Need the user's external_id to know whether RP-logout applies
             // and which issuer to ask. Cheap lookup; same row we just hit.
-            if let Ok(Some(u)) = UserEntity::find_by_id(sess.user_id).one(&app.db).await {
-                user_external_id = Some(u.external_id);
+            if let Ok(Some(ext)) = UserEntity::find_by_id(sess.user_id)
+                .select_only()
+                .column(user::Column::ExternalId)
+                .into_tuple::<String>()
+                .one(&app.db)
+                .await
+            {
+                user_external_id = Some(ext);
             }
         }
         let _ = SessionEntity::update_many()
@@ -1307,7 +1327,7 @@ pub async fn request_password_reset(
         .ok()
         .flatten();
     if let Some(row) = row
-        && row.state != "disabled"
+        && row.state != UserState::Disabled
         && row.external_id.starts_with("local:")
         && let Some(addr) = row.email.as_deref()
     {
@@ -1489,7 +1509,7 @@ pub async fn reset_password(
             );
         }
     };
-    if row.state == "disabled" || !row.external_id.starts_with("local:") {
+    if row.state == UserState::Disabled || !row.external_id.starts_with("local:") {
         return fail_at_forgot(
             StatusCode::BAD_REQUEST,
             "auth.token_invalid",
@@ -1584,11 +1604,11 @@ pub async fn verify_email(
             );
         }
     };
-    if row.state == "active" {
+    if row.state == UserState::Active {
         // Idempotent re-click — just bounce to sign-in.
         return Redirect::to("/sign-in?verified=1").into_response();
     }
-    if row.state != "pending_verification" {
+    if row.state != UserState::PendingVerification {
         return error(
             StatusCode::BAD_REQUEST,
             "auth.token_invalid",
@@ -1596,7 +1616,7 @@ pub async fn verify_email(
         );
     }
     let mut am: UserAM = row.clone().into();
-    am.state = Set("active".into());
+    am.state = Set(UserState::Active);
     am.email_verified = Set(true);
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     if let Err(e) = am.update(&app.db).await {
@@ -1632,7 +1652,7 @@ pub async fn resend_verification(
         .ok()
         .flatten();
     if let Some(row) = row
-        && row.state == "pending_verification"
+        && row.state == UserState::PendingVerification
         && row.external_id.starts_with("local:")
         && let Some(addr) = row.email.as_deref()
     {
@@ -1746,7 +1766,7 @@ fn finalize_session(
     let refresh_ttl = app.cfg().refresh_ttl();
     let access = match keys.issue_access(
         user_row.id,
-        &user_row.role,
+        user_row.role.as_str(),
         user_row.token_version,
         ChronoDuration::seconds(access_ttl.as_secs() as i64),
     ) {
@@ -1799,7 +1819,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         email_editable: is_local,
         password_editable: is_local && row.password_hash.is_some(),
         display_name: row.display_name.clone(),
-        role: row.role.clone(),
+        role: row.role,
         csrf_token,
         default_reading_direction: opt_from_db(row.default_reading_direction.as_deref()),
         default_fit_mode: opt_from_db(row.default_fit_mode.as_deref()),
@@ -1845,7 +1865,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             email_editable: true,
             password_editable: true,
             display_name: user.display_name.clone(),
-            role: user.role.clone(),
+            role: user.role,
             csrf_token,
             default_reading_direction: None,
             default_fit_mode: None,

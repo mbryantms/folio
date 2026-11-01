@@ -212,7 +212,7 @@ async fn verify_email_activates_pending_user() {
         .into_iter()
         .find(|u| u.email.as_deref() == Some("click-me@example.com"))
         .expect("user exists");
-    assert_eq!(row.state, "active");
+    assert_eq!(row.state, entity::user::UserState::Active);
     assert!(row.email_verified);
 }
 

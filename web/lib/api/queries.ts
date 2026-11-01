@@ -134,11 +134,13 @@ import type {
   SortOrder,
   ThumbnailsSettingsView,
   ThumbnailsStatusView,
+  UserRole,
+  UserState,
 } from "./types";
 
 export type UserListFilters = {
-  role?: "admin" | "user";
-  state?: "pending_verification" | "active" | "disabled";
+  role?: UserRole;
+  state?: UserState;
   q?: string;
   limit?: number;
   cursor?: string;

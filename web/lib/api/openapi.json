@@ -14165,7 +14165,7 @@
             ]
           },
           "role": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserRole"
           },
           "sessions_30d": {
             "type": "integer",
@@ -14176,7 +14176,7 @@
             "format": "int64"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserState"
           },
           "top_series_name": {
             "type": [
@@ -14231,10 +14231,10 @@
             "description": "Count of `library_user_access` rows for this user. For admins this is\nalways reported as 0 since admins implicitly see every library."
           },
           "role": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserRole"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserState"
           }
         }
       },
@@ -19342,7 +19342,7 @@
                   ]
                 },
                 "role": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/UserRole"
                 },
                 "sessions_30d": {
                   "type": "integer",
@@ -19353,7 +19353,7 @@
                   "format": "int64"
                 },
                 "state": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/UserState"
                 },
                 "top_series_name": {
                   "type": [
@@ -26578,7 +26578,7 @@
             "description": "M6a: minimum distinct pages before a session is recorded."
           },
           "role": {
-            "type": "string"
+            "$ref": "#/components/schemas/UserRole"
           },
           "show_marker_count": {
             "type": "boolean",
@@ -36364,7 +36364,7 @@
       },
       "UserRole": {
         "type": "string",
-        "description": "Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query\nparams + the matching fields on `UpdateUserReq`. Serde rejects bad\nvalues at deserialize time so handlers never see strings they can't\ntrust.",
+        "description": "A user's role: `admin` | `user`.",
         "enum": [
           "admin",
           "user"
@@ -36372,6 +36372,7 @@
       },
       "UserState": {
         "type": "string",
+        "description": "A user account's state: `pending_verification` | `active` | `disabled`.",
         "enum": [
           "pending_verification",
           "active",

@@ -27,6 +27,7 @@ use axum::{
 };
 use axum_extra::extract::{CookieJar, cookie::Cookie};
 use base64::Engine;
+use entity::user::{UserRole, UserState};
 use hmac::{Hmac, KeyInit, Mac};
 use openidconnect::{
     AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
@@ -602,12 +603,17 @@ pub async fn callback(
     // Upsert user (lookup by external_id).
     let user_id = Uuid::now_v7();
     let now = chrono::Utc::now().fixed_offset();
-    let existing = UserEntity::find()
+    let existing = match UserEntity::find()
         .filter(user::Column::ExternalId.eq(external_id.clone()))
         .one(&app.db)
         .await
-        .ok()
-        .flatten();
+    {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::error!(error = %e, "oidc user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
 
     let user_row = if let Some(row) = existing {
         // Sync fields that may have changed at the issuer.
@@ -728,9 +734,9 @@ pub async fn callback(
             let user_count = UserEntity::find().count(&txn).await.unwrap_or(1);
             let role = if user_count == 0 {
                 tracing::warn!("first_admin_bootstrap: granting admin role to first user (oidc)");
-                "admin"
+                UserRole::Admin
             } else {
-                "user"
+                UserRole::User
             };
             let am = UserAM {
                 id: Set(user_id),
@@ -740,8 +746,8 @@ pub async fn callback(
                 email_verified: Set(email_verified),
                 password_hash: Set(None),
                 totp_secret: Set(None),
-                state: Set("active".into()),
-                role: Set(role.into()),
+                state: Set(UserState::Active),
+                role: Set(role),
                 token_version: Set(0),
                 created_at: Set(now),
                 updated_at: Set(now),
@@ -792,7 +798,7 @@ pub async fn callback(
         }
     };
 
-    if user_row.state == "disabled" {
+    if user_row.state == UserState::Disabled {
         return error(StatusCode::FORBIDDEN, "auth.disabled", "account disabled");
     }
 
@@ -828,7 +834,7 @@ pub async fn callback(
     let keys = &app.jwt_keys;
     let access = match keys.issue_access(
         user_row.id,
-        &user_row.role,
+        user_row.role.as_str(),
         user_row.token_version,
         chrono::Duration::seconds(access_ttl.as_secs() as i64),
     ) {

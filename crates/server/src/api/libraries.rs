@@ -14,6 +14,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use entity::user::UserRole;
 use entity::{issue, library, library_user_access, scan_batch, scan_run, series};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ModelTrait, PaginatorTrait,
@@ -1498,7 +1499,7 @@ async fn filter_visible(
     user: &CurrentUser,
     rows: Vec<library::Model>,
 ) -> Vec<library::Model> {
-    if user.role == "admin" {
+    if user.role == UserRole::Admin {
         return rows;
     }
     let lib_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
@@ -1516,7 +1517,7 @@ async fn filter_visible(
 }
 
 async fn user_can_see(app: &AppState, user: &CurrentUser, lib: &library::Model) -> bool {
-    if user.role == "admin" {
+    if user.role == UserRole::Admin {
         return true;
     }
     library_user_access::Entity::find_by_id((lib.id, user.id))

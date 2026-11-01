@@ -8,7 +8,7 @@
 //!   - `POST   /admin/users/{id}/enable`           state -> active
 //!   - `POST   /admin/users/{id}/library-access`   replace library_user_access rows
 //!
-//! All endpoints require `role == "admin"`. Mutating endpoints emit an
+//! All endpoints require `role == UserRole::Admin`. Mutating endpoints emit an
 //! audit_log row keyed on the actor and the affected user.
 
 use axum::{
@@ -58,8 +58,8 @@ pub struct AdminUserView {
     pub id: String,
     pub email: Option<String>,
     pub display_name: String,
-    pub role: String,
-    pub state: String,
+    pub role: UserRole,
+    pub state: UserState,
     pub email_verified: bool,
     pub created_at: String,
     pub last_login_at: Option<String>,
@@ -103,40 +103,9 @@ pub struct AdminUserDetailView {
 /// Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query
 /// params + the matching fields on `UpdateUserReq`. Serde rejects bad
 /// values at deserialize time so handlers never see strings they can't
-/// trust.
-#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum UserRole {
-    Admin,
-    User,
-}
-
-impl UserRole {
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            Self::Admin => "admin",
-            Self::User => "user",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UserState {
-    PendingVerification,
-    Active,
-    Disabled,
-}
-
-impl UserState {
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            Self::PendingVerification => "pending_verification",
-            Self::Active => "active",
-            Self::Disabled => "disabled",
-        }
-    }
-}
+/// trust. Since AR-7 (audit 2026-11) these are the `users` column types
+/// themselves, defined once in `entity::user`.
+pub use entity::user::{UserRole, UserState};
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct ListUsersQuery {
@@ -329,8 +298,8 @@ pub async fn create(
         email_verified: Set(true),
         password_hash: Set(Some(hash)),
         totp_secret: Set(None),
-        state: Set("active".into()),
-        role: Set(role.as_db_str().to_owned()),
+        state: Set(UserState::Active),
+        role: Set(role),
         token_version: Set(0),
         created_at: Set(now),
         updated_at: Set(now),
@@ -390,7 +359,7 @@ pub async fn create(
         target = ("user", user_id.to_string()),
         payload = serde_json::json!({
             "email": email,
-            "role": role.as_db_str(),
+            "role": role,
         }),
     );
 
@@ -438,10 +407,10 @@ pub async fn list(
     // values at deserialize time.
     let mut filtered = user::Entity::find();
     if let Some(role) = q.role {
-        filtered = filtered.filter(user::Column::Role.eq(role.as_db_str()));
+        filtered = filtered.filter(user::Column::Role.eq(role));
     }
     if let Some(state) = q.state {
-        filtered = filtered.filter(user::Column::State.eq(state.as_db_str()));
+        filtered = filtered.filter(user::Column::State.eq(state));
     }
     if let Some(needle) = q.q.as_deref()
         && !needle.trim().is_empty()
@@ -537,8 +506,13 @@ pub async fn get_one(
     let Ok(uuid) = Uuid::parse_str(&id) else {
         return error(StatusCode::BAD_REQUEST, "validation", "invalid id");
     };
-    let Ok(Some(target)) = user::Entity::find_by_id(uuid).one(&app.db).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "user not found");
+    let target = match user::Entity::find_by_id(uuid).one(&app.db).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "user not found"),
+        Err(e) => {
+            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
     };
 
     let counts = match library_counts_for(&app, vec![uuid]).await {
@@ -593,12 +567,19 @@ pub async fn update(
             "invalid id",
         );
     };
-    let Ok(Some(target)) = user::Entity::find_by_id(uuid).one(&app.db).await else {
-        return respond(
-            StatusCode::NOT_FOUND,
-            ApiErrorCode::UserNotFound,
-            "user not found",
-        );
+    let target = match user::Entity::find_by_id(uuid).one(&app.db).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return respond(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::UserNotFound,
+                "user not found",
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
     };
 
     // Garde enforces: display_name non-empty-after-trim, role ∈
@@ -634,22 +615,20 @@ pub async fn update(
             am.display_name = Set(trimmed);
         }
     }
-    if let Some(role) = req.role {
-        let role_str = role.as_db_str();
-        if role_str != target.role {
-            changed.insert("role".into(), serde_json::json!(role_str));
-            am.role = Set(role_str.to_owned());
-        }
+    if let Some(role) = req.role
+        && role != target.role
+    {
+        changed.insert("role".into(), serde_json::json!(role));
+        am.role = Set(role);
     }
-    if let Some(state) = req.state {
-        let state_str = state.as_db_str();
-        if state_str != target.state {
-            changed.insert("state".into(), serde_json::json!(state_str));
-            if matches!(state, UserState::Disabled) {
-                bump_token_version = true;
-            }
-            am.state = Set(state_str.to_owned());
+    if let Some(state) = req.state
+        && state != target.state
+    {
+        changed.insert("state".into(), serde_json::json!(state));
+        if state == UserState::Disabled {
+            bump_token_version = true;
         }
+        am.state = Set(state);
     }
 
     if changed.is_empty() {
@@ -726,7 +705,7 @@ pub async fn disable(
     Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<String>,
 ) -> impl IntoResponse {
-    set_state(app, actor, ctx, id, "disabled").await
+    set_state(app, actor, ctx, id, UserState::Disabled).await
 }
 
 #[utoipa::path(
@@ -746,7 +725,7 @@ pub async fn enable(
     Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<String>,
 ) -> impl IntoResponse {
-    set_state(app, actor, ctx, id, "active").await
+    set_state(app, actor, ctx, id, UserState::Active).await
 }
 
 async fn set_state(
@@ -754,15 +733,20 @@ async fn set_state(
     actor: crate::auth::CurrentUser,
     ctx: RequestContext,
     id: String,
-    new_state: &'static str,
+    new_state: UserState,
 ) -> axum::response::Response {
     let Ok(uuid) = Uuid::parse_str(&id) else {
         return error(StatusCode::BAD_REQUEST, "validation", "invalid id");
     };
-    let Ok(Some(target)) = user::Entity::find_by_id(uuid).one(&app.db).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "user not found");
+    let target = match user::Entity::find_by_id(uuid).one(&app.db).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "user not found"),
+        Err(e) => {
+            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
     };
-    if target.id == actor.id && new_state == "disabled" {
+    if target.id == actor.id && new_state == UserState::Disabled {
         return error(
             StatusCode::FORBIDDEN,
             "self_disable",
@@ -778,15 +762,15 @@ async fn set_state(
     }
 
     let mut am: user::ActiveModel = target.clone().into();
-    am.state = Set(new_state.into());
+    am.state = Set(new_state);
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
-    if new_state == "disabled" {
+    if new_state == UserState::Disabled {
         am.token_version = Set(target.token_version + 1);
     }
     let updated = match am.update(&app.db).await {
         Ok(m) => m,
         Err(e) => {
-            tracing::error!(error = %e, user_id = %uuid, new_state, "set state failed");
+            tracing::error!(error = %e, user_id = %uuid, new_state = new_state.as_str(), "set state failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
@@ -794,7 +778,7 @@ async fn set_state(
     // AUTH-1: disabling a user revokes their sessions so an already-issued
     // refresh token can't keep rotating (the token_version bump only stops
     // access tokens). Enabling is a no-op here.
-    if new_state == "disabled" {
+    if new_state == UserState::Disabled {
         crate::auth::local::revoke_sessions_for_user(&app.db, uuid, None).await;
     }
 
@@ -802,7 +786,7 @@ async fn set_state(
         &app.db,
         AuditEntry {
             actor_id: actor.id,
-            action: if new_state == "disabled" {
+            action: if new_state == UserState::Disabled {
                 "admin.user.disable"
             } else {
                 "admin.user.enable"
@@ -845,8 +829,13 @@ pub async fn set_library_access(
     let Ok(uuid) = Uuid::parse_str(&id) else {
         return error(StatusCode::BAD_REQUEST, "validation", "invalid id");
     };
-    let Ok(Some(target)) = user::Entity::find_by_id(uuid).one(&app.db).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "user not found");
+    let target = match user::Entity::find_by_id(uuid).one(&app.db).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "user not found"),
+        Err(e) => {
+            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
     };
 
     let mut wanted: Vec<Uuid> = Vec::with_capacity(req.library_ids.len());
@@ -978,7 +967,7 @@ pub async fn set_library_access(
 
 impl AdminUserView {
     fn from_model(m: user::Model, counts: &HashMap<Uuid, i64>) -> Self {
-        let library_count = if m.role == "admin" {
+        let library_count = if m.role == UserRole::Admin {
             0
         } else {
             counts.get(&m.id).copied().unwrap_or(0)

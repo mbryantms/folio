@@ -214,16 +214,23 @@ async fn resolve_labels(
         ..LabelLookup::default()
     };
     if !user_ids.is_empty() {
-        let rows = user::Entity::find()
+        let rows: Vec<(Uuid, String, Option<String>)> = user::Entity::find()
+            .select_only()
+            .columns([
+                user::Column::Id,
+                user::Column::DisplayName,
+                user::Column::Email,
+            ])
             .filter(user::Column::Id.is_in(user_ids))
+            .into_tuple()
             .all(&app.db)
             .await?;
-        for u in rows {
-            let label = match u.email.as_deref() {
-                Some(email) if !email.is_empty() => format!("{} <{}>", u.display_name, email),
-                _ => u.display_name.clone(),
+        for (id, display_name, email) in rows {
+            let label = match email.as_deref() {
+                Some(email) if !email.is_empty() => format!("{display_name} <{email}>"),
+                _ => display_name,
             };
-            out.users.insert(u.id, label);
+            out.users.insert(id, label);
         }
     }
     if !library_ids.is_empty() {

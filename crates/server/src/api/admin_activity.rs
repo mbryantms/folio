@@ -27,7 +27,9 @@ use axum::{
 use base64::Engine;
 use chrono::{DateTime, FixedOffset};
 use entity::{issue, library, series, user};
-use sea_orm::{ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, Value};
+use sea_orm::{
+    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QuerySelect, Statement, Value,
+};
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
@@ -307,16 +309,23 @@ async fn resolve_activity_labels(
 
     let mut out = ActivityLabels::default();
     if !user_ids.is_empty() {
-        for u in user::Entity::find()
+        let rows: Vec<(Uuid, String, Option<String>)> = user::Entity::find()
+            .select_only()
+            .columns([
+                user::Column::Id,
+                user::Column::DisplayName,
+                user::Column::Email,
+            ])
             .filter(user::Column::Id.is_in(user_ids.iter().copied()))
+            .into_tuple()
             .all(&app.db)
-            .await?
-        {
-            let label = match u.email.as_deref() {
-                Some(email) if !email.is_empty() => format!("{} <{}>", u.display_name, email),
-                _ => u.display_name.clone(),
+            .await?;
+        for (id, display_name, email) in rows {
+            let label = match email.as_deref() {
+                Some(email) if !email.is_empty() => format!("{display_name} <{email}>"),
+                _ => display_name,
             };
-            out.users.insert(u.id, label);
+            out.users.insert(id, label);
         }
     }
     if !library_ids.is_empty() {
