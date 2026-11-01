@@ -113,7 +113,7 @@ async fn seed(app: &TestApp, dir: &Path) -> (String, Uuid, Uuid, std::path::Path
             series_id: Set(series),
             issue_id: Set(issue_id.clone()),
             page_index: Set(page),
-            kind: Set(kind.into()),
+            kind: Set(marker::MarkerKind::parse(kind).expect("marker kind")),
             is_favorite: Set(false),
             tags: Set(vec![]),
             region: Set((kind == "highlight").then(
@@ -155,7 +155,7 @@ async fn marker_state(app: &TestApp, issue_id: &str) -> Vec<(String, i32, Vec<St
         .await
         .unwrap()
         .into_iter()
-        .map(|m| (m.kind, m.page_index, m.tags))
+        .map(|m| (m.kind.as_str().to_owned(), m.page_index, m.tags))
         .collect();
     rows.sort();
     rows

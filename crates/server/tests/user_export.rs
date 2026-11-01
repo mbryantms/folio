@@ -147,7 +147,7 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
         series_id: Set(series_id),
         issue_id: Set(issue_id.clone()),
         page_index: Set(3),
-        kind: Set("note".into()),
+        kind: Set(entity::marker::MarkerKind::Note),
         is_favorite: Set(true),
         tags: Set(vec!["quote".into(), "arc".into()]),
         region: Set(Some(

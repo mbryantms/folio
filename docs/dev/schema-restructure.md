@@ -495,7 +495,9 @@ primary key). Conventions it added:
   became typed aliases of the variants, so call sites and `match` arms
   read as before.
 - `scan_runs.kind` also holds `deep_validate` (the page-decode probe);
-  the History filter still rejects it as a `?kind=` value.
+  the History filter still rejects it as a `?kind=` value, and
+  `/admin/background-work` lists such a run under `tasks`, never as a
+  scan (E11).
 
 **E4 batch 2** converted `issue_cover.kind` (`IssueCoverKind`:
 `primary | variant | back | incentive`), `series_cover.kind`
@@ -514,20 +516,43 @@ reserved M0 values, kept so a row holding one still loads.
 `series_relationship_suggestion.accepted_kind` (same value set, nullable)
 is still a `String`.
 
+**E4 batch 3** converted `markers.kind` (`MarkerKind`:
+`bookmark | note | favorite | highlight`, the `markers_kind_chk` set).
+The `GET /me/markers?kind=` filter, `MarkerKindFilter`, is now a type
+alias of the column enum instead of a second copy of the four values; the
+private `KIND_*` string constants are gone, and the notes export labels
+kinds with an exhaustive `match`. Raw-SQL readers still spell the kinds as
+strings: the `/me/bookmarks` feed (`api::bookmarks_feed::FeedKind` and its
+per-kind counts), the saved-view `MarkerExists` predicates (`views::`) and
+the reading-log `marker_kind` payload. `CreateMarkerReq`
+and `RestoreMarkerItem` keep `kind: String` and parse it, so an unknown
+kind is still the same 422 message; `MarkerView.kind` and
+`MarkerSearchHit.kind` carry the enum.
+
+The two credit `role` columns (`issue_credits.role`,
+`series_credits.role`) **stay strings**: their value set is open by
+design. `metadata::provider::canonical_credit_role` folds every known
+spelling onto the eight ComicInfo keys (`writer`, `penciller`, `inker`,
+`colorist`, `letterer`, `cover_artist`, `editor`, `translator`) and
+*keeps* any other role (`journalist`, `ink_assists`) snake_cased, so the
+junction still carries a provider credit that has no ComicInfo column
+(`writers::set_issue_credits`, the issue PATCH path and
+`tests/manual_writeback.rs` all rely on it). A closed enum would either
+drop those credits or fail the issue page on load. The scanner itself
+only writes the eight (`scanner::metadata_rollup::CreditRole`).
+
 **E4 backlog** — the remaining stringly `role` / `state` / `kind`
-entity fields, after E4 batch 2:
+entity fields after E4 batch 3, left for batch 4:
 
 | Column | Entity field |
 |---|---|
 | `issues.state` | `crates/entity/src/issue.rs:28` |
-| `issue_credits.role` | `crates/entity/src/issue_credit.rs:12` |
 | `library_health_issues.kind` | `crates/entity/src/library_health_issue.rs:26` |
-| `markers.kind` | `crates/entity/src/marker.rs:26` |
-| `series_credits.role` | `crates/entity/src/series_credit.rs:13` |
 
-The two credit `role` columns hold the canonical credit-role table
-(`metadata::provider::canonical_credit_role`); check whether any
-non-canonical value is still stored before closing that set.
+Also left from batch 2: `series_relationship_suggestion.accepted_kind`
+(nullable, same set as `RelationshipKind`) and the suggestion engine's raw
+`KeyRow.kind` string; from batch 3, the raw-SQL marker-kind readers named
+above.
 
 Beyond `role` / `state` / `kind`, the same shape fits the `status`,
 `scope`, `source`, `set_by` and `severity` discriminators

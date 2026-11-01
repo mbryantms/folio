@@ -1,5 +1,61 @@
+use sea_orm::Iterable;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+
+// Storage contract (AR-7): `markers.kind` stays `TEXT`, pinned by the
+// `markers_kind_chk` CHECK to exactly these strings
+// (`m20260520_000001_marker_kind_favorite`); `string_value` and the serde
+// name are the same string (tests below). An unknown stored string fails
+// to load with a `DbErr`.
+
+/// What a `markers` row is. The markers API adds a shape rule per kind:
+/// a note needs `body`, a highlight needs `region`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum MarkerKind {
+    /// A page bookmark, optionally region-scoped.
+    #[sea_orm(string_value = "bookmark")]
+    Bookmark,
+    /// A Markdown note; `body` is required.
+    #[sea_orm(string_value = "note")]
+    Note,
+    /// A page-level favorite (the reader's page star).
+    #[sea_orm(string_value = "favorite")]
+    Favorite,
+    /// A region highlight; `region` is required.
+    #[sea_orm(string_value = "highlight")]
+    Highlight,
+}
+
+impl MarkerKind {
+    /// The stored / wire string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bookmark => "bookmark",
+            Self::Note => "note",
+            Self::Favorite => "favorite",
+            Self::Highlight => "highlight",
+        }
+    }
+
+    /// The variant whose stored string is `s`, if any.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::iter().find(|v| v.as_str() == s)
+    }
+}
 
 /// One marker — bookmark, note, favorite, or highlight — anchored on a
 /// `(user, issue, page)` triple. Region is normalized to 0–100% of the
@@ -22,8 +78,9 @@ pub struct Model {
     /// briefly a flag (2026-05-12 → 2026-05-20) and is now a kind
     /// again, this time *independent* of bookmark — the reader's
     /// page-level star creates a standalone `kind='favorite'` row.
-    /// See [`m20260520_000001_marker_kind_favorite`](../../migration/src/m20260520_000001_marker_kind_favorite.rs).
-    pub kind: String,
+    /// See [`m20260520_000001_marker_kind_favorite`](../../migration/src/m20260520_000001_marker_kind_favorite.rs)
+    /// and [`MarkerKind`].
+    pub kind: MarkerKind,
     /// Legacy star flag from the 2026-05-12 "favorite as a boolean"
     /// architecture. Still set by `MarkerEditor` for per-marker
     /// starring (e.g. "I want to remember THIS highlight"), but new
@@ -114,3 +171,24 @@ impl Related<super::issue::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enum_contract::assert_exact_strings;
+
+    #[test]
+    fn kind_round_trips_exact_db_strings() {
+        assert_exact_strings(
+            &[
+                (MarkerKind::Bookmark, "bookmark"),
+                (MarkerKind::Note, "note"),
+                (MarkerKind::Favorite, "favorite"),
+                (MarkerKind::Highlight, "highlight"),
+            ],
+            MarkerKind::as_str,
+            MarkerKind::parse,
+            &["Bookmark", "bookmarks", "star", "closing_note", ""],
+        );
+    }
+}

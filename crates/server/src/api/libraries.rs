@@ -1198,6 +1198,7 @@ pub struct DeepValidateResp {
         (status = 202, body = DeepValidateResp),
         (status = 403, description = "admin only"),
         (status = 404, description = "library not found"),
+        (status = 409, description = "a deep validation of this library is already running"),
     )
 )]
 /// Tranche C of recovery-visibility — admin-triggered deep page-
@@ -1207,7 +1208,9 @@ pub struct DeepValidateResp {
 ///
 /// Returns immediately. The job runs in a `tokio::spawn` background
 /// task without apalis-style persistence; a server restart abandons
-/// the in-flight run and the operator can re-trigger.
+/// the in-flight run (the next boot marks its row failed) and the
+/// operator can re-trigger. Cancel it like a scan
+/// (`POST /libraries/{slug}/scan-runs/{id}/cancel`, the Live scan page).
 ///
 /// **Cost.** Image-decoding every page in a 20K-issue library can
 /// take 1-2 hours of single-core CPU. Operator-only; never
@@ -1223,9 +1226,21 @@ pub async fn validate_deeply(
         Err(resp) => return resp,
     };
     let library_id = row.id;
+    // One run per library: a second would double the decode work and race
+    // the first's findings. The run registers itself just after inserting
+    // its row, so this catches a retry or double-click, not two POSTs a
+    // millisecond apart.
+    if crate::library::deep_validate::is_running(&app, library_id) {
+        return error(
+            StatusCode::CONFLICT,
+            "already_running",
+            "a deep validation of this library is already running",
+        );
+    }
     let state = app.clone();
+    // The run registers itself as a background task (with its run id) and
+    // closes its `scan_runs` row on its way out, failure included.
     tokio::spawn(async move {
-        let _task = state.track_background_task("deep_validate", Some(library_id));
         if let Err(e) = crate::library::deep_validate::run(&state, library_id).await {
             tracing::error!(
                 error = %e,

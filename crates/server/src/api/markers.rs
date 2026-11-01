@@ -44,6 +44,7 @@ use axum::{
 };
 use base64::Engine;
 use chrono::Utc;
+use entity::marker::MarkerKind;
 use entity::{issue, marker};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, ModelTrait, PaginatorTrait,
@@ -114,11 +115,8 @@ const MIN_REGION_DIM_PCT: f64 = 0.5;
 const MAX_ISSUE_ID_LEN: usize = 128;
 const MAX_LIMIT: u64 = 200;
 const DEFAULT_LIMIT: u64 = 50;
-const KIND_BOOKMARK: &str = "bookmark";
-const KIND_NOTE: &str = "note";
-const KIND_FAVORITE: &str = "favorite";
-const KIND_HIGHLIGHT: &str = "highlight";
-const ALL_KINDS: &[&str] = &[KIND_BOOKMARK, KIND_NOTE, KIND_FAVORITE, KIND_HIGHLIGHT];
+/// The 422 message for a `kind` outside [`MarkerKind`].
+const BAD_KIND_MSG: &str = "kind must be bookmark | note | favorite | highlight";
 
 const MAX_TAGS_PER_MARKER: usize = 32;
 const MAX_TAG_LEN: usize = 80;
@@ -160,7 +158,7 @@ pub struct MarkerView {
     /// `'bookmark' | 'note' | 'highlight' | 'favorite'`. Favorite is
     /// both a kind (re-introduced 2026-05-20) and, for any marker, a
     /// flag — see `is_favorite`.
-    pub kind: String,
+    pub kind: MarkerKind,
     /// Star flag. Any marker can be favorited; the /bookmarks
     /// "Favorites" chip filters on this rather than on kind.
     pub is_favorite: bool,
@@ -236,7 +234,7 @@ pub struct MarkerSearchView {
 pub struct MarkerSearchHit {
     pub id: String,
     /// `'bookmark' | 'note' | 'favorite' | 'highlight'`.
-    pub kind: String,
+    pub kind: MarkerKind,
     pub issue_id: String,
     pub series_id: String,
     pub page_index: i32,
@@ -353,12 +351,9 @@ pub struct UpdateMarkerReq {
 // ────────────── garde validators ──────────────
 
 fn valid_kind(kind: &str, _: &()) -> garde::Result {
-    if ALL_KINDS.contains(&kind) {
-        Ok(())
-    } else {
-        Err(garde::Error::new(
-            "kind must be bookmark | note | favorite | highlight",
-        ))
+    match MarkerKind::parse(kind) {
+        Some(_) => Ok(()),
+        None => Err(garde::Error::new(BAD_KIND_MSG)),
     }
 }
 
@@ -503,26 +498,10 @@ where
 }
 
 /// `kind` filter values for `GET /me/markers` — typed enum so a
-/// bad value rejects at deserialize time (audit-remediation M9.4).
-#[derive(Debug, Clone, Copy, Deserialize, utoipa::ToSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum MarkerKindFilter {
-    Bookmark,
-    Note,
-    Favorite,
-    Highlight,
-}
-
-impl MarkerKindFilter {
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            Self::Bookmark => KIND_BOOKMARK,
-            Self::Note => KIND_NOTE,
-            Self::Favorite => KIND_FAVORITE,
-            Self::Highlight => KIND_HIGHLIGHT,
-        }
-    }
-}
+/// bad value rejects at deserialize time (audit-remediation M9.4). The
+/// column's own enum (AR-7), so the filter and the stored value cannot
+/// drift apart.
+pub type MarkerKindFilter = MarkerKind;
 
 /// `tag_match` mode for the marker list — AND vs OR over selected tags.
 #[derive(Debug, Default, Clone, Copy, Deserialize, utoipa::ToSchema)]
@@ -754,21 +733,22 @@ async fn fetch_visible_issue(
     Ok(row)
 }
 
+/// The request body's `kind` string as a [`MarkerKind`]; 422 when it is
+/// not one (request bodies keep `String` so this stays a 422, AR-7).
+fn parse_kind(kind: &str) -> Result<MarkerKind, MarkerError> {
+    MarkerKind::parse(kind).ok_or_else(|| {
+        MarkerError::new(StatusCode::UNPROCESSABLE_ENTITY, "validation", BAD_KIND_MSG)
+    })
+}
+
 /// Per-kind shape + region/selection validation. Returns Ok on success
 /// or a 400/422 response with a stable error code.
 fn validate_shape(
-    kind: &str,
+    kind: MarkerKind,
     region: Option<&serde_json::Value>,
     body: Option<&str>,
 ) -> Result<(), MarkerError> {
-    if !ALL_KINDS.contains(&kind) {
-        return Err(MarkerError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation",
-            "kind must be bookmark | note | favorite | highlight",
-        ));
-    }
-    if kind == KIND_NOTE {
+    if kind == MarkerKind::Note {
         let body = body.unwrap_or("");
         if body.trim().is_empty() {
             return Err(MarkerError::new(
@@ -778,7 +758,7 @@ fn validate_shape(
             ));
         }
     }
-    if kind == KIND_HIGHLIGHT && region.is_none() {
+    if kind == MarkerKind::Highlight && region.is_none() {
         return Err(MarkerError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "validation",
@@ -978,7 +958,7 @@ pub async fn list(
     if let Some(kind) = q.kind {
         // Enum-typed query param (audit-remediation M9.4) — serde
         // rejects bad values at deserialize time (400 from axum).
-        select = select.filter(marker::Column::Kind.eq(kind.as_db_str()));
+        select = select.filter(marker::Column::Kind.eq(kind));
     }
     if let Some(issue_id) = q.issue_id.as_ref() {
         select = select.filter(marker::Column::IssueId.eq(issue_id));
@@ -998,7 +978,7 @@ pub async fn list(
         select = select.filter(
             Condition::any()
                 .add(marker::Column::IsFavorite.eq(true))
-                .add(marker::Column::Kind.eq(KIND_FAVORITE)),
+                .add(marker::Column::Kind.eq(MarkerKind::Favorite)),
         );
     }
     if let Some(raw_tags) = q.tags.as_deref().filter(|s| !s.trim().is_empty()) {
@@ -1401,7 +1381,11 @@ pub async fn create(
         .as_ref()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty());
-    if let Err(resp) = validate_shape(&req.kind, req.region.as_ref(), body.as_deref()) {
+    let kind = match parse_kind(&req.kind) {
+        Ok(k) => k,
+        Err(resp) => return resp.into_response(),
+    };
+    if let Err(resp) = validate_shape(kind, req.region.as_ref(), body.as_deref()) {
         return resp.into_response();
     }
     let region = match normalize_region(req.region) {
@@ -1443,7 +1427,7 @@ pub async fn create(
         series_id: Set(issue_row.series_id),
         issue_id: Set(issue_row.id),
         page_index: Set(req.page_index),
-        kind: Set(req.kind.clone()),
+        kind: Set(kind),
         is_favorite: Set(req.is_favorite.unwrap_or(false)),
         tags: Set(tags),
         region: Set(region),
@@ -1547,7 +1531,7 @@ pub async fn update(
             Err(resp) => return resp.into_response(),
         };
     }
-    if let Err(resp) = validate_shape(&row.kind, next_region.as_ref(), next_body.as_deref()) {
+    if let Err(resp) = validate_shape(row.kind, next_region.as_ref(), next_body.as_deref()) {
         return resp.into_response();
     }
 
@@ -1790,6 +1774,7 @@ pub struct RestoreMarkersResp {
 /// A snapshot that passed the per-item rules, ready to insert.
 struct RestoreRow {
     item: RestoreMarkerItem,
+    kind: MarkerKind,
     body: Option<String>,
     region: Option<serde_json::Value>,
     selection: Option<serde_json::Value>,
@@ -1805,12 +1790,14 @@ fn prepare_restore(mut item: RestoreMarkerItem) -> Result<RestoreRow, MarkerErro
         .take()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty());
-    validate_shape(&item.kind, item.region.as_ref(), body.as_deref())?;
+    let kind = parse_kind(&item.kind)?;
+    validate_shape(kind, item.region.as_ref(), body.as_deref())?;
     let region = normalize_region(item.region.take())?;
     let selection = normalize_selection(item.selection.take())?;
     let tags = normalize_tags(std::mem::take(&mut item.tags))?;
     Ok(RestoreRow {
         item,
+        kind,
         body,
         region,
         selection,
@@ -1927,7 +1914,7 @@ pub async fn restore(
             series_id: Set(issue_row.series_id),
             issue_id: Set(issue_row.id.clone()),
             page_index: Set(r.item.page_index),
-            kind: Set(r.item.kind),
+            kind: Set(r.kind),
             is_favorite: Set(r.item.is_favorite),
             tags: Set(r.tags),
             region: Set(r.region),
@@ -2023,5 +2010,18 @@ mod color_tests {
         assert!(!region_out_of_bounds(90.0, 0.0, 10.000_000_000_000_01, 5.0));
         assert!(region_out_of_bounds(90.0, 0.0, 10.1, 5.0));
         assert!(region_out_of_bounds(0.0, 95.0, 5.0, 5.01));
+    }
+
+    /// The 422 message lists exactly the kinds `MarkerKind` accepts, so a
+    /// new variant cannot leave the message stale.
+    #[test]
+    fn bad_kind_message_lists_every_marker_kind() {
+        use sea_orm::Iterable;
+        let listed: Vec<&str> = BAD_KIND_MSG
+            .trim_start_matches("kind must be ")
+            .split(" | ")
+            .collect();
+        let kinds: Vec<&str> = MarkerKind::iter().map(MarkerKind::as_str).collect();
+        assert_eq!(listed, kinds);
     }
 }

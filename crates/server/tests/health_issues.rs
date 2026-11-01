@@ -658,6 +658,8 @@ async fn deep_validate_emits_unreadable_page() {
     let folder = tmp.path().join("Series Garbage (2024)");
     std::fs::create_dir_all(&folder).unwrap();
     write_cbz_with_undecodable_page(&folder.join("Garbage 001.cbz"));
+    // A layout finding only the regular scan reports.
+    write_cbz(&tmp.path().join("orphan.cbz"), 2);
 
     let lib_id = create_library(&app, tmp.path(), false).await;
     let state = app.state();
@@ -668,6 +670,11 @@ async fn deep_validate_emits_unreadable_page() {
     assert!(
         !pre.iter().any(|i| i.kind == "UnreadablePage"),
         "regular scan must NOT decode pages",
+    );
+    assert!(
+        pre.iter()
+            .any(|i| i.kind == "FileAtRoot" && i.resolved_at.is_none()),
+        "scan reports the stray root file",
     );
 
     // Deep-validate finds the decode failure.
@@ -683,6 +690,17 @@ async fn deep_validate_emits_unreadable_page() {
     let data = &unreadable.payload["data"];
     assert_eq!(data["page_index"].as_u64().unwrap(), 0);
     assert_eq!(unreadable.severity, "warning");
+    // E11: the deep run re-emits only `UnreadablePage`, so it must not
+    // resolve what the regular scan found (it used to run the scan's
+    // library-wide auto-resolve sweep and close every other finding).
+    let root = post
+        .iter()
+        .find(|i| i.kind == "FileAtRoot")
+        .expect("FileAtRoot row");
+    assert!(
+        root.resolved_at.is_none(),
+        "deep-validate must leave the scan's findings open: {root:?}",
+    );
 
     // Re-run deep-validate: row should upsert by fingerprint, not
     // duplicate.
@@ -695,6 +713,22 @@ async fn deep_validate_emits_unreadable_page() {
         .filter(|i| i.kind == "UnreadablePage")
         .count();
     assert_eq!(count, 1, "re-validate must upsert by fingerprint");
+
+    // A file the next run cannot open had none of its pages decoded, so a
+    // complete run must not resolve its open `UnreadablePage` row.
+    std::fs::write(folder.join("Garbage 001.cbz"), b"not an archive").unwrap();
+    let stats = deep_validate::run(&state, lib_id).await.unwrap();
+    assert_eq!(stats.issues_unopenable, 1, "{stats:?}");
+    let still_open = HealthEntity::find()
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .any(|i| i.kind == "UnreadablePage" && i.resolved_at.is_none());
+    assert!(
+        still_open,
+        "an unopenable file keeps its UnreadablePage open"
+    );
 }
 
 /// Tranche B per-issue health-issue endpoint:

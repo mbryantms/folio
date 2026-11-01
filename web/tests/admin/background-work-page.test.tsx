@@ -14,6 +14,7 @@ const state: { data: BackgroundWorkView | undefined } = { data: undefined };
 
 vi.mock("@/lib/api/mutations", () => ({
   useCancelMetadataBatch: () => ({ mutate: vi.fn(), isPending: false }),
+  useCancelScanRun: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock("@/lib/api/queries", () => ({
   useBackgroundWork: () => ({
@@ -162,6 +163,8 @@ describe("BackgroundWorkClient", () => {
           kind: "deep_validate",
           library_id: "a",
           started_at: "2026-10-04T23:48:00Z",
+          scan_run_id: "run-dv",
+          stalled: false,
         },
       ],
     });
@@ -231,6 +234,49 @@ describe("BackgroundWorkClient", () => {
     expect(html).toContain("265 / 1,000");
     expect(html).toContain("12 skipped (format)");
     expect(html).toContain("3 failed");
+    expect(html).not.toContain("Nothing queued.");
+  });
+
+  it("lists a stalled deep validation with a cancel control", () => {
+    state.data = view({
+      libraries: [
+        {
+          id: "a",
+          slug: "marvel",
+          name: "Marvel",
+          scan: null,
+          scoped_scans: 0,
+          issues_total: 10,
+          covers_ready: 10,
+          covers_remaining: 0,
+          covers_hash_only: 0,
+          covers_errored: 0,
+          cover_jobs_queued: 0,
+          cover_jobs_running: 0,
+          page_jobs_queued: 0,
+          page_jobs_running: 0,
+          hash_pending: 0,
+          busy: false,
+        },
+      ],
+      tasks: [
+        {
+          kind: "deep_validate",
+          library_id: "a",
+          started_at: "2026-10-04T22:00:00Z",
+          scan_run_id: "run-dv",
+          stalled: true,
+        },
+      ],
+    });
+    const html = render();
+    // Its own label, not a scan.
+    expect(html).toContain("Deep validation — Marvel");
+    expect(html).toContain("stalled — nothing is running it");
+    // Cancellable from here: a newer scan hides it from the live scan page.
+    expect(html).toContain('aria-label="Cancel Deep validation — Marvel"');
+    // A stalled task is not work in progress: no spinner.
+    expect(html).not.toContain("animate-spin");
     expect(html).not.toContain("Nothing queued.");
   });
 

@@ -447,7 +447,7 @@ async fn seed_personal_rows(
         series_id: Set(series_id),
         issue_id: Set(issue_id.clone()),
         page_index: Set(1),
-        kind: Set("note".into()),
+        kind: Set(entity::marker::MarkerKind::Note),
         is_favorite: Set(false),
         tags: Set(vec![]),
         region: Set(None),

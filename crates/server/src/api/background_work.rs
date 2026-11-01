@@ -14,7 +14,9 @@
 //! - **per queue**: waiting / retry-delayed / held-by-a-worker / dead;
 //! - **metadata batches** still running or waiting on provider quota;
 //! - **tasks** spawned outside the queues (deep validation, reading-list
-//!   rematch), from a process-local registry;
+//!   rematch), from a process-local registry. A deep validation also owns
+//!   a `scan_runs` row; it lists here, never as a scan, and reads stalled
+//!   once no task in this process owns the row;
 //! - **sidecar re-emit runs** (library-wide sidecar rewrites) that are live
 //!   or finished in the last day, with their counts.
 //!
@@ -52,7 +54,8 @@ pub fn routes() -> OpenApiRouter<AppState> {
 /// Server-wide roll-up of [`BackgroundWorkView`].
 #[derive(Debug, Default, Serialize, utoipa::ToSchema)]
 pub struct BackgroundWorkTotals {
-    /// Scan runs executing (any kind: library, series, issue).
+    /// Scan runs executing (library, series or issue; deep validations
+    /// count under `tasks`).
     pub scans_running: i64,
     /// Scan runs accepted but not started.
     pub scans_queued: i64,
@@ -176,6 +179,12 @@ pub struct TaskWorkView {
     pub kind: String,
     pub library_id: Option<String>,
     pub started_at: String,
+    /// The `scan_runs` row the task owns (`deep_validate` only).
+    pub scan_run_id: Option<String>,
+    /// A `deep_validate` run row still `running` with no task in this
+    /// process behind it, so nothing will advance or close it (cancel it
+    /// through `scan_run_id`). Excluded from `busy`.
+    pub stalled: bool,
 }
 
 /// A library-wide sidecar re-emit run ([`crate::jobs::sidecar_reemit`]).
@@ -197,7 +206,7 @@ pub struct BackgroundWorkView {
     pub queues: Vec<QueueWorkView>,
     pub metadata_batches: Vec<MetadataBatchWorkView>,
     /// Spawned tasks with no queue (process-local): deep validation,
-    /// reading-list rematch.
+    /// reading-list rematch; plus stalled deep-validation rows.
     pub tasks: Vec<TaskWorkView>,
     /// Sidecar re-emit runs that are live or finished in the last 24 h,
     /// newest first.
@@ -342,11 +351,16 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         .order_by_asc(library::Column::Name)
         .all(&app.db)
         .await?;
-    let runs = scan_run::Entity::find()
-        .filter(scan_run::Column::State.is_in([ScanRunState::Queued, ScanRunState::Running]))
-        .order_by_asc(scan_run::Column::StartedAt)
-        .all(&app.db)
-        .await?;
+    // Deep-validate rows are not scans: no queue carries them, so the scan
+    // stall rule would always call them stalled. They list under `tasks`.
+    let (deep_validate_runs, runs): (Vec<scan_run::Model>, Vec<scan_run::Model>) =
+        scan_run::Entity::find()
+            .filter(scan_run::Column::State.is_in([ScanRunState::Queued, ScanRunState::Running]))
+            .order_by_asc(scan_run::Column::StartedAt)
+            .all(&app.db)
+            .await?
+            .into_iter()
+            .partition(|r| r.kind == ScanRunKind::DeepValidate);
     let issues: HashMap<Uuid, IssueCounts> = issue_counts(&app.db)
         .await?
         .into_iter()
@@ -508,21 +522,36 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
             .map(|rate| (totals.thumbs_outstanding as f64 / rate * 60.0).ceil() as u64);
     }
 
-    let tasks: Vec<TaskWorkView> = app
-        .running_background_tasks()
-        .into_iter()
+    let live_tasks = app.running_background_tasks();
+    let mut tasks: Vec<TaskWorkView> = live_tasks
+        .iter()
         .map(|t| TaskWorkView {
             kind: t.kind.to_owned(),
             library_id: t.library_id.map(|l| l.to_string()),
             started_at: t.started_at.to_rfc3339(),
+            scan_run_id: t.run_id.map(|r| r.to_string()),
+            stalled: false,
         })
         .collect();
+    // A deep-validate row is live while a task in this process owns it.
+    tasks.extend(
+        deep_validate_runs
+            .iter()
+            .filter(|r| !live_tasks.iter().any(|t| t.run_id == Some(r.id)))
+            .map(|r| TaskWorkView {
+                kind: crate::library::deep_validate::TASK_KIND.to_owned(),
+                library_id: Some(r.library_id.to_string()),
+                started_at: r.started_at.to_rfc3339(),
+                scan_run_id: Some(r.id.to_string()),
+                stalled: true,
+            }),
+    );
 
     totals.busy = totals.scans_running + totals.scans_queued + totals.jobs_outstanding > 0
         || metadata_batches
             .iter()
             .any(|b| b.status == "running" && !b.stalled)
-        || !tasks.is_empty()
+        || tasks.iter().any(|t| !t.stalled)
         || sidecar_reemits
             .iter()
             .any(|r| !r.run.stalled && matches!(r.run.status.as_str(), "running" | "draining"));
