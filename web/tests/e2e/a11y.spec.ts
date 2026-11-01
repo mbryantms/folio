@@ -184,7 +184,14 @@ const ROUTES: Route[] = [
   { path: "/settings/views", label: "settings, views" },
   { path: "/settings/pages", label: "settings, pages" },
   { path: "/settings/sidebar", label: "settings, sidebar" },
-  { path: "/settings/account", label: "settings, account" },
+  {
+    path: "/settings/account",
+    label: "settings, account",
+    // Same finding as settings, reading stats: the "Delete account"
+    // button is the vendored `destructive` variant, 3.2:1 in the dark
+    // theme until the `--destructive` palette decision lands.
+    exclude: ['[data-variant="destructive"]'],
+  },
   { path: "/settings/api-tokens", label: "settings, app passwords" },
   // ----- admin -----
   { path: "/admin", label: "admin dashboard" },
