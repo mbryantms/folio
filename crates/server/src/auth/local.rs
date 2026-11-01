@@ -890,11 +890,17 @@ pub async fn refresh(
         }
     };
 
-    // AUTH-2: a disabled account must not rotate a live refresh token into a
-    // fresh access token. Returning here — before `txn.commit()` — rolls back
-    // the rotation performed above, so the session stops rather than advancing.
-    if user_row.state == UserState::Disabled {
-        return error(StatusCode::UNAUTHORIZED, "auth.invalid", "account disabled");
+    // AUTH-2: an account that isn't `active` (disabled, or moved back to
+    // pending_verification) must not rotate a live refresh token into a
+    // fresh access token — the same state rule as `CurrentUser`. Returning
+    // here — before `txn.commit()` — rolls back the rotation performed above,
+    // so the session stops rather than advancing.
+    if user_row.state != UserState::Active {
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "auth.invalid",
+            "account not active",
+        );
     }
 
     if txn.commit().await.is_err() {
