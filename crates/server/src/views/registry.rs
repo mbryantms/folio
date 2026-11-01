@@ -6,6 +6,7 @@
 //! Adding or changing a filterable field is a one-place edit here.
 
 use super::dsl::{Field, Op, ViewEntity};
+use entity::marker::MarkerKind;
 
 /// High-level value family. The compiler maps these to SQL operators and
 /// dispatches the value validator per `(kind, op)` pair.
@@ -84,7 +85,7 @@ pub enum Source {
     /// `EXISTS` a marker of this kind owned by the caller on the row
     /// (`markers.issue_id = issues.id` / `markers.series_id = series.id`),
     /// ignoring markers on removed issues (WP-5.7).
-    MarkerExists(&'static str),
+    MarkerExists(MarkerKind),
     /// The caller's own `progress_records.<col>` for the issue (issue
     /// views only; filter-parity-and-builtin-views-1.0 M1). A scalar
     /// subquery, so an issue the caller never opened is NULL — numeric
@@ -764,8 +765,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Bool,
         id: "has_notes",
         label: "Has My Notes",
-        source: Some(Source::MarkerExists("note")),
-        issue_source: Some(Source::MarkerExists("note")),
+        source: Some(Source::MarkerExists(MarkerKind::Note)),
+        issue_source: Some(Source::MarkerExists(MarkerKind::Note)),
         allowed_ops: BOOL_OPS,
         enum_values: &[],
     },
@@ -774,8 +775,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Bool,
         id: "has_bookmarks",
         label: "Has My Bookmarks",
-        source: Some(Source::MarkerExists("bookmark")),
-        issue_source: Some(Source::MarkerExists("bookmark")),
+        source: Some(Source::MarkerExists(MarkerKind::Bookmark)),
+        issue_source: Some(Source::MarkerExists(MarkerKind::Bookmark)),
         allowed_ops: BOOL_OPS,
         enum_values: &[],
     },
@@ -784,8 +785,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Bool,
         id: "has_highlights",
         label: "Has My Highlights",
-        source: Some(Source::MarkerExists("highlight")),
-        issue_source: Some(Source::MarkerExists("highlight")),
+        source: Some(Source::MarkerExists(MarkerKind::Highlight)),
+        issue_source: Some(Source::MarkerExists(MarkerKind::Highlight)),
         allowed_ops: BOOL_OPS,
         enum_values: &[],
     },
@@ -795,8 +796,8 @@ const SPECS: &[FieldSpec] = &[
         kind: FieldKind::Bool,
         id: "has_favorites",
         label: "Has My Favorites",
-        source: Some(Source::MarkerExists("favorite")),
-        issue_source: Some(Source::MarkerExists("favorite")),
+        source: Some(Source::MarkerExists(MarkerKind::Favorite)),
+        issue_source: Some(Source::MarkerExists(MarkerKind::Favorite)),
         allowed_ops: BOOL_OPS,
         enum_values: &[],
     },

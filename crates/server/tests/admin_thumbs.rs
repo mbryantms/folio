@@ -174,7 +174,7 @@ async fn seed_library_with_issues(
             file_path: Set(format!("/tmp/status/{i}.cbz")),
             file_size: Set(1),
             file_mtime: Set(now),
-            state: Set("active".into()),
+            state: Set(entity::issue::IssueState::Active),
             content_hash: Set(id.clone()),
             title: Set(None),
             sort_number: Set(Some(i as f64)),

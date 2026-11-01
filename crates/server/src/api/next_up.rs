@@ -719,7 +719,7 @@ async fn series_lane_rows(
 ) -> Result<Vec<IssueCardRow>, Response> {
     let mut sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(lane);
     // WP-2.7: never resolve onto an issue the caller can't open.

@@ -559,8 +559,8 @@ async fn create_rejects_invisible_targets_like_missing_ones() {
     am.removed_at = Set(Some(Utc::now().fixed_offset()));
     am.update(&db).await.unwrap();
     for (id, removed, state) in [
-        (&removed_issue.issue_id, true, "active"),
-        (&missing_file.issue_id, false, "missing"),
+        (&removed_issue.issue_id, true, issue::IssueState::Active),
+        (&missing_file.issue_id, false, issue::IssueState::Encrypted),
     ] {
         let row = issue::Entity::find_by_id(id.clone())
             .one(&db)
@@ -569,7 +569,7 @@ async fn create_rejects_invisible_targets_like_missing_ones() {
             .unwrap();
         let mut am: issue::ActiveModel = row.into();
         am.removed_at = Set(removed.then(|| Utc::now().fixed_offset()));
-        am.state = Set(state.into());
+        am.state = Set(state);
         am.update(&db).await.unwrap();
     }
 

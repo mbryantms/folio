@@ -230,7 +230,7 @@ async fn library_stats_figures_access_and_query_count() {
     // One malformed (50 bytes) — on disk but not readable: neither count.
     let bad_path = dir_a.path().join("Live Run 005.cbz");
     IssueSeed::new(lib_a, live_series, &bad_path, &[5u8; 50], 5.0)
-        .with_state("malformed")
+        .with_state(entity::issue::IssueState::Malformed)
         .insert(&db)
         .await;
     // A backup on disk that no sweep has counted: the endpoint must not

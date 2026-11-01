@@ -278,7 +278,7 @@ async fn seed_issue_with_file(
         file_path: Set(file_path.to_string_lossy().into_owned()),
         file_size: Set(std::fs::metadata(file_path).unwrap().len() as i64),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(hash.clone()),
         title: Set(Some("Issue".into())),
         sort_number: Set(Some(1.0)),
@@ -368,7 +368,7 @@ async fn seed_issue_full(
     file_path: &std::path::Path,
     payload: &[u8],
     sort_number: f64,
-    state: &str,
+    state: entity::issue::IssueState,
     removed: bool,
 ) -> String {
     std::fs::write(file_path, payload).unwrap();
@@ -383,7 +383,7 @@ async fn seed_issue_full(
         file_path: Set(file_path.to_string_lossy().into_owned()),
         file_size: Set(std::fs::metadata(file_path).unwrap().len() as i64),
         file_mtime: Set(now),
-        state: Set(state.into()),
+        state: Set(state),
         content_hash: Set(hash.clone()),
         title: Set(Some("Issue".into())),
         sort_number: Set(Some(sort_number)),
@@ -1049,7 +1049,7 @@ async fn recent_feed_hides_removed_and_inactive_issues() {
         &tmp.path().join("v-active.cbz"),
         b"v-active",
         1.0,
-        "active",
+        entity::issue::IssueState::Active,
         false,
     )
     .await;
@@ -1060,7 +1060,7 @@ async fn recent_feed_hides_removed_and_inactive_issues() {
         &tmp.path().join("v-missing.cbz"),
         b"v-missing",
         2.0,
-        "missing",
+        entity::issue::IssueState::Encrypted,
         false,
     )
     .await;
@@ -1071,7 +1071,7 @@ async fn recent_feed_hides_removed_and_inactive_issues() {
         &tmp.path().join("v-removed.cbz"),
         b"v-removed",
         3.0,
-        "active",
+        entity::issue::IssueState::Active,
         true,
     )
     .await;
@@ -1837,7 +1837,7 @@ async fn series_cover_picks_lowest_sort_number() {
         &tmp.path().join("c.cbz"),
         b"three",
         3.0,
-        "active",
+        entity::issue::IssueState::Active,
         false,
     )
     .await;
@@ -1848,7 +1848,7 @@ async fn series_cover_picks_lowest_sort_number() {
         &tmp.path().join("a.cbz"),
         b"one",
         1.0,
-        "active",
+        entity::issue::IssueState::Active,
         false,
     )
     .await;
@@ -1859,7 +1859,7 @@ async fn series_cover_picks_lowest_sort_number() {
         &tmp.path().join("b.cbz"),
         b"two",
         2.0,
-        "active",
+        entity::issue::IssueState::Active,
         false,
     )
     .await;
@@ -1902,7 +1902,7 @@ async fn series_cover_skips_removed_and_inactive_issues() {
         &tmp.path().join("rm.cbz"),
         b"removed",
         1.0,
-        "active",
+        entity::issue::IssueState::Active,
         true,
     )
     .await;
@@ -1913,7 +1913,7 @@ async fn series_cover_skips_removed_and_inactive_issues() {
         &tmp.path().join("inactive.cbz"),
         b"inactive",
         2.0,
-        "removed",
+        entity::issue::IssueState::Malformed,
         false,
     )
     .await;
@@ -1924,7 +1924,7 @@ async fn series_cover_skips_removed_and_inactive_issues() {
         &tmp.path().join("ok.cbz"),
         b"visible",
         3.0,
-        "active",
+        entity::issue::IssueState::Active,
         false,
     )
     .await;

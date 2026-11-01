@@ -119,7 +119,7 @@ async fn seed_minimal_issue(app: &TestApp) -> (sea_orm::DatabaseConnection, Stri
         file_path: Set(format!("/tmp/{issue_id}.cbz")),
         file_size: Set(1),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(issue_id.clone()),
         title: Set(Some("Family Matters".into())),
         sort_number: Set(Some(1.0)),

@@ -709,7 +709,7 @@ pub async fn on_this_day(
             sort_number: r.sort_number,
             year: r.year,
             page_count: r.page_count,
-            state: "active".to_owned(),
+            state: entity::issue::IssueState::Active,
             special_type: r.special_type,
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
@@ -908,7 +908,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
                 sort_number: r.sort_number,
                 year: r.year,
                 page_count: r.page_count,
-                state: "active".to_owned(),
+                state: entity::issue::IssueState::Active,
                 cover_url,
                 special_type: r.special_type,
                 created_at: r.created_at.to_rfc3339(),
@@ -1524,7 +1524,7 @@ async fn hydrate_series_issues(
     }
     let mut sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.is_in(series_ids.to_vec()))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null());
     // WP-2.7: an issue rated above the cap is never the "next" pick.
     if let Some(cap) = acl.issue_cap_condition() {
@@ -1924,7 +1924,7 @@ fn visible_dismissal_condition(acl: &access::VisibleLibraries, user_id: Uuid) ->
     let issue_hit = access::visible_issues_select(acl)
         .select_only()
         .column(issue::Column::Id)
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(
             Expr::col((issue::Entity, issue::Column::Id))
                 .equals((rail_dismissal::Entity, rail_dismissal::Column::TargetId)),
@@ -2006,7 +2006,7 @@ async fn hydrate_dismissals(
         Vec::new()
     } else {
         access::visible_issues_select(acl)
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::Id.is_in(issue_ids))
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)
@@ -2220,7 +2220,7 @@ async fn ensure_target_visible(
         DISMISS_KIND_ISSUE => {
             let hits = access::visible_issues_select(&acl)
                 .filter(issue::Column::Id.eq(target_id.to_owned()))
-                .filter(issue::Column::State.eq("active"))
+                .filter(issue::Column::State.eq(issue::IssueState::Active))
                 .count(&app.db)
                 .await
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;

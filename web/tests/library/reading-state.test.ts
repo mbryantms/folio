@@ -73,8 +73,8 @@ describe("pickNextIssue", () => {
     expect(out.state).toBe("unread");
   });
 
-  it("ignores soft-deleted issues", () => {
-    const removed = issue({ id: "i-removed", state: "removed" });
+  it("ignores non-active issues", () => {
+    const removed = issue({ id: "i-removed", state: "malformed" });
     const active = issue({ id: "i-active" });
     const out = pickNextIssue([removed, active], new Map());
     expect(out.target?.id).toBe("i-active");

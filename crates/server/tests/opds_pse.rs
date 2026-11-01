@@ -219,7 +219,7 @@ async fn seed_issue(app: &TestApp, cbz_path: &std::path::Path) -> (Uuid, String)
         file_path: Set(cbz_path.to_string_lossy().into_owned()),
         file_size: Set(size),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(hash.clone()),
         title: Set(Some("Issue".into())),
         sort_number: Set(Some(1.0)),

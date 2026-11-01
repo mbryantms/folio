@@ -1893,7 +1893,7 @@ pub async fn bulk_metadata(
 
     let rows: Vec<issue::Model> = match issue::Entity::find()
         .filter(issue::Column::Id.is_in(ids.clone()))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .all(&app.db)
         .await
@@ -2744,7 +2744,7 @@ pub async fn list(
     };
 
     let base = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null());
     let Some(mut select) = apply_issue_visibility(base, &visible, q.library) else {
         return empty();
@@ -3019,7 +3019,7 @@ pub async fn search(
 
     let visible = access::for_user(&app, &user).await;
     let mut sel = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(issue_search_condition(text))
         .order_by_desc(Expr::cust_with_values(

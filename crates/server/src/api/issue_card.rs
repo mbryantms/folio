@@ -39,7 +39,7 @@ pub(crate) struct IssueCardRow {
     pub month: Option<i32>,
     pub day: Option<i32>,
     pub page_count: Option<i32>,
-    pub state: String,
+    pub state: entity::issue::IssueState,
     pub special_type: Option<String>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
@@ -74,8 +74,8 @@ impl IssueCardRow {
     /// Build the card view — the single `issue → IssueSummaryView`
     /// mapping (`IssueSummaryView::from_model` delegates here).
     pub(crate) fn into_summary_view(self, series_slug: &str) -> IssueSummaryView {
-        let cover_url =
-            (self.state == "active").then(|| format!("/issues/{}/pages/0/thumb", self.id));
+        let cover_url = (self.state == entity::issue::IssueState::Active)
+            .then(|| format!("/issues/{}/pages/0/thumb", self.id));
         IssueSummaryView {
             id: self.id,
             slug: self.slug,

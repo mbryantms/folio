@@ -30,6 +30,7 @@ use axum::{
     response::IntoResponse,
 };
 use base64::Engine;
+use entity::marker::MarkerKind;
 use entity::{issue, marker, series, user_issue_note, user_rating};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, QueryFilter,
@@ -73,6 +74,19 @@ pub enum FeedKind {
     Favorite,
     Highlight,
     ClosingNote,
+}
+
+impl FeedKind {
+    /// The marker kind this filter selects; `None` for `closing_note`.
+    fn marker_kind(self) -> Option<MarkerKind> {
+        match self {
+            Self::Bookmark => Some(MarkerKind::Bookmark),
+            Self::Note => Some(MarkerKind::Note),
+            Self::Favorite => Some(MarkerKind::Favorite),
+            Self::Highlight => Some(MarkerKind::Highlight),
+            Self::ClosingNote => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, utoipa::ToSchema)]
@@ -237,15 +251,14 @@ fn common_where(
 /// Marker-only filters: kind, favorite, tags.
 fn marker_only_where(q: &FeedQuery, params: &mut Vec<Value>) -> String {
     let mut sql = String::new();
-    match q.kind {
-        Some(FeedKind::Bookmark) => sql.push_str(" AND m.kind = 'bookmark'"),
-        Some(FeedKind::Note) => sql.push_str(" AND m.kind = 'note'"),
-        Some(FeedKind::Favorite) => sql.push_str(" AND m.kind = 'favorite'"),
-        Some(FeedKind::Highlight) => sql.push_str(" AND m.kind = 'highlight'"),
-        Some(FeedKind::ClosingNote) | None => {}
+    if let Some(kind) = q.kind.and_then(FeedKind::marker_kind) {
+        sql.push_str(&format!(" AND m.kind = '{}'", kind.as_str()));
     }
     if q.is_favorite == Some(true) {
-        sql.push_str(" AND (m.is_favorite OR m.kind = 'favorite')");
+        sql.push_str(&format!(
+            " AND (m.is_favorite OR m.kind = '{}')",
+            MarkerKind::Favorite.as_str()
+        ));
     }
     if let Some(raw) = q.tags.as_deref().filter(|s| !s.trim().is_empty()) {
         let parsed = parse_tag_list(raw);
@@ -555,7 +568,8 @@ async fn hydrate(
                     issue_title: issue_row.and_then(|i| i.title.clone()),
                     issue_number: issue_row.and_then(|i| i.number_raw.clone()),
                     cover_url: issue_row.and_then(|i| {
-                        (i.state == "active").then(|| format!("/issues/{}/pages/0/thumb", i.id))
+                        (i.state == entity::issue::IssueState::Active)
+                            .then(|| format!("/issues/{}/pages/0/thumb", i.id))
                     }),
                     rating: ratings.get(&n.issue_id).copied(),
                     body: n.body,
@@ -597,8 +611,8 @@ pub struct CountsQuery {
 
 #[derive(Debug, FromQueryResult)]
 struct CountRow {
-    entry_kind: String,
-    kind: String,
+    /// `None` for the closing-note arm.
+    kind: Option<MarkerKind>,
     is_favorite: bool,
     n: i64,
 }
@@ -622,7 +636,7 @@ async fn count_rows(
     let mut sql = marker_sql;
     if arms_for(q).notes {
         let mut note_sql = String::from(
-            " UNION ALL SELECT 'closing_note', 'closing_note', false \
+            " UNION ALL SELECT 'closing_note', NULL::text, false \
              FROM user_issue_notes n JOIN issues i ON i.id = n.issue_id WHERE n.user_id = $1",
         );
         note_sql.push_str(&common_where(acl, q, &mut params, NOTE_BODY_EXPRS));
@@ -642,20 +656,19 @@ fn fold_counts(rows: &[CountRow]) -> (u64, BookmarkKindCounts) {
     for r in rows {
         let n = r.n.max(0) as u64;
         total += n;
-        if r.entry_kind == "closing_note" {
+        let Some(kind) = r.kind else {
             by.closing_note += n;
             continue;
-        }
-        match r.kind.as_str() {
-            "bookmark" => by.bookmark += n,
-            "note" => by.note += n,
-            "highlight" => by.highlight += n,
-            "favorite" => by.favorite += n,
-            _ => {}
+        };
+        match kind {
+            MarkerKind::Bookmark => by.bookmark += n,
+            MarkerKind::Note => by.note += n,
+            MarkerKind::Highlight => by.highlight += n,
+            MarkerKind::Favorite => by.favorite += n,
         }
         // Legacy favorited bookmarks / notes / highlights count toward
         // the Favorites chip too (same union the feed applies).
-        if r.is_favorite && r.kind != "favorite" {
+        if r.is_favorite && kind != MarkerKind::Favorite {
             by.favorite += n;
         }
     }

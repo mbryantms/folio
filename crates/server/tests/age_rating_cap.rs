@@ -304,7 +304,7 @@ async fn seed_library(app: &TestApp) -> Fixture {
             file_path: Set(file.to_string_lossy().into_owned()),
             file_size: Set(1),
             file_mtime: Set(now),
-            state: Set("active".into()),
+            state: Set(entity::issue::IssueState::Active),
             content_hash: Set(id.clone()),
             title: Set(Some(title.into())),
             sort_number: Set(Some(n as f64)),

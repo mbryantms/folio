@@ -9249,7 +9249,7 @@ export interface components {
             series_slug: string;
             slug: string;
             special_type?: string | null;
-            state: string;
+            state: components["schemas"]["IssueState"];
             title?: string | null;
         };
         /**
@@ -10172,20 +10172,27 @@ export interface components {
             total: number;
         };
         /**
+         * @description What a health row reports. The scanner's typed payload enum
+         *     (`server::library::health::IssueKind`) maps each of its variants onto
+         *     one of these.
+         * @enum {string}
+         */
+        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "MetadataDriftFromXml";
+        /**
          * @description One kind-facet tally within the current status+severity scope (drives the
          *     per-kind filter pills).
          */
         HealthIssueKindFacet: {
             /** Format: int64 */
             count: number;
-            kind: string;
+            kind: components["schemas"]["HealthIssueKind"];
         };
         HealthIssueView: {
             dismissed_at?: string | null;
             fingerprint: string;
             first_seen_at: string;
             id: string;
-            kind: string;
+            kind: components["schemas"]["HealthIssueKind"];
             last_seen_at: string;
             payload: unknown;
             resolved_at?: string | null;
@@ -10503,7 +10510,7 @@ export interface components {
             slug: string;
             /** Format: double */
             sort_number?: number | null;
-            state: string;
+            state: components["schemas"]["IssueState"];
             story_arc?: string | null;
             story_arc_number?: string | null;
             summary?: string | null;
@@ -10669,6 +10676,14 @@ export interface components {
             gcd?: string | null;
             metron?: string | null;
         };
+        /**
+         * @description Whether an issue's archive opened cleanly. The scanner writes it on
+         *     every ingest (`scanner::process`); only `active` issues have readable
+         *     pages, so covers, page bytes and most list surfaces key off it.
+         *     Soft deletion is `removed_at`, not a state.
+         * @enum {string}
+         */
+        IssueState: "active" | "encrypted" | "malformed";
         IssueSummaryView: {
             cover_url?: string | null;
             created_at: string;
@@ -10695,7 +10710,7 @@ export interface components {
              *     reader's Specials & Extras section on the series detail page.
              */
             special_type?: string | null;
-            state: string;
+            state: components["schemas"]["IssueState"];
             title?: string | null;
             updated_at: string;
             /** Format: int32 */

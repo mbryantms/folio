@@ -280,7 +280,7 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
             file_path: Set(format!("/tmp/cbl-test/Invincible #{num}.cbz")),
             file_size: Set(1),
             file_mtime: Set(now),
-            state: Set("active".into()),
+            state: Set(entity::issue::IssueState::Active),
             content_hash: Set(issue_id.clone()),
             title: Set(None),
             sort_number: Set(Some(num as f64)),

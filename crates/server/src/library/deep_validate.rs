@@ -264,7 +264,7 @@ async fn walk(
         .select_only()
         .column(issue::Column::FilePath)
         .filter(issue::Column::LibraryId.eq(library_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .into_tuple()
         .all(&state.db)
@@ -332,7 +332,10 @@ async fn resolve_stale_unreadable_pages(
             Expr::value(chrono::Utc::now().fixed_offset()),
         )
         .filter(library_health_issue::Column::LibraryId.eq(library_id))
-        .filter(library_health_issue::Column::Kind.eq("UnreadablePage"))
+        .filter(
+            library_health_issue::Column::Kind
+                .eq(library_health_issue::HealthIssueKind::UnreadablePage),
+        )
         .filter(library_health_issue::Column::ResolvedAt.is_null())
         .filter(library_health_issue::Column::LastSeenAt.lt(started_at))
         .exec(db)

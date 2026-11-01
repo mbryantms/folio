@@ -13,6 +13,7 @@
 //! require a migration.
 
 use chrono::{DateTime, FixedOffset, Utc};
+use entity::library_health_issue::HealthIssueKind;
 use entity::{external_id, issue, library_health_issue};
 use sea_orm::sea_query::{Expr, OnConflict};
 use sea_orm::{
@@ -227,30 +228,31 @@ pub enum IssueKind {
 }
 
 impl IssueKind {
-    /// Stable string identifier — also used as the `kind` discriminant in the
-    /// DB row, so renames cause silent duplication. Treat as a wire format.
-    pub fn kind(&self) -> &'static str {
+    /// The row's `kind` column. Its string (`HealthIssueKind::as_str`) is
+    /// also hashed into [`Self::fingerprint`], so renames cause silent
+    /// duplication. Treat as a wire format.
+    pub fn kind(&self) -> HealthIssueKind {
         match self {
-            Self::FileAtRoot { .. } => "FileAtRoot",
-            Self::EmptyFolder { .. } => "EmptyFolder",
-            Self::UnreadableFile { .. } => "UnreadableFile",
-            Self::UnreadableFolder { .. } => "UnreadableFolder",
-            Self::UnreadableArchive { .. } => "UnreadableArchive",
-            Self::MissingComicInfo { .. } => "MissingComicInfo",
-            Self::MalformedComicInfo { .. } => "MalformedComicInfo",
-            Self::MalformedArchive { .. } => "MalformedArchive",
-            Self::EncryptedArchive { .. } => "EncryptedArchive",
-            Self::FolderNameMismatch { .. } => "FolderNameMismatch",
-            Self::MixedSeriesInFolder { .. } => "MixedSeriesInFolder",
-            Self::DuplicateContent { .. } => "DuplicateContent",
-            Self::OrphanedSeriesJson { .. } => "OrphanedSeriesJson",
-            Self::UnsupportedArchiveFormat { .. } => "UnsupportedArchiveFormat",
-            Self::RecoveredArchive { .. } => "RecoveredArchive",
-            Self::SkippedArchiveEntries { .. } => "SkippedArchiveEntries",
-            Self::UnreadablePage { .. } => "UnreadablePage",
-            Self::NoPages { .. } => "NoPages",
-            Self::AmbiguousFolder { .. } => "AmbiguousFolder",
-            Self::DuplicateExternalId { .. } => "DuplicateExternalId",
+            Self::FileAtRoot { .. } => HealthIssueKind::FileAtRoot,
+            Self::EmptyFolder { .. } => HealthIssueKind::EmptyFolder,
+            Self::UnreadableFile { .. } => HealthIssueKind::UnreadableFile,
+            Self::UnreadableFolder { .. } => HealthIssueKind::UnreadableFolder,
+            Self::UnreadableArchive { .. } => HealthIssueKind::UnreadableArchive,
+            Self::MissingComicInfo { .. } => HealthIssueKind::MissingComicInfo,
+            Self::MalformedComicInfo { .. } => HealthIssueKind::MalformedComicInfo,
+            Self::MalformedArchive { .. } => HealthIssueKind::MalformedArchive,
+            Self::EncryptedArchive { .. } => HealthIssueKind::EncryptedArchive,
+            Self::FolderNameMismatch { .. } => HealthIssueKind::FolderNameMismatch,
+            Self::MixedSeriesInFolder { .. } => HealthIssueKind::MixedSeriesInFolder,
+            Self::DuplicateContent { .. } => HealthIssueKind::DuplicateContent,
+            Self::OrphanedSeriesJson { .. } => HealthIssueKind::OrphanedSeriesJson,
+            Self::UnsupportedArchiveFormat { .. } => HealthIssueKind::UnsupportedArchiveFormat,
+            Self::RecoveredArchive { .. } => HealthIssueKind::RecoveredArchive,
+            Self::SkippedArchiveEntries { .. } => HealthIssueKind::SkippedArchiveEntries,
+            Self::UnreadablePage { .. } => HealthIssueKind::UnreadablePage,
+            Self::NoPages { .. } => HealthIssueKind::NoPages,
+            Self::AmbiguousFolder { .. } => HealthIssueKind::AmbiguousFolder,
+            Self::DuplicateExternalId { .. } => HealthIssueKind::DuplicateExternalId,
         }
     }
 
@@ -460,7 +462,7 @@ impl HealthCollector {
         let open: Vec<library_health_issue::Model> = library_health_issue::Entity::find()
             .filter(library_health_issue::Column::LibraryId.eq(self.library_id))
             .filter(library_health_issue::Column::ResolvedAt.is_null())
-            .filter(library_health_issue::Column::Kind.eq("DuplicateExternalId"))
+            .filter(library_health_issue::Column::Kind.eq(HealthIssueKind::DuplicateExternalId))
             .all(db)
             .await?;
         if open.is_empty() {
@@ -630,7 +632,7 @@ impl HealthCollector {
 
     pub fn emit(&mut self, issue: IssueKind) {
         tracing::debug!(
-            kind = issue.kind(),
+            kind = issue.kind().as_str(),
             severity = issue.severity().as_str(),
             "scanner: health issue emitted",
         );
@@ -638,7 +640,7 @@ impl HealthCollector {
             events.emit(ScanEvent::HealthIssue {
                 library_id: self.library_id,
                 scan_id: self.scan_id,
-                kind: issue.kind().to_owned(),
+                kind: issue.kind().as_str().to_owned(),
                 severity: issue.severity().as_str().to_owned(),
                 path: issue.event_path(),
             });
@@ -701,7 +703,7 @@ impl HealthCollector {
                 id: Set(Uuid::now_v7()),
                 library_id: Set(self.library_id),
                 scan_id: Set(Some(self.scan_id)),
-                kind: Set(issue.kind().to_string()),
+                kind: Set(issue.kind()),
                 payload: Set(issue.payload()),
                 severity: Set(issue.severity().as_str().to_string()),
                 fingerprint: Set(issue.fingerprint()),
@@ -754,9 +756,8 @@ impl HealthCollector {
             let open: Vec<library_health_issue::Model> = library_health_issue::Entity::find()
                 .filter(library_health_issue::Column::LibraryId.eq(self.library_id))
                 .filter(library_health_issue::Column::ResolvedAt.is_null())
-                .filter(library_health_issue::Column::Kind.ne("PageCountMismatch"))
-                .filter(library_health_issue::Column::Kind.ne("UnreadableFolder"))
-                .filter(library_health_issue::Column::Kind.ne("DuplicateExternalId"))
+                .filter(library_health_issue::Column::Kind.ne(HealthIssueKind::UnreadableFolder))
+                .filter(library_health_issue::Column::Kind.ne(HealthIssueKind::DuplicateExternalId))
                 .all(db)
                 .await?;
             let touched_files: HashSet<&str> =
@@ -804,7 +805,7 @@ impl HealthCollector {
             let open: Vec<library_health_issue::Model> = library_health_issue::Entity::find()
                 .filter(library_health_issue::Column::LibraryId.eq(self.library_id))
                 .filter(library_health_issue::Column::ResolvedAt.is_null())
-                .filter(library_health_issue::Column::Kind.eq("UnreadableFolder"))
+                .filter(library_health_issue::Column::Kind.eq(HealthIssueKind::UnreadableFolder))
                 .all(db)
                 .await?;
             let under_scope = |p: &str| {

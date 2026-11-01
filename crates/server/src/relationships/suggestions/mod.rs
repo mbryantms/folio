@@ -477,10 +477,10 @@ struct KeyRow {
     from_series_id: Uuid,
     to_series_id: Option<Uuid>,
     to_arc_id: Option<Uuid>,
-    kind: String,
+    kind: RelationshipKind,
 }
 
-type RowKey = (Uuid, Target, String);
+type RowKey = (Uuid, Target, RelationshipKind);
 
 fn key_set(rows: Vec<KeyRow>) -> HashSet<RowKey> {
     rows.into_iter()
@@ -633,8 +633,8 @@ pub async fn generate_for_library<C: ConnectionTrait>(
         // orientation for both the kind and its inverse covers "already
         // related this way" and "would contradict on accept". Equivalent
         // kinds (`sequel_of` ⇔ `continues`) count as the same decision.
-        let same = (p.from, p.to, p.kind.as_str().to_owned());
-        let key = |k: RelationshipKind| (p.from, p.to, k.as_str().to_owned());
+        let same = (p.from, p.to, p.kind);
+        let key = |k: RelationshipKind| (p.from, p.to, k);
         let equivalents = equivalent_kinds(p.kind);
         if equivalents
             .iter()
@@ -1002,15 +1002,7 @@ where
     } else {
         SuggestionStatus::Accepted
     };
-    let suggestion = set_status(
-        &txn,
-        row,
-        status,
-        modified.then(|| kind.as_str().to_owned()),
-        actor,
-        now,
-    )
-    .await?;
+    let suggestion = set_status(&txn, row, status, modified.then_some(kind), actor, now).await?;
     txn.commit().await?;
     Ok(AcceptOutcome {
         suggestion,
@@ -1207,7 +1199,7 @@ async fn set_status<C: ConnectionTrait>(
     conn: &C,
     row: sug::Model,
     status: SuggestionStatus,
-    accepted_kind: Option<String>,
+    accepted_kind: Option<RelationshipKind>,
     actor: Uuid,
     now: chrono::DateTime<chrono::FixedOffset>,
 ) -> Result<sug::Model, DbErr> {

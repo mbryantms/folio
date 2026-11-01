@@ -236,7 +236,7 @@ async fn seed_library_with_issues(
             file_path: Set(format!("/tmp/rl/{label}-{n}.cbz")),
             file_size: Set(1),
             file_mtime: Set(now),
-            state: Set("active".into()),
+            state: Set(entity::issue::IssueState::Active),
             content_hash: Set(id.clone()),
             title: Set(None),
             sort_number: Set(Some(n as f64)),

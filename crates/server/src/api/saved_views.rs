@@ -2064,7 +2064,7 @@ struct IssueViewRow {
     month: Option<i32>,
     day: Option<i32>,
     page_count: Option<i32>,
-    state: String,
+    state: entity::issue::IssueState,
     special_type: Option<String>,
     created_at: chrono::DateTime<chrono::FixedOffset>,
     updated_at: chrono::DateTime<chrono::FixedOffset>,
@@ -2099,8 +2099,8 @@ impl IssueViewRow {
 
     fn into_summary_view(self) -> IssueSummaryView {
         // `state` is pinned 'active' by the compiler's WHERE.
-        let cover_url =
-            (self.state == "active").then(|| format!("/issues/{}/pages/0/thumb", self.id));
+        let cover_url = (self.state == entity::issue::IssueState::Active)
+            .then(|| format!("/issues/{}/pages/0/thumb", self.id));
         IssueSummaryView {
             id: self.id,
             slug: self.slug,

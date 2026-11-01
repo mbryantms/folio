@@ -949,7 +949,7 @@ async fn hydrate(
                 reason: r.reason,
                 evidence: r.evidence,
                 status: r.status.parse().unwrap_or(SuggestionStatus::Pending),
-                accepted_kind: r.accepted_kind.as_deref().and_then(|k| k.parse().ok()),
+                accepted_kind: r.accepted_kind,
                 created_at: r.created_at.to_rfc3339(),
                 updated_at: r.updated_at.to_rfc3339(),
                 reviewed_at: r.reviewed_at.map(|t| t.to_rfc3339()),

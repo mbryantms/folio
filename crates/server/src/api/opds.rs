@@ -1006,7 +1006,8 @@ pub(crate) async fn discovery_feed_page(
     created_since: Option<chrono::DateTime<chrono::FixedOffset>>,
     page: u64,
 ) -> Result<(Vec<OpdsIssueRow>, u64), sea_orm::DbErr> {
-    let mut base = access::visible_issues_select(allowed).filter(issue::Column::State.eq("active"));
+    let mut base = access::visible_issues_select(allowed)
+        .filter(issue::Column::State.eq(issue::IssueState::Active));
     if let Some(cutoff) = created_since {
         base = base.filter(issue::Column::CreatedAt.gte(cutoff));
     }

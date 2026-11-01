@@ -275,7 +275,7 @@ pub struct IssueSeed<'a> {
     pub sort_number: f64,
     pub title: Option<String>,
     pub page_count: Option<i32>,
-    pub state: &'static str,
+    pub state: entity::issue::IssueState,
 }
 
 impl<'a> IssueSeed<'a> {
@@ -294,7 +294,7 @@ impl<'a> IssueSeed<'a> {
             sort_number,
             title: None,
             page_count: Some(20),
-            state: "active",
+            state: entity::issue::IssueState::Active,
         }
     }
 
@@ -313,7 +313,7 @@ impl<'a> IssueSeed<'a> {
         self
     }
 
-    pub fn with_state(mut self, s: &'static str) -> Self {
+    pub fn with_state(mut self, s: entity::issue::IssueState) -> Self {
         self.state = s;
         self
     }
@@ -334,7 +334,7 @@ impl<'a> IssueSeed<'a> {
             file_path: Set(self.file_path.to_string_lossy().into_owned()),
             file_size: Set(std::fs::metadata(self.file_path).unwrap().len() as i64),
             file_mtime: Set(now),
-            state: Set(self.state.into()),
+            state: Set(self.state),
             content_hash: Set(hash.clone()),
             title: Set(Some(title)),
             sort_number: Set(Some(self.sort_number)),

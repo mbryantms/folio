@@ -226,7 +226,7 @@ async fn seed(app: &TestApp) -> (Uuid, String) {
         file_path: Set("/tmp/doomed/issue1.cbz".into()),
         file_size: Set(1),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(issue_id.clone()),
         title: Set(None),
         sort_number: Set(Some(0.0)),

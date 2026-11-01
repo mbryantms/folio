@@ -127,10 +127,10 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     // (only `removed_at` is set — see `library::reconcile`), so check both.
     // Their file is gone by definition; opening it would just log a
     // "No such file" failure on every THUMBNAIL_VERSION bump.
-    if row.state != "active" || row.removed_at.is_some() {
+    if row.state != entity::issue::IssueState::Active || row.removed_at.is_some() {
         tracing::debug!(
             issue_id = %job.issue_id,
-            state = %row.state,
+            state = row.state.as_str(),
             soft_removed = row.removed_at.is_some(),
             "thumbs job: skipping non-active or soft-removed issue",
         );
@@ -759,7 +759,7 @@ pub async fn enqueue_pending_for_library(app: &AppState, library_id: Uuid) -> us
 
     let pending: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter())
         .select_only()
@@ -796,7 +796,7 @@ pub async fn enqueue_pending_for_series(
     let ids: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter())
         .select_only()
@@ -874,7 +874,7 @@ async fn active_issue_rows_for_thumbs(
     // — it stays satisfied once the hash lands.
     let mut query = issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter());
     if let Some(series_id) = series_id {
@@ -957,7 +957,7 @@ where
     let pending: Vec<String> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::Id.is_in(ids))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(needs_cover_work_filter())
         .select_only()
@@ -1060,7 +1060,7 @@ pub async fn enqueue_strips_for_series(app: &AppState, library_id: Uuid, series_
     let rows: Vec<(String, Option<i32>)> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::Id)
@@ -1119,7 +1119,7 @@ pub async fn enqueue_strips_for_library(app: &AppState, library_id: Uuid) -> usi
 
     let rows: Vec<(String, Option<i32>)> = match issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(library_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .select_only()
         .column(issue::Column::Id)

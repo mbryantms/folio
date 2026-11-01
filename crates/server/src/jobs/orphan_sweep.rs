@@ -38,7 +38,7 @@ pub async fn run(state: &AppState) -> anyhow::Result<usize> {
     let alive: Vec<String> = issue::Entity::find()
         .select_only()
         .column(issue::Column::Id)
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::Id.is_in(candidates))
         .into_tuple::<String>()
         .all(&state.db)

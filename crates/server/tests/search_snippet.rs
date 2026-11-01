@@ -215,7 +215,7 @@ async fn seed_issue(
         file_path: Set(format!("/tmp/{series_id}-{idx}.cbz")),
         file_size: Set(1),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(issue_id.clone()),
         title: Set(Some(format!("Issue {idx}"))),
         sort_number: Set(Some(idx as f64)),

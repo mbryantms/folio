@@ -434,7 +434,7 @@ async fn seed_library(
                 file_path: Set(format!("/tmp/perf-{label}/{s}/{n}.cbz")),
                 file_size: Set(1),
                 file_mtime: Set(now),
-                state: Set("active".into()),
+                state: Set(entity::issue::IssueState::Active),
                 content_hash: Set(issue_id.clone()),
                 title: Set(Some(format!("Issue {n}"))),
                 sort_number: Set(Some((n + 1) as f64)),

@@ -878,7 +878,7 @@ async fn auto_set_reading_direction<C: ConnectionTrait>(
 
     let total = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .count(db)
         .await?;
@@ -888,7 +888,7 @@ async fn auto_set_reading_direction<C: ConnectionTrait>(
 
     let manga_count = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq("active"))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null())
         .filter(issue::Column::Manga.is_in(["Yes", "YesAndRightToLeft"]))
         .count(db)

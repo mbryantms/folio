@@ -24,6 +24,7 @@ use super::registry::{self, FieldKind, Source};
 use crate::library::access::VisibleLibraries;
 use crate::reading::series_progress;
 use crate::util::search::{contains_pattern, literal_like, prefix_pattern, suffix_pattern};
+use entity::marker::MarkerKind;
 use entity::{issue, series};
 use sea_orm::{
     Condition as SeaCondition, Iterable,
@@ -553,7 +554,9 @@ fn issue_base(input: &IssueCompileInput<'_>) -> Result<SelectStatement, CompileE
         Expr::col((series::Entity, series::Column::Id))
             .equals((issue::Entity, issue::Column::SeriesId)),
     );
-    q.and_where(Expr::col((issue::Entity, issue::Column::State)).eq("active"));
+    q.and_where(
+        Expr::col((issue::Entity, issue::Column::State)).eq(issue::IssueState::Active.as_str()),
+    );
     q.and_where(Expr::col((issue::Entity, issue::Column::RemovedAt)).is_null());
     apply_issue_visibility(&mut q, &input.visible_libraries);
     let ctx = Ctx {
@@ -885,7 +888,7 @@ fn metadata_completeness_subquery() -> SelectStatement {
             Alias::new("complete_count"),
         )
         .from(issue::Entity)
-        .and_where(Expr::col(issue::Column::State).eq("active"))
+        .and_where(Expr::col(issue::Column::State).eq(issue::IssueState::Active.as_str()))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
         .add_group_by([Expr::col(issue::Column::SeriesId)])
         .to_owned()
@@ -917,7 +920,7 @@ fn active_issue_count_subquery() -> SelectStatement {
             Alias::new("special_count"),
         )
         .from(issue::Entity)
-        .and_where(Expr::col(issue::Column::State).eq("active"))
+        .and_where(Expr::col(issue::Column::State).eq(issue::IssueState::Active.as_str()))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
         .add_group_by([Expr::col(issue::Column::SeriesId)])
         .to_owned()
@@ -1062,7 +1065,7 @@ fn provider_match_expr(ctx: &Ctx) -> SimpleExpr {
 /// registry, never from user input.
 fn marker_predicate(
     cond: &Condition,
-    kind: &'static str,
+    kind: MarkerKind,
     ctx: &Ctx,
 ) -> Result<SeaCondition, CompileError> {
     let owner = match ctx.entity {
@@ -1071,10 +1074,10 @@ fn marker_predicate(
     };
     // `favorite` (WP-8.4) is both a kind and a flag on any marker; match
     // either, like the /bookmarks "Favorites" chip.
-    let kind_clause = if kind == "favorite" {
-        "(m.kind = 'favorite' OR m.is_favorite)".to_owned()
+    let kind_clause = if kind == MarkerKind::Favorite {
+        format!("(m.kind = '{}' OR m.is_favorite)", kind.as_str())
     } else {
-        format!("m.kind = '{kind}'")
+        format!("m.kind = '{}'", kind.as_str())
     };
     let exists = format!(
         "EXISTS (SELECT 1 FROM markers m \

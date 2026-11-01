@@ -1591,7 +1591,7 @@ pub(crate) fn visible_series_select(
 pub(crate) fn visible_issues_select(
     acl: &access::VisibleLibraries,
 ) -> sea_orm::Select<issue::Entity> {
-    access::visible_issues_select(acl).filter(issue::Column::State.eq("active"))
+    access::visible_issues_select(acl).filter(issue::Column::State.eq(issue::IssueState::Active))
 }
 
 /// `collection_entries` rows whose target the caller can currently see
@@ -1866,7 +1866,7 @@ async fn build_collection_cbl(
     if !series_entry_ids.is_empty() {
         let rows = issue::Entity::find()
             .filter(issue::Column::SeriesId.is_in(series_entry_ids.clone()))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)

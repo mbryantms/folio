@@ -16,7 +16,7 @@ use crate::state::AppState;
 use archive::{ArchiveError, ArchiveLimits};
 use chrono::Utc;
 use entity::{
-    issue::{self, ActiveModel as IssueAM, Entity as IssueEntity},
+    issue::{self, ActiveModel as IssueAM, Entity as IssueEntity, IssueState},
     library,
 };
 use parsers::{
@@ -254,11 +254,11 @@ struct ParsedArchive {
     hash: Option<String>,
     info: ComicInfo,
     actual_pages: u32,
-    /// `"active"` for happy-path + MissingComicInfo (no ComicInfo but
-    /// the archive is intact); `"encrypted"` / `"malformed"` for the
+    /// `Active` for happy-path + MissingComicInfo (no ComicInfo but
+    /// the archive is intact); `Encrypted` / `Malformed` for the
     /// degraded paths. Stored on `issues.state` so downstream consumers
     /// (UI, page-bytes guard) can react to the partial-data state.
-    parse_state: &'static str,
+    parse_state: IssueState,
     /// Full MetronInfo `<ID source="...">` map when MetronInfo.xml was
     /// present. Kept separately from `info` (which only carries the
     /// legacy CV/Metron/GTIN trio) so the per-issue ingest can write
@@ -401,7 +401,7 @@ async fn parse_archive_for_ingest(
             info,
             metron,
             actual_pages,
-        } => (info, metron, actual_pages, "active"),
+        } => (info, metron, actual_pages, IssueState::Active),
         ArchiveOutcome::MissingComicInfo { info, actual_pages } => {
             // §11: only emit a health issue when explicitly requested. Mylar/CBL
             // libraries usually have ComicInfo everywhere; loose libraries
@@ -411,7 +411,7 @@ async fn parse_archive_for_ingest(
                     path: path.to_path_buf(),
                 });
             }
-            (info, None, actual_pages, "active")
+            (info, None, actual_pages, IssueState::Active)
         }
         ArchiveOutcome::Encrypted => {
             // Audit 2026-11 N-L1: the issue row alone left a coverless card
@@ -423,7 +423,7 @@ async fn parse_archive_for_ingest(
             health.emit(IssueKind::EncryptedArchive {
                 path: path.to_path_buf(),
             });
-            (ComicInfo::default(), None, 0, "encrypted")
+            (ComicInfo::default(), None, 0, IssueState::Encrypted)
         }
         ArchiveOutcome::Malformed(e) => {
             tracing::warn!(path = %path.display(), error = %e, "malformed ComicInfo.xml");
@@ -432,7 +432,7 @@ async fn parse_archive_for_ingest(
                 path: path.to_path_buf(),
                 error: e.clone(),
             });
-            (ComicInfo::default(), None, 0, "malformed")
+            (ComicInfo::default(), None, 0, IssueState::Malformed)
         }
         ArchiveOutcome::MalformedArchive(e) => {
             tracing::warn!(path = %path.display(), error = %e, "malformed archive");
@@ -441,7 +441,7 @@ async fn parse_archive_for_ingest(
                 path: path.to_path_buf(),
                 error: e.clone(),
             });
-            (ComicInfo::default(), None, 0, "malformed")
+            (ComicInfo::default(), None, 0, IssueState::Malformed)
         }
         ArchiveOutcome::Unreadable(e) => {
             tracing::warn!(path = %path.display(), error = %e, "io error reading archive");
@@ -458,7 +458,7 @@ async fn parse_archive_for_ingest(
     // image entries used to ingest as a silent 0-page issue — openable in
     // the reader, never turnable, invisible to the operator. Surface it.
     // Parse-failure states already emitted their own (severity-error) rows.
-    if actual_pages == 0 && parse_state == "active" {
+    if actual_pages == 0 && parse_state == IssueState::Active {
         health.emit(IssueKind::NoPages {
             path: path.to_path_buf(),
         });
@@ -1183,7 +1183,7 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         am.file_path = Set(path_str.clone());
         am.file_size = Set(size);
         am.file_mtime = Set(mtime.fixed_offset());
-        am.state = Set(parse_state.into());
+        am.state = Set(parse_state);
         am.content_hash = Set(hash);
         // The update path always hashes, so a row that was still pending
         // (lazy first import, then retagged) is now settled.
@@ -1516,7 +1516,7 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             file_path: Set(path_str.clone()),
             file_size: Set(size),
             file_mtime: Set(mtime.fixed_offset()),
-            state: Set(parse_state.into()),
+            state: Set(parse_state),
             content_hash: Set(hash),
             title: Set(info.title.clone()),
             sort_number: Set(sort_number),

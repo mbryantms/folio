@@ -3015,7 +3015,7 @@ pub(crate) async fn series_batch_selection(
                 .select_only()
                 .column(issue::Column::Id)
                 .filter(issue::Column::SeriesId.eq(series_id))
-                .filter(issue::Column::State.eq("active"))
+                .filter(issue::Column::State.eq(issue::IssueState::Active))
                 .filter(issue::Column::RemovedAt.is_null())
                 .order_by_asc(issue::Column::SortNumber)
                 .into_tuple::<String>()
@@ -3203,7 +3203,7 @@ pub async fn create_series_selection_batch(
     } else {
         match issue::Entity::find()
             .filter(issue::Column::SeriesId.eq(s.id))
-            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
             .filter(issue::Column::RemovedAt.is_null())
             .filter(issue::Column::Id.is_in(req.issue_ids.iter().cloned()))
             .order_by_asc(issue::Column::SortNumber)

@@ -189,7 +189,7 @@ async fn seed_three_issues(app: &TestApp) -> Vec<String> {
             file_path: Set(format!("/tmp/bulk/{i}.cbz")),
             file_size: Set(1),
             file_mtime: Set(now),
-            state: Set("active".into()),
+            state: Set(entity::issue::IssueState::Active),
             content_hash: Set(issue_id.clone()),
             title: Set(None),
             sort_number: Set(Some(f64::from(i))),

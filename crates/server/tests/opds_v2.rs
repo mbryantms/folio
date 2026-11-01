@@ -250,7 +250,7 @@ async fn seed_issue_with_file(
         file_path: Set(file_path.to_string_lossy().into_owned()),
         file_size: Set(std::fs::metadata(file_path).unwrap().len() as i64),
         file_mtime: Set(now),
-        state: Set("active".into()),
+        state: Set(entity::issue::IssueState::Active),
         content_hash: Set(hash.clone()),
         title: Set(Some("Issue".into())),
         sort_number: Set(Some(1.0)),
