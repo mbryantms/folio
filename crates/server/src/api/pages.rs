@@ -579,7 +579,7 @@ pub async fn set_sidebar(
             }
             let am = user_sidebar_entry::ActiveModel {
                 user_id: Set(user.id),
-                kind: Set(KIND_PAGE.into()),
+                kind: Set(KIND_PAGE),
                 ref_id: Set(id.to_string()),
                 visible: Set(false),
                 // Position is reassigned wholesale by /me/sidebar-layout

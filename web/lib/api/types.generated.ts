@@ -6118,7 +6118,7 @@ export interface components {
             files_per_sec?: number | null;
             id: string;
             /** @description `library` | `series` | `issue`. */
-            kind: string;
+            kind: components["schemas"]["ScanRunKind"];
             /**
              * @description Scanner phase (`planning`, `scanning`, `reconciling`,
              *     `enqueueing_thumbnails`, …); `None` until the first progress write.
@@ -6134,7 +6134,7 @@ export interface components {
             stalled: boolean;
             started_at: string;
             /** @description `queued` | `running`. */
-            state: string;
+            state: components["schemas"]["ScanRunState"];
             /** Format: int64 */
             total?: number | null;
         };
@@ -8636,7 +8636,7 @@ export interface components {
                 config: unknown;
                 created_at: string;
                 id: string;
-                kind: string;
+                kind: components["schemas"]["LogWidgetKind"];
                 /** Format: int32 */
                 position: number;
                 updated_at: string;
@@ -8708,7 +8708,7 @@ export interface components {
                 force: boolean;
                 id: string;
                 /** @description Trigger discriminator — today always `scan_all`. */
-                kind: string;
+                kind: components["schemas"]["ScanBatchKind"];
                 /**
                  * Format: int32
                  * @description Number of runs that adopted the batch (newly-enqueued libraries).
@@ -8718,7 +8718,7 @@ export interface components {
                 runs: components["schemas"]["BatchRunTally"];
                 started_at: string;
                 /** @description `running` | `complete` | `partial_failed` | `failed`. */
-                state: string;
+                state: components["schemas"]["ScanBatchState"];
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -8741,8 +8741,11 @@ export interface components {
                  *     since deleted, or when this scan isn't issue-kinded.
                  */
                 issue_label?: string | null;
-                /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
-                kind: string;
+                /**
+                 * @description `library` | `series` | `issue` drive the History tab filter chips;
+                 *     `deep_validate` runs have no chip.
+                 */
+                kind: components["schemas"]["ScanRunKind"];
                 /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
                 series_id?: string | null;
                 /**
@@ -8752,7 +8755,7 @@ export interface components {
                  */
                 series_name?: string | null;
                 started_at: string;
-                state: string;
+                state: components["schemas"]["ScanRunState"];
                 stats: unknown;
             }[];
             next_cursor?: string | null;
@@ -9661,7 +9664,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @description `"filter_series"`, `"filter_issues"` or `"cbl"`. */
-            kind: string;
+            kind: components["schemas"]["SavedViewKind"];
             match_mode?: string | null;
             name: string;
             /** Format: int32 */
@@ -9709,8 +9712,8 @@ export interface components {
             want_to_read?: components["schemas"]["ExportCollection"] | null;
         };
         ExportSidebarEntry: {
-            /** @description `builtin` / `library` / `view` / `header` / `spacer`. */
-            kind: string;
+            /** @description `builtin` / `library` / `view` / `page` / `header` / `spacer`. */
+            kind: components["schemas"]["SidebarEntryKind"];
             label?: string | null;
             /** Format: int32 */
             position: number;
@@ -9731,12 +9734,7 @@ export interface components {
             show_in_sidebar: boolean;
             /** Format: uuid */
             view_id: string;
-            /**
-             * @description The pinned view's `kind` (`filter_series` / `cbl` / `system` /
-             *     `collection`), hydrated so a system rail is recognisable after a
-             *     rebuild. `null` when the view no longer exists.
-             */
-            view_kind?: string | null;
+            view_kind?: components["schemas"]["SavedViewKind"] | null;
             view_name?: string | null;
             /**
              * @description `system_key` of the pinned view (e.g. `continue_reading`), when it
@@ -11054,11 +11052,16 @@ export interface components {
             target: string;
             timestamp: string;
         };
+        /**
+         * @description Which widget a `/log` page slot renders.
+         * @enum {string}
+         */
+        LogWidgetKind: "chrono_feed" | "stats_hero" | "heatmap" | "top_creators" | "top_publishers" | "top_imprints" | "series_finishes" | "pace_chart" | "time_of_day" | "recent_bookmarks" | "currently_reading" | "note";
         LogWidgetView: {
             config: unknown;
             created_at: string;
             id: string;
-            kind: string;
+            kind: components["schemas"]["LogWidgetKind"];
             /** Format: int32 */
             position: number;
             updated_at: string;
@@ -13540,6 +13543,12 @@ export interface components {
             /** Format: uuid */
             saved_view_id: string;
         };
+        /**
+         * @description What a saved view is: a filter over series or issues, a CBL reading
+         *     list, a built-in system rail, or a user collection.
+         * @enum {string}
+         */
+        SavedViewKind: "filter_series" | "filter_issues" | "cbl" | "system" | "collection";
         SavedViewListView: {
             items: components["schemas"]["SavedViewView"][];
         };
@@ -13563,7 +13572,7 @@ export interface components {
             id: string;
             /** @description True for system views (`user_id IS NULL`). */
             is_system: boolean;
-            kind: string;
+            kind: components["schemas"]["SavedViewKind"];
             match_mode?: string | null;
             name: string;
             /** @description Whether the calling user has this view pinned to their home rail. */
@@ -13692,13 +13701,24 @@ export interface components {
             /** @description Aggregated counters across the member runs. */
             totals: components["schemas"]["BatchTotals"];
         };
+        /**
+         * @description What triggered a batch. Today only the admin "Scan all" action.
+         * @enum {string}
+         */
+        ScanBatchKind: "scan_all";
+        /**
+         * @description A batch's state, derived from its member runs as they finish: all
+         *     `complete` → `complete`, none → `failed`, a mix → `partial_failed`.
+         * @enum {string}
+         */
+        ScanBatchState: "running" | "complete" | "partial_failed" | "failed";
         ScanBatchView: {
             actor_id?: string | null;
             ended_at?: string | null;
             force: boolean;
             id: string;
             /** @description Trigger discriminator — today always `scan_all`. */
-            kind: string;
+            kind: components["schemas"]["ScanBatchKind"];
             /**
              * Format: int32
              * @description Number of runs that adopted the batch (newly-enqueued libraries).
@@ -13708,13 +13728,13 @@ export interface components {
             runs: components["schemas"]["BatchRunTally"];
             started_at: string;
             /** @description `running` | `complete` | `partial_failed` | `failed`. */
-            state: string;
+            state: components["schemas"]["ScanBatchState"];
         };
         ScanCancelResp: {
             ended_at?: string | null;
             error?: string | null;
             id: string;
-            state: string;
+            state: components["schemas"]["ScanRunState"];
         };
         ScanPreviewView: {
             /** Format: int64 */
@@ -13723,7 +13743,7 @@ export interface components {
             known_issue_count: number;
             /** Format: int64 */
             last_scan_duration_ms?: number | null;
-            last_scan_state?: string | null;
+            last_scan_state?: components["schemas"]["ScanRunState"] | null;
             mode: string;
             reason: string;
             /** Format: int64 */
@@ -13749,6 +13769,19 @@ export interface components {
             series_id?: string | null;
             state: string;
         };
+        /**
+         * @description What triggered a scan run. `library` is the legacy default for rows
+         *     that existed before the kind column; `deep_validate` is the opt-in
+         *     page-decode probe (`library::deep_validate`), which the History tab's
+         *     filter chips do not offer.
+         * @enum {string}
+         */
+        ScanRunKind: "library" | "series" | "issue" | "deep_validate";
+        /**
+         * @description A scan run's lifecycle state.
+         * @enum {string}
+         */
+        ScanRunState: "queued" | "running" | "complete" | "failed" | "cancelled";
         ScanRunView: {
             ended_at?: string | null;
             error?: string | null;
@@ -13761,8 +13794,11 @@ export interface components {
              *     since deleted, or when this scan isn't issue-kinded.
              */
             issue_label?: string | null;
-            /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
-            kind: string;
+            /**
+             * @description `library` | `series` | `issue` drive the History tab filter chips;
+             *     `deep_validate` runs have no chip.
+             */
+            kind: components["schemas"]["ScanRunKind"];
             /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
             series_id?: string | null;
             /**
@@ -13772,7 +13808,7 @@ export interface components {
              */
             series_name?: string | null;
             started_at: string;
-            state: string;
+            state: components["schemas"]["ScanRunState"];
             stats: unknown;
         };
         /**
@@ -14624,10 +14660,15 @@ export interface components {
          * @enum {string}
          */
         SharedUniverseVia: "universe" | "series_group";
+        /**
+         * @description What a sidebar entry points at; decides what `ref_id` means.
+         * @enum {string}
+         */
+        SidebarEntryKind: "builtin" | "library" | "view" | "page" | "header" | "spacer";
         SidebarEntryView: {
             href: string;
             icon: string;
-            kind: string;
+            kind: components["schemas"]["SidebarEntryKind"];
             label: string;
             /** Format: int32 */
             position: number;

@@ -100,13 +100,13 @@ async fn library_events_filters() {
     // The library_events.batch_id FK requires a real scan_batch row.
     BatchAM {
         id: Set(batch),
-        kind: Set("scan_all".into()),
+        kind: Set(entity::scan_batch::ScanBatchKind::ScanAll),
         actor_id: Set(None),
         force: Set(false),
         started_at: Set(chrono::Utc::now().fixed_offset()),
         ended_at: Set(None),
         library_count: Set(1),
-        state: Set("running".into()),
+        state: Set(entity::scan_batch::ScanBatchState::Running),
     }
     .insert(&db)
     .await

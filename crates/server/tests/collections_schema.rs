@@ -235,7 +235,7 @@ async fn make_collection(
     SavedViewAM {
         id: Set(id),
         user_id: Set(Some(user_id)),
-        kind: Set("collection".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Collection),
         system_key: Set(system_key.map(str::to_owned)),
         name: Set(name.into()),
         description: Set(None),
@@ -415,7 +415,7 @@ async fn per_user_and_global_system_key_uniqueness() {
     let dup = SavedViewAM {
         id: Set(Uuid::now_v7()),
         user_id: Set(Some(user_a)),
-        kind: Set("collection".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Collection),
         system_key: Set(Some("want_to_read".into())),
         name: Set("Want to Read dupe".into()),
         description: Set(None),
