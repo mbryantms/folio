@@ -1018,3 +1018,66 @@ async fn list_hides_sessions_on_removed_and_revoked_issues() {
     assert_eq!(listed_issue_ids(&app, &reader).await.len(), 2);
     assert_eq!(listed_issue_ids(&app, &admin).await, [issue_a]);
 }
+
+async fn stats_sessions(app: &TestApp, auth: &Authed, uri: &str) -> (i64, usize, i64) {
+    let (s, body) = get(app, auth, uri).await;
+    assert_eq!(s, StatusCode::OK, "{body:#?}");
+    (
+        body["totals"]["sessions"].as_i64().unwrap(),
+        body["top_series"].as_array().unwrap().len(),
+        body["totals"]["current_streak"].as_i64().unwrap(),
+    )
+}
+
+/// E7: `/me/reading-stats` counts only sessions whose issue the caller can
+/// still see — a soft-removed issue and a revoked library drop out of the
+/// totals, the rankings and the streak alike (the page links rankings to
+/// series, so totals must not count what the rankings cannot show). The
+/// admin's per-user view applies the removed rule only. Rows are kept, so
+/// a restore brings the numbers back.
+#[tokio::test]
+async fn stats_exclude_removed_and_revoked_issues() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "stats-vis-admin@example.com").await;
+    let reader = register(&app, "stats-vis-reader@example.com").await;
+    let (lib_a, _series_a, issue_a) = seed_one(&app, "stats-vis-a").await;
+    let (lib_b, _series_b, issue_b) = seed_one(&app, "stats-vis-b").await;
+    grant_library(&app, reader.user_id, lib_a).await;
+    grant_library(&app, reader.user_id, lib_b).await;
+
+    let started = (Utc::now() - Duration::seconds(120)).to_rfc3339();
+    for (client, issue) in [("sv-a", &issue_a), ("sv-b", &issue_b)] {
+        let (s, body) = post(
+            &app,
+            &reader,
+            "/api/me/reading-sessions",
+            &upsert_body(client, issue, &started),
+        )
+        .await;
+        assert!(s.is_success(), "{client}: {body:#?}");
+    }
+    let me = "/api/me/reading-stats?range=all";
+    let as_admin = format!(
+        "/api/admin/users/{}/reading-stats?range=all",
+        reader.user_id
+    );
+    assert_eq!(stats_sessions(&app, &reader, me).await, (2, 2, 1));
+    assert_eq!(stats_sessions(&app, &admin, &as_admin).await.0, 2);
+
+    set_issue_removed(&app, &issue_a, true).await;
+    assert_eq!(stats_sessions(&app, &reader, me).await, (1, 1, 1));
+    assert_eq!(stats_sessions(&app, &admin, &as_admin).await.0, 1);
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    library_user_access::Entity::delete_by_id((lib_b, reader.user_id))
+        .exec(&db)
+        .await
+        .unwrap();
+    assert_eq!(stats_sessions(&app, &reader, me).await, (0, 0, 0));
+    // The admin sees every library: only the removed issue is left out.
+    assert_eq!(stats_sessions(&app, &admin, &as_admin).await.0, 1);
+
+    set_issue_removed(&app, &issue_a, false).await;
+    grant_library(&app, reader.user_id, lib_b).await;
+    assert_eq!(stats_sessions(&app, &reader, me).await, (2, 2, 1));
+}

@@ -2924,3 +2924,138 @@ async fn issue_entry_carries_rel_alternate_json() {
         "missing rel=alternate JSON link for issue: {body}"
     );
 }
+
+/// Soft-remove a row by id (`issues` / `series`) through raw SQL.
+async fn mark_removed(db: &DatabaseConnection, table: &str, id: &str) {
+    use sea_orm::ConnectionTrait;
+    db.execute_unprepared(&format!(
+        "UPDATE {table} SET removed_at = now() WHERE id::text = '{id}'"
+    ))
+    .await
+    .unwrap();
+}
+
+/// E7: the collection feed lists what the web entries page lists — a
+/// soft-removed issue, a soft-removed series and an issue of a removed
+/// series never render, even for an admin (ACL alone let them through).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_acq_hides_removed_targets() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "col-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let live_series = seed_series(&db, lib_id, "Live Run").await;
+    let gone_series = seed_series(&db, lib_id, "Gone Run").await;
+    let live =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("l.cbz"), b"l").await;
+    let removed =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("r.cbz"), b"r").await;
+    let orphan =
+        seed_issue_with_file(&db, lib_id, gone_series, &tmp.path().join("o.cbz"), b"o").await;
+    mark_removed(&db, "issues", &removed).await;
+    mark_removed(&db, "series", &gone_series.to_string()).await;
+
+    let view_id = seed_collection(&db, auth.user_id, "With removed").await;
+    seed_collection_entry(&db, view_id, 0, Some(live_series), None).await;
+    seed_collection_entry(&db, view_id, 1, Some(gone_series), None).await;
+    seed_collection_entry(&db, view_id, 2, None, Some(&live)).await;
+    seed_collection_entry(&db, view_id, 3, None, Some(&removed)).await;
+    seed_collection_entry(&db, view_id, 4, None, Some(&orphan)).await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/collections/{view_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 2, "{body}");
+    assert!(body.contains(&format!(r#"href="/opds/v1/series/{live_series}""#)));
+    assert!(body.contains(&format!(r#"href="/opds/v1/issues/{live}/file""#)));
+    assert!(
+        !body.contains(&gone_series.to_string()),
+        "removed series hidden"
+    );
+    assert!(!body.contains(&removed), "removed issue hidden");
+    assert!(!body.contains(&orphan), "issue of a removed series hidden");
+}
+
+/// E7: every paged OPDS 1.2 feed clamps `?page=` (`opds::page_number`), so a
+/// hostile page number near `u64::MAX` answers an empty page instead of
+/// overflowing `(page - 1) * PAGE_SIZE`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paged_feeds_clamp_an_absurd_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "page-clamp@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Clamp Run").await;
+    seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("c.cbz"), b"c").await;
+
+    let page = u64::MAX;
+    for path in [
+        "/opds/v1/series".to_owned(),
+        format!("/opds/v1/series/{series_id}"),
+        "/opds/v1/browse".to_owned(),
+        "/opds/v1/history".to_owned(),
+        "/opds/v1/by-creator/Nobody".to_owned(),
+        "/opds/v1/search?q=Clamp".to_owned(),
+        "/opds/v1/characters".to_owned(),
+        "/opds/v1/teams".to_owned(),
+        "/opds/v1/arcs".to_owned(),
+        "/opds/v1/publishers".to_owned(),
+    ] {
+        let sep = if path.contains('?') { '&' } else { '?' };
+        let resp = get_with_auth(
+            &app,
+            &format!("{path}{sep}page={page}"),
+            Header::Cookie(auth.cookies()),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+    }
+}
+
+/// E7: the CBL list feed (and every feed hydrated through
+/// `fetch_visible_issues_preserving_order`) drops a match to a soft-removed
+/// issue or to an issue of a removed series.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cbl_list_acq_hides_removed_matches() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cbl-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let live_series = seed_series(&db, lib_id, "Live").await;
+    let gone_series = seed_series(&db, lib_id, "Gone").await;
+    let live =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("a.cbz"), b"a").await;
+    let removed =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("b.cbz"), b"b").await;
+    let orphan =
+        seed_issue_with_file(&db, lib_id, gone_series, &tmp.path().join("c.cbz"), b"c").await;
+    mark_removed(&db, "issues", &removed).await;
+    mark_removed(&db, "series", &gone_series.to_string()).await;
+
+    let list_id = seed_cbl_list(&db, Some(auth.user_id), "Removed matches").await;
+    seed_cbl_entry(&db, list_id, 0, Some(&removed)).await;
+    seed_cbl_entry(&db, list_id, 1, Some(&orphan)).await;
+    seed_cbl_entry(&db, list_id, 2, Some(&live)).await;
+
+    let resp = get_with_auth(
+        &app,
+        &format!("/opds/v1/lists/{list_id}"),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 1, "{body}");
+    assert!(body.contains(&format!("urn:issue:{live}")));
+}
