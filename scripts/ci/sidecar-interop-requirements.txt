@@ -5,6 +5,6 @@
 # 1.6 release on PyPI (1.5.5, the last stable, predates the `tags` plugin
 # API the script uses). darkseid is Metron-Tagger's reader; it is pinned
 # beside metron-tagger so the resolver can't float it.
-comictagger==1.6.0b9
+comictagger==1.6.0b11.dev0
 metron-tagger==5.0.0
 darkseid==9.1.0
