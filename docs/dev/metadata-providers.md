@@ -564,6 +564,9 @@ External-IDs conflicts (user-pinned `external_ids` row disagrees with
 the candidate's value) surface separately so the preview can render a
 per-source "Keep mine / Use theirs" toggle. The user's choices come
 back to apply as `selected_fields: Vec<String>` + `override_external_id_sources: Vec<String>`.
+Apply itself is admin-only (audit 2026-11 E16), and a non-empty
+`override_external_id_sources` also trips `AdminGatedOverride` like
+`override_user_edits` (E13); readers see the conflicts read-only.
 
 The diff endpoint shares the provider detail-fetch cache with apply
 (`metadata_cache` table; TTL 24h for issues, 168h for series), so

@@ -542,6 +542,27 @@ Pre-fix every failure returned `Ok`: a NAS hiccup consumed the apply's
 deferred writes with no retry, and the run stayed `completed`. Guards:
 `writeback_job_retry.rs`.
 
+**What a failed attempt records, and what it doesn't.** Every attempt,
+failed or not, writes one `archive` row to the library-event manifest and,
+when the job carries an actor, one `admin.issue.sidecar_writeback` audit
+row whose payload holds the `error` and its `disposition` (`Refused`,
+`Retrying`, `Final`); anonymous jobs write no audit row. A failed
+attempt writes nothing else: no `last_sidecar_rewrite_at` stamp, no
+scoped rescan (it would only re-ingest the old file), and none of the
+step 10 deferred writes, so the database keeps describing the file as
+it is. What that leaves behind depends on where the job came from:
+
+- **Provider apply** (`triggering_run_id` set): the run is marked
+  `failed` only on the last budgeted attempt or a spent busy budget;
+  a refusal leaves it alone, since the dispatch gate already reported it.
+  No provider provenance is written, so no drift appears either.
+- **Manual edit, drift flush, library re-emit** (`post_apply = None`, no
+  run): the edit and its `user` pins are already committed. The unstamped
+  `last_sidecar_rewrite_at` keeps the issue in the `MetadataDriftFromXml`
+  count until a later rewrite lands, so **Flush** retries it. A re-emit
+  run also counts the issue under `failed` (a job-time refusal under
+  `refused`).
+
 The **apply job** (`jobs/metadata_apply.rs`) follows the same rule for its
 own per-entity mutex (`metadata:apply:{series|issue}:<id>`): a busy lock
 requeues the job through `busy_requeue` with the job's `attempt` counter
@@ -801,10 +822,14 @@ on a copy.
 ## User-edit drift (M6)
 
 User PATCH edits (via the Edit sheet) write directly to the DB and
-stamp `field_provenance.set_by = 'user'`. They do **not** trigger a
-sidecar rewrite — Q3 of the plan locked this: "Only write a sidecar
+stamp `field_provenance.set_by = 'user'`. **Superseded by WP-2.10**
+([Manual edits](#manual-edits-roadmap-wp-210)): a hand edit now queues
+its own rewrite, so drift is what is left when that rewrite was refused
+or failed (see [Failure handling](#failure-handling-retry-or-refuse)), or
+for pins older than WP-2.10. The original M6 rule was that they do
+**not** trigger a sidecar rewrite — Q3 of the plan locked this: "Only write a sidecar
 file from an API pull from Metron or Comicvine and those should be only
-when the user chooses to do so." This means user edits sit DB-only
+when the user chooses to do so." Under that rule user edits sat DB-only
 until the next provider apply (which the composer respects via the
 user-pin set, so the next XML carries the user value forward).
 
@@ -814,7 +839,7 @@ The gap between "pin landed in DB" and "XML carries the pin" is called
 - `GET /libraries/{slug}/health-issues` synthesizes a virtual row of
   kind `MetadataDriftFromXml` (severity `info`) when the library is in
   writeback mode AND at least one issue has
-  `field_provenance.set_at > issue.last_sidecar_rewrite_at` (NULL =
+  a `user` `field_provenance` row with `set_at > issue.last_sidecar_rewrite_at` (NULL =
   never sidecar-rewritten). The predicate deliberately ignores
   `last_rewrite_at`: page edits and restores stamp that one too but
   carry the *old* XML through verbatim, so pre-fix a page edit after a
