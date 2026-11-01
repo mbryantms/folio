@@ -207,7 +207,7 @@ async fn seed_cbl_view(db: &DatabaseConnection, owner: Uuid, list_id: Uuid) -> U
     saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(Some(owner)),
-        kind: Set("cbl".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Cbl),
         system_key: Set(None),
         name: Set("Event order".into()),
         description: Set(None),

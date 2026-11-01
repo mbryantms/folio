@@ -40,16 +40,22 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(page_count))
         .routes(routes!(restore))
         .routes(routes!(backups))
-        // The staged-image upload is the one body in this module bigger
-        // than the `api` group's 2 MiB default (`app::DEFAULT_BODY_LIMIT`), so
-        // it raises the limit on its own sub-router. The handler still caps
-        // the `file` field at `MAX_UPLOAD_BYTES`; the slack covers the
-        // multipart framing around it.
-        .merge(
-            OpenApiRouter::new()
-                .routes(routes!(upload))
-                .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
-        )
+}
+
+/// `POST /uploads`, kept out of [`routes`] because `app::build_openapi_router`
+/// mounts it in the long-body group: a 32 MiB body over a slow phone link
+/// outlasts `app::JSON_ROUTE_TIMEOUT`, so it runs under
+/// `app::UPLOAD_ROUTE_TIMEOUT` (plus the per-frame
+/// `app::UPLOAD_BODY_IDLE_TIMEOUT`) and skips compression instead.
+///
+/// The staged-image upload is the one body in this module bigger than the
+/// 2 MiB default (`app::DEFAULT_BODY_LIMIT`), so it raises the limit on its
+/// own sub-router. The handler still caps the `file` field at
+/// `MAX_UPLOAD_BYTES`; the slack covers the multipart framing around it.
+pub fn upload_routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(upload))
+        .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -711,7 +717,7 @@ pub async fn upload(
     // half-written or non-image staged file under the final name. An
     // abandoned `.part` (crash mid-upload) is swept like any stale upload.
     let part = uploads_dir.join(format!("{id}.part"));
-    // Backstop for a cancelled request (client gone, `JSON_ROUTE_TIMEOUT`):
+    // Backstop for a cancelled request (client gone, `UPLOAD_ROUTE_TIMEOUT`):
     // the future is dropped mid-stream and the explicit cleanup below never
     // runs, so the guard removes the `.part` (best effort; anything it
     // misses, such as a create still in flight on the blocking pool, is
@@ -782,7 +788,9 @@ const SNIFF_PREFIX_BYTES: usize = 64;
 /// `too_large`; a malformed multipart stream → 422 `validation`; no `file`
 /// field → 422 `validation`; not an image → 422 `validation.not_an_image`.
 /// A body that trips the route's `DefaultBodyLimit` surfaces from the
-/// multipart reader with status 413 and maps to `too_large` as well.
+/// multipart reader with status 413 and maps to `too_large` as well; one
+/// that stalls past `app::UPLOAD_BODY_IDLE_TIMEOUT` maps to 408
+/// `request_timeout`.
 async fn stream_upload_field(
     multipart: &mut Multipart,
     part: &std::path::Path,
@@ -792,6 +800,12 @@ async fn stream_upload_field(
     let multipart_error = |e: axum::extract::multipart::MultipartError| {
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
             too_large()
+        } else if is_body_idle_timeout(&e) {
+            error(
+                StatusCode::REQUEST_TIMEOUT,
+                "request_timeout",
+                "upload stalled: no data received in time",
+            )
         } else {
             error(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -848,6 +862,21 @@ async fn stream_upload_field(
         "validation",
         "missing `file` field",
     ))
+}
+
+/// Whether a multipart read failed because the long-body group's
+/// `TimeoutBody` (`app::UPLOAD_BODY_IDLE_TIMEOUT`) gave up on a stalled
+/// client. The error is buried a few `source()` levels down (multer →
+/// axum body error → tower-http), so walk the chain.
+fn is_body_idle_timeout(e: &axum::extract::multipart::MultipartError) -> bool {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(e);
+    while let Some(err) = cur {
+        if err.is::<tower_http::timeout::TimeoutError>() {
+            return true;
+        }
+        cur = err.source();
+    }
+    false
 }
 
 fn too_large() -> Response {

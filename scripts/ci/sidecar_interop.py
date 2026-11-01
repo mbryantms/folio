@@ -5,9 +5,11 @@ Reads the CBZ that `crates/server/tests/sidecar_interop_emit.rs` wrote with
 the two tools other people open Folio's archives with — ComicTagger
 (`comicapi`, the ComicInfo.xml reader) and Metron-Tagger (`darkseid`, the
 MetronInfo.xml *and* ComicInfo.xml reader) — and diffs what each tool reads
-against `expected.json`, the values Folio meant to write. Three readings
-are compared: comicapi on ComicInfo.xml, darkseid on ComicInfo.xml and
-darkseid on MetronInfo.xml. darkseid also validates MetronInfo.xml against
+against `expected.json`, the values Folio meant to write. Three tool
+readings are compared: comicapi on ComicInfo.xml, darkseid on ComicInfo.xml
+and darkseid on MetronInfo.xml; a fourth, stdlib view of the raw
+ComicInfo.xml checks the elements neither tool reads (`<GTIN>`,
+`<StoryArcNumber>`). darkseid also validates MetronInfo.xml against
 its bundled MetronInfo v1.1 / v1.2 schemas with an XSD 1.1 validator (the
 `<xs:assert>`s xmllint cannot check) and must report v1.2.
 
@@ -299,7 +301,48 @@ def read_comicapi(cbz: Path, expected: dict[str, Any], report: Report) -> None:
     )
     # Not read by comicapi 1.6 from ComicInfo.xml: Tags, GTIN, the
     # <ComicVineID>/<MetronID> extension elements, StoryArcNumber,
-    # Translator, universes, reprints.
+    # Translator, universes, reprints. GTIN and StoryArcNumber are checked
+    # on the raw XML instead (`read_comicinfo_xml`).
+
+
+# ───────── reader 4: the raw ComicInfo.xml (stdlib) ─────────
+
+
+def folio_arc_numbers(arcs: list[dict[str, Any]]) -> str | None:
+    """`sidecar_compose::compose_comicinfo_arcs`: the numbers parallel to
+    `<StoryArc>`, same separator, an unnumbered arc's slot left empty,
+    trailing empty slots dropped, no element when no arc has a number."""
+    slots = ["" if a["number"] is None else str(a["number"]) for a in arcs]
+    while slots and not slots[-1]:
+        slots.pop()
+    if not slots:
+        return None
+    sep = "; " if any("," in a["name"] for a in arcs) else ", "
+    return sep.join(slots)
+
+
+def read_comicinfo_xml(cbz: Path, expected: dict[str, Any], report: Report) -> None:
+    """The ComicInfo elements neither tool reads but ComicInfo-only readers
+    (ComicRack, Kavita, Komga) do: `<GTIN>` (one barcode, the precedence
+    Folio chose) and `<StoryArcNumber>` as a list parallel to `<StoryArc>`.
+    Compared as the exact element text, so order and separator count."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    view = "xml/ComicInfo"
+    with zipfile.ZipFile(cbz) as zf:
+        root = ET.fromstring(zf.read("ComicInfo.xml"))
+
+    def text(tag: str) -> str | None:
+        el = root.find(tag)
+        return el.text if el is not None else None
+
+    report.check(view, "gtin", expected["comicinfo_gtin"], text("GTIN"))
+    arcs = expected["story_arcs"]
+    report.check(
+        view, "story_arc", folio_csv_join([a["name"] for a in arcs]) or None, text("StoryArc")
+    )
+    report.check(view, "story_arc_number", folio_arc_numbers(arcs), text("StoryArcNumber"))
 
 
 # ───────── reader 2 + 3: Metron-Tagger's darkseid ─────────
@@ -385,7 +428,8 @@ def read_darkseid_comicinfo(cbz: Path, expected: dict[str, Any], report: Report)
     )
     expect_credits(report, view, expected["credits"], darkseid_credits(md.credits), split_credits)
     # Not read by darkseid from ComicInfo.xml: Tags, GTIN, the extension
-    # id elements, StoryArcNumber, Translator, universes, reprints.
+    # id elements, StoryArcNumber, Translator, universes, reprints (GTIN and
+    # StoryArcNumber: see `read_comicinfo_xml`).
 
 
 def read_darkseid_metroninfo(cbz: Path, expected: dict[str, Any], report: Report) -> None:
@@ -525,6 +569,7 @@ def main() -> int:
     read_comicapi(cbz, expected, report)
     read_darkseid_comicinfo(cbz, expected, report)
     read_darkseid_metroninfo(cbz, expected, report)
+    read_comicinfo_xml(cbz, expected, report)
 
     # darkseid bundles ComicInfo v1/v2 XSDs only; Folio writes the v2.1
     # draft vocabulary (<Tags>, <Translator>, <StoryArcNumber>, <GTIN>) and
@@ -539,7 +584,7 @@ def main() -> int:
     )
     print(f"  {Comic(cbz).validate_metadata(MetadataFormat.COMIC_INFO)}")
 
-    print(f"\ncompared {report.compared} field readings across 3 views")
+    print(f"\ncompared {report.compared} field readings across 4 views")
     if report.tolerated:
         print(f"\ntolerated normalisations ({len(report.tolerated)}):")
         for line in sorted(set(report.tolerated)):

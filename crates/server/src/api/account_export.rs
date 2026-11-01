@@ -34,6 +34,8 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use entity::saved_view::SavedViewKind;
+use entity::user_sidebar_entry::SidebarEntryKind;
 use entity::{
     collection_entry, issue, library, marker, progress_record, rail_dismissal, reading_session,
     saved_view, series, user, user_issue_note, user_page, user_rating, user_sidebar_entry,
@@ -41,6 +43,7 @@ use entity::{
 };
 
 use crate::api::respond;
+use crate::api::saved_views::KIND_COLLECTION;
 use crate::auth::CurrentUser;
 use crate::middleware::rate_limit;
 use crate::state::AppState;
@@ -56,7 +59,6 @@ pub const EXPORT_VERSION: u32 = 1;
 /// on a large export while keeping the query count O(rows / CHUNK).
 const HYDRATE_CHUNK: usize = 1000;
 
-const KIND_COLLECTION: &str = "collection";
 const SYSTEM_KEY_WANT_TO_READ: &str = "want_to_read";
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -214,7 +216,7 @@ pub struct ExportCollectionEntry {
 pub struct ExportSavedView {
     pub id: Uuid,
     /// `"filter_series"`, `"filter_issues"` or `"cbl"`.
-    pub kind: String,
+    pub kind: SavedViewKind,
     pub name: String,
     pub description: Option<String>,
     pub custom_year_start: Option<i32>,
@@ -273,7 +275,7 @@ pub struct ExportViewPin {
     /// The pinned view's `kind` (`filter_series` / `cbl` / `system` /
     /// `collection`), hydrated so a system rail is recognisable after a
     /// rebuild. `null` when the view no longer exists.
-    pub view_kind: Option<String>,
+    pub view_kind: Option<SavedViewKind>,
     pub view_name: Option<String>,
     /// `system_key` of the pinned view (e.g. `continue_reading`), when it
     /// is a built-in rail or the Want to Read collection.
@@ -286,8 +288,8 @@ pub struct ExportViewPin {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ExportSidebarEntry {
-    /// `builtin` / `library` / `view` / `header` / `spacer`.
-    pub kind: String,
+    /// `builtin` / `library` / `view` / `page` / `header` / `spacer`.
+    pub kind: SidebarEntryKind,
     pub ref_id: String,
     pub visible: bool,
     pub position: i32,
@@ -476,7 +478,7 @@ async fn build_export(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let pinned_views: HashMap<Uuid, (String, String, Option<String>)> =
+    let pinned_views: HashMap<Uuid, (SavedViewKind, String, Option<String>)> =
         if pinned_view_ids.is_empty() {
             HashMap::new()
         } else {
@@ -487,7 +489,7 @@ async fn build_export(
                 .column(saved_view::Column::Name)
                 .column(saved_view::Column::SystemKey)
                 .filter(saved_view::Column::Id.is_in(pinned_view_ids))
-                .into_tuple::<(Uuid, String, String, Option<String>)>()
+                .into_tuple::<(Uuid, SavedViewKind, String, Option<String>)>()
                 .all(db)
                 .await?
                 .into_iter()
@@ -655,7 +657,7 @@ async fn build_export(
             .or_default()
             .push(ExportViewPin {
                 view_id: p.view_id,
-                view_kind: hydrated.map(|(k, _, _)| k.clone()),
+                view_kind: hydrated.map(|(k, _, _)| *k),
                 view_name: hydrated.map(|(_, n, _)| n.clone()),
                 view_system_key: hydrated.and_then(|(_, _, key)| key.clone()),
                 position: p.position,

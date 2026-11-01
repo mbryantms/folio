@@ -10,7 +10,11 @@ import {
   queueHref,
   sortLibraries,
 } from "@/lib/admin/background-work";
-import type { BackgroundWorkView, LibraryWorkView } from "@/lib/api/types";
+import type {
+  BackgroundWorkView,
+  LibraryWorkView,
+  ScanRunState,
+} from "@/lib/api/types";
 
 const q = (queue: string, waiting: number, in_flight = 0, scheduled = 0) => ({
   queue,
@@ -41,7 +45,7 @@ function lib(over: Partial<LibraryWorkView>): LibraryWorkView {
   };
 }
 
-const scan = (state: string): NonNullable<LibraryWorkView["scan"]> => ({
+const scan = (state: ScanRunState): NonNullable<LibraryWorkView["scan"]> => ({
   id: "run",
   state,
   kind: "library",

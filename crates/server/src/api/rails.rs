@@ -1464,7 +1464,7 @@ async fn cbl_saved_view_ids_for_candidates(
     use sea_orm::Condition;
 
     let rows = match saved_view::Entity::find()
-        .filter(saved_view::Column::Kind.eq("cbl"))
+        .filter(saved_view::Column::Kind.eq(saved_view::SavedViewKind::Cbl))
         .filter(saved_view::Column::CblListId.is_in(list_ids.to_vec()))
         .filter(
             Condition::any()

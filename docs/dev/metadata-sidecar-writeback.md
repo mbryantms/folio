@@ -162,9 +162,7 @@ file another tool wrote (`<Prices>`, `<CommunityRating>`,
 per-element `id` attributes) do not survive a Folio rewrite — unchanged
 from before, when the same elements were dropped. Several `<Story>`
 elements read back as one title joined with `; ` and are rewritten as one
-`<Story>`. A `gtin`-source id rewritten into `<GTIN><UPC>` / `<ISBN>`
-gains one `upc` / `isbn` row of the same value on the next rescan (the
-schema has no generic barcode source). `<Series>` is required by the
+`<Story>`. `<Series>` is required by the
 schema; the composer always has a series name, but `serialize` on a
 struct without one writes no `<Series>`.
 
@@ -192,6 +190,51 @@ fills an issue with no `<Format>` of its own (except `Single Issue`);
 `<LastModified>` and the `<Series>` scalars are parsed but not ingested
 (the apply path writes universes / reprints / store date directly, the
 archive's real page count is the truth, series identity is folder-pinned).
+
+**ComicInfo `<GTIN>` and `<StoryArcNumber>` (audit 2026-11 WP A8).**
+ComicInfo has one barcode field where MetronInfo has `<UPC>` / `<ISBN>`.
+`compose_comicinfo` fills `<GTIN>` from the issue's ids in the order
+`gtin` → `upc` → `isbn` (`sidecar_compose::comicinfo_gtin`): a `gtin` row
+is the field's own value (a file's ComicInfo or a user edit), so it
+round-trips first; otherwise the UPC with its 5-digit add-on names this
+issue and cover, while an ISBN names the book edition. Spaces and hyphens
+are dropped and the value stays a string (leading zeros kept). Because
+one barcode now sits in both sidecars under different names, the scanner
+drops the echo before writing ids (`process::dedupe_barcodes`): a
+MetronInfo `upc` / `isbn` whose value the issue already holds under
+another barcode source is skipped, and ComicInfo's `<GTIN>` is skipped
+when the issue holds its value under another source or the same
+archive's MetronInfo carries it as `upc` / `isbn` (so a first ingest of a
+Folio-written archive records one `upc` row, not `upc` + `gtin`). Values
+compare without spaces or hyphens; a barcode new to the issue still
+lands under its own source. Rows that already exist twice (a `gtin` row
+and the `upc` echo an earlier rescan added) are left alone and no third
+appears.
+
+`<StoryArc>` and `<StoryArcNumber>` are parallel comma-separated lists
+built together from the winning arc list (the provider's unless
+`story_arcs` is pinned, else the `issue_arcs` junction in
+`position_in_arc` order): slot N of the numbers is arc N's position
+(`arc_number`: the provider's first when its list won, else the
+junction's, each falling back to the other; the same lookup feeds
+MetronInfo's `<Arc><Number>`), joined with the names' separator (`; `
+once a name has a comma). An unnumbered arc leaves its slot empty
+(`1, , 3`), trailing empty slots are dropped, and a list with no number
+omits the element. For file-owned arcs (no `story_arcs` provenance above
+the file tier, `IssueJunctions::arcs_from_file`, the rollup's own
+`arcs_file_owned` predicate) an arc with no position takes the number the
+file paired with *that arc*, read from the parsed `comic_info_raw`
+(`file_arc_slots`): the scanner derives a position only for a single-arc
+issue and never updates one, so a file's multi-arc `<StoryArcNumber>`
+lives there alone, and the junction lists unpositioned arcs by name, so
+zipping the column against it would re-pair the numbers. A user-owned
+issue with no position keeps the `story_arc_number` it typed (the PATCH
+handler positions a single integer arc only). The flat columns are
+otherwise read verbatim only when the issue has no junction rows. On
+rescan, provider- and user-owned `issue_arcs` are never touched, so their
+positions survive; a multi-arc file's numbers still reach the junction
+only through `comic_info_raw` (follow-up: ingest parallel positions in
+the rollup and the PATCH handler).
 
 **Validation.** `sidecar_parity.rs` validates Folio's MetronInfo.xml
 against the vendored XSD with `xmllint --noout --schema` (libxml2 is XSD
@@ -445,7 +488,12 @@ not the bytes (Redis), so the fetch happens in the job; a fetch failure
 or a host behind a bot challenge is logged, not retried, as on the
 DB-direct path. The cover follows `apply_cover`, not the preview
 selection (the single-candidate preview has no cover row), matching
-`write_issue_fields`. A series-scope apply has no issue covers.
+`write_issue_fields`. A series-scope apply has no issue covers. A primary
+an admin chose ("Use as cover" on a variant, a `cover.primary` user pin;
+see `metadata-providers.md`, "Chosen primary cover") is kept: the apply
+defers no cover over it and the writer refuses one queued before the
+pick, unless `override_user_edits`. The pick itself is an `issue_cover`
+row only, so it needs no rewrite.
 
 **Stuck issues from before the fix.** An issue applied on an affected
 release has the provider value in its archive and the old one in its
@@ -839,7 +887,8 @@ CI**. The `sidecar-interop` job in `ci.yml` does that in two steps:
    [`crates/server/tests/sidecar_interop_emit.rs`](../../crates/server/tests/sidecar_interop_emit.rs)
    seeds one rich issue in a writeback library (credits incl. the
    comma-suffixed `Mike Deodato, Jr.`, three characters, teams, locations,
-   an arc with a number, genres, tags, a universe, a reprint, ComicVine /
+   two numbered arcs written to the junction only, genres, tags, a
+   universe, a reprint, ComicVine /
    Metron / GCD issue ids, the series' Metron id, a UPC with a leading
    zero and an ISBN, cover + store date, `Mature 17+`, a primary URL and
    a ComicVine link), writes a three-page CBZ through the real
@@ -857,7 +906,8 @@ CI**. The `sidecar-interop` job in `ci.yml` does that in two steps:
    imprint, language, summary, notes, page count, credits by role,
    characters, teams, locations, arcs (with numbers on the MetronInfo
    side), genres, tags, universes, reprints, ids + primary, GTIN, age
-   rating, URLs. darkseid also validates MetronInfo.xml against its
+   rating, URLs; plus ComicInfo's `<GTIN>` and `<StoryArcNumber>` on the
+   raw XML (below). darkseid also validates MetronInfo.xml against its
    bundled MetronInfo v1.1 and v1.2 schemas with an XSD 1.1 validator
    (the `<xs:assert>`s xmllint skips; v1.1 is tried first) and the script
    requires `Metron Info V1.2`. Any difference not covered by a *named*
@@ -894,15 +944,14 @@ printed when it fires):
 neither comicapi 1.6 nor darkseid reads `<Tags>`, `<GTIN>`,
 `<Translator>`, `<StoryArcNumber>` or the `<ComicVineID>` / `<MetronID>`
 extension elements, and ComicInfo has no universes or reprints; those
-fields are checked on the MetronInfo reading only. Two of them are also
-**composer gaps the check cannot see** (follow-up, not interop
-failures): `compose_comicinfo` writes `<GTIN>` only from a `gtin`-source
-external id, so the fixture's `upc` / `isbn` rows reach MetronInfo's
-`<GTIN>` but not ComicInfo's; and `<StoryArcNumber>` comes from the flat
-`issue.story_arc_number` column, which a junction-only write (a provider
-apply) leaves empty although `<Arcs><Arc><Number>` is written from the
-junction. A ComicInfo-only reader (ComicRack, Kavita) therefore gets
-neither. Values
+fields are checked on the MetronInfo reading. ComicInfo-only readers
+(ComicRack, Kavita, Komga) do read `<GTIN>` and `<StoryArcNumber>`, so a
+fourth, stdlib view (`read_comicinfo_xml`, `xml/ComicInfo` in the log)
+opens the raw ComicInfo.xml and compares both as exact element text: the
+fixture has `upc` and `isbn` ids and no `gtin` id, so `<GTIN>` must be the
+UPC (`comicinfo_gtin` in `expected.json`), and its two arcs live in the
+junction only, so `<StoryArc>Volume One, The Will</StoryArc>` must come
+with `<StoryArcNumber>1, 4</StoryArcNumber>` (WP A8). Values
 that legitimately differ *per sidecar* travel in `expected.json` under
 their own keys rather than as exceptions: the age rating (`Mature 17+` in
 ComicInfo, the schema's `Mature` in MetronInfo) and the series format /

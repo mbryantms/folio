@@ -29,6 +29,44 @@ a scalar for `equals` / `is` / `gt` …, `[lo, hi]` for `between`, an array
 for `in` / `includes_any` …, a positive day count for `relative`, and
 nothing for `is_empty` / `is_not_empty` / `is_true` / `is_false`.
 
+Conditions are a flat list under one `match_mode`. `group_id` is on the
+wire but always `0`: nested groups ("A and (B or C)") are not built yet,
+and the id is reserved so they can land without a wire-format break.
+
+### Operators
+
+`Op` in `dsl.rs`; which ops a field takes is its registry `allowed_ops`
+(mirrored by `allowedOps` in the web registry, labelled by `OP_LABELS`).
+An unknown op fails when the request body is deserialized (422), before
+the compiler runs; an op the field doesn't allow is 422 `filter_invalid`
+from the compiler.
+
+| Op | Builder label | Field kinds | SQL |
+| --- | --- | --- | --- |
+| `contains` / `not_contains` | contains / does not contain | text | `col [NOT] LIKE '%v%'` |
+| `starts_with` | starts with | text | `col LIKE 'v%'` |
+| `ends_with` (UX-8) | ends with | text | `col LIKE '%v'` |
+| `equals` / `not_equals` | equals / does not equal | text, number | `col = v` / `col <> v` |
+| `is` / `is_not` | is / is not | enum | `col = v` / `col <> v` |
+| `in` / `not_in` | is one of / is not one of | enum | `col [NOT] IN (…)` |
+| `gt` / `lt` | > / < | number, date | comparison |
+| `gte` / `lte` | ≥ / ≤ | number | comparison |
+| `between` | between | number, date | `col >= lo AND col <= hi` |
+| `before` / `after` | before / after | date | `col < v` / `col > v` |
+| `relative` / `not_relative` | in last / not in last | date | see below |
+| `includes_any` / `includes_all` / `excludes` | any of / all of / none of | multi | junction `EXISTS` / `NOT EXISTS` |
+| `is_true` / `is_false` | is true / is false | bool | `col = true` / marker `EXISTS` |
+| `is_empty` / `is_not_empty` | is empty / is not empty | nullable fields | see below |
+
+The three text-pattern ops are offered on exactly the same fields (every
+text field) and compile the same way: a plain, **case-sensitive** `LIKE`
+on the raw column, the value bound as a parameter. `%` / `_` in the value
+are not escaped, so they act as wildcards. None of the columns these ops
+read carries a trigram or `text_pattern_ops` index (the trigram indexes
+sit on `series.normalized_name` and the people / entity lookup names), so
+all three filter rows already narrowed by the library ACL, and `ends_with`
+costs the same as `contains`.
+
 ## The registry
 
 `crates/server/src/views/registry.rs` is the single source of truth per

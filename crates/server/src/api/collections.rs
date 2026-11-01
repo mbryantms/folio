@@ -347,7 +347,7 @@ fn to_view(
     SavedViewView {
         id: model.id.to_string(),
         user_id: model.user_id.map(|u| u.to_string()),
-        kind: model.kind.clone(),
+        kind: model.kind,
         name: model.name.clone(),
         description: model.description.clone(),
         custom_year_start: model.custom_year_start,
@@ -398,7 +398,7 @@ pub(crate) async fn ensure_want_to_read_seeded(
     let insert = saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(Some(user_id)),
-        kind: Set(KIND_COLLECTION.into()),
+        kind: Set(KIND_COLLECTION),
         system_key: Set(Some(SYSTEM_KEY_WANT_TO_READ.into())),
         name: Set("Want to Read".into()),
         description: Set(Some("Series and issues you want to read later.".into())),
@@ -552,7 +552,7 @@ pub async fn create(
     let saved = match (saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(Some(user.id)),
-        kind: Set(KIND_COLLECTION.into()),
+        kind: Set(KIND_COLLECTION),
         system_key: Set(None),
         name: Set(name.to_owned()),
         description: Set(description),

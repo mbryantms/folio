@@ -195,6 +195,14 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
     // forever — wipe first, but only for wide cover pages (portrait
     // covers keep their bytes + ETags across the bump).
     let stale_stamp = row.thumbnail_version < THUMBNAIL_VERSION;
+    // An admin-chosen cover ("Use as cover") replaces the archive page in
+    // the cover thumbnail. The perceptual hashes below stay
+    // archive-sourced: the matcher compares the file's own cover.
+    let chosen_cover = if matches!(kind, ThumbsJobKind::Cover | ThumbsJobKind::CoverAndStrip) {
+        thumbnails::chosen_cover_bytes(&app.db, &data_dir, &issue_id).await
+    } else {
+        None
+    };
 
     let outcome = match app.archive_work_semaphore.clone().acquire_owned().await {
         Ok(permit) => {
@@ -237,6 +245,20 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
                                     width: img.width() as i32,
                                     height: img.height() as i32,
                                 });
+                                let img = match chosen_cover.as_deref().map(
+                                    crate::util::image_decode::decode_limited,
+                                ) {
+                                    Some(Ok(chosen)) => chosen,
+                                    Some(Err(e)) => {
+                                        tracing::warn!(
+                                            issue_id = %issue_id,
+                                            error = %e,
+                                            "thumbs job: chosen cover undecodable; using the archive page"
+                                        );
+                                        img
+                                    }
+                                    None => img,
+                                };
                                 let cover = thumbnails::encode_cover_from_image(
                                     &data_dir,
                                     &issue_id,

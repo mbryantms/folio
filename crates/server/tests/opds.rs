@@ -1356,7 +1356,7 @@ async fn seed_collection(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uu
     SavedViewAM {
         id: Set(id),
         user_id: Set(Some(owner)),
-        kind: Set("collection".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Collection),
         system_key: Set(None),
         name: Set(name.into()),
         description: Set(Some(format!("{name} desc"))),
@@ -1420,7 +1420,7 @@ async fn seed_filter_view(
     SavedViewAM {
         id: Set(id),
         user_id: Set(Some(owner)),
-        kind: Set("filter_series".into()),
+        kind: Set(entity::saved_view::SavedViewKind::FilterSeries),
         system_key: Set(None),
         name: Set(name.into()),
         description: Set(None),
@@ -2579,7 +2579,7 @@ async fn seed_cbl_saved_view(
     SavedViewAM {
         id: Set(id),
         user_id: Set(Some(owner)),
-        kind: Set("cbl".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Cbl),
         system_key: Set(None),
         name: Set(name.into()),
         description: Set(None),

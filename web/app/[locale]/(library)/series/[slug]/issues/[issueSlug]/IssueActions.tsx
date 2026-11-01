@@ -151,7 +151,11 @@ export function IssueActions({
   // `cover_page_index` on refresh; the thumbnail itself follows once the
   // cover job has run.
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
-  const setCoverPage = useSetIssueCoverPage(issue.series_slug, issue.slug);
+  const setCoverPage = useSetIssueCoverPage(
+    issue.series_slug,
+    issue.slug,
+    issue.id,
+  );
   const forceRecreatePageMap = useForceRecreateIssuePageMap(
     issue.series_slug,
     issue.slug,

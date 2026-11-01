@@ -1128,6 +1128,59 @@ pub fn encode_cover_small_from_image(
     )
 }
 
+/// Bytes of the issue's admin-chosen cover ("Use as cover" on a provider
+/// variant, [`crate::metadata::writers::user_primary_cover`]) when its file
+/// is stored. The cover thumbnail renders from these instead of the
+/// archive's cover page, so cards, the issue header and OPDS follow the
+/// pick. `None` = the archive page (no pick, or its file is missing).
+pub async fn chosen_cover_bytes<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    data_dir: &Path,
+    issue_id: &str,
+) -> Option<Vec<u8>> {
+    let row = match crate::metadata::writers::user_primary_cover(db, issue_id).await {
+        Ok(row) => row?,
+        Err(e) => {
+            tracing::warn!(issue_id, error = %e, "chosen cover lookup failed; using the archive page");
+            return None;
+        }
+    };
+    match tokio::fs::read(data_dir.join(&row.local_path)).await {
+        Ok(bytes) => Some(bytes),
+        Err(e) => {
+            tracing::warn!(issue_id, error = %e, "chosen cover file unreadable; using the archive page");
+            None
+        }
+    }
+}
+
+/// Encode the cover (or `@sm` cover) thumbnail from an admin-chosen cover
+/// image ([`chosen_cover_bytes`]) instead of an archive page. Same encoder,
+/// size and front-half crop rule as the archive path; idempotent like
+/// [`encode_cover_from_image`].
+#[allow(clippy::too_many_arguments)]
+pub fn encode_chosen_cover(
+    data_dir: &Path,
+    issue_id: &str,
+    page_index: usize,
+    bytes: &[u8],
+    variant: Variant,
+    format: ThumbFormat,
+    quality: ThumbnailQuality,
+    front_side: FrontCoverSide,
+) -> Result<PathBuf, ThumbError> {
+    let img = crate::util::image_decode::decode_limited(bytes)
+        .map_err(|e| ThumbError::Decode(e.to_string()))?;
+    match variant {
+        Variant::CoverSmall => {
+            encode_cover_small_from_image(data_dir, issue_id, &img, format, quality, front_side)
+        }
+        _ => encode_cover_from_image(
+            data_dir, issue_id, page_index, &img, format, quality, front_side,
+        ),
+    }
+}
+
 /// Generate the small (`@sm`) cover by downscaling the issue's *existing*
 /// full cover on disk — no archive access (audit G9 backfill). The `@sm` is
 /// written in the same format as the full cover it derives from (so the read

@@ -196,6 +196,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/libraries/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_library_stats_all"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/libraries/{slug}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_library_stats_one"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/libraries/{slug}/thumbnails": {
         parameters: {
             query?: never;
@@ -4651,6 +4683,43 @@ export interface paths {
         patch: operations["cover_pick_set_issue_cover"];
         trace?: never;
     };
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revert a chosen variant cover: the issue's cover is its archive cover
+         *     page again (and the provider primary the pick displaced is restored).
+         */
+        delete: operations["cover_pick_clear_issue_variant_cover"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant/{variant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make one of the issue's provider variant covers its primary cover. */
+        post: operations["cover_pick_set_issue_variant_cover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}/duplicate-decision": {
         parameters: {
             query?: never;
@@ -6049,7 +6118,7 @@ export interface components {
             files_per_sec?: number | null;
             id: string;
             /** @description `library` | `series` | `issue`. */
-            kind: string;
+            kind: components["schemas"]["ScanRunKind"];
             /**
              * @description Scanner phase (`planning`, `scanning`, `reconciling`,
              *     `enqueueing_thumbnails`, …); `None` until the first progress write.
@@ -6065,7 +6134,7 @@ export interface components {
             stalled: boolean;
             started_at: string;
             /** @description `queued` | `running`. */
-            state: string;
+            state: components["schemas"]["ScanRunState"];
             /** Format: int64 */
             total?: number | null;
         };
@@ -8567,7 +8636,7 @@ export interface components {
                 config: unknown;
                 created_at: string;
                 id: string;
-                kind: string;
+                kind: components["schemas"]["LogWidgetKind"];
                 /** Format: int32 */
                 position: number;
                 updated_at: string;
@@ -8639,7 +8708,7 @@ export interface components {
                 force: boolean;
                 id: string;
                 /** @description Trigger discriminator — today always `scan_all`. */
-                kind: string;
+                kind: components["schemas"]["ScanBatchKind"];
                 /**
                  * Format: int32
                  * @description Number of runs that adopted the batch (newly-enqueued libraries).
@@ -8649,7 +8718,7 @@ export interface components {
                 runs: components["schemas"]["BatchRunTally"];
                 started_at: string;
                 /** @description `running` | `complete` | `partial_failed` | `failed`. */
-                state: string;
+                state: components["schemas"]["ScanBatchState"];
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -8672,8 +8741,11 @@ export interface components {
                  *     since deleted, or when this scan isn't issue-kinded.
                  */
                 issue_label?: string | null;
-                /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
-                kind: string;
+                /**
+                 * @description `library` | `series` | `issue` drive the History tab filter chips;
+                 *     `deep_validate` runs have no chip.
+                 */
+                kind: components["schemas"]["ScanRunKind"];
                 /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
                 series_id?: string | null;
                 /**
@@ -8683,7 +8755,7 @@ export interface components {
                  */
                 series_name?: string | null;
                 started_at: string;
-                state: string;
+                state: components["schemas"]["ScanRunState"];
                 stats: unknown;
             }[];
             next_cursor?: string | null;
@@ -9592,7 +9664,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @description `"filter_series"`, `"filter_issues"` or `"cbl"`. */
-            kind: string;
+            kind: components["schemas"]["SavedViewKind"];
             match_mode?: string | null;
             name: string;
             /** Format: int32 */
@@ -9640,8 +9712,8 @@ export interface components {
             want_to_read?: components["schemas"]["ExportCollection"] | null;
         };
         ExportSidebarEntry: {
-            /** @description `builtin` / `library` / `view` / `header` / `spacer`. */
-            kind: string;
+            /** @description `builtin` / `library` / `view` / `page` / `header` / `spacer`. */
+            kind: components["schemas"]["SidebarEntryKind"];
             label?: string | null;
             /** Format: int32 */
             position: number;
@@ -9662,12 +9734,7 @@ export interface components {
             show_in_sidebar: boolean;
             /** Format: uuid */
             view_id: string;
-            /**
-             * @description The pinned view's `kind` (`filter_series` / `cbl` / `system` /
-             *     `collection`), hydrated so a system rail is recognisable after a
-             *     rebuild. `null` when the view no longer exists.
-             */
-            view_kind?: string | null;
+            view_kind?: components["schemas"]["SavedViewKind"] | null;
             view_name?: string | null;
             /**
              * @description `system_key` of the pinned view (e.g. `continue_reading`), when it
@@ -10147,6 +10214,12 @@ export interface components {
              */
             fallback_primary_url: string;
             issue_id: string;
+            /**
+             * @description `true` when the primary cover is a variant an admin chose ("Use as
+             *     cover"); `DELETE /series/{s}/issues/{i}/cover/variant` returns the
+             *     issue to its archive cover page.
+             */
+            variant_cover_chosen: boolean;
         };
         /**
          * @description One credit row from `issue_credits` — the source of truth for who
@@ -10522,6 +10595,24 @@ export interface components {
             /** Format: int32 */
             year?: number | null;
         };
+        IssueVariantCoverClearResp: {
+            /** @description `false` when the issue had no chosen variant cover (nothing changed). */
+            reverted: boolean;
+            /** @description `true` when a cover-thumbnail regeneration job was queued. */
+            thumbnail_enqueued: boolean;
+        };
+        IssueVariantCoverResp: {
+            /**
+             * Format: uuid
+             * @description Id of the new primary `issue_cover` row (a copy of the variant).
+             */
+            cover_id: string;
+            /**
+             * @description `true` when a cover-thumbnail regeneration job was queued (the
+             *     library has thumbnails enabled and no identical job was pending).
+             */
+            thumbnail_enqueued: boolean;
+        };
         LatestReleaseView: {
             /** @description Browse URL on the host's release page. */
             html_url: string;
@@ -10599,6 +10690,58 @@ export interface components {
             without_gcd: number;
             /** Format: int64 */
             without_metron: number;
+        };
+        /** @description Counts and disk usage for one library. */
+        LibraryStatsView: {
+            /**
+             * Format: int64
+             * @description Readable issues still on disk (`state = 'active'`, not removed).
+             *     Encrypted or malformed archives count in neither this nor
+             *     `removed_issue_count`.
+             */
+            active_issue_count: number;
+            /**
+             * Format: int64
+             * @description Sum of the stored file size of the active issues, in bytes. Removed
+             *     and unreadable issues are left out, so this is the readable
+             *     collection's size, not every byte under the root.
+             */
+            archive_bytes: number;
+            /**
+             * Format: int64
+             * @description Bytes of `.bak` / `.bak.N` archive backups from the stored tally;
+             *     `null` until the daily backup sweep (or the health page) has
+             *     counted this library.
+             */
+            backup_bytes?: number | null;
+            /** @description RFC 3339 — when the backup tally was counted. */
+            backup_counted_at?: string | null;
+            /** Format: int64 */
+            backup_file_count?: number | null;
+            /**
+             * @description A scan changed the library since the tally was counted, so the
+             *     backup figures may be behind until the next recount (the health
+             *     page or the daily sweep). `false` when there is no tally.
+             */
+            backup_stale: boolean;
+            /**
+             * @description RFC 3339 — when the library's last full, completed scan finished
+             *     (`libraries.last_scan_at`; scoped and cancelled scans leave it).
+             */
+            last_scan_at?: string | null;
+            library_id: string;
+            /**
+             * Format: int64
+             * @description Soft-removed issues (`removed_at` set, confirmed or not): the file
+             *     left the disk, or a duplicate copy was removed from the catalogue.
+             */
+            removed_issue_count: number;
+            /**
+             * Format: int64
+             * @description Series still on disk (`removed_at IS NULL`).
+             */
+            series_count: number;
+            slug: string;
         };
         LibraryView: {
             /**
@@ -10909,11 +11052,16 @@ export interface components {
             target: string;
             timestamp: string;
         };
+        /**
+         * @description Which widget a `/log` page slot renders.
+         * @enum {string}
+         */
+        LogWidgetKind: "chrono_feed" | "stats_hero" | "heatmap" | "top_creators" | "top_publishers" | "top_imprints" | "series_finishes" | "pace_chart" | "time_of_day" | "recent_bookmarks" | "currently_reading" | "note";
         LogWidgetView: {
             config: unknown;
             created_at: string;
             id: string;
-            kind: string;
+            kind: components["schemas"]["LogWidgetKind"];
             /** Format: int32 */
             position: number;
             updated_at: string;
@@ -11858,7 +12006,7 @@ export interface components {
             month: number;
         };
         /** @enum {string} */
-        Op: "contains" | "not_contains" | "starts_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "not_relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false" | "is_empty" | "is_not_empty";
+        Op: "contains" | "not_contains" | "starts_with" | "ends_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "not_relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false" | "is_empty" | "is_not_empty";
         OverviewView: {
             /**
              * Format: int64
@@ -13395,6 +13543,12 @@ export interface components {
             /** Format: uuid */
             saved_view_id: string;
         };
+        /**
+         * @description What a saved view is: a filter over series or issues, a CBL reading
+         *     list, a built-in system rail, or a user collection.
+         * @enum {string}
+         */
+        SavedViewKind: "filter_series" | "filter_issues" | "cbl" | "system" | "collection";
         SavedViewListView: {
             items: components["schemas"]["SavedViewView"][];
         };
@@ -13418,7 +13572,7 @@ export interface components {
             id: string;
             /** @description True for system views (`user_id IS NULL`). */
             is_system: boolean;
-            kind: string;
+            kind: components["schemas"]["SavedViewKind"];
             match_mode?: string | null;
             name: string;
             /** @description Whether the calling user has this view pinned to their home rail. */
@@ -13547,13 +13701,24 @@ export interface components {
             /** @description Aggregated counters across the member runs. */
             totals: components["schemas"]["BatchTotals"];
         };
+        /**
+         * @description What triggered a batch. Today only the admin "Scan all" action.
+         * @enum {string}
+         */
+        ScanBatchKind: "scan_all";
+        /**
+         * @description A batch's state, derived from its member runs as they finish: all
+         *     `complete` → `complete`, none → `failed`, a mix → `partial_failed`.
+         * @enum {string}
+         */
+        ScanBatchState: "running" | "complete" | "partial_failed" | "failed";
         ScanBatchView: {
             actor_id?: string | null;
             ended_at?: string | null;
             force: boolean;
             id: string;
             /** @description Trigger discriminator — today always `scan_all`. */
-            kind: string;
+            kind: components["schemas"]["ScanBatchKind"];
             /**
              * Format: int32
              * @description Number of runs that adopted the batch (newly-enqueued libraries).
@@ -13563,13 +13728,13 @@ export interface components {
             runs: components["schemas"]["BatchRunTally"];
             started_at: string;
             /** @description `running` | `complete` | `partial_failed` | `failed`. */
-            state: string;
+            state: components["schemas"]["ScanBatchState"];
         };
         ScanCancelResp: {
             ended_at?: string | null;
             error?: string | null;
             id: string;
-            state: string;
+            state: components["schemas"]["ScanRunState"];
         };
         ScanPreviewView: {
             /** Format: int64 */
@@ -13578,7 +13743,7 @@ export interface components {
             known_issue_count: number;
             /** Format: int64 */
             last_scan_duration_ms?: number | null;
-            last_scan_state?: string | null;
+            last_scan_state?: components["schemas"]["ScanRunState"] | null;
             mode: string;
             reason: string;
             /** Format: int64 */
@@ -13604,6 +13769,19 @@ export interface components {
             series_id?: string | null;
             state: string;
         };
+        /**
+         * @description What triggered a scan run. `library` is the legacy default for rows
+         *     that existed before the kind column; `deep_validate` is the opt-in
+         *     page-decode probe (`library::deep_validate`), which the History tab's
+         *     filter chips do not offer.
+         * @enum {string}
+         */
+        ScanRunKind: "library" | "series" | "issue" | "deep_validate";
+        /**
+         * @description A scan run's lifecycle state.
+         * @enum {string}
+         */
+        ScanRunState: "queued" | "running" | "complete" | "failed" | "cancelled";
         ScanRunView: {
             ended_at?: string | null;
             error?: string | null;
@@ -13616,8 +13794,11 @@ export interface components {
              *     since deleted, or when this scan isn't issue-kinded.
              */
             issue_label?: string | null;
-            /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
-            kind: string;
+            /**
+             * @description `library` | `series` | `issue` drive the History tab filter chips;
+             *     `deep_validate` runs have no chip.
+             */
+            kind: components["schemas"]["ScanRunKind"];
             /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
             series_id?: string | null;
             /**
@@ -13627,7 +13808,7 @@ export interface components {
              */
             series_name?: string | null;
             started_at: string;
-            state: string;
+            state: components["schemas"]["ScanRunState"];
             stats: unknown;
         };
         /**
@@ -14479,10 +14660,15 @@ export interface components {
          * @enum {string}
          */
         SharedUniverseVia: "universe" | "series_group";
+        /**
+         * @description What a sidebar entry points at; decides what `ref_id` means.
+         * @enum {string}
+         */
+        SidebarEntryKind: "builtin" | "library" | "view" | "page" | "header" | "spacer";
         SidebarEntryView: {
             href: string;
             icon: string;
-            kind: string;
+            kind: components["schemas"]["SidebarEntryKind"];
             label: string;
             /** Format: int32 */
             position: number;
@@ -15016,8 +15202,8 @@ export interface components {
          *
          *     Every field is optional. For nullable columns the body distinguishes:
          *       - field absent     → leave column untouched
-         *       - field present, null → clear column, mark as user-edited
-         *       - field present, set  → write column, mark as user-edited
+         *       - field present, null → clear column, pin it (`set_by='user'`)
+         *       - field present, set  → write column, pin it (`set_by='user'`)
          *
          *     `additional_links` is replace-all: send the full desired array, or `[]`
          *     to clear. Empty / whitespace-only `url` entries are rejected.
@@ -16131,6 +16317,67 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_library_stats_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryStatsView"][];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_library_stats_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryStatsView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -24911,6 +25158,94 @@ export interface operations {
             };
             /** @description page_index outside the archive */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cover_pick_clear_issue_variant_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueVariantCoverClearResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cover_pick_set_issue_variant_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+                /** @description `issue_cover` id of an active variant of this issue */
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueVariantCoverResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue or variant not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the variant has no image to use, or it is not a recognised image */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the variant image could not be downloaded */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

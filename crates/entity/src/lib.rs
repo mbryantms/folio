@@ -93,6 +93,9 @@ pub mod user_series_reader_prefs;
 pub mod user_sidebar_entry;
 pub mod user_view_pin;
 
+#[cfg(test)]
+mod enum_contract;
+
 pub mod prelude {
     pub use super::app_password::Entity as AppPassword;
     pub use super::app_setting::Entity as AppSetting;

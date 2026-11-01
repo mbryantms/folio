@@ -74,10 +74,32 @@ pub struct ApiDoc;
 /// `Router::fallback` proxy in [`router`] sits outside both groups, so
 /// its WebSocket passthrough is untouched too.
 ///
-/// **Body limits (N-A2):** both groups declare [`DEFAULT_BODY_LIMIT`]
+/// **Long-body routes (E8):** the staged page-image upload the web app
+/// sends through `apiFetch` (`POST /api/uploads`, up to 32 MiB) lives in
+/// a third group, `long_body`, nested under `/api` beside the JSON group
+/// but wrapped by [`with_long_body_layers`] instead:
+/// [`UPLOAD_ROUTE_TIMEOUT`] rather than [`JSON_ROUTE_TIMEOUT`] (the
+/// timeout covers reading the body, so 60 s would 408 a big upload on a
+/// slow phone link), a per-frame [`UPLOAD_BODY_IDLE_TIMEOUT`] so a client
+/// that stops sending is still dropped quickly, and no compression. Every
+/// outer layer in [`router`] (CSRF, auth extractors, security headers,
+/// tracing, metrics) still runs on it, and it stays in the spec. The CBL
+/// file import (`POST /api/me/cbl-lists/upload`) stays in the JSON group:
+/// its 4 MiB cap is an eighth of the page cap, real lists are a few
+/// hundred KiB, and its handler matches up to 5000 entries against the DB
+/// synchronously, which the 60 s ceiling should keep bounding.
+///
+/// **Body limits (N-A2):** every group declares [`DEFAULT_BODY_LIMIT`]
 /// explicitly. It only bounds buffering extractors, so the bare streams
 /// are unaffected.
 pub fn build_openapi_router() -> OpenApiRouter<AppState> {
+    build_openapi_router_with(RouteTimeouts::PRODUCTION)
+}
+
+/// [`build_openapi_router`] with explicit per-group deadlines. Only the
+/// integration tests pass anything but [`RouteTimeouts::PRODUCTION`], to
+/// prove which group a route lands in without wall-clocking 60 s.
+pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppState> {
     let bare = OpenApiRouter::<AppState>::new()
         .merge(api::health::routes())
         .merge(api::csp::routes())
@@ -122,6 +144,7 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::scan_batches::routes())
         .merge(api::library_events::routes())
         .merge(api::library_hash_backfill::routes())
+        .merge(api::library_stats::routes())
         .merge(api::admin_queue::routes())
         .merge(api::background_work::routes())
         .merge(api::admin_thumbs::routes())
@@ -187,22 +210,75 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(api::relationship_suggestions::routes())
         .merge(api::covers::routes());
 
-    bare.nest("/api", with_json_layers(api, JSON_ROUTE_TIMEOUT))
+    // Long-body uploads: the only `/api` routes outside `with_json_layers`.
+    // Add a route here only when its request body can legitimately take
+    // longer than `JSON_ROUTE_TIMEOUT` to arrive and the handler does little
+    // beyond receiving it (the whole handler runs under the long deadline).
+    let long_body = OpenApiRouter::<AppState>::new().merge(api::archive_edit::upload_routes());
+
+    bare.nest(
+        "/api",
+        with_json_layers(api, timeouts.json).merge(with_long_body_layers(
+            long_body,
+            timeouts.long_body,
+            timeouts.long_body_idle,
+        )),
+    )
+}
+
+/// Per-group request deadlines for [`build_openapi_router_with`] /
+/// [`router_with_timeouts`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteTimeouts {
+    /// The JSON `api` group ([`with_json_layers`]).
+    pub json: Duration,
+    /// The `long_body` upload group's whole-request deadline
+    /// ([`with_long_body_layers`]).
+    pub long_body: Duration,
+    /// The `long_body` group's longest pause between request-body frames.
+    pub long_body_idle: Duration,
+}
+
+impl RouteTimeouts {
+    /// What the served router uses.
+    pub const PRODUCTION: Self = Self {
+        json: JSON_ROUTE_TIMEOUT,
+        long_body: UPLOAD_ROUTE_TIMEOUT,
+        long_body_idle: UPLOAD_BODY_IDLE_TIMEOUT,
+    };
 }
 
 /// Handler-latency budget for the JSON `api` group. tower-http's
 /// [`TimeoutLayer`] bounds the time until the response *head* is
-/// produced (not body streaming), so it caps a handler that is stuck on
-/// a lock / a slow query / an unresponsive metadata provider, and
-/// answers `408 Request Timeout` instead of holding the connection open
-/// indefinitely. Long-running work in this group is already dispatched
-/// to apalis jobs and returns `202` immediately (scans, deep-validate,
-/// metadata search/apply, archive edits), so 60 s is a ceiling nothing
-/// healthy approaches.
+/// produced (not response-body streaming); that includes reading the
+/// request body, which a buffering handler does before it answers. So it
+/// caps a handler that is stuck on a lock / a slow query / an
+/// unresponsive metadata provider, and answers `408 Request Timeout`
+/// instead of holding the connection open indefinitely. Long-running
+/// work in this group is already dispatched to apalis jobs and returns
+/// `202` immediately (scans, deep-validate, metadata search/apply,
+/// archive edits), so 60 s is a ceiling nothing healthy approaches. The
+/// page-image upload, whose body alone can take longer, runs under
+/// [`UPLOAD_ROUTE_TIMEOUT`] instead.
 pub const JSON_ROUTE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Whole-request deadline for the `long_body` upload group (E8): the
+/// page-image upload (`POST /api/uploads`, 32 MiB + framing). The timeout
+/// covers receiving the body, and the owner reads on phones over LAN and
+/// sometimes remotely: a full 32 MiB page needs about 0.45 Mbit/s to land
+/// in 10 minutes, against about 4.5 Mbit/s under the 60 s JSON deadline.
+pub const UPLOAD_ROUTE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// Longest pause between request-body frames on the `long_body` group. A
+/// slow link keeps delivering frames, so it never trips this; a client
+/// that goes silent mid-body is dropped after a minute (the same hold the
+/// JSON deadline gave before E8) instead of holding the connection, the
+/// handler task and the `.part` file for the whole
+/// [`UPLOAD_ROUTE_TIMEOUT`]. The upload handler answers it with `408`.
+pub const UPLOAD_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Request-body limit for every buffered extractor (`Json`, `Bytes`,
-/// `String`, `Form`, `Multipart`) on both route groups: 2 MiB, the value
+/// `String`, `Form`, `Multipart`) on every route group: 2 MiB, the value
 /// axum applied implicitly before it was declared (N-A2). JSON bodies in
 /// this API are small; the two multipart imports that need more raise it
 /// on their own sub-routers (`POST /uploads` 32 MiB + framing in
@@ -266,14 +342,54 @@ pub fn with_json_layers<S>(router: OpenApiRouter<S>, timeout: Duration) -> OpenA
 where
     S: Clone + Send + Sync + 'static,
 {
+    with_body_limit_layers(router)
+        .layer(CompressionLayer::new())
+        .layer(request_timeout(timeout))
+}
+
+/// Wrap the `long_body` upload group: the same body-limit floor and 413
+/// envelope as [`with_json_layers`] (each upload raises its own limit
+/// further in), every request-body frame bounded by `idle`
+/// ([`UPLOAD_BODY_IDLE_TIMEOUT`] in production) and the whole request by
+/// `timeout` ([`UPLOAD_ROUTE_TIMEOUT`]), and deliberately no
+/// [`CompressionLayer`]: the responses are a few bytes of JSON, so there
+/// is nothing worth encoding.
+pub fn with_long_body_layers<S>(
+    router: OpenApiRouter<S>,
+    timeout: Duration,
+    idle: Duration,
+) -> OpenApiRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    with_body_limit_layers(router)
+        .layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                // `TimeoutBody` restarts its clock on every frame, so this
+                // bounds a stall, not the transfer. Its `TimeoutError`
+                // reaches the handler through the body extractor.
+                let req = req.map(|body| {
+                    axum::body::Body::new(tower_http::timeout::TimeoutBody::new(idle, body))
+                });
+                next.run(req)
+            },
+        ))
+        .layer(request_timeout(timeout))
+}
+
+/// The layers every `/api` group shares, innermost first: the 413 envelope
+/// and the explicit [`DEFAULT_BODY_LIMIT`].
+fn with_body_limit_layers<S>(router: OpenApiRouter<S>) -> OpenApiRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     router
         .layer(axum::middleware::map_response(envelope_payload_too_large))
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
-        .layer(CompressionLayer::new())
-        .layer(TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            timeout,
-        ))
+}
+
+fn request_timeout(timeout: Duration) -> TimeoutLayer {
+    TimeoutLayer::with_status_code(axum::http::StatusCode::REQUEST_TIMEOUT, timeout)
 }
 
 pub fn openapi_spec() -> utoipa::openapi::OpenApi {
@@ -632,6 +748,12 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
 }
 
 pub fn router(state: AppState) -> Router {
+    router_with_timeouts(state, RouteTimeouts::PRODUCTION)
+}
+
+/// [`router`] with explicit per-group deadlines; see
+/// [`build_openapi_router_with`].
+pub fn router_with_timeouts(state: AppState, timeouts: RouteTimeouts) -> Router {
     let request_id_header = axum::http::HeaderName::from_static("x-request-id");
     // Snapshot config at router-build time: CspTemplate + TrustedProxies
     // are built once and live for the lifetime of the process. They don't
@@ -646,7 +768,7 @@ pub fn router(state: AppState) -> Router {
     // Single source of truth: `build_openapi_router` composes every routed
     // module. `split_for_parts` discards the OpenApi side here — that
     // surface is exposed via [`openapi_spec`] / the `--emit-openapi` flag.
-    let (api_router, _) = build_openapi_router().split_for_parts();
+    let (api_router, _) = build_openapi_router_with(timeouts).split_for_parts();
 
     api_router
         // Catch-all fallback: anything no explicit route matched is

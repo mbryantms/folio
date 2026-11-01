@@ -114,7 +114,7 @@ export function ConfigureWidgetDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const def = WIDGET_REGISTRY[widget.kind as LogWidgetKind];
+  const def = WIDGET_REGISTRY[widget.kind];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -155,11 +155,7 @@ function ConfigureFormBody({
   };
   return (
     <>
-      <ConfigureBody
-        kind={widget.kind as LogWidgetKind}
-        draft={draft}
-        setDraft={setDraft}
-      />
+      <ConfigureBody kind={widget.kind} draft={draft} setDraft={setDraft} />
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>
           Cancel
