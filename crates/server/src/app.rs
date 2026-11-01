@@ -799,6 +799,11 @@ pub fn router_with_timeouts(state: AppState, timeouts: RouteTimeouts) -> Router 
         // sits outside CSRF so a preflight never reaches the CSRF check.
         // Regression guards: `tests/http_layers.rs::cors_*`.
         .layer(deny_all_cors())
+        // The access-token verifier the per-user rate-limit key reads
+        // (`rate_limit::UserKey`); a key extractor can't reach `AppState`.
+        .layer(axum::Extension(crate::middleware::rate_limit::RateLimitIdentity(
+            state.jwt_keys.clone(),
+        )))
         // Order matters: outermost wraps innermost. `set_context` needs to run
         // before handlers so `Request::extensions::get::<RequestContext>()`
         // works inside extractors and handlers.

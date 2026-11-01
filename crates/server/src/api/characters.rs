@@ -18,6 +18,7 @@ use super::entity_pages::{
 use super::series::{IssueListView, SeriesListView};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::middleware::RequestContext;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 use shared::pagination::CursorPage;
@@ -25,8 +26,13 @@ use shared::pagination::CursorPage;
 const KIND: EntityKind = EntityKind::Character;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
+    // The `q`-filtered index is a global-search source: per-user `SEARCH`
+    // bucket (E3, audit N-A5) in its own sub-router.
+    let search = OpenApiRouter::new()
         .routes(routes!(list))
+        .route_layer(rate_limit::SEARCH.build_per_user());
+    OpenApiRouter::new()
+        .merge(search)
         .routes(routes!(get_one))
         .routes(routes!(series))
         .routes(routes!(issues))
@@ -45,7 +51,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         ("starts_with" = Option<String>, Query,),
         ("q" = Option<String>, Query,),
     ),
-    responses((status = 200, body = CursorPage<EntityListItem>))
+    responses((status = 200, body = CursorPage<EntityListItem>), (status = 429, description = "search rate limit"))
 )]
 #[handler]
 pub async fn list(
