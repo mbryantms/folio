@@ -1,7 +1,9 @@
 //! Per-route token-bucket rate limiting (§17.7).
 //!
 //! Buckets are keyed by the real client IP (via [`crate::middleware::RequestContext`]
-//! → XFF walker → trusted-proxy CIDRs). Token state lives in-memory inside
+//! → XFF walker → trusted-proxy CIDRs), or, for the signed-in web-app
+//! surfaces built with [`Bucket::build_per_user`], by the user id of a
+//! verified access token ([`UserKey`]). Token state lives in-memory inside
 //! the `governor` crate's keyed-state store — fine for a single-replica
 //! deployment, which is the Folio target. Multi-replica deploys would
 //! require a Redis backend; that's tracked as a post-1.0 enhancement.
@@ -23,7 +25,11 @@ use tower_governor::governor::{GovernorConfig, GovernorConfigBuilder};
 use tower_governor::key_extractor::KeyExtractor;
 use tower_governor::{GovernorError, GovernorLayer};
 
+use uuid::Uuid;
+
 use super::RequestContext;
+use crate::auth::extractor::access_token_subject;
+use crate::auth::jwt::JwtKeys;
 
 // ───────── key extractor ─────────
 
@@ -45,9 +51,55 @@ impl KeyExtractor for ClientIpKey {
     }
 }
 
+/// The verifier [`UserKey`] checks access tokens with. The router inserts
+/// it as a request extension (`app::router_with_timeouts`), since a key
+/// extractor has no access to `AppState`.
+#[derive(Clone)]
+pub struct RateLimitIdentity(pub Arc<JwtKeys>);
+
+/// Key of a per-user bucket: the signed-in user, or the client IP when the
+/// request carries no valid JWT access token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UserOrIp {
+    User(Uuid),
+    Ip(IpAddr),
+}
+
+/// Per-user key (E3, audit N-A5). The user id comes from the signature-checked
+/// JWT access token (`auth::extractor::access_token_subject`): a forged token
+/// never names a user, so nobody can drain another user's bucket, and the
+/// key set stays bounded by real users plus client IPs. An expired but
+/// genuine token still names its user, so a tab waking up with a stale token
+/// spends its own budget, not the shared IP one, and gets the 401 that makes
+/// the client refresh. Requests without a signed JWT (anonymous, forged,
+/// app-password, Basic) fall back to the [`ClientIpKey`] key; the handler
+/// rejects the anonymous ones anyway.
+/// Household members behind one NAT therefore get a budget each, which a
+/// per-IP key would not give them.
+#[derive(Debug, Clone, Copy)]
+pub struct UserKey;
+
+impl KeyExtractor for UserKey {
+    type Key = UserOrIp;
+
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        let user = req
+            .extensions()
+            .get::<RateLimitIdentity>()
+            .and_then(|id| access_token_subject(req.headers(), &id.0));
+        match user {
+            Some(id) => Ok(UserOrIp::User(id)),
+            None => ClientIpKey.extract(req).map(UserOrIp::Ip),
+        }
+    }
+}
+
 // ───────── bucket factory ─────────
 
-/// A single rate-limit bucket. Built once per process via [`Bucket::build`].
+/// A single rate-limit bucket. Built once per process via [`Bucket::build`]
+/// (per-IP key) or [`Bucket::build_per_user`] (per-user key). Each call
+/// makes an independent token store: routes share a budget only when they
+/// sit under the same built layer.
 pub struct Bucket {
     /// Telemetry name for the denial counter (`folio_rate_limit_denied_total{bucket=…}`).
     pub name: &'static str,
@@ -58,14 +110,26 @@ pub struct Bucket {
 }
 
 impl Bucket {
-    /// Build a tower layer ready to plug onto a route. Returns the layer plus
-    /// the keep-alive `Arc` so callers can hold the config alive (the layer
-    /// holds one too, this is for any future inspection).
+    /// Build a per-IP tower layer ready to plug onto a route.
     pub fn build(&self) -> GovernorLayer<ClientIpKey, governor::middleware::NoOpMiddleware, Body> {
+        self.build_keyed(ClientIpKey)
+    }
+
+    /// Build a per-user tower layer ([`UserKey`]).
+    pub fn build_per_user(
+        &self,
+    ) -> GovernorLayer<UserKey, governor::middleware::NoOpMiddleware, Body> {
+        self.build_keyed(UserKey)
+    }
+
+    fn build_keyed<K: KeyExtractor>(
+        &self,
+        key: K,
+    ) -> GovernorLayer<K, governor::middleware::NoOpMiddleware, Body> {
         let mut default = GovernorConfigBuilder::default();
-        let mut builder = default.key_extractor(ClientIpKey);
+        let mut builder = default.key_extractor(key);
         builder.period(self.period).burst_size(self.burst);
-        let config: GovernorConfig<ClientIpKey, governor::middleware::NoOpMiddleware> =
+        let config: GovernorConfig<K, governor::middleware::NoOpMiddleware> =
             builder.finish().expect("non-zero period + burst");
         let name = self.name;
         GovernorLayer::new(Arc::new(config))
@@ -235,6 +299,61 @@ pub const MARKER_WRITE: Bucket = Bucket {
     name: "marker_write",
     period: Duration::from_millis(100),
     burst: 60,
+};
+
+/// Free-text search — per user (E3, audit N-A5), 10/s sustained with a
+/// burst of 60, one independent instance per route family: `GET
+/// /issues/search` + `GET /issues`, `GET /series`, `GET /people`, `GET
+/// /me/markers/search`, and each entity index (`/characters`, `/teams`,
+/// `/locations`, `/arcs`). The global search fans one debounced query out
+/// to every family (200 ms debounce in the modal and top bar, 250 ms on
+/// `/search`), so non-stop typing costs each family at most 5 requests a
+/// second, half the refill. The burst covers a `/search` session that
+/// pages a result grid and flips filters on top of that. `/series` and
+/// `/issues` also back the library grids; infinite scroll asks for one
+/// page per sentinel hit, far below 10/s.
+pub const SEARCH: Bucket = Bucket {
+    name: "search",
+    period: Duration::from_millis(100),
+    burst: 60,
+};
+
+/// Metadata edits — per user (E3), 1/s sustained with a burst of 30: `PATCH
+/// /series/{slug}` in one instance, `PATCH
+/// /series/{series_slug}/issues/{issue_slug}` and `PATCH
+/// /me/issues/bulk-metadata` sharing another. Every UI save is one
+/// request: the issue drawer and the series editor send one PATCH per
+/// save, and the bulk "Edit metadata" dialog sends the whole selection
+/// (up to its 500-id cap) in a single PATCH. A person saving issue after
+/// issue manages a few a minute; a writeback library turns each save
+/// into an archive rewrite job, so a script stops at 60 a minute.
+pub const METADATA_WRITE: Bucket = Bucket {
+    name: "metadata_write",
+    period: Duration::from_secs(1),
+    burst: 30,
+};
+
+/// Collection writes — per user (E3), 5/s sustained with a burst of 60:
+/// create, rename/update, delete, add entry, remove entry, bulk add and
+/// bulk remove under `/me/collections`. The busiest human pattern is
+/// toggling Want to Read (an add or remove entry) on card after card in a
+/// grid, a couple per second; bulk adds from a selection are one request.
+pub const COLLECTION_WRITE: Bucket = Bucket {
+    name: "collection_write",
+    period: Duration::from_millis(200),
+    burst: 60,
+};
+
+/// Collection reorder — per user (E3), 4/s sustained with a burst of 30:
+/// `POST /me/collections/{id}/entries/reorder`, its own bucket so a drag
+/// session never starves the writes above. A drop sends one request with
+/// the full order, and a person drops at most about once a second; each
+/// request rewrites the position of every entry, so it is the heavier
+/// write and gets the smaller budget.
+pub const COLLECTION_REORDER: Bucket = Bucket {
+    name: "collection_reorder",
+    period: Duration::from_millis(250),
+    burst: 30,
 };
 
 // ───────── error handler ─────────

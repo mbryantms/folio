@@ -18968,6 +18968,13 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     arcs_get_one: {
@@ -19548,6 +19555,13 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     characters_get_one: {
@@ -20088,6 +20102,13 @@ export interface operations {
                     "application/json": components["schemas"]["IssueListView"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     issues_search: {
@@ -20110,6 +20131,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueSearchView"];
                 };
+            };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -21238,6 +21266,13 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     locations_get_one: {
@@ -22168,6 +22203,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_delete_one: {
@@ -22182,6 +22224,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22211,6 +22260,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -22261,6 +22317,13 @@ export interface operations {
                     "application/json": components["schemas"]["CollectionEntryView"];
                 };
             };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_reorder_entries: {
@@ -22284,6 +22347,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description collection reorder rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_remove_entry: {
@@ -22299,6 +22369,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22372,6 +22449,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_bulk_remove_members: {
@@ -22406,6 +22490,13 @@ export interface operations {
             };
             /** @description collection not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22611,6 +22702,13 @@ export interface operations {
             };
             /** @description validation */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23202,6 +23300,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MarkerSearchView"];
                 };
+            };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -24786,6 +24891,13 @@ export interface operations {
                     "application/json": components["schemas"]["PeopleListView"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     publishers_list: {
@@ -24904,6 +25016,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
+            };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25055,6 +25174,13 @@ export interface operations {
             };
             /** @description validation error (field-level `details`) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25792,6 +25918,13 @@ export interface operations {
             };
             /** @description series not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28261,6 +28394,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
+            };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
