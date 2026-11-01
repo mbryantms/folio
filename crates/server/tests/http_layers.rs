@@ -7,6 +7,10 @@
 //! - Page bytes (`/issues/{id}/pages/{n}`, bare group) are never encoded,
 //!   even when the client advertises gzip: the reader relies on verbatim
 //!   bytes, `Content-Length` and Range semantics.
+//! - Thumbnail bytes (`/issues/{id}/pages/{n}/thumb`, bare group) are never
+//!   encoded either, and carry the OP-7 cache contract: `Cache-Control:
+//!   private, max-age=300` plus a strong digest `ETag`, with `If-None-Match`
+//!   answered by a bodiless 304 that keeps both headers.
 //! - The bare group as a whole is untouched (`/healthz` stays identity).
 //!
 //! The timeout is exercised at the unit level in `app::tests` with a tiny
@@ -45,6 +49,23 @@ fn cbz_bytes() -> Vec<u8> {
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zw.start_file("page-001.png", opts).unwrap();
     zw.write_all(&page_payload()).unwrap();
+    zw.finish().unwrap().into_inner()
+}
+
+/// One-page CBZ whose page is a real, decodable PNG — the thumbnail route
+/// has to encode it, so the fake-signature payload above will not do.
+fn decodable_cbz_bytes() -> Vec<u8> {
+    use image::{ImageBuffer, ImageFormat, Rgba};
+    let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_fn(64, 96, |x, y| Rgba([x as u8 * 3, y as u8 * 2, 90, 255]));
+    let mut png: Vec<u8> = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut png), ImageFormat::Png)
+        .unwrap();
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zw.start_file("page-001.png", opts).unwrap();
+    zw.write_all(&png).unwrap();
     zw.finish().unwrap().into_inner()
 }
 
@@ -203,6 +224,118 @@ async fn page_bytes_are_never_compressed() {
     );
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert_eq!(body.as_ref(), page_payload().as_slice());
+}
+
+/// Audit OP-7 + the bare-group invariant together: thumbnail bytes leave
+/// the server verbatim (no `Content-Encoding` however loudly the client
+/// asks), with `Cache-Control: private, max-age=300`, a strong digest
+/// `ETag`, and a 304 on `If-None-Match` that carries both headers and no
+/// body. A layer leaking onto this route would re-encode the image or, on
+/// a slow NAS, time out the inline generation.
+#[tokio::test]
+async fn thumbnail_bytes_are_never_compressed_and_carry_the_cache_contract() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let db = &app.state().db;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(db, tmp.path()).await;
+    let series = seed_series(db, lib, "Thumb Layers").await;
+    let issue_id = seed_issue(
+        db,
+        lib,
+        series,
+        &tmp.path().join("Thumb Layers 001.cbz"),
+        &decodable_cbz_bytes(),
+        1.0,
+    )
+    .await;
+
+    let uri = format!("/issues/{issue_id}/pages/0/thumb");
+    let resp = get(&app, &session, &uri, Some("gzip, deflate, br, zstd")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        content_encoding(&resp),
+        None,
+        "thumbnail bytes must go out verbatim regardless of Accept-Encoding"
+    );
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/webp")
+    );
+    assert_eq!(
+        resp.headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("private, max-age=300"),
+        "OP-7: five-minute private freshness, never `no-cache`, never `public`"
+    );
+    assert!(
+        resp.headers().get(header::VARY).is_none_or(|v| !v
+            .to_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .contains("accept-encoding")),
+        "no content negotiation on the thumb route, so no Vary: Accept-Encoding"
+    );
+    let etag = resp
+        .headers()
+        .get(header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .expect("strong ETag")
+        .to_owned();
+    assert!(
+        etag.starts_with('"') && etag.ends_with('"') && !etag.starts_with("W/"),
+        "ETag must be a strong quoted validator, got {etag:?}"
+    );
+    let declared_len = resp
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok())
+        .expect("Content-Length");
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(body.len(), declared_len);
+    assert_eq!(
+        etag,
+        format!("\"{}\"", blake3::hash(&body).to_hex()),
+        "ETag is the digest of the bytes on the wire"
+    );
+
+    // Revalidation: 304, no body, both cache headers repeated, still identity.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(&uri)
+                .header(header::COOKIE, format!("__Host-comic_session={session}"))
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .header(header::IF_NONE_MATCH, &etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(content_encoding(&resp), None);
+    assert_eq!(
+        resp.headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok()),
+        Some(etag.as_str())
+    );
+    assert_eq!(
+        resp.headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("private, max-age=300")
+    );
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty(), "304 must not carry a body");
 }
 
 #[tokio::test]

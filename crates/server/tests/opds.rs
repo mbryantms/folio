@@ -824,6 +824,266 @@ async fn series_one_paginates_at_50() {
     );
 }
 
+/// Audit N-L6: `/opds/v1/recent` used to be a hard `LIMIT 50` with no
+/// paging rels. It now pages like every other v1 feed — page 1 carries
+/// `next` + `last`, the last page carries `previous` but no `next`, and
+/// the entries stay newest-first across the page boundary.
+#[tokio::test]
+async fn recent_feed_paginates_at_50() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "recent-paging@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Recent Run").await;
+    let mut ids = Vec::new();
+    for i in 0..55 {
+        let file = tmp.path().join(format!("recent-{i:03}.cbz"));
+        ids.push(
+            seed_issue_with_file(
+                &db,
+                lib_id,
+                series_id,
+                &file,
+                format!("recent-payload-{i:03}").as_bytes(),
+            )
+            .await,
+        );
+    }
+
+    let resp = get_with_auth(&app, "/opds/v1/recent", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 50, "page 1 capped at 50");
+    assert!(
+        body.contains(r#"<link rel="self" href="/opds/v1/recent" "#),
+        "page 1 keeps the bare self href clients bookmarked:\n{body}"
+    );
+    assert!(body.contains(r#"rel="first" href="/opds/v1/recent?page=1""#));
+    assert!(body.contains(r#"rel="next" href="/opds/v1/recent?page=2""#));
+    assert!(body.contains(r#"rel="last" href="/opds/v1/recent?page=2""#));
+    assert!(
+        !body.contains(r#"rel="previous""#),
+        "page 1 has no previous"
+    );
+    // Every entry on page 1 is one of the 55 seeded issues and the page is
+    // newest-first: the first entry is the last issue seeded.
+    let first_entry_id = body
+        .split("<id>urn:issue:")
+        .nth(1)
+        .and_then(|rest| rest.split("</id>").next())
+        .expect("first entry id");
+    assert_eq!(first_entry_id, ids[54], "newest issue leads the feed");
+
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/recent?page=2",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(
+        body.matches("<entry>").count(),
+        5,
+        "page 2 has the remaining 5"
+    );
+    assert!(body.contains(r#"<link rel="self" href="/opds/v1/recent?page=2" "#));
+    assert!(body.contains(r#"rel="previous" href="/opds/v1/recent?page=1""#));
+    assert!(
+        !body.contains(r#"rel="next""#),
+        "last page has no next:\n{body}"
+    );
+    // The five oldest issues, and none that page 1 already listed.
+    for id in &ids[..5] {
+        assert!(
+            body.contains(&format!("<id>urn:issue:{id}</id>")),
+            "{id} on page 2"
+        );
+    }
+    for id in &ids[5..] {
+        assert!(
+            !body.contains(&format!("<id>urn:issue:{id}</id>")),
+            "{id} must not repeat"
+        );
+    }
+
+    // Past the end: an empty page with the rels still pointing home.
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/recent?page=9",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 0);
+    assert!(body.contains(r#"rel="first" href="/opds/v1/recent?page=1""#));
+}
+
+/// `/opds/v1/new-this-month` pages like `recent` instead of stopping at a
+/// silent 50 (no-silent-truncation invariant).
+#[tokio::test]
+async fn new_this_month_feed_paginates_at_50() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "ntm-paging@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Month Run").await;
+    for i in 0..55 {
+        let file = tmp.path().join(format!("ntm-{i:03}.cbz"));
+        seed_issue_with_file(
+            &db,
+            lib_id,
+            series_id,
+            &file,
+            format!("ntm-{i:03}").as_bytes(),
+        )
+        .await;
+    }
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/new-this-month",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 50);
+    assert!(body.contains(r#"rel="next" href="/opds/v1/new-this-month?page=2""#));
+    let resp = get_with_auth(
+        &app,
+        "/opds/v1/new-this-month?page=2",
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 5);
+    assert!(!body.contains(r#"rel="next""#));
+}
+
+/// The recent feed selects the `OpdsIssueRow` projection instead of the
+/// full `issue::Model`; every column the acquisition entry renders has to
+/// ride along, or the entry silently loses its Dublin Core metadata, the
+/// summary, the PSE page count or the download MIME.
+#[tokio::test]
+async fn recent_feed_entries_render_full_metadata_from_the_projection() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "recent-meta@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Projected Series").await;
+    let file = tmp.path().join("projected.cbr");
+    let issue_id = seed_issue_with_file(&db, lib_id, series_id, &file, b"projected-bytes").await;
+    let row = entity::issue::Entity::find_by_id(&issue_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::issue::ActiveModel = row.into();
+    am.title = Set(Some("Projected & Paged".into()));
+    am.summary = Set(Some("A <b>summary</b>".into()));
+    am.language_code = Set(Some("fr".into()));
+    am.publisher = Set(Some("Image".into()));
+    am.year = Set(Some(2021));
+    am.month = Set(Some(11));
+    am.day = Set(None);
+    am.writer = Set(Some("Brian K. Vaughan, Fiona Staples".into()));
+    am.genre = Set(Some("Science Fiction".into()));
+    am.tags = Set(Some("space, opera".into()));
+    am.page_count = Set(Some(32));
+    am.update(&db).await.unwrap();
+
+    let resp = get_with_auth(&app, "/opds/v1/recent", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 1);
+    assert!(body.contains(&format!("<id>urn:issue:{issue_id}</id>")));
+    // The default progress glyph (`◯ `) prefixes the title; match the tail.
+    assert!(body.contains("Projected &amp; Paged</title>"), "{body}");
+    assert!(body.contains("<summary>A &lt;b&gt;summary&lt;/b&gt;</summary>"));
+    assert!(body.contains(&format!(
+        "<dc:identifier>urn:folio:issue:{issue_id}</dc:identifier>"
+    )));
+    assert!(body.contains("<dc:language>fr</dc:language>"));
+    assert!(body.contains("<dc:publisher>Image</dc:publisher>"));
+    assert!(body.contains("<dc:issued>2021-11</dc:issued>"));
+    assert!(body.contains("<author><name>Brian K. Vaughan</name></author>"));
+    assert!(body.contains(r#"term="Science Fiction""#));
+    assert!(body.contains(r#"term="space""#));
+    assert!(body.contains(r#"term="opera""#));
+    // `file_path` → download MIME; `page_count` → PSE count.
+    assert!(
+        body.contains(r#"type="application/vnd.comicbook-rar""#),
+        "acquisition MIME follows the archive extension:\n{body}"
+    );
+    assert!(
+        body.contains(r#"pse:count="32""#),
+        "PSE page count:\n{body}"
+    );
+    // `series_id` → the related-series deep link.
+    assert!(body.contains(r#"rel="related" href="/api/series/"#));
+}
+
+/// The recent feed goes through `access::visible_issues_select`: removed
+/// issues and non-active (missing-file) issues never advertise a download.
+#[tokio::test]
+async fn recent_feed_hides_removed_and_inactive_issues() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "recent-visible@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Visible Run").await;
+    let active = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("v-active.cbz"),
+        b"v-active",
+        1.0,
+        "active",
+        false,
+    )
+    .await;
+    let missing = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("v-missing.cbz"),
+        b"v-missing",
+        2.0,
+        "missing",
+        false,
+    )
+    .await;
+    let removed = seed_issue_full(
+        &db,
+        lib_id,
+        series_id,
+        &tmp.path().join("v-removed.cbz"),
+        b"v-removed",
+        3.0,
+        "active",
+        true,
+    )
+    .await;
+
+    let resp = get_with_auth(&app, "/opds/v1/recent", Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 1, "{body}");
+    assert!(body.contains(&format!("<id>urn:issue:{active}</id>")));
+    assert!(!body.contains(&missing), "missing-file issue hidden");
+    assert!(!body.contains(&removed), "removed issue hidden");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn download_supports_range() {
     let app = TestApp::spawn().await;

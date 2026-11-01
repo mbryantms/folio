@@ -1269,3 +1269,107 @@ async fn scan_dedupe_lookup_is_projected_and_cover_stamps_are_batched() {
         "every issue carries the success stamp"
     );
 }
+
+// ───────── audit N-L6: the OPDS recent feed is projected and paged ─────────
+
+/// `/opds/v1/recent` (and its v2 twin) selects the `OpdsIssueRow`
+/// projection: no statement the request fires reads `comic_info_raw` (or
+/// `pages`), and the page is capped at the OPDS page size with a `next`
+/// rel instead of a hard limit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opds_recent_feed_is_projected_and_paged() {
+    let _serial = SERIAL.lock().await;
+    install_query_counter();
+    let app = TestApp::spawn_with_query_logging().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Recent Series (2021)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib_id = common::seed::seed_library(&db, tmp.path()).await;
+    let series_id = common::seed::seed_series(&db, lib_id, "Recent Series").await;
+    for n in 0..55u32 {
+        common::seed::seed_issue(
+            &db,
+            lib_id,
+            series_id,
+            &folder.join(format!("Recent Series {n:03}.cbz")),
+            format!("recent-{n:03}").as_bytes(),
+            f64::from(n),
+        )
+        .await;
+    }
+    let user = register(&app, "opds-recent-perf@example.com").await;
+    // First user is the admin, so no library grant is needed.
+
+    let log = start_statement_log();
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/opds/v1/recent")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", user.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let statements = stop_statement_log(&log);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(body.to_vec()).unwrap();
+    assert_eq!(body.matches("<entry>").count(), 50, "one OPDS page");
+    assert!(
+        body.contains(r#"rel="next" href="/opds/v1/recent?page=2""#),
+        "paged, not hard-capped:\n{body}"
+    );
+
+    let issue_selects: Vec<&String> = statements
+        .iter()
+        .filter(|s| s.contains(r#"FROM "issues""#))
+        .collect();
+    assert!(
+        !issue_selects.is_empty(),
+        "expected the feed to read the issues table; statements: {statements:#?}"
+    );
+    for sql in &issue_selects {
+        assert!(
+            !sql.contains("comic_info_raw") && !sql.contains(r#""issues"."pages""#),
+            "recent feed hydrates the full issue row (N-L6 regression):\n{sql}",
+        );
+    }
+
+    // The OPDS 2.0 twin renders publications from the same projection.
+    let log = start_statement_log();
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/opds/v2/recent")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", user.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let statements = stop_statement_log(&log);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let issue_selects: Vec<&String> = statements
+        .iter()
+        .filter(|s| s.contains(r#"FROM "issues""#))
+        .collect();
+    assert!(!issue_selects.is_empty(), "statements: {statements:#?}");
+    for sql in &issue_selects {
+        assert!(
+            !sql.contains("comic_info_raw") && !sql.contains(r#""issues"."pages""#),
+            "v2 recent feed hydrates the full issue row (N-L6 regression):\n{sql}",
+        );
+    }
+}

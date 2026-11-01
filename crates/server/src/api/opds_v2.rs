@@ -561,6 +561,7 @@ async fn series_one(
         .order_by_asc(issue::Column::SortNumber)
         .offset(offset)
         .limit(opds::PAGE_SIZE)
+        .into_partial_model::<opds::OpdsIssueRow>()
         .all(&app.db)
         .await
     {
@@ -690,30 +691,52 @@ async fn series_one(
     json_response(body)
 }
 
-async fn recent(State(app): State<AppState>, user: CurrentUser) -> Response {
-    let allowed = match opds::allowed_libraries(&app, &user).await {
+/// `/opds/v2/recent` — JSON mirror of the v1 feed: every visible active
+/// issue, newest `created_at` first, paginated at [`opds::PAGE_SIZE`]
+/// (audit N-L6: this used to be a hard `LIMIT 50` with no paging).
+async fn recent(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    discovery_feed_v2(&app, &user, &q, None, "Recently added", "/opds/v2/recent").await
+}
+
+/// JSON mirror of `opds::discovery_feed_v1`: one
+/// [`opds::discovery_feed_page`] as a paged publications feed.
+async fn discovery_feed_v2(
+    app: &AppState,
+    user: &CurrentUser,
+    q: &PageQuery,
+    created_since: Option<chrono::DateTime<chrono::FixedOffset>>,
+    title: &str,
+    base_href: &str,
+) -> Response {
+    let allowed = match opds::allowed_libraries(app, user).await {
         Ok(v) => v,
         Err(e) => return server_error(e),
     };
-    let mut sel = issue::Entity::find()
-        .order_by_desc(issue::Column::CreatedAt)
-        .limit(50);
-    if let Some(cond) = allowed.issue_filter() {
-        sel = sel.filter(cond);
-    }
-    let rows = match sel.all(&app.db).await {
-        Ok(r) => r,
+    let page = opds::page_number(q.page);
+    let (rows, total) = match opds::discovery_feed_page(app, &allowed, created_since, page).await {
+        Ok(v) => v,
         Err(e) => return server_error(e.to_string()),
     };
-    let publications = build_publications(&app, &user, &rows).await;
+    let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
+    let publications = build_publications(app, user, &rows).await;
+    let mut links = vec![json!({
+        "rel": "self",
+        "href": format!("{base_href}?page={page}"),
+        "type": NAV_CT,
+    })];
+    paginate_links(&mut links, base_href, page, total_pages, opds::PAGE_SIZE);
     let body = json!({
         "metadata": {
-            "title": "Recently added",
-            "numberOfItems": publications.len(),
+            "title": title,
+            "itemsPerPage": opds::PAGE_SIZE,
+            "numberOfItems": total,
+            "currentPage": page,
         },
-        "links": [
-            { "rel": "self", "href": "/opds/v2/recent", "type": NAV_CT },
-        ],
+        "links": links,
         "publications": publications,
     });
     json_response(body)
@@ -906,38 +929,23 @@ async fn history(
 }
 
 /// `/opds/v2/new-this-month` — issues created in the last 30 days,
-/// newest first, scoped to the user's visible libraries.
-async fn new_this_month(State(app): State<AppState>, user: CurrentUser) -> Response {
-    let allowed = match opds::allowed_libraries(&app, &user).await {
-        Ok(v) => v,
-        Err(e) => return server_error(e),
-    };
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
-    let mut sel = issue::Entity::find()
-        .filter(issue::Column::State.eq("active"))
-        .filter(issue::Column::RemovedAt.is_null())
-        .filter(issue::Column::CreatedAt.gte(cutoff.fixed_offset()))
-        .order_by_desc(issue::Column::CreatedAt)
-        .limit(50);
-    if let Some(cond) = allowed.issue_filter() {
-        sel = sel.filter(cond);
-    }
-    let rows = match sel.all(&app.db).await {
-        Ok(r) => r,
-        Err(e) => return server_error(e.to_string()),
-    };
-    let publications = build_publications(&app, &user, &rows).await;
-    let body = json!({
-        "metadata": {
-            "title": "New this month",
-            "numberOfItems": publications.len(),
-        },
-        "links": [
-            { "rel": "self", "href": "/opds/v2/new-this-month", "type": NAV_CT },
-        ],
-        "publications": publications,
-    });
-    json_response(body)
+/// newest first, scoped to the user's visible libraries, paged like
+/// `recent`.
+async fn new_this_month(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<PageQuery>,
+) -> Response {
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).fixed_offset();
+    discovery_feed_v2(
+        &app,
+        &user,
+        &q,
+        Some(cutoff),
+        "New this month",
+        "/opds/v2/new-this-month",
+    )
+    .await
 }
 
 /// `/opds/v2/by-creator/{writer}` — series where any writer credit
@@ -1681,7 +1689,7 @@ fn up_next_link_json(issue_id: &str) -> Value {
 async fn build_publications(
     app: &AppState,
     user: &CurrentUser,
-    issues: &[issue::Model],
+    issues: &[opds::OpdsIssueRow],
 ) -> Vec<Value> {
     build_publications_inner(app, user, issues, false, None, None).await
 }
@@ -1694,7 +1702,7 @@ async fn build_publications(
 async fn build_publications_with_up_next(
     app: &AppState,
     user: &CurrentUser,
-    issues: &[issue::Model],
+    issues: &[opds::OpdsIssueRow],
     up_next_id: Option<&str>,
 ) -> Vec<Value> {
     build_publications_inner(app, user, issues, false, up_next_id, None).await
@@ -1712,7 +1720,7 @@ async fn build_publications_with_up_next(
 async fn build_publications_sequential(
     app: &AppState,
     user: &CurrentUser,
-    issues: &[issue::Model],
+    issues: &[opds::OpdsIssueRow],
     up_next_id: Option<&str>,
     entry_positions: Option<&HashMap<String, i32>>,
 ) -> Vec<Value> {
@@ -1722,7 +1730,7 @@ async fn build_publications_sequential(
 async fn build_publications_inner(
     app: &AppState,
     user: &CurrentUser,
-    issues: &[issue::Model],
+    issues: &[opds::OpdsIssueRow],
     sequential_nav: bool,
     up_next_id: Option<&str>,
     entry_positions: Option<&HashMap<String, i32>>,
@@ -1767,13 +1775,13 @@ async fn build_publications_inner(
 /// into one struct during code-quality-cleanup M3 so the builder
 /// surface doesn't fan back out across the file.
 struct PublicationCtx<'a> {
-    issue: &'a issue::Model,
+    issue: &'a opds::OpdsIssueRow,
     series_slug: Option<&'a str>,
     user_id: Uuid,
     url_signing_key: &'a [u8],
     progress: Option<&'a progress_record::Model>,
-    prev: Option<&'a issue::Model>,
-    next: Option<&'a issue::Model>,
+    prev: Option<&'a opds::OpdsIssueRow>,
+    next: Option<&'a opds::OpdsIssueRow>,
     progress_glyphs: bool,
     up_next_id: Option<&'a str>,
     /// 1-indexed CBL position; mirrors the v1
@@ -2108,17 +2116,18 @@ async fn render_collection_acq_v2(
             .map(|s| (s.id, s))
             .collect()
     };
-    let issue_models: Vec<issue::Model> = if issue_ids.is_empty() {
+    let issue_models: Vec<opds::OpdsIssueRow> = if issue_ids.is_empty() {
         Vec::new()
     } else {
         let rows = issue::Entity::find()
             .filter(issue::Column::Id.is_in(issue_ids))
+            .into_partial_model::<opds::OpdsIssueRow>()
             .all(&app.db)
             .await
             .unwrap_or_default();
         access::filter_issues(app, &visible, rows).await
     };
-    let issue_by_id: HashMap<String, issue::Model> = issue_models
+    let issue_by_id: HashMap<String, opds::OpdsIssueRow> = issue_models
         .iter()
         .cloned()
         .map(|i| (i.id.clone(), i))
@@ -2135,7 +2144,7 @@ async fn render_collection_acq_v2(
     // Walk rows in position order so series + issues retain the
     // collection's logical sequence.
     let mut navigation: Vec<Value> = Vec::new();
-    let mut publication_models: Vec<issue::Model> = Vec::new();
+    let mut publication_models: Vec<opds::OpdsIssueRow> = Vec::new();
     for row in &rows {
         if let Some(sid) = row.series_id
             && let Some(s) = series_by_id.get(&sid)

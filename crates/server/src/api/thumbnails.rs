@@ -16,6 +16,10 @@
 //!     the encoder pool. Beyond the cap, requests wait briefly; a wait
 //!     longer than 2s yields 503 with `Retry-After: 1` so the browser's
 //!     lazy-load doesn't pile up.
+//!   - Caching (audit OP-7). `Cache-Control: private, max-age=300` plus a
+//!     strong `ETag` that is the blake3 digest of the served bytes;
+//!     `If-None-Match` answers 304 with no body. See [`THUMB_CACHE_CONTROL`]
+//!     for the staleness analysis.
 
 use axum::{
     Router,
@@ -28,6 +32,7 @@ use axum::{
 use entity::{issue, issue_cover, library};
 use sea_orm::EntityTrait;
 use serde::Deserialize;
+use std::path::Path;
 use std::time::Duration;
 use tokio_util::io::ReaderStream;
 
@@ -38,6 +43,45 @@ use crate::state::AppState;
 use server_macros::handler;
 
 const INLINE_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Freshness lifetime of a served thumbnail.
+///
+/// Thumbnail URLs are stable — `/issues/{id}/pages/{n}/thumb` never changes
+/// while the bytes behind it can (archive edits, admin force-recreate, a
+/// cover-page pick, a library format switch). Until audit OP-7 the route
+/// answered `private, no-cache`, so every browse revalidated every cover:
+/// one conditional request per card per paint. With `max-age=300` a
+/// browser reuses a cover for five minutes and then revalidates against
+/// the content-digest [`ETag`](header::ETAG) below, so a regenerated
+/// thumbnail is picked up on the first paint after the window closes.
+///
+/// Staleness window. Every regeneration (archive edit, cover-page pick,
+/// force-recreate, format switch) wipes the artifact and writes a new file
+/// at the same path through tmp + rename (`library::thumbnails`), so the
+/// served bytes — and with them the digest ETag — change exactly when the
+/// pixels do. A browser holding the old copy therefore shows it for at
+/// most five minutes, then revalidates, misses the old ETag and gets the
+/// new bytes. Where it applies:
+///
+/// - Card grids and the issue page cover (`coverThumbUrl`, no version in
+///   the URL): up to five minutes after a cover pick or force-recreate in a
+///   tab the service worker does not control. This is the accepted cost.
+/// - The reader page strip appends `?v=<last_rewrite_at>`
+///   (`withContentVersion`), so an archive edit changes its URLs and the
+///   window never applies there; the page-map editor appends
+///   `?sw=bypass&t=<open stamp>` for the same reason.
+/// - Inside the installed PWA the service worker serves its cached copy
+///   first and refetches with `cache: "no-cache"`, which skips `max-age`;
+///   a changed cover shows on the next paint, as it did before OP-7.
+/// - OPDS clients (Panels, Chunky, KOReader) keep their own cover caches.
+///
+/// `private` because the route is ACL'd per user: a shared cache must
+/// never serve one account's cover to another. `Vary: Cookie,
+/// Authorization` goes with it so one browser profile or one OPDS client
+/// used by two accounts in turn (parent signs out, age-capped child signs
+/// in) keys its cache on the credentials and never reuses the first
+/// account's cover for the second.
+const THUMB_CACHE_CONTROL: &str = "private, max-age=300";
 
 #[derive(Debug, Deserialize)]
 pub struct ThumbQuery {
@@ -109,7 +153,7 @@ pub async fn thumb(
     if let Some(cached) = app.cached_thumb_path(&cache_key) {
         if tokio::fs::try_exists(&cached).await.unwrap_or(false) {
             touch_for_lru(&app, &cached);
-            return serve_file(&cached, &headers, &row.id, page_index, variant).await;
+            return serve_file(&cached, &headers).await;
         }
         app.uncache_thumb_path(&cache_key);
     }
@@ -118,7 +162,7 @@ pub async fn thumb(
     {
         app.cache_thumb_path(cache_key.clone(), existing.clone());
         touch_for_lru(&app, &existing);
-        return serve_file(&existing, &headers, &row.id, page_index, variant).await;
+        return serve_file(&existing, &headers).await;
     }
 
     // Cold path: generate inline under a global semaphore. Strip misses enqueue
@@ -232,7 +276,7 @@ pub async fn thumb(
     // (WP-3.8); throttled + no-op when the budget is off.
     let cfg = app.cfg();
     thumbnails::spawn_budget_sweep_if_needed(cfg.data_path.clone(), cfg.thumbs_budget_bytes());
-    serve_file(&path, &headers, &row.id, page_index, variant).await
+    serve_file(&path, &headers).await
 }
 
 /// Keep a served thumbnail's mtime fresh so the byte-budget sweep evicts
@@ -256,66 +300,61 @@ fn thumb_cache_key(issue_id: &str, variant: Variant, page_index: usize) -> Strin
     format!("{issue_id}:{variant}:{page_index}")
 }
 
-async fn serve_file(
-    path: &std::path::Path,
-    req_headers: &HeaderMap,
-    issue_id: &str,
-    page_index: usize,
-    variant: Variant,
-) -> Response {
-    let variant_tag = match variant {
-        Variant::Cover => "c",
-        Variant::CoverSmall => "cs",
-        Variant::Strip => "s",
-    };
-    let file = match tokio::fs::File::open(path).await {
-        Ok(f) => f,
-        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable"),
-    };
-    let meta = file.metadata().await.ok();
-    let len = meta.as_ref().map(std::fs::Metadata::len);
-    // ETag derives from the on-disk artifact (size + mtime), not from the
-    // pipeline constant `THUMBNAIL_VERSION`: the URL is stable across
-    // archive rewrites, so a page edit that regenerates the thumbnail must
-    // change the validator or revalidation keeps 304-ing stale pixels.
-    // Every generator writes via tmp+rename, so mtime moves on regen.
-    let stamp = meta
-        .as_ref()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let etag = format!(
-        "\"{}-{}-{}-{}-{}\"",
-        &issue_id[..32.min(issue_id.len())],
-        variant_tag,
-        page_index,
-        len.unwrap_or(0),
-        stamp,
-    );
+/// Strong validator for a thumbnail: the blake3 digest of the bytes about
+/// to be served, quoted per RFC 9110. Bytes-only on purpose — never the
+/// file's mtime (a `cp -p` restore or a backup replay keeps mtime while the
+/// pixels differ) and never the pipeline constant `THUMBNAIL_VERSION` (a
+/// regen under the same version must still miss). Identical bytes rewritten
+/// by a no-op regeneration keep matching, so the client is spared the
+/// transfer.
+fn thumb_etag(bytes: &[u8]) -> String {
+    format!("\"{}\"", blake3::hash(bytes).to_hex())
+}
+
+fn cache_headers(etag: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    // `no-cache` = cache but revalidate before reuse. Thumb URLs never
-    // change, while their bytes do (archive edits, force-recreate, format
-    // switches) — an `immutable` year here left the page-map editor and
-    // reader strip showing pre-edit pixels indefinitely. The ETag above
-    // keeps revalidation at 304-with-no-body for the common unchanged case.
-    // `private` because the route is ACL'd per user.
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("private, no-cache"),
+        HeaderValue::from_static(THUMB_CACHE_CONTROL),
+    );
+    headers.insert(
+        header::VARY,
+        HeaderValue::from_static("Cookie, Authorization"),
     );
     headers.insert(
         header::ETAG,
-        HeaderValue::from_str(&etag).unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
+        HeaderValue::from_str(etag).unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),
     );
+    headers
+}
 
-    if req_headers
+/// `If-None-Match` uses the weak comparison (RFC 9110 §13.1.2): a `W/`
+/// prefix a proxy added on the way out still matches the strong validator.
+fn if_none_match_hits(req_headers: &HeaderMap, etag: &str) -> bool {
+    req_headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(',').any(|candidate| candidate.trim() == etag))
-    {
-        return (StatusCode::NOT_MODIFIED, headers).into_response();
+        .is_some_and(|v| {
+            v.split(',').map(str::trim).any(|candidate| {
+                candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == etag
+            })
+        })
+}
+
+async fn serve_file(path: &Path, req_headers: &HeaderMap) -> Response {
+    // Thumbnails are small (a 600 px cover is tens of KB, a strip thumb a
+    // few KB), so the whole artifact is read before the response: the ETag
+    // is a digest of the bytes and has to be known before the status line.
+    // A revalidation therefore costs one small read + a blake3 pass (well
+    // under a millisecond) and sends no body.
+    let Ok(bytes) = tokio::fs::read(path).await else {
+        return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable");
+    };
+    let etag = thumb_etag(&bytes);
+    if if_none_match_hits(req_headers, &etag) {
+        return (StatusCode::NOT_MODIFIED, cache_headers(&etag)).into_response();
     }
+    let mut headers = cache_headers(&etag);
 
     // Content-Type follows the on-disk extension so old thumbs in the
     // previous format keep serving with the right MIME after a switch.
@@ -326,11 +365,8 @@ async fn serve_file(
         .map(ThumbFormat::mime)
         .unwrap_or("image/webp");
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
-    if let Some(l) = len {
-        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(l));
-    }
-    let stream = ReaderStream::new(file);
-    (StatusCode::OK, headers, Body::from_stream(stream)).into_response()
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    (StatusCode::OK, headers, Body::from(bytes)).into_response()
 }
 
 /// Stream a locally-stored `issue_cover` artifact (primary or variant)
