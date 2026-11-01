@@ -458,7 +458,8 @@ per-list opt-out to preserve curated orders).
   refresh-token rotation; a replayed refresh token is rejected.
 - **App passwords** per device/app, individually revocable, with
   last-used tracking.
-- A complete admin area: users, libraries, scan monitoring with live
+- A complete admin area: users, libraries (each with its series and issue
+  counts, archive size and `.bak` backup footprint), scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every
   admin action (kept forever by default; an optional retention exports old
   entries to NDJSON in the data volume before trimming them), runtime

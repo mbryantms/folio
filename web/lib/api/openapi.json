@@ -505,6 +505,60 @@
         }
       }
     },
+    "/api/admin/libraries/stats": {
+      "get": {
+        "operationId": "admin_library_stats_all",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryStatsView"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/libraries/{slug}/stats": {
+      "get": {
+        "operationId": "admin_library_stats_one",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryStatsView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      }
+    },
     "/api/admin/libraries/{slug}/thumbnails": {
       "delete": {
         "operationId": "admin_thumbs_delete_all",
@@ -25092,6 +25146,86 @@
           "without_metron": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "LibraryStatsView": {
+        "type": "object",
+        "description": "Counts and disk usage for one library.",
+        "required": [
+          "library_id",
+          "slug",
+          "series_count",
+          "active_issue_count",
+          "removed_issue_count",
+          "archive_bytes",
+          "backup_stale"
+        ],
+        "properties": {
+          "active_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Readable issues still on disk (`state = 'active'`, not removed).\nEncrypted or malformed archives count in neither this nor\n`removed_issue_count`.",
+            "minimum": 0
+          },
+          "archive_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum of the stored file size of the active issues, in bytes. Removed\nand unreadable issues are left out, so this is the readable\ncollection's size, not every byte under the root.",
+            "minimum": 0
+          },
+          "backup_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes of `.bak` / `.bak.N` archive backups from the stored tally;\n`null` until the daily backup sweep (or the health page) has\ncounted this library.",
+            "minimum": 0
+          },
+          "backup_counted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 — when the backup tally was counted."
+          },
+          "backup_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "backup_stale": {
+            "type": "boolean",
+            "description": "A scan changed the library since the tally was counted, so the\nbackup figures may be behind until the next recount (the health\npage or the daily sweep). `false` when there is no tally."
+          },
+          "last_scan_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339 — when the library's last full, completed scan finished\n(`libraries.last_scan_at`; scoped and cancelled scans leave it)."
+          },
+          "library_id": {
+            "type": "string"
+          },
+          "removed_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Soft-removed issues (`removed_at` set, confirmed or not): the file\nleft the disk, or a duplicate copy was removed from the catalogue.",
+            "minimum": 0
+          },
+          "series_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Series still on disk (`removed_at IS NULL`).",
+            "minimum": 0
+          },
+          "slug": {
+            "type": "string"
           }
         }
       },

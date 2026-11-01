@@ -134,6 +134,12 @@ export const queryKeys = {
     ["libraries", libraryId, "scan-runs"] as const,
   scanPreview: (libraryId: string) =>
     ["libraries", libraryId, "scan-preview"] as const,
+  /** Admin per-library counts + disk usage for every library. `"*"` can't
+   *  be a slug, and the `libraries` prefix means a library create / delete
+   *  refreshes it. */
+  libraryStatsAll: ["libraries", "*", "stats"] as const,
+  libraryStats: (libraryId: string) =>
+    ["libraries", libraryId, "stats"] as const,
   removed: (libraryId: string) => ["libraries", libraryId, "removed"] as const,
   /** First-page probe of the removed listing for the tab badge. Prefixed
    *  by `removed` so one invalidation refreshes both. */
