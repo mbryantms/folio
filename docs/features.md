@@ -538,6 +538,9 @@ coalesce into one run.
   bytes actually changed.
 - Each cover is decoded **once** and reused for the thumbnail, the small
   variant, and all three perceptual hashes.
+- An admin can choose an issue's cover: any archive page, or one of the
+  provider's variant covers ("Use as cover" in the issue's Covers tab),
+  which later provider applies keep and "Use page cover" undoes.
 - Cold-cache thumbnail requests are generated inline behind a semaphore
   sized to browser connection bursts, so a fresh page of 40 covers
   backfills gracefully instead of stampeding the server.

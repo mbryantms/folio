@@ -365,6 +365,51 @@ appropriate writer:
 - Covers → `writers::apply_cover` (writes bytes + issue_cover row +
   per-cover phash)
 
+### Chosen primary cover (a variant as the cover)
+
+An admin can make one of an issue's provider variant covers its primary
+cover: `POST /series/{s}/issues/{i}/cover/variant/{variant_id}`
+(`api/cover_pick.rs`, audited `admin.issue.cover.variant.set`) →
+`writers::set_user_primary_cover`. It copies the variant's image (the
+stored file, else a fetch through `writers::fetch_cover_bytes`) into a new
+active `primary/0` `issue_cover` row, hashes computed at write time, and in
+the same transaction writes a `cover.primary` `field_provenance` row with
+`set_by='user'`. The displaced primary is deactivated (a provider or
+legacy row) or deleted with its file (an earlier pick), so an issue has at
+most one chosen row. The variant row itself is untouched, so it stays in
+the gallery (and a later variant refresh may replace it without affecting
+the copy).
+
+- **Precedence.** `apply_cover` refuses to replace a pinned primary unless
+  `CoverWrite::override_user_pin` (the apply's admin-only
+  `override_user_edits`); with the override, the pick row and its pin are
+  deleted and the provider cover takes the slot. The DB-direct apply
+  checks the pin first and skips the download (`cover_skipped_reason =
+  "user_pinned"`); the sidecar apply defers no cover over a pin, and the
+  rewrite job's deferred write (`PrimaryCoverWrite.override_user_edits`)
+  goes through the same writer guard, so a pick made after an apply was
+  queued also survives.
+- **Writeback libraries.** The primary cover is an `issue_cover` row there
+  too (see `metadata-sidecar-writeback.md`, "Primary cover"), so a pick
+  never touches the archive and no sidecar rewrite runs.
+- **Thumbnails.** While the pin and an active stored row exist
+  (`writers::user_primary_cover`), the cover thumbnail (cards, issue
+  header, OPDS) is encoded from the chosen image instead of the archive's
+  cover page, in the post-scan worker and on the inline cold path
+  (`thumbnails::chosen_cover_bytes` / `encode_chosen_cover`). The
+  `archive_extracted` hashes stay archive-sourced, since the matcher
+  compares the file's own cover. The endpoint wipes the cover thumbnail
+  and queues the cover job, exactly as the page pick does.
+- **Revert.** `DELETE /series/{s}/issues/{i}/cover/variant`
+  (`writers::clear_user_primary_cover`, audited
+  `admin.issue.cover.variant.clear`) deletes the pick and its pin and
+  reactivates the newest inactive non-`archive_extracted` primary (the
+  provider cover the pick displaced); the thumbnail renders from the
+  archive page again. `GET /issues/{id}/covers` reports
+  `variant_cover_chosen` so the gallery can offer "Use page cover". The
+  page pick (`PATCH …/cover {page_index}`) runs the same revert first, so
+  the chosen page is what shows.
+
 After every successful write, `write_provenance_for_applied` emits
 one `field_provenance` row per applied field with
 `set_by=SetBy::Provider(source)` + the provider's external id.

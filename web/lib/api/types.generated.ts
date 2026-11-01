@@ -4635,6 +4635,43 @@ export interface paths {
         patch: operations["cover_pick_set_issue_cover"];
         trace?: never;
     };
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revert a chosen variant cover: the issue's cover is its archive cover
+         *     page again (and the provider primary the pick displaced is restored).
+         */
+        delete: operations["cover_pick_clear_issue_variant_cover"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{series_slug}/issues/{issue_slug}/cover/variant/{variant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make one of the issue's provider variant covers its primary cover. */
+        post: operations["cover_pick_set_issue_variant_cover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{series_slug}/issues/{issue_slug}/duplicate-decision": {
         parameters: {
             query?: never;
@@ -10111,6 +10148,12 @@ export interface components {
              */
             fallback_primary_url: string;
             issue_id: string;
+            /**
+             * @description `true` when the primary cover is a variant an admin chose ("Use as
+             *     cover"); `DELETE /series/{s}/issues/{i}/cover/variant` returns the
+             *     issue to its archive cover page.
+             */
+            variant_cover_chosen: boolean;
         };
         /**
          * @description One credit row from `issue_credits` — the source of truth for who
@@ -10485,6 +10528,24 @@ export interface components {
             updated_at: string;
             /** Format: int32 */
             year?: number | null;
+        };
+        IssueVariantCoverClearResp: {
+            /** @description `false` when the issue had no chosen variant cover (nothing changed). */
+            reverted: boolean;
+            /** @description `true` when a cover-thumbnail regeneration job was queued. */
+            thumbnail_enqueued: boolean;
+        };
+        IssueVariantCoverResp: {
+            /**
+             * Format: uuid
+             * @description Id of the new primary `issue_cover` row (a copy of the variant).
+             */
+            cover_id: string;
+            /**
+             * @description `true` when a cover-thumbnail regeneration job was queued (the
+             *     library has thumbnails enabled and no identical job was pending).
+             */
+            thumbnail_enqueued: boolean;
         };
         LatestReleaseView: {
             /** @description Browse URL on the host's release page. */
@@ -24793,6 +24854,94 @@ export interface operations {
             };
             /** @description page_index outside the archive */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cover_pick_clear_issue_variant_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueVariantCoverClearResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cover_pick_set_issue_variant_cover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_slug: string;
+                issue_slug: string;
+                /** @description `issue_cover` id of an active variant of this issue */
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssueVariantCoverResp"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description issue or variant not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the variant has no image to use, or it is not a recognised image */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the variant image could not be downloaded */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

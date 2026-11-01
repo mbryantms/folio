@@ -115,6 +115,8 @@ import type {
   UpsertSeriesProgressResp,
   IssueCoverPickReq,
   IssueCoverPickResp,
+  IssueVariantCoverClearResp,
+  IssueVariantCoverResp,
   SeriesCoverPickReq,
   SeriesCoverPickResp,
   ConfirmRemovalsReq,
@@ -1096,7 +1098,11 @@ export function useUpdateIssue(seriesSlug: string, issueSlug: string) {
  * libraries and queues a cover-thumbnail rebuild, so the new image shows
  * up once that job runs.
  */
-export function useSetIssueCoverPage(seriesSlug: string, issueSlug: string) {
+export function useSetIssueCoverPage(
+  seriesSlug: string,
+  issueSlug: string,
+  issueId: string,
+) {
   const qc = useQueryClient();
   return useApiMutation<IssueCoverPickResp, IssueCoverPickReq>(
     (body) => ({
@@ -1109,12 +1115,70 @@ export function useSetIssueCoverPage(seriesSlug: string, issueSlug: string) {
         data?.thumbnail_enqueued
           ? "Cover page set — the thumbnail is being rebuilt"
           : "Cover page set",
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["series"], exact: false });
-        qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
-      },
+      // A page pick also drops a chosen variant cover.
+      onSuccess: () => invalidateIssueCover(qc, issueId),
     },
   );
+}
+
+/**
+ * `POST /series/{series_slug}/issues/{issue_slug}/cover/variant/{variant_id}`
+ * — make one of the issue's provider variant covers its primary cover
+ * (admin). The server keeps the choice through later provider applies and
+ * rebuilds the cover thumbnail from it, so cards follow once that job ran.
+ */
+export function useSetIssueVariantCover(
+  issueId: string,
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<IssueVariantCoverResp, { variantId: string }>(
+    ({ variantId }) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/cover/variant/${encodeURIComponent(variantId)}`,
+      method: "POST",
+    }),
+    {
+      successMessage: (data) =>
+        data?.thumbnail_enqueued
+          ? "Cover set — the thumbnail is being rebuilt"
+          : "Cover set",
+      onSuccess: () => invalidateIssueCover(qc, issueId),
+    },
+  );
+}
+
+/**
+ * `DELETE /series/{series_slug}/issues/{issue_slug}/cover/variant` — undo
+ * {@link useSetIssueVariantCover}: the issue's cover is its archive cover
+ * page again (admin).
+ */
+export function useClearIssueVariantCover(
+  issueId: string,
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  const qc = useQueryClient();
+  return useApiMutation<IssueVariantCoverClearResp, void>(
+    () => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/cover/variant`,
+      method: "DELETE",
+    }),
+    {
+      successMessage: "Cover reset to the archive cover page",
+      onSuccess: () => invalidateIssueCover(qc, issueId),
+    },
+  );
+}
+
+/** The issue's covers, every series card listing, and the queue pill. */
+function invalidateIssueCover(
+  qc: ReturnType<typeof useQueryClient>,
+  issueId: string,
+) {
+  qc.invalidateQueries({ queryKey: queryKeys.issueCovers(issueId) });
+  qc.invalidateQueries({ queryKey: ["series"], exact: false });
+  qc.invalidateQueries({ queryKey: queryKeys.queueDepth });
 }
 
 /**

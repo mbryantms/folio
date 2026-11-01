@@ -25,6 +25,12 @@ let queryState: {
 
 vi.mock("@/lib/api/queries", () => ({
   useIssueCovers: () => queryState,
+  useMe: () => ({ data: undefined }),
+}));
+
+vi.mock("@/lib/api/mutations", () => ({
+  useSetIssueVariantCover: () => ({ mutate: vi.fn(), isPending: false }),
+  useClearIssueVariantCover: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 import { CoverGallery } from "@/components/library/CoverGallery";

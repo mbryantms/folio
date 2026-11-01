@@ -25,18 +25,30 @@
  * Silent when an issue has zero rows AND no fallback is meaningful —
  * the gallery is opt-in surface that simply doesn't appear when
  * there's nothing extra to show.
+ *
+ * Admins (with `seriesSlug` + `issueSlug`) get a "Use as cover" action on
+ * each variant: the server makes that variant the primary cover and
+ * rebuilds the cover thumbnail from it. The primary tile comes first and
+ * carries a "Cover" chip; while a variant is the cover, the primary tile
+ * offers "Use page cover" to go back to the archive's cover page.
  */
 
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { ProviderCoverImage } from "@/components/library/ProviderCoverImage";
 import {
   CoverViewer,
   type ViewerCover,
 } from "@/components/library/CoverViewer";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useIssueCovers } from "@/lib/api/queries";
+import {
+  useClearIssueVariantCover,
+  useSetIssueVariantCover,
+} from "@/lib/api/mutations";
+import { useIssueCovers, useMe } from "@/lib/api/queries";
 import type { IssueCoverRow } from "@/lib/api/types";
 
 /** The full-resolution source for a cover row, or `null` when none exists. */
@@ -58,12 +70,30 @@ function coverSrc(row: IssueCoverRow, fallbackUrl: string): string | null {
 export function CoverGallery({
   issueId,
   chrome = "card",
+  seriesSlug,
+  issueSlug,
 }: {
   issueId: string;
   chrome?: "card" | "bare";
+  /** With `issueSlug`: enables the admin cover actions. */
+  seriesSlug?: string;
+  issueSlug?: string;
 }) {
   const q = useIssueCovers(issueId);
   const data = q.data;
+  const isAdmin = useMe().data?.role === "admin";
+  const setVariant = useSetIssueVariantCover(
+    issueId,
+    seriesSlug ?? "",
+    issueSlug ?? "",
+  );
+  const clearVariant = useClearIssueVariantCover(
+    issueId,
+    seriesSlug ?? "",
+    issueSlug ?? "",
+  );
+  const canPick = isAdmin && !!seriesSlug && !!issueSlug;
+  const pending = setVariant.isPending || clearVariant.isPending;
   // Active lightbox cover (index into the `viewable` list below), or null when
   // closed. Declared before the early returns so hook order stays stable.
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -132,16 +162,57 @@ export function CoverGallery({
     });
   }
 
+  // The variant the primary was copied from (same source image) needs no
+  // "Use as cover" — it already is the cover.
+  const primaryRow = data.covers.find((c) => c.kind === "primary");
+  const isCurrentCover = (c: IssueCoverRow) =>
+    !!primaryRow?.source_url && c.source_url === primaryRow.source_url;
+
   const grid = (
     <ul className={gridClass}>
       {data.covers.map((c) => {
         const vi = viewerIndexById.get(c.id);
+        const label = c.variant_label ?? c.kind;
+        let action: ReactNode = null;
+        if (canPick && c.kind === "variant" && !isCurrentCover(c)) {
+          action = (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="mt-1.5 w-full"
+              disabled={pending}
+              aria-label={`Use as cover: ${label}`}
+              onClick={() => setVariant.mutate({ variantId: c.id })}
+            >
+              Use as cover
+            </Button>
+          );
+        } else if (
+          canPick &&
+          c.kind === "primary" &&
+          data.variant_cover_chosen
+        ) {
+          action = (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="mt-1.5 w-full"
+              disabled={pending}
+              onClick={() => clearVariant.mutate()}
+            >
+              Use page cover
+            </Button>
+          );
+        }
         return (
           <CoverTile
             key={c.id}
             row={c}
             fallbackUrl={data.fallback_primary_url}
             onOpen={vi === undefined ? null : () => setViewerIndex(vi)}
+            action={action}
           />
         );
       })}
@@ -184,11 +255,14 @@ function CoverTile({
   row,
   fallbackUrl,
   onOpen,
+  action,
 }: {
   row: IssueCoverRow;
   fallbackUrl: string;
   /** Opens the lightbox at this cover; `null` when the cover has no image. */
   onOpen: (() => void) | null;
+  /** Admin cover action under the tile (outside the lightbox button). */
+  action: ReactNode;
 }) {
   // The thumbnail and the lightbox use the same `image_url` — the locally
   // stored cover, which is the full-res original we downloaded (the CDN
@@ -218,6 +292,11 @@ function CoverTile({
     <div className="mt-1.5 min-w-0">
       <div className="flex items-center justify-between gap-1 text-xs">
         <span className="truncate capitalize">{label}</span>
+        {row.kind === "primary" && (
+          <Badge variant="secondary" className="shrink-0">
+            Cover
+          </Badge>
+        )}
         {row.kind !== "primary" && row.ordinal > 0 && (
           <span className="text-muted-foreground">#{row.ordinal}</span>
         )}
@@ -259,6 +338,7 @@ function CoverTile({
           {caption}
         </>
       )}
+      {action}
     </li>
   );
 }

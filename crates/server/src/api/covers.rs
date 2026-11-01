@@ -68,6 +68,10 @@ pub struct IssueCoversResp {
     /// exists (legacy issues whose primary cover is the page-thumb
     /// pipeline). Always points at page 0's cover thumb.
     pub fallback_primary_url: String,
+    /// `true` when the primary cover is a variant an admin chose ("Use as
+    /// cover"); `DELETE /series/{s}/issues/{i}/cover/variant` returns the
+    /// issue to its archive cover page.
+    pub variant_cover_chosen: bool,
 }
 
 #[utoipa::path(
@@ -142,10 +146,15 @@ pub async fn list_issue_covers(
             }
         })
         .collect();
+    let variant_cover_chosen = crate::metadata::writers::primary_cover_pinned(&app.db, &id)
+        .await
+        .unwrap_or(false)
+        && covers.iter().any(|c| c.kind == "primary");
     Json(IssueCoversResp {
         issue_id: id.clone(),
         covers,
         fallback_primary_url: format!("/issues/{}/pages/0/thumb", urlencode(&id)),
+        variant_cover_chosen,
     })
     .into_response()
 }

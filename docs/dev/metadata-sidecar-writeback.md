@@ -445,7 +445,12 @@ not the bytes (Redis), so the fetch happens in the job; a fetch failure
 or a host behind a bot challenge is logged, not retried, as on the
 DB-direct path. The cover follows `apply_cover`, not the preview
 selection (the single-candidate preview has no cover row), matching
-`write_issue_fields`. A series-scope apply has no issue covers.
+`write_issue_fields`. A series-scope apply has no issue covers. A primary
+an admin chose ("Use as cover" on a variant, a `cover.primary` user pin;
+see `metadata-providers.md`, "Chosen primary cover") is kept: the apply
+defers no cover over it and the writer refuses one queued before the
+pick, unless `override_user_edits`. The pick itself is an `issue_cover`
+row only, so it needs no rewrite.
 
 **Stuck issues from before the fix.** An issue applied on an affected
 release has the provider value in its archive and the old one in its
