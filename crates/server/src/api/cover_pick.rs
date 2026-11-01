@@ -69,6 +69,7 @@ use crate::library::thumbnails;
 use crate::metadata::writers::{self, CoverWrite};
 use crate::metadata::{Identifier, Source};
 use crate::middleware::RequestContext;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -79,11 +80,15 @@ pub(crate) const PICK_KIND: &str = "pick";
 const PICK_PROVIDER: &str = "user";
 
 pub fn routes() -> OpenApiRouter<AppState> {
+    // Per-user bucket (E12, audit N-A5): every route here is a write, so
+    // the whole router shares one `METADATA_WRITE` instance. A pick is one
+    // click and queues a sidecar rewrite in a writeback library.
     OpenApiRouter::new()
         .routes(routes!(set_issue_cover))
         .routes(routes!(set_issue_variant_cover))
         .routes(routes!(clear_issue_variant_cover))
         .routes(routes!(set_series_cover))
+        .route_layer(rate_limit::METADATA_WRITE.build_per_user())
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -152,6 +157,7 @@ pub struct SeriesCoverPickResp {
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
         (status = 422, description = "page_index outside the archive"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -277,6 +283,7 @@ async fn refresh_cover_thumbnail(app: &AppState, row: &issue::Model) -> bool {
         (status = 404, description = "issue or variant not found"),
         (status = 422, description = "the variant has no image to use, or it is not a recognised image"),
         (status = 502, description = "the variant image could not be downloaded"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -395,6 +402,7 @@ pub async fn set_issue_variant_cover(
         (status = 200, body = IssueVariantCoverClearResp),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -496,6 +504,7 @@ async fn variant_image_bytes(
         (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
         (status = 422, description = "issue_id is not an active issue of this series"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]

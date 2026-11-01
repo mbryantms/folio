@@ -24189,6 +24189,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description saved-view write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_update: {
@@ -24213,6 +24220,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+            /** @description saved-view write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25090,6 +25104,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     issues_get_one: {
@@ -25289,6 +25310,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     cover_pick_clear_issue_variant_cover: {
@@ -25320,6 +25348,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25365,6 +25400,13 @@ export interface operations {
             };
             /** @description the variant has no image to use, or it is not a recognised image */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25496,6 +25538,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     issues_clear_field_pin: {
@@ -25528,6 +25577,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -26080,6 +26136,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     external_ids_delete_series: {
@@ -26117,6 +26180,13 @@ export interface operations {
             };
             /** @description series / link not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -26339,6 +26409,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     external_ids_delete_issue: {
@@ -26377,6 +26454,13 @@ export interface operations {
             };
             /** @description issue / link not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

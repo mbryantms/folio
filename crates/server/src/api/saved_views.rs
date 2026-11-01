@@ -40,6 +40,7 @@ use crate::api::series::{IssueListView, IssueSummaryView, SeriesListView};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
 use crate::middleware::RequestContext;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use crate::views::{
     compile::{self, CompileError, CompileInput, Cursor, IssueCompileInput},
@@ -103,11 +104,18 @@ const MIN_RESULT_LIMIT: u64 = 1;
 const DEFAULT_MAX_RAILS_PER_PAGE: i64 = 12;
 
 pub fn routes() -> OpenApiRouter<AppState> {
+    // Per-user bucket (E12, audit N-A5): the PATCH and DELETE also edit
+    // and delete collection rows, so they get the collection-write budget
+    // (`SAVED_VIEW_WRITE`, same numbers as `COLLECTION_WRITE`). Own
+    // sub-router so the `route_layer` stays off the reads.
+    let writes = OpenApiRouter::new()
+        .routes(routes!(update))
+        .routes(routes!(delete_one))
+        .route_layer(rate_limit::SAVED_VIEW_WRITE.build_per_user());
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(create))
-        .routes(routes!(update))
-        .routes(routes!(delete_one))
+        .merge(writes)
         .routes(routes!(pin))
         .routes(routes!(unpin))
         .routes(routes!(set_sidebar))
@@ -924,7 +932,7 @@ async fn cbl_year_range(
     path = "/me/saved-views/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateSavedViewReq,
-    responses((status = 200, body = SavedViewView))
+    responses((status = 200, body = SavedViewView), (status = 429, description = "saved-view write rate limit"))
 )]
 #[handler]
 pub async fn update(
@@ -1142,7 +1150,7 @@ async fn apply_update(
     operation_id = "saved_views_delete_one",    delete,
     path = "/me/saved-views/{id}",
     params(("id" = String, Path,)),
-    responses((status = 204))
+    responses((status = 204), (status = 429, description = "saved-view write rate limit"))
 )]
 #[handler]
 pub async fn delete_one(
