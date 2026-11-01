@@ -65,12 +65,15 @@ pub enum UserOrIp {
     Ip(IpAddr),
 }
 
-/// Per-user key (E3, audit N-A5). The user id comes from a verified JWT
-/// access token (`auth::extractor::access_token_subject`): a forged or
-/// expired token never names a user, so nobody can drain another user's
-/// bucket, and the key set stays bounded by real users plus client IPs.
-/// Requests without a valid JWT (anonymous, app-password, Basic) fall back
-/// to the [`ClientIpKey`] key; the handler rejects the anonymous ones anyway.
+/// Per-user key (E3, audit N-A5). The user id comes from the signature-checked
+/// JWT access token (`auth::extractor::access_token_subject`): a forged token
+/// never names a user, so nobody can drain another user's bucket, and the
+/// key set stays bounded by real users plus client IPs. An expired but
+/// genuine token still names its user, so a tab waking up with a stale token
+/// spends its own budget, not the shared IP one, and gets the 401 that makes
+/// the client refresh. Requests without a signed JWT (anonymous, forged,
+/// app-password, Basic) fall back to the [`ClientIpKey`] key; the handler
+/// rejects the anonymous ones anyway.
 /// Household members behind one NAT therefore get a budget each, which a
 /// per-IP key would not give them.
 #[derive(Debug, Clone, Copy)]

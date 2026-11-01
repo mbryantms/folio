@@ -234,60 +234,70 @@ where
     }
 }
 
-/// The user id of a valid JWT access token on `headers` — `Authorization:
-/// Bearer <jwt>`, else the session cookie — with the same precedence as
-/// [`CurrentUser`]. Signature, issuer, audience and expiry are checked; the
-/// `users` row (`token_version`, disabled state) is not, because this runs
-/// before the handler without a DB round-trip. So it answers "whose token is
-/// this", never "may this request proceed": the per-user rate-limit key
+/// The user id named by a JWT access token on `headers`, chosen by the same
+/// [`credential`] rule as [`CurrentUser`]. The signature, issuer and audience
+/// are checked; expiry is not, and neither is the `users` row
+/// (`token_version`, disabled state), because this runs before the handler
+/// without a DB round-trip. So it answers "whose token is this", never "may
+/// this request proceed": the per-user rate-limit key
 /// ([`crate::middleware::rate_limit::UserKey`]) uses it, and the handler's
-/// extractor still authenticates. App-password and Basic credentials give
-/// `None` (their check is an argon2 verify, too slow for a key extractor).
+/// extractor still authenticates (an expired token then gets its 401 and the
+/// client refreshes). App-password and Basic credentials give `None` (their
+/// check is an argon2 verify, too slow for a key extractor).
 pub fn access_token_subject(
     headers: &axum::http::HeaderMap,
     keys: &super::jwt::JwtKeys,
 ) -> Option<Uuid> {
-    let jar;
-    let authorization = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-    // Same order as `extract_token`: Bearer wins, Basic is app-password
-    // only, any other header falls through to the cookie.
-    let token = if let Some(rest) = authorization.and_then(|v| v.strip_prefix("Bearer ")) {
-        rest.trim()
-    } else if authorization.is_some_and(|v| v.starts_with("Basic ")) {
-        return None;
-    } else {
-        jar = CookieJar::from_headers(headers);
-        jar.get(SESSION_COOKIE)?.value()
+    let token = match credential(headers)? {
+        Credential::Bearer(t) => t.to_owned(),
+        Credential::Cookie(t) => t,
+        Credential::Basic(_) => return None,
     };
-    if super::app_password::looks_like_app_password(token) {
+    if super::app_password::looks_like_app_password(&token) {
         return None;
     }
-    keys.verify_access(token).ok()?.sub.parse().ok()
+    keys.access_subject_ignoring_expiry(&token)?.parse().ok()
 }
 
-fn extract_token(parts: &Parts) -> Option<String> {
-    if let Some(v) = parts
-        .headers
+/// Where a request's credential comes from. One rule for every reader
+/// ([`extract_token`] and [`access_token_subject`]), so the rate-limit key
+/// always names the same token the handler authenticates.
+enum Credential<'a> {
+    /// `Authorization: Bearer <jwt|app_…>` (trimmed).
+    Bearer(&'a str),
+    /// `Authorization: Basic <b64>` (trimmed, still encoded).
+    Basic(&'a str),
+    /// `Cookie: __Host-comic_session=<jwt>`.
+    Cookie(String),
+}
+
+fn credential(headers: &axum::http::HeaderMap) -> Option<Credential<'_>> {
+    if let Some(v) = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
     {
-        // Authorization: Bearer <jwt|app_…>
         if let Some(rest) = v.strip_prefix("Bearer ") {
-            return Some(rest.trim().to_owned());
+            return Some(Credential::Bearer(rest.trim()));
         }
-        // Authorization: Basic <b64(user:password)> — OPDS-client default.
-        // Only app-password tokens are accepted here; a raw JWT carried via
-        // Basic would be a session-token-in-URL-style footgun (clients log
-        // / surface the Authorization header in places they shouldn't).
         if let Some(rest) = v.strip_prefix("Basic ") {
-            return extract_basic_app_password(rest.trim(), parts);
+            return Some(Credential::Basic(rest.trim()));
         }
     }
-    // Cookie: __Host-comic_session=<jwt>
-    let jar = CookieJar::from_headers(&parts.headers);
-    jar.get(SESSION_COOKIE).map(|c| c.value().to_owned())
+    let jar = CookieJar::from_headers(headers);
+    jar.get(SESSION_COOKIE)
+        .map(|c| Credential::Cookie(c.value().to_owned()))
+}
+
+fn extract_token(parts: &Parts) -> Option<String> {
+    match credential(&parts.headers)? {
+        Credential::Bearer(t) => Some(t.to_owned()),
+        // Basic is the OPDS-client default. Only app-password tokens are
+        // accepted here; a raw JWT carried via Basic would be a
+        // session-token-in-URL-style footgun (clients log / surface the
+        // Authorization header in places they shouldn't).
+        Credential::Basic(b64) => extract_basic_app_password(b64, parts),
+        Credential::Cookie(t) => Some(t),
+    }
 }
 
 fn extract_basic_app_password(b64: &str, parts: &Parts) -> Option<String> {

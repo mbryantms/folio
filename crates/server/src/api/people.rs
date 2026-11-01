@@ -32,10 +32,12 @@ const DEFAULT_LIMIT: i64 = 20;
 const MAX_LIMIT: i64 = 100;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    // Free-text credit search: per-user `SEARCH` bucket (E3, audit N-A5).
-    OpenApiRouter::new()
+    // Free-text credit search: per-user `SEARCH` bucket (E3, audit N-A5),
+    // in its own sub-router so a route added here later doesn't inherit it.
+    let search = OpenApiRouter::new()
         .routes(routes!(list))
-        .route_layer(rate_limit::SEARCH.build_per_user())
+        .route_layer(rate_limit::SEARCH.build_per_user());
+    OpenApiRouter::new().merge(search)
 }
 
 #[derive(Debug, Deserialize)]

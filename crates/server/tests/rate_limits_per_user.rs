@@ -105,8 +105,9 @@ async fn http(
 
 /// Send the request as `auth` until the bucket answers 429 and return the
 /// 429 body. At least `burst` requests must get through first (the bucket
-/// refills while the loop runs, so usually a few more do). Panics if it
-/// never trips.
+/// refills while the loop runs, so usually a few more do). Requests go out
+/// in concurrent waves of [`WAVE`], so the drain outpaces the refill even
+/// when each request is slow on a loaded CI shard. Panics if it never trips.
 async fn drain(
     app: &TestApp,
     auth: &Authed,
@@ -115,15 +116,24 @@ async fn drain(
     body: Option<Value>,
     burst: usize,
 ) -> Value {
-    // `allowed` = requests that got through before this one.
-    for allowed in 0..(burst * 10) {
-        let (s, retry_after, b) = http(app, method.clone(), uri, auth, body.clone()).await;
-        if s == StatusCode::TOO_MANY_REQUESTS {
+    const WAVE: usize = 20;
+    let mut allowed = 0;
+    for _ in 0..(burst * 10 / WAVE) {
+        let wave = (0..WAVE).map(|_| http(app, method.clone(), uri, auth, body.clone()));
+        let mut limited = None;
+        for (s, retry_after, b) in futures::future::join_all(wave).await {
+            if s == StatusCode::TOO_MANY_REQUESTS {
+                assert!(retry_after.is_some(), "429 carries Retry-After");
+                limited.get_or_insert(b);
+            } else {
+                allowed += 1;
+            }
+        }
+        if let Some(b) = limited {
             assert!(
                 allowed >= burst,
                 "{method} {uri} tripped after only {allowed} requests (burst {burst})"
             );
-            assert!(retry_after.is_some(), "429 carries Retry-After");
             return b;
         }
     }
@@ -185,6 +195,52 @@ async fn forged_tokens_do_not_drain_a_users_bucket() {
     assert_envelope(&body, "search");
     let (s, _, _) = http(&app, Method::GET, uri, &a, None).await;
     assert_eq!(s, StatusCode::OK, "the real user keeps their own bucket");
+}
+
+/// An expired token we signed still names its user: it spends that user's
+/// budget (not the shared IP one) and, before the trip, gets the 401 that
+/// makes the web client refresh.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn expired_tokens_spend_their_own_users_budget() {
+    use sea_orm::{ColumnTrait, Database, EntityTrait, QueryFilter};
+
+    let (app, a, b) = two_users().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let user_a = entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq("first@example.com"))
+        .one(&db)
+        .await
+        .unwrap()
+        .expect("first user");
+    let expired = Authed {
+        session: app
+            .state()
+            .jwt_keys
+            .issue_access(user_a.id, "admin", 0, chrono::Duration::hours(-2))
+            .unwrap(),
+        csrf: a.csrf.clone(),
+    };
+    let uri = "/api/issues/search?q=batman";
+    let (s, _, _) = http(&app, Method::GET, uri, &expired, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED, "expired token reaches auth");
+
+    let body = drain(&app, &expired, Method::GET, uri, None, 60).await;
+    assert_envelope(&body, "search");
+    // The bucket refills at 10/s, so a token can appear between the trip
+    // and the next request; the shared bucket must still answer 429 within
+    // a few immediate requests.
+    let mut shared = false;
+    for _ in 0..20 {
+        let (s, _, _) = http(&app, Method::GET, uri, &a, None).await;
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            shared = true;
+            break;
+        }
+        assert_eq!(s, StatusCode::OK, "a refilled token reaches the handler");
+    }
+    assert!(shared, "the fresh token shares the same user's bucket");
+    let (s, _, _) = http(&app, Method::GET, uri, &b, None).await;
+    assert_eq!(s, StatusCode::OK, "other users are unaffected");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
