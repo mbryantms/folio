@@ -20,6 +20,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use entity::user::UserRole;
 use entity::{series, series_external_relationship as ext};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, TransactionTrait};
 use serde::{Deserialize, Serialize};
@@ -171,7 +172,7 @@ pub(crate) async fn external_views(
         HashMap::new()
     } else {
         let acl = access::for_user(app, user).await;
-        let is_admin = user.role == "admin";
+        let is_admin = user.role == UserRole::Admin;
         series::Entity::find()
             .filter(series::Column::Id.is_in(local_ids.into_iter().collect::<Vec<_>>()))
             .all(&app.db)

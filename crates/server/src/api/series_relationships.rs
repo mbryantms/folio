@@ -32,6 +32,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use entity::user::UserRole;
 use entity::{series, series_relationship as rel, story_arc};
 use sea_orm::{
     ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, Statement, TransactionTrait, Value,
@@ -984,7 +985,7 @@ pub(crate) async fn arc_tie_ins_handler(
     let limit = limit.unwrap_or(60).clamp(1, 100);
 
     let mut params: Vec<Value> = vec![Value::from(arc.id)];
-    let include_removed = user.role == "admin";
+    let include_removed = user.role == UserRole::Admin;
     let Some(svis) = ep::series_visible_sql_for(&visible, &mut params, include_removed) else {
         return Json(CursorPage::<ArcTieInView>::paginated(
             Vec::new(),
@@ -1198,7 +1199,7 @@ async fn visible_series(
         .all(&app.db)
         .await?;
     let acl = access::for_user(app, user).await;
-    let is_admin = user.role == "admin";
+    let is_admin = user.role == UserRole::Admin;
     Ok(rows
         .into_iter()
         .filter(|o| {

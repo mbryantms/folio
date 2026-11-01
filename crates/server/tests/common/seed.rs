@@ -44,6 +44,7 @@ pub struct LibrarySeed<'a> {
     pub auto_convert_cbr_on_scan: bool,
     pub auto_convert_cb7_on_scan: bool,
     pub trust_fingerprint_on_first_import: bool,
+    pub auto_search_new_series: bool,
 }
 
 impl<'a> LibrarySeed<'a> {
@@ -57,6 +58,7 @@ impl<'a> LibrarySeed<'a> {
             auto_convert_cbr_on_scan: false,
             auto_convert_cb7_on_scan: false,
             trust_fingerprint_on_first_import: false,
+            auto_search_new_series: false,
         }
     }
 
@@ -95,6 +97,12 @@ impl<'a> LibrarySeed<'a> {
     /// library has never completed a full scan; hashes backfill later.
     pub fn with_trust_fingerprint_on_first_import(mut self) -> Self {
         self.trust_fingerprint_on_first_import = true;
+        self
+    }
+
+    /// Scan-time provider search for created series (audit 2026-11 N-M9).
+    pub fn with_auto_search_new_series(mut self) -> Self {
+        self.auto_search_new_series = true;
         self
     }
 
@@ -137,6 +145,7 @@ impl<'a> LibrarySeed<'a> {
             auto_convert_cbr_on_scan: Set(self.auto_convert_cbr_on_scan),
             auto_convert_cb7_on_scan: Set(self.auto_convert_cb7_on_scan),
             trust_fingerprint_on_first_import: Set(self.trust_fingerprint_on_first_import),
+            auto_search_new_series: Set(self.auto_search_new_series),
         }
         .insert(db)
         .await

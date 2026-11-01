@@ -331,7 +331,7 @@ async fn respects_library_acl_and_age_cap() {
     .unwrap();
     entity::user::ActiveModel {
         id: Unchanged(user.user_id),
-        role: Set("user".into()),
+        role: Set(entity::user::UserRole::User),
         ..Default::default()
     }
     .update(&db)

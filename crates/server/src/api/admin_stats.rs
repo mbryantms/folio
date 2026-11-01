@@ -13,6 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{Duration, Utc};
+use entity::user::{UserRole, UserState};
 use entity::{
     issue, library, scan_run, series,
     user::{self, Entity as UserEntity},
@@ -93,8 +94,8 @@ pub struct AdminUserStatsRow {
     pub user_id: String,
     pub display_name: String,
     pub email: Option<String>,
-    pub role: String,
-    pub state: String,
+    pub role: UserRole,
+    pub state: UserState,
     pub last_active_at: Option<String>,
     pub sessions_30d: i64,
     pub active_ms_30d: i64,

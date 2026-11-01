@@ -73,6 +73,7 @@ const schema = z
     filename_ignore_leading_numbers: z.boolean().default(false),
     filename_assume_issue_one: z.boolean().default(false),
     metadata_auto_apply_strong_matches: z.boolean().default(false),
+    auto_search_new_series: z.boolean().default(false),
   })
   .refine((v) => !v.metadata_writeback_enabled || v.allow_archive_writeback, {
     message:
@@ -118,6 +119,7 @@ function formValuesFromLibrary(lib: LibraryView): z.input<typeof schema> {
     filename_ignore_leading_numbers: lib.filename_ignore_leading_numbers,
     filename_assume_issue_one: lib.filename_assume_issue_one,
     metadata_auto_apply_strong_matches: lib.metadata_auto_apply_strong_matches,
+    auto_search_new_series: lib.auto_search_new_series,
   };
 }
 
@@ -148,6 +150,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       filename_ignore_leading_numbers: false,
       filename_assume_issue_one: false,
       metadata_auto_apply_strong_matches: false,
+      auto_search_new_series: false,
     },
   });
 
@@ -190,6 +193,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         filename_assume_issue_one: values.filename_assume_issue_one,
         metadata_auto_apply_strong_matches:
           values.metadata_auto_apply_strong_matches,
+        auto_search_new_series: values.auto_search_new_series,
         scan_schedule_cron:
           values.scan_schedule_cron.trim() === ""
             ? null
@@ -739,6 +743,33 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       of Hamming distance, and no other candidate is comparably
                       close. User-edited fields are still preserved. All other
                       matches stay in the review queue.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="auto_search_new_series"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>
+                      Search providers for new series after a scan
+                    </FormLabel>
+                    <FormDescription>
+                      When a scan adds series that aren&rsquo;t matched yet,
+                      Folio queues a metadata search for each one (up to 50 per
+                      library a day; the rest wait for an unmatched refresh).
+                      Each search spends provider API quota. With auto-apply
+                      strong matches also on and archive writeback enabled, a
+                      strong match rewrites the new series&rsquo; archives.
                     </FormDescription>
                   </div>
                   <FormControl>

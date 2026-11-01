@@ -27,6 +27,7 @@
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use entity::cbl_list;
+use entity::user::UserRole;
 use redis::AsyncCommands;
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 
@@ -45,7 +46,7 @@ fn window_key(user_id: uuid::Uuid) -> String {
 }
 
 fn is_exempt(user: &CurrentUser) -> bool {
-    user.role == "admin"
+    user.role == UserRole::Admin
 }
 
 /// Consume one import-class token for `user`. `Err(response)` is the 429 the

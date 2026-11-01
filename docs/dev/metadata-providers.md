@@ -525,6 +525,40 @@ Both paths protect user-pinned values via `set_external_id`'s
 precedence rule — rescanning a folder whose tag changed never
 overwrites a value the user pinned by hand.
 
+### Search triggers
+
+Every series / issue search is a `metadata_run` row whose
+`trigger_kind` records what started it. All of them enqueue through
+`jobs::metadata_search::enqueue_series_search` / `enqueue_issue_search`
+or the API handler's equivalent, so they share the per-entity Redis
+in-flight slot, the provider rate limits and the quota park + resume.
+
+| `trigger_kind` | Started by | Auto-apply eligible |
+|---|---|---|
+| `manual` | "Match this series…" / issue Fetch metadata, and the selection-toolbar bulk fetch (its batch is held for review) | never |
+| `bulk_action` | the library refresh endpoint (`POST /libraries/{slug}/metadata/refresh`, series scopes + issue-level pass) | yes, when the library opts in |
+| `weekly_refresh` | the weekly cron (series scopes + issue-level pass) | yes, when the library opts in |
+| `scanner` | a library scan that **created** series, when `libraries.auto_search_new_series` is on (audit 2026-11 N-M9) | yes, when the library opts in |
+
+The scanner trigger lives in
+[`library/scanner/auto_search.rs`](../../crates/server/src/library/scanner/auto_search.rs),
+called from the scan's `finalize_run`. It searches only series whose
+identity resolution returned `Created` in that scan (tracked in the
+in-process, non-serialized `ScanStats::created_series_ids`). It re-reads
+the library flag at finalize, and skips removed / paused series, series
+with no active issue, series that already have a series-level
+`external_ids` row (the `unmatched` refresh rule — folder tags and
+sidecar ids land during the scan), and any series with a run still
+`queued`, `searching` or `awaiting_quota`. It queues in creation order
+within a rolling budget of `SCAN_AUTO_SEARCH_CAP` (50) scanner-triggered
+series runs per library per `SCAN_AUTO_SEARCH_WINDOW_HOURS` (24), counted
+from `metadata_run` rows, so watcher-split imports share one budget. The
+remainder stays unmatched for an unmatched-scope library refresh or the
+weekly refresh (both oldest first, 200 per call). A cancelled scan queues
+nothing. Throttling is a budget rather than staggered scheduling: the
+search workers and provider buckets already pace the queued jobs, and the
+budget bounds the quota a first import can spend.
+
 ## Weekly refresh + bulk dispatch
 
 `metadata.weekly_refresh_enabled = false` by default. When operators
