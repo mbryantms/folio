@@ -164,7 +164,17 @@ Default admin (first registered user becomes admin):
     archive-download streams and `/ws/*` upgrades are never timed
     out or re-encoded; regression guards in
     `crates/server/tests/http_layers.rs`.
-    **Body limits are explicit:** both groups carry
+    **Long-body uploads are the one exception inside `/api`:**
+    `POST /api/uploads` (32 MiB page images) is nested from a separate
+    `long_body` group wrapped by `app::with_long_body_layers`
+    (`UPLOAD_ROUTE_TIMEOUT` 10 min whole-request,
+    `UPLOAD_BODY_IDLE_TIMEOUT` 60 s per body frame, no compression),
+    because the timeout covers receiving the body and a big page over
+    a phone link outlasts 60 s; add a route there (via the module's
+    `upload_routes()`) only when its body can legitimately take that
+    long and the handler does little beyond receiving it (the CBL
+    import stays in `api`: small files, inline DB matching).
+    **Body limits are explicit:** every group carries
     `DefaultBodyLimit::max(app::DEFAULT_BODY_LIMIT)` (2 MiB, 413
     `too_large` envelope); a multipart route that needs more raises it
     on its own sub-router (`/uploads` 32 MiB, `/me/cbl-lists/upload`
@@ -676,7 +686,9 @@ Default admin (first registered user becomes admin):
   macro pulls method+path from it, axum routing AND the OpenAPI spec
   pick the handler up automatically. The module's `routes()` is then
   `.merge(...)`-ed into either the `bare` or `api` group in
-  [`build_openapi_router`](crates/server/src/app.rs). There is no
+  [`build_openapi_router`](crates/server/src/app.rs) (a long-body
+  upload goes in a separate `upload_routes()` merged into
+  `long_body`; see Routing precedence). There is no
   separate `paths(...)` or `components(schemas(...))` list to maintain
   (audit-remediation M1).
   - **Note:** `routes!(h1, h2)` combines handlers at the **same** path
