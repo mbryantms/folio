@@ -9,9 +9,20 @@
 //!   detail. `?run_id=...` pins a specific run; without it, the
 //!   latest run for the scope/entity is returned.
 //!
-//! ACL: callers need read access to the parent library. Admin users
-//! have unconditional access (the visibility helper already
-//! short-circuits for them).
+//! ACL (audit 2026-11 E16): **reads** — search, lookup, candidates,
+//! coverage hints, sync status, the proposed / composite diffs and batch
+//! status / list — serve any caller with read access to the parent
+//! library (admins short-circuit the visibility helper). **Writes** —
+//! single and composite apply, batch create and batch apply, accept /
+//! unaccept, pause / resume and the library-wide refresh — take
+//! [`RequireAdmin`]: an apply rewrites shared series / issue rows and
+//! provider ids and, in a writeback library, the archives themselves, so
+//! a reader gets 403 (`auth.permission_denied`) before the handler runs.
+//! (SE-3a previously gated only the `override_user_edits` force flag via
+//! [`AdminGatedOverride`]; the apply bodies still parse through it, so
+//! the flag keeps its own structural gate.) Every gated write records an
+//! `audit_log` row in the handler; the queued single / batch applies add
+//! the apply job's own row once it runs, with the admin as actor.
 
 use axum::{
     Extension, Json,
@@ -37,7 +48,7 @@ use crate::api::extractors::{
     AdminGatedOverride, OptionalValidated, OverridesUserEdits, Validated,
 };
 use crate::api::saved_views::BatchTargets;
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequireAdmin};
 use crate::jobs::{metadata_apply, metadata_search};
 use crate::metadata::apply::{self, ApplyArgs, ApplyMode};
 use crate::metadata::coverage;
@@ -946,18 +957,23 @@ pub async fn sync_status_series(
     params(("slug" = String, Path)),
     responses(
         (status = 200, body = SyncStatusResp),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
     )
 )]
 #[handler]
 pub async fn pause_series(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
 ) -> Response {
-    toggle_metadata_sync_paused(&app, &user, &ctx, &slug, true).await
+    let (resp, entry) = match toggle_metadata_sync_paused(&app, &user, &ctx, &slug, true).await {
+        Ok(done) => done,
+        Err(resp) => return resp,
+    };
+    crate::audit::record(&app.db, entry).await;
+    resp
 }
 
 #[utoipa::path(
@@ -966,77 +982,72 @@ pub async fn pause_series(
     params(("slug" = String, Path)),
     responses(
         (status = 200, body = SyncStatusResp),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
     )
 )]
 #[handler]
 pub async fn resume_series(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
 ) -> Response {
-    toggle_metadata_sync_paused(&app, &user, &ctx, &slug, false).await
+    let (resp, entry) = match toggle_metadata_sync_paused(&app, &user, &ctx, &slug, false).await {
+        Ok(done) => done,
+        Err(resp) => return resp,
+    };
+    crate::audit::record(&app.db, entry).await;
+    resp
 }
 
+/// Flip `series.metadata_sync_paused`. Returns the response plus the audit
+/// row for the caller to record — the admin-gated handlers write it in
+/// their own bodies so `audit-check` sees it.
 async fn toggle_metadata_sync_paused(
     app: &AppState,
     user: &CurrentUser,
     ctx: &RequestContext,
     slug: &str,
     paused: bool,
-) -> Response {
-    let s = match crate::api::series::find_by_slug(&app.db, slug).await {
-        Ok(s) => s,
-        Err(resp) => return resp,
-    };
-    if !crate::library::access::series_visible(app, user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
+) -> Result<(Response, crate::audit::AuditEntry<'static>), Response> {
+    let s = crate::api::series::find_by_slug(&app.db, slug).await?;
     let was = s.metadata_sync_paused;
     let mut am: entity::series::ActiveModel = s.clone().into();
     am.metadata_sync_paused = sea_orm::Set(paused);
     am.updated_at = sea_orm::Set(chrono::Utc::now().fixed_offset());
     if let Err(e) = am.update(&app.db).await {
         tracing::error!(error = %e, "metadata pause/resume update failed");
-        return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+        return Err(error(StatusCode::BAD_GATEWAY, "internal", "internal"));
     }
     let action: &'static str = if paused {
         "admin.series.metadata_pause"
     } else {
         "admin.series.metadata_resume"
     };
-    crate::audit::record(
-        &app.db,
-        crate::audit::AuditEntry {
-            actor_id: user.id,
-            action,
-            target_type: Some("series"),
-            target_id: Some(s.id.to_string()),
-            payload: serde_json::json!({ "was": was, "now": paused }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
-    )
-    .await;
+    let entry = crate::audit::AuditEntry {
+        actor_id: user.id,
+        action,
+        target_type: Some("series"),
+        target_id: Some(s.id.to_string()),
+        payload: serde_json::json!({ "was": was, "now": paused }),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    };
     let linked = entity::external_id::Entity::find()
         .filter(entity::external_id::Column::EntityType.eq("series"))
         .filter(entity::external_id::Column::EntityId.eq(s.id.to_string()))
         .count(&app.db)
         .await
         .unwrap_or(0) as i64;
-    Json(SyncStatusResp {
+    let resp = Json(SyncStatusResp {
         series_slug: s.slug.clone(),
         paused,
         last_metadata_sync_at: s.last_metadata_sync_at.map(|t| t.to_rfc3339()),
         linked_source_count: linked,
     })
-    .into_response()
+    .into_response();
+    Ok((resp, entry))
 }
 
 // ───────── per-issue ─────────
@@ -1647,7 +1658,8 @@ pub struct AcceptMetadataResp {
 /// Set / clear the "mark metadata complete" acknowledgement on an issue (B4).
 /// This never touches field data — it only records the operator's judgement,
 /// so the completeness overlay reports `accepted` instead of `needs_metadata`
-/// (the detail view still lists the real gaps).
+/// (the detail view still lists the real gaps). Returns the response plus
+/// the audit row for the admin-gated caller to record in its own body.
 async fn set_issue_metadata_accepted(
     app: &AppState,
     user: &CurrentUser,
@@ -1655,17 +1667,14 @@ async fn set_issue_metadata_accepted(
     slug: &str,
     issue_slug: &str,
     accept: bool,
-) -> Response {
-    let Some((s, i)) = find_series_issue(app, slug, issue_slug).await else {
-        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+) -> Result<(Response, crate::audit::AuditEntry<'static>), Response> {
+    let Some((_, i)) = find_series_issue(app, slug, issue_slug).await else {
+        return Err(error(
+            StatusCode::NOT_FOUND,
+            "issue.not_found",
+            "issue not found",
+        ));
     };
-    if !crate::library::access::series_visible(app, user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let now = chrono::Utc::now().fixed_offset();
     let accepted_at = accept.then_some(now);
     let mut am: issue::ActiveModel = i.clone().into();
@@ -1674,29 +1683,26 @@ async fn set_issue_metadata_accepted(
     am.updated_at = sea_orm::Set(now);
     if let Err(e) = am.update(&app.db).await {
         tracing::error!(error = %e, "issue metadata accept update failed");
-        return error(StatusCode::BAD_GATEWAY, "internal", "internal");
+        return Err(error(StatusCode::BAD_GATEWAY, "internal", "internal"));
     }
-    crate::audit::record(
-        &app.db,
-        crate::audit::AuditEntry {
-            actor_id: user.id,
-            action: if accept {
-                "metadata.issue.accept"
-            } else {
-                "metadata.issue.unaccept"
-            },
-            target_type: Some("issue"),
-            target_id: Some(i.id.clone()),
-            payload: serde_json::json!({ "accepted": accept }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
+    let entry = crate::audit::AuditEntry {
+        actor_id: user.id,
+        action: if accept {
+            "metadata.issue.accept"
+        } else {
+            "metadata.issue.unaccept"
         },
-    )
-    .await;
-    Json(AcceptMetadataResp {
+        target_type: Some("issue"),
+        target_id: Some(i.id.clone()),
+        payload: serde_json::json!({ "accepted": accept }),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    };
+    let resp = Json(AcceptMetadataResp {
         metadata_review_accepted_at: accepted_at.map(|t| t.to_rfc3339()),
     })
-    .into_response()
+    .into_response();
+    Ok((resp, entry))
 }
 
 #[utoipa::path(
@@ -1705,18 +1711,24 @@ async fn set_issue_metadata_accepted(
     params(("slug" = String, Path), ("issue_slug" = String, Path)),
     responses(
         (status = 200, body = AcceptMetadataResp),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
     )
 )]
 #[handler]
 pub async fn accept_issue_metadata(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
 ) -> Response {
-    set_issue_metadata_accepted(&app, &user, &ctx, &slug, &issue_slug, true).await
+    let (resp, entry) =
+        match set_issue_metadata_accepted(&app, &user, &ctx, &slug, &issue_slug, true).await {
+            Ok(done) => done,
+            Err(resp) => return resp,
+        };
+    crate::audit::record(&app.db, entry).await;
+    resp
 }
 
 #[utoipa::path(
@@ -1725,18 +1737,24 @@ pub async fn accept_issue_metadata(
     params(("slug" = String, Path), ("issue_slug" = String, Path)),
     responses(
         (status = 200, body = AcceptMetadataResp),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
     )
 )]
 #[handler]
 pub async fn unaccept_issue_metadata(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
 ) -> Response {
-    set_issue_metadata_accepted(&app, &user, &ctx, &slug, &issue_slug, false).await
+    let (resp, entry) =
+        match set_issue_metadata_accepted(&app, &user, &ctx, &slug, &issue_slug, false).await {
+            Ok(done) => done,
+            Err(resp) => return resp,
+        };
+    crate::audit::record(&app.db, entry).await;
+    resp
 }
 
 // ───────── /series/{slug}/metadata/proposed-diff ─────────
@@ -1859,6 +1877,38 @@ pub async fn proposed_diff_series(
 
 // ───────── /series/{slug}/metadata/apply ─────────
 
+/// The request-time audit row for a queued single apply (E16). The job
+/// writes its own `admin.{series,issue}.metadata_apply[_force]` row once
+/// it runs; this one records that the admin asked, which also covers a job
+/// that is later cancelled or never claims the mutex.
+fn apply_queued_audit_entry(
+    ctx: &RequestContext,
+    actor_id: Uuid,
+    scope: &'static str,
+    entity_id: String,
+    req: &ApplyRequest,
+) -> crate::audit::AuditEntry<'static> {
+    crate::audit::AuditEntry {
+        actor_id,
+        action: if scope == "series" {
+            "admin.series.metadata_apply_queued"
+        } else {
+            "admin.issue.metadata_apply_queued"
+        },
+        target_type: Some(scope),
+        target_id: Some(entity_id),
+        payload: serde_json::json!({
+            "run_id": req.run_id,
+            "ordinal": req.ordinal,
+            "mode": req.mode,
+            "override_user_edits": req.override_user_edits,
+            "override_external_id_sources": req.override_external_id_sources,
+        }),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    }
+}
+
 #[utoipa::path(
     operation_id = "metadata_apply_series",    post,
     path = "/series/{slug}/metadata/apply",
@@ -1867,7 +1917,7 @@ pub async fn proposed_diff_series(
     responses(
         (status = 202, body = ApplyAcceptedResp),
         (status = 400, description = "candidate not found / no providers"),
-        (status = 403, description = "library access denied / override_user_edits / override_external_id_sources requires admin"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series / run not found"),
         (status = 502, description = "queue error"),
     )
@@ -1875,7 +1925,9 @@ pub async fn proposed_diff_series(
 #[handler]
 pub async fn apply_series(
     State(app): State<AppState>,
-    user: CurrentUser,
+    // E16: admin-only. Records `admin.series.metadata_apply_queued`; the
+    // job adds `admin.series.metadata_apply[_force]` with this admin as actor.
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
     // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
@@ -1885,13 +1937,6 @@ pub async fn apply_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     // Validate the run belongs to this series + the candidate exists.
     let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
         .await
@@ -1964,6 +2009,11 @@ pub async fn apply_series(
             "queue push failed",
         );
     }
+    crate::audit::record(
+        &app.db,
+        apply_queued_audit_entry(&ctx, user.id, "series", s.id.to_string(), &req),
+    )
+    .await;
 
     (
         StatusCode::ACCEPTED,
@@ -2207,7 +2257,7 @@ pub async fn composite_diff_issue(
     responses(
         (status = 202, body = ApplyAcceptedResp),
         (status = 400, description = "candidate not found / no providers"),
-        (status = 403, description = "library access denied / override_user_edits / override_external_id_sources requires admin"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "issue / run not found"),
         (status = 502, description = "queue error"),
     )
@@ -2215,22 +2265,17 @@ pub async fn composite_diff_issue(
 #[handler]
 pub async fn apply_issue(
     State(app): State<AppState>,
-    user: CurrentUser,
+    // E16: admin-only. Records `admin.issue.metadata_apply_queued`; the
+    // job adds `admin.issue.metadata_apply[_force]` with this admin as actor.
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
     // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
     AdminGatedOverride(req): AdminGatedOverride<ApplyRequest>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
         .await
         .ok()
@@ -2301,6 +2346,11 @@ pub async fn apply_issue(
             "queue push failed",
         );
     }
+    crate::audit::record(
+        &app.db,
+        apply_queued_audit_entry(&ctx, user.id, "issue", i.id.clone(), &req),
+    )
+    .await;
 
     (
         StatusCode::ACCEPTED,
@@ -2354,14 +2404,15 @@ pub struct RefreshLibraryResp {
     responses(
         (status = 202, body = RefreshLibraryResp),
         (status = 400, description = "unknown scope"),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "library not found"),
     )
 )]
 #[handler]
 pub async fn refresh_library_metadata(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
     Query(q): Query<RefreshLibraryQuery>,
 ) -> Response {
@@ -2369,13 +2420,6 @@ pub async fn refresh_library_metadata(
         Ok(l) => l,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, lib.id).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let Ok(scope) = q.scope.parse::<RefreshScope>() else {
         return error(
             StatusCode::BAD_REQUEST,
@@ -2404,6 +2448,31 @@ pub async fn refresh_library_metadata(
         lib.id,
         orchestrator::trigger_kind::BULK_ACTION,
         Some(user.id),
+    )
+    .await;
+    // The series jobs are already queued, so the row is written even when
+    // the issue-level fan-out failed (its error lands in the payload).
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id: user.id,
+            action: "admin.library.metadata_refresh",
+            target_type: Some("library"),
+            target_id: Some(lib.id.to_string()),
+            payload: serde_json::json!({
+                "scope": scope.as_str(),
+                "series_eligible": series.series_eligible,
+                "jobs_enqueued": series.jobs_enqueued,
+                "jobs_coalesced": series.jobs_coalesced,
+                "jobs_failed": series.jobs_failed,
+                "issue_refresh": match &issue_refresh {
+                    Ok(o) => serde_json::json!(o),
+                    Err(e) => serde_json::json!({ "error": e.to_string() }),
+                },
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
     )
     .await;
     match issue_refresh {
@@ -2516,14 +2585,15 @@ fn make_composite_args(
     }
 }
 
-async fn audit_composite(
-    app: &AppState,
+/// The audit row for a composite apply; the admin-gated handlers record it
+/// in their own bodies.
+fn composite_audit_entry(
     ctx: &RequestContext,
     actor_id: Uuid,
     scope: &'static str,
     entity_id: String,
     req: &CompositeApplyRequest,
-) {
+) -> crate::audit::AuditEntry<'static> {
     // SE-3 (WP-6.3): an override applies under the distinct `…_force`
     // action — same convention as `metadata_apply_force` on the single-
     // provider path — so the bypass of the user-precedence rule is visible
@@ -2540,23 +2610,19 @@ async fn audit_composite(
         .iter()
         .map(|fs| serde_json::json!({ "field": fs.field, "ordinal": fs.ordinal }))
         .collect();
-    crate::audit::record(
-        &app.db,
-        crate::audit::AuditEntry {
-            actor_id,
-            action,
-            target_type: Some(scope),
-            target_id: Some(entity_id),
-            payload: serde_json::json!({
-                "run_id": req.run_id,
-                "per_field_sources": per_field,
-                "override_user_edits": req.override_user_edits,
-            }),
-            ip: ctx.ip_string(),
-            user_agent: ctx.user_agent.clone(),
-        },
-    )
-    .await;
+    crate::audit::AuditEntry {
+        actor_id,
+        action,
+        target_type: Some(scope),
+        target_id: Some(entity_id),
+        payload: serde_json::json!({
+            "run_id": req.run_id,
+            "per_field_sources": per_field,
+            "override_user_edits": req.override_user_edits,
+        }),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    }
 }
 
 #[utoipa::path(
@@ -2567,14 +2633,14 @@ async fn audit_composite(
     request_body = CompositeApplyRequest,
     responses(
         (status = 200, body = CompositeApplyResp),
-        (status = 403, description = "library access denied / override requires admin"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series / run not found"),
     )
 )]
 #[handler]
 pub async fn composite_apply_series(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
     // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
@@ -2584,13 +2650,6 @@ pub async fn composite_apply_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
         .await
         .ok()
@@ -2618,7 +2677,11 @@ pub async fn composite_apply_series(
     .await
     {
         Ok(outcome) => {
-            audit_composite(&app, &ctx, user.id, "series", s.id.to_string(), &req).await;
+            crate::audit::record(
+                &app.db,
+                composite_audit_entry(&ctx, user.id, "series", s.id.to_string(), &req),
+            )
+            .await;
             // The compare view's apply is a manual series match too.
             crate::jobs::provider_coverage::enqueue_after_series_apply(
                 &app,
@@ -2651,29 +2714,22 @@ pub async fn composite_apply_series(
     request_body = CompositeApplyRequest,
     responses(
         (status = 200, body = CompositeApplyResp),
-        (status = 403, description = "library access denied / override requires admin"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "issue / run not found"),
     )
 )]
 #[handler]
 pub async fn composite_apply_issue(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
     // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
     AdminGatedOverride(req): AdminGatedOverride<CompositeApplyRequest>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let Some(run) = orchestrator::fetch_run(&app.db, req.run_id)
         .await
         .ok()
@@ -2701,7 +2757,11 @@ pub async fn composite_apply_issue(
     .await
     {
         Ok(outcome) => {
-            audit_composite(&app, &ctx, user.id, "issue", i.id.clone(), &req).await;
+            crate::audit::record(
+                &app.db,
+                composite_audit_entry(&ctx, user.id, "issue", i.id.clone(), &req),
+            )
+            .await;
             Json(CompositeApplyResp {
                 run_id: req.run_id,
                 status: "applied".into(),
@@ -2837,14 +2897,15 @@ pub struct SeriesBatchQuery {
     params(("slug" = String, Path), SeriesBatchQuery),
     responses(
         (status = 202, body = BatchCreatedResp),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
     )
 )]
 #[handler]
 pub async fn create_series_batch(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
     Query(q): Query<SeriesBatchQuery>,
 ) -> Response {
@@ -2852,13 +2913,6 @@ pub async fn create_series_batch(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
 
     let selection = match series_batch_selection(&app, s.id, q.scope).await {
         Ok(sel) => sel,
@@ -2882,6 +2936,18 @@ pub async fn create_series_batch(
 
     let outcome = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
     set_batch_items_total(&app.db, batch_id, outcome.jobs_enqueued as i32).await;
+    crate::audit::record(
+        &app.db,
+        batch_created_audit_entry(
+            &ctx,
+            user.id,
+            batch_id,
+            "series",
+            s.id.to_string(),
+            &outcome,
+        ),
+    )
+    .await;
 
     (
         StatusCode::ACCEPTED,
@@ -3113,14 +3179,15 @@ pub struct SeriesSelectionBatchReq {
     request_body = SeriesSelectionBatchReq,
     responses(
         (status = 202, body = BatchCreatedResp),
-        (status = 403, description = "library access denied"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
     )
 )]
 #[handler]
 pub async fn create_series_selection_batch(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
     Json(req): Json<SeriesSelectionBatchReq>,
 ) -> Response {
@@ -3128,13 +3195,6 @@ pub async fn create_series_selection_batch(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
 
     // Intersect the requested ids with this series' active issues — a foreign
     // or stale id simply drops out. Capped like the other fan-outs.
@@ -3172,6 +3232,18 @@ pub async fn create_series_selection_batch(
 
     let outcome = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
     set_batch_items_total(&app.db, batch_id, outcome.jobs_enqueued as i32).await;
+    crate::audit::record(
+        &app.db,
+        batch_created_audit_entry(
+            &ctx,
+            user.id,
+            batch_id,
+            "series_selection",
+            s.id.to_string(),
+            &outcome,
+        ),
+    )
+    .await;
 
     (
         StatusCode::ACCEPTED,
@@ -3194,6 +3266,35 @@ struct FanOutTally {
     jobs_enqueued: usize,
     jobs_coalesced: usize,
     jobs_failed: usize,
+}
+
+/// The audit row for a batch create (E16): `source` names the endpoint
+/// (`series` / `series_selection` / `saved_view`) and `source_id` the
+/// series or saved view it fanned out over. The admin-gated handlers
+/// record it in their own bodies.
+fn batch_created_audit_entry(
+    ctx: &RequestContext,
+    actor_id: Uuid,
+    batch_id: Uuid,
+    source: &'static str,
+    source_id: String,
+    tally: &FanOutTally,
+) -> crate::audit::AuditEntry<'static> {
+    crate::audit::AuditEntry {
+        actor_id,
+        action: "admin.metadata_batch.create",
+        target_type: Some("metadata_batch"),
+        target_id: Some(batch_id.to_string()),
+        payload: serde_json::json!({
+            "source": source,
+            "source_id": source_id,
+            "jobs_enqueued": tally.jobs_enqueued,
+            "jobs_coalesced": tally.jobs_coalesced,
+            "jobs_failed": tally.jobs_failed,
+        }),
+        ip: ctx.ip_string(),
+        user_agent: ctx.user_agent.clone(),
+    }
 }
 
 /// How many per-issue enqueues a batch fan-out runs at once. Each is a
@@ -3265,14 +3366,15 @@ pub struct SavedViewBatchReq {
     request_body = SavedViewBatchReq,
     responses(
         (status = 202, body = BatchCreatedResp),
-        (status = 403, description = "view not visible"),
+        (status = 403, description = "admin only / view not visible"),
         (status = 404, description = "saved view not found"),
     )
 )]
 #[handler]
 pub async fn create_saved_view_batch(
     State(app): State<AppState>,
-    user: CurrentUser,
+    RequireAdmin(user): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     Json(req): Json<SavedViewBatchReq>,
 ) -> Response {
     match crate::api::saved_views::resolve_metadata_batch_targets(&app, &user, req.saved_view_id)
@@ -3311,6 +3413,18 @@ pub async fn create_saved_view_batch(
                 }
             }
             set_batch_items_total(&app.db, batch_id, t.jobs_enqueued as i32).await;
+            crate::audit::record(
+                &app.db,
+                batch_created_audit_entry(
+                    &ctx,
+                    user.id,
+                    batch_id,
+                    "saved_view",
+                    req.saved_view_id.to_string(),
+                    &t,
+                ),
+            )
+            .await;
             (
                 StatusCode::ACCEPTED,
                 Json(BatchCreatedResp {
@@ -3337,6 +3451,18 @@ pub async fn create_saved_view_batch(
                 };
             let outcome = fan_out_issue_batch(&app, &issue_ids, Some(user.id), batch_id).await;
             set_batch_items_total(&app.db, batch_id, outcome.jobs_enqueued as i32).await;
+            crate::audit::record(
+                &app.db,
+                batch_created_audit_entry(
+                    &ctx,
+                    user.id,
+                    batch_id,
+                    "saved_view",
+                    req.saved_view_id.to_string(),
+                    &outcome,
+                ),
+            )
+            .await;
             (
                 StatusCode::ACCEPTED,
                 Json(BatchCreatedResp {
@@ -3932,7 +4058,7 @@ pub struct RunOrdinal {
 }
 
 /// Which batch children to apply.
-#[derive(Copy, Clone, Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchApplyFilter {
     /// Every child with a `single_good` outcome whose top high candidate
@@ -4015,14 +4141,17 @@ pub struct BatchApplyResp {
     request_body = BatchApplyReq,
     responses(
         (status = 202, body = BatchApplyResp),
-        (status = 403, description = "batch not visible / override_user_edits / override_external_id_sources requires admin"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "batch not found"),
     )
 )]
 #[handler]
 pub async fn batch_apply(
     State(app): State<AppState>,
-    user: CurrentUser,
+    // E16: admin-only. Each queued apply job records its own
+    // `admin.{series,issue}.metadata_apply*` row; the handler records one
+    // `admin.metadata_batch.apply` summary row for the bulk action.
+    RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     Path(batch_id): Path<Uuid>,
     // SE-3 (WP-6.3): `override_user_edits` is admin-gated by the extractor.
@@ -4030,20 +4159,18 @@ pub async fn batch_apply(
 ) -> Response {
     use apalis::prelude::TaskSink;
 
-    let batch = match metadata_batch::Entity::find_by_id(batch_id)
+    match metadata_batch::Entity::find_by_id(batch_id)
         .one(&app.db)
         .await
     {
-        Ok(Some(b)) => b,
+        Ok(Some(_)) => {}
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "batch not found"),
         Err(e) => {
             tracing::error!(error = %e, "batch_apply: lookup failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
-    };
-    if !user_can_see_batch(&app, &user, &batch).await {
-        return error(StatusCode::FORBIDDEN, "forbidden", "batch not visible");
     }
+    let filter = req.filter;
 
     // Child runs of this batch, keyed by id.
     let runs: std::collections::HashMap<Uuid, metadata_run::Model> = metadata_run::Entity::find()
@@ -4260,6 +4387,30 @@ pub async fn batch_apply(
         }
     }
 
+    crate::audit::record(
+        &app.db,
+        crate::audit::AuditEntry {
+            actor_id: user.id,
+            // The per-target job rows carry the `_force` split; this
+            // summary keeps one action and the flag in the payload.
+            action: "admin.metadata_batch.apply",
+            target_type: Some("metadata_batch"),
+            target_id: Some(batch_id.to_string()),
+            payload: serde_json::json!({
+                "filter": filter,
+                "mode": req.mode,
+                "override_user_edits": req.override_user_edits,
+                "enqueued": enqueued,
+                "skipped_already_applied": skipped_already_applied,
+                "skipped_not_eligible": skipped_not_eligible,
+                "remainder": remainder,
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+
     (
         StatusCode::ACCEPTED,
         Json(BatchApplyResp {
@@ -4452,5 +4603,42 @@ fn build_match_outcome_view(rows: &[entity::metadata_run_candidate::Model]) -> M
         kind: kind.to_owned(),
         top_hamming,
         matched_via_alternate,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The apply handlers are `RequireAdmin` since E16, so the reader-facing
+    /// tests can no longer tell the force-flag gate from the handler gate.
+    /// Pin what `AdminGatedOverride` treats as an override instead.
+    #[test]
+    fn override_flag_covers_force_and_external_id_overrides() {
+        let run = Uuid::now_v7();
+        let apply =
+            |body: serde_json::Value| -> ApplyRequest { serde_json::from_value(body).unwrap() };
+        assert!(!apply(serde_json::json!({"run_id": run, "ordinal": 0})).override_user_edits());
+        assert!(
+            apply(serde_json::json!({"run_id": run, "ordinal": 0, "override_user_edits": true}))
+                .override_user_edits()
+        );
+        assert!(
+            apply(serde_json::json!({
+                "run_id": run, "ordinal": 0, "override_external_id_sources": ["comicvine"],
+            }))
+            .override_user_edits()
+        );
+        let composite: CompositeApplyRequest = serde_json::from_value(serde_json::json!({
+            "run_id": run, "field_sources": [], "included": [0],
+            "override_external_id_sources": ["metron"],
+        }))
+        .unwrap();
+        assert!(composite.override_user_edits());
+        let batch: BatchApplyReq = serde_json::from_value(serde_json::json!({
+            "filter": "all_strong", "override_user_edits": true,
+        }))
+        .unwrap();
+        assert!(batch.override_user_edits());
     }
 }

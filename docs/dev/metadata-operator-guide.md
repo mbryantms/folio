@@ -599,9 +599,12 @@ It's `blocked_by_user` — the field has `set_by='user'` in
 fields** toggle at the top of the dialog to bypass the
 precedence rule (audited as `metadata_apply_force`, or
 `metadata_composite_apply_force` from the multi-provider merge view);
-non-admins see the field as read-only, and the API rejects the flag
-from them with `403 auth.permission_denied` before anything runs
-(`api::extractors::AdminGatedOverride`).
+non-admins see the field as read-only. Since audit 2026-11 E16 every
+apply, batch, accept, pause and library refresh is admin-only: readers
+can still search and look at candidates and previews, but the dialog
+offers them no Apply, and the API answers `403 auth.permission_denied`
+before anything runs (`RequireAdmin`; the override flag keeps its own
+gate in `api::extractors::AdminGatedOverride`).
 
 ## Disaster recovery
 

@@ -62,6 +62,7 @@ export function MetadataCompareView({
   onBack,
   onApply,
   isApplying,
+  canApply = true,
 }: {
   data: CompositeDiffResp | undefined;
   isLoading: boolean;
@@ -72,6 +73,9 @@ export function MetadataCompareView({
   onApply: () => void;
   onBack: () => void;
   isApplying: boolean;
+  /** `false` renders the merge read-only for readers: no Apply button
+   *  (the composite apply is admin-only, audit 2026-11 E16). */
+  canApply?: boolean;
 }) {
   if (isLoading) {
     return (
@@ -289,13 +293,19 @@ export function MetadataCompareView({
       )}
 
       <div className="flex items-center justify-end gap-2">
-        <Button
-          onClick={onApply}
-          disabled={isApplying || selectedCount === 0 || columns.length === 0}
-        >
-          {isApplying && <Loader2 className="mr-1.5 size-4 animate-spin" />}
-          Apply merged ({selectedCount} field{selectedCount === 1 ? "" : "s"})
-        </Button>
+        {canApply ? (
+          <Button
+            onClick={onApply}
+            disabled={isApplying || selectedCount === 0 || columns.length === 0}
+          >
+            {isApplying && <Loader2 className="mr-1.5 size-4 animate-spin" />}
+            Apply merged ({selectedCount} field{selectedCount === 1 ? "" : "s"})
+          </Button>
+        ) : (
+          <p className="text-muted-foreground text-xs">
+            Only an admin can apply metadata.
+          </p>
+        )}
       </div>
     </div>
   );

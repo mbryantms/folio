@@ -202,8 +202,9 @@ export function MetadataMatchForm({
     scope.kind === "issue" ? scope.seriesSlug : "",
     scope.kind === "issue" ? scope.issueSlug : "",
   );
+  // The pin clear is admin-only server-side, like every apply (E16).
   const onRevertPin =
-    scope.kind === "issue"
+    scope.kind === "issue" && isAdmin
       ? async (field: string) => {
           await clearIssuePin.mutateAsync({ field });
         }
@@ -683,16 +684,18 @@ export function MetadataMatchForm({
             </Label>
           </RadioGroup>
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          <Label htmlFor="mmd-cover" className="cursor-pointer">
-            Apply cover
-          </Label>
-          <Switch
-            id="mmd-cover"
-            checked={applyCover}
-            onCheckedChange={setApplyCover}
-          />
-        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-2 text-sm">
+            <Label htmlFor="mmd-cover" className="cursor-pointer">
+              Apply cover
+            </Label>
+            <Switch
+              id="mmd-cover"
+              checked={applyCover}
+              onCheckedChange={setApplyCover}
+            />
+          </div>
+        )}
       </div>
 
       {isAdmin && (
@@ -753,6 +756,7 @@ export function MetadataMatchForm({
           onApply={onConfirmApply}
           isApplying={apply.isPending}
           canOverride={isAdmin}
+          canApply={isAdmin}
           onRevertPin={onRevertPin}
         />
       ) : compareMode ? (
@@ -772,6 +776,7 @@ export function MetadataMatchForm({
           onBack={() => setCompareMode(false)}
           onApply={onConfirmCompositeApply}
           isApplying={compositeApply.isPending}
+          canApply={isAdmin}
         />
       ) : (
         <div className={embedded ? "" : "max-h-[50vh] overflow-y-auto pr-1"}>
@@ -889,6 +894,7 @@ export function MetadataMatchForm({
                   isApplying={apply.isPending && pickedOrdinal === 0}
                   onOneClickApply={onOneClickApply}
                   onShowDetails={() => onEnterPreview(0)}
+                  canApply={isAdmin}
                 />
               )}
               <ul className="space-y-2 py-2">

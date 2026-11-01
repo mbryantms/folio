@@ -34,7 +34,7 @@ import {
   useBulkMarkProgress,
   useCreateSavedViewBatch,
 } from "@/lib/api/mutations";
-import { useSavedViewIssueResultsInfinite } from "@/lib/api/queries";
+import { useMe, useSavedViewIssueResultsInfinite } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -65,6 +65,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
   const results = useSavedViewIssueResultsInfinite(view.id);
   const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
+  const isAdmin = useMe().data?.role === "admin";
 
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = results;
@@ -191,14 +192,17 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
       <ViewHeader
         view={view}
         onEdit={() => setEditOpen(true)}
+        // Starts a metadata batch: admin-only (audit 2026-11 E16).
         extraMenuItems={
-          <DropdownMenuItem
-            onSelect={fetchViewMetadata}
-            disabled={createBatch.isPending}
-          >
-            <Sparkles className="mr-2 size-4" />
-            Fetch metadata for view
-          </DropdownMenuItem>
+          isAdmin ? (
+            <DropdownMenuItem
+              onSelect={fetchViewMetadata}
+              disabled={createBatch.isPending}
+            >
+              <Sparkles className="mr-2 size-4" />
+              Fetch metadata for view
+            </DropdownMenuItem>
+          ) : undefined
         }
         // phone-layout rule 11: [Select] [▦]; the header appends [⋯].
         extraActions={

@@ -31,12 +31,16 @@ export function MatchOutcomeBanner({
   isApplying,
   onOneClickApply,
   onShowDetails,
+  canApply = true,
 }: {
   outcome: MatchOutcomeView;
   topCandidate: CandidateView | undefined;
   isApplying: boolean;
   onOneClickApply: () => void;
   onShowDetails: () => void;
+  /** `false` for readers: the strong-match banner keeps its copy but drops
+   *  the one-click Apply (admin-only, audit 2026-11 E16). */
+  canApply?: boolean;
 }) {
   if (outcome.kind === "no_match") {
     return null;
@@ -60,7 +64,7 @@ export function MatchOutcomeBanner({
               {altBadge}
             </p>
             <p className="text-muted-foreground text-xs">
-              Apply now to write every field. Use{" "}
+              {canApply ? <>Apply now to write every field. Use </> : null}
               <button
                 type="button"
                 onClick={onShowDetails}
@@ -68,19 +72,23 @@ export function MatchOutcomeBanner({
               >
                 Show details
               </button>{" "}
-              to pick fields first.
+              {canApply
+                ? "to pick fields first."
+                : "to see what it would change. Only an admin can apply it."}
             </p>
           </div>
-          <Button size="sm" onClick={onOneClickApply} disabled={isApplying}>
-            {isApplying ? (
-              <>
-                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                Applying
-              </>
-            ) : (
-              "Apply"
-            )}
-          </Button>
+          {canApply && (
+            <Button size="sm" onClick={onOneClickApply} disabled={isApplying}>
+              {isApplying ? (
+                <>
+                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                  Applying
+                </>
+              ) : (
+                "Apply"
+              )}
+            </Button>
+          )}
         </div>
       </div>
     );

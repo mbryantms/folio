@@ -162,10 +162,12 @@ const issues: SeriesMetadataIssuesResp = {
 
 // Reassigned per test for the complete-series case; the mock reads it lazily.
 let overviewData: SeriesMetadataOverview = overview;
+// Reassigned per test for the reader case (audit 2026-11 E16).
+let role: "admin" | "user" = "admin";
 vi.mock("@/lib/api/queries", () => ({
   useSeriesMetadataOverview: () => ({ data: overviewData, isLoading: false }),
   useSeriesMetadataIssues: () => ({ data: issues, isLoading: false }),
-  useMe: () => ({ data: { role: "admin" } }),
+  useMe: () => ({ data: { role } }),
   useProviderCoverageSeries: () => ({
     data: {
       providers: [
@@ -288,6 +290,31 @@ describe("<SeriesMetadataTab>", () => {
     expect(html).toContain('aria-label="Fetch metadata options"');
     expect(html).not.toContain('role="group" aria-label="Fetch metadata"');
     expect(html).not.toContain("(0)");
+  });
+
+  it("hides the write actions from a reader but keeps Match this series (E16)", () => {
+    role = "user";
+    let html: string;
+    try {
+      html = render();
+    } finally {
+      role = "admin";
+    }
+    // Fetch (a batch) and the refresh wizard are admin-only writes.
+    expect(html).not.toContain("Fetch metadata");
+    expect(html).not.toContain("Refresh this series…");
+    // Search + candidates stay readable: the match dialog still opens.
+    expect(html).toContain("Match this series…");
+    // The audit table renders without the selection column (its bulk
+    // fetch / mark-complete actions are admin-only).
+    expect(html).toContain('data-testid="series-metadata-issues"');
+    expect(html).not.toContain("Select all shown");
+    expect(html).not.toMatch(/aria-label="Select #/);
+  });
+
+  it("gives an admin the selection column on the audit table", () => {
+    const html = render();
+    expect(html).toContain("Select all shown");
   });
 
   it("mounts the provider-mapping card, which now carries the series ids", () => {

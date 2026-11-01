@@ -469,12 +469,15 @@ function CblViewDetailInner({
   // row's instance (one per breakpoint composition).
   const viewMenuItems = (
     <>
-      <DropdownMenuItem
-        onSelect={fetchViewMetadata}
-        disabled={createBatch.isPending}
-      >
-        <Sparkles className="mr-2 size-4" /> Fetch metadata for view
-      </DropdownMenuItem>
+      {/* Starts a metadata batch: admin-only (audit 2026-11 E16). */}
+      {isAdmin && (
+        <DropdownMenuItem
+          onSelect={fetchViewMetadata}
+          disabled={createBatch.isPending}
+        >
+          <Sparkles className="mr-2 size-4" /> Fetch metadata for view
+        </DropdownMenuItem>
+      )}
       <DropdownMenuItem onSelect={() => setOfflineOpen(true)}>
         <HardDriveDownload className="mr-2 size-4" />
         Download for offline…

@@ -598,30 +598,33 @@ export function IssuesPanel({
             disabled: allMatchingSelected,
           },
         ]}
-        actionGroups={[
-          {
-            id: "editing",
-            label: "Editing",
-            icon: Pencil,
-            actions: [
-              {
-                id: "edit-metadata",
-                label: "Edit metadata…",
-                icon: Pencil,
-                onClick: () => setEditMetadataOpen(true),
-                disabled: allMatchingSelected,
-              },
-              {
-                id: "fetch-metadata",
-                label: "Fetch metadata",
-                icon: Sparkles,
-                onClick: () => runBulkMetadataFetch(),
-                disabled: allMatchingSelected || selectionBatch.isPending,
-              },
-              // Admin-only: rewrites archive files. The server skips issues
-              // whose library has writeback off (reported in the result).
-              ...(isAdmin
-                ? [
+        // Every editing action is admin-only (audit 2026-11 E16): the bulk
+        // edit writes shared rows + pins, the fetch starts a metadata batch,
+        // and the archive edit rewrites files. Readers get no Editing group.
+        actionGroups={
+          isAdmin
+            ? [
+                {
+                  id: "editing",
+                  label: "Editing",
+                  icon: Pencil,
+                  actions: [
+                    {
+                      id: "edit-metadata",
+                      label: "Edit metadata…",
+                      icon: Pencil,
+                      onClick: () => setEditMetadataOpen(true),
+                      disabled: allMatchingSelected,
+                    },
+                    {
+                      id: "fetch-metadata",
+                      label: "Fetch metadata",
+                      icon: Sparkles,
+                      onClick: () => runBulkMetadataFetch(),
+                      disabled: allMatchingSelected || selectionBatch.isPending,
+                    },
+                    // The server skips issues whose library has writeback
+                    // off (reported in the result).
                     {
                       id: "edit-archives",
                       label: "Edit archives…",
@@ -629,11 +632,11 @@ export function IssuesPanel({
                       onClick: () => setArchiveEditOpen(true),
                       disabled: allMatchingSelected,
                     },
-                  ]
-                : []),
-            ],
-          },
-        ]}
+                  ],
+                },
+              ]
+            : []
+        }
         onDone={() => {
           setAllMatchingSelected(false);
           selection.exit();

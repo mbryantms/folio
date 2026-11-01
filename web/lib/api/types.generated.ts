@@ -3427,11 +3427,13 @@ export interface paths {
         head?: never;
         /**
          * Bulk-update a per-field patch across a list of issue ids.
-         * @description One transaction; batched by issue across the patch's fields. ACL
-         *     is per-issue via the library access check. Skips per-field +
-         *     per-issue when `mode = skip_if_set` AND the column is non-NULL.
-         *     Emits one `admin.issue.bulk_metadata_update` audit row per call
-         *     with `{ patch_keys, mode, updated_count, requested_count }`.
+         * @description One transaction; batched by issue across the patch's fields.
+         *     Admin-only (audit 2026-11 E16): it writes the same columns and user
+         *     pins as the admin-only issue PATCH, so it takes the same gate. The
+         *     path keeps its historical `/me/` prefix to avoid an API break. Skips
+         *     per-field + per-issue when `mode = skip_if_set` AND the column is
+         *     non-NULL. Emits one `admin.issue.bulk_metadata_update` audit row per
+         *     call with `{ patch_keys, mode, updated_count, requested_count }`.
          */
         patch: operations["issues_bulk_metadata"];
         trace?: never;
@@ -7198,8 +7200,9 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Issues the caller doesn't have library access to. Filtered
-             *     silently; surfaced in the response for admin debugging.
+             * @description Issues the caller doesn't have library access to. Always `0`
+             *     since the endpoint became admin-only (audit 2026-11 E16; admins see
+             *     every library); kept so the wire shape is unchanged.
              */
             forbidden: number;
             /**
@@ -21186,7 +21189,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -23089,6 +23092,13 @@ export interface operations {
             };
             /** @description validation */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25244,7 +25254,7 @@ export interface operations {
                     "application/json": components["schemas"]["BatchCreatedResp"];
                 };
             };
-            /** @description view not visible */
+            /** @description admin only / view not visible */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -25318,7 +25328,7 @@ export interface operations {
                     "application/json": components["schemas"]["BatchApplyResp"];
                 };
             };
-            /** @description batch not visible / override_user_edits / override_external_id_sources requires admin */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26963,7 +26973,7 @@ export interface operations {
                     "application/json": components["schemas"]["AcceptMetadataResp"];
                 };
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26999,7 +27009,7 @@ export interface operations {
                     "application/json": components["schemas"]["AcceptMetadataResp"];
                 };
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27046,7 +27056,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied / override_user_edits / override_external_id_sources requires admin */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27135,7 +27145,7 @@ export interface operations {
                     "application/json": components["schemas"]["CompositeApplyResp"];
                 };
             };
-            /** @description library access denied / override requires admin */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27407,7 +27417,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied / override_user_edits / override_external_id_sources requires admin */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27452,7 +27462,7 @@ export interface operations {
                     "application/json": components["schemas"]["BatchCreatedResp"];
                 };
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27491,7 +27501,7 @@ export interface operations {
                     "application/json": components["schemas"]["BatchCreatedResp"];
                 };
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27571,7 +27581,7 @@ export interface operations {
                     "application/json": components["schemas"]["CompositeApplyResp"];
                 };
             };
-            /** @description library access denied / override requires admin */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -27753,6 +27763,13 @@ export interface operations {
                     "application/json": components["schemas"]["AcceptIssuesResp"];
                 };
             };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description series not found */
             404: {
                 headers: {
@@ -27876,7 +27893,7 @@ export interface operations {
                     "application/json": components["schemas"]["SyncStatusResp"];
                 };
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -28000,7 +28017,7 @@ export interface operations {
                     "application/json": components["schemas"]["SyncStatusResp"];
                 };
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;

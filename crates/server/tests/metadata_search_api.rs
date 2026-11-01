@@ -729,8 +729,8 @@ async fn apply_series_403_when_override_user_edits_requested_by_non_admin() {
 /// (`override_external_id_sources`) replaces a `set_by = 'user'` id, which
 /// only an admin may pin, so it is admin-gated like `override_user_edits`
 /// on the single and the composite apply. The pinned id survives a
-/// reader's attempt; a plain apply (no override) still reaches the
-/// handler for the reader.
+/// reader's attempt. (Since E16 every apply is admin-only; see
+/// `tests/metadata_writes_admin.rs`.)
 #[tokio::test]
 async fn apply_403_when_override_external_id_sources_requested_by_non_admin() {
     let app = TestApp::spawn_with_comicvine("k", true).await;
@@ -799,13 +799,12 @@ async fn apply_403_when_override_external_id_sources_requested_by_non_admin() {
     assert_eq!(pinned.external_id, "99999");
     assert_eq!(pinned.set_by, "user");
 
-    // Without the override the reader's apply passes the gate (the
-    // reader apply surface itself is unchanged).
+    // The admin's override passes the gate.
     let resp = post_json(
         &app,
-        &user,
+        &admin,
         &format!("/api/series/{series_id}/metadata/apply"),
-        json!({"run_id": run_id, "ordinal": ord, "override_external_id_sources": []}),
+        json!({"run_id": run_id, "ordinal": ord, "override_external_id_sources": ["comicvine"]}),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
