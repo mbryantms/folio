@@ -170,7 +170,7 @@ pub struct ExportMarker {
     pub id: Uuid,
     pub issue: IssueRef,
     pub page_index: i32,
-    pub kind: String,
+    pub kind: entity::marker::MarkerKind,
     pub is_favorite: bool,
     pub tags: Vec<String>,
     #[schema(value_type = Option<Object>)]

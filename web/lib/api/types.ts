@@ -16,7 +16,7 @@
  *       2. **WS payload shapes** (`ScanEvent`) — the OpenAPI surface
  *          excludes WebSocket events.
  *       3. **Typed enums where the Rust source uses bare `String`** —
- *          `MarkerKind`, `MarkerShape`, `CblMatchStatus`,
+ *          `MarkerShape`, `CblMatchStatus`,
  *          `ThumbnailFormat`, etc. Each is a tracked debt: when the Rust source derives `ToSchema` on an
  *          enum (following the
  *          [`preferences.rs`](../../../crates/server/src/auth/preferences.rs)
@@ -96,8 +96,8 @@ export type RatingView = Schemas["RatingView"];
 export type SetIssueNoteReq = Schemas["SetIssueNoteReq"];
 export type IssueNoteView = Schemas["IssueNoteView"];
 export type ClosingNoteEntryView = Schemas["ClosingNoteEntryView"];
-/** Inline (not an alias): the generated `MarkerView` carries `kind` as a
- *  bare string; the frontend narrows it to `MarkerKind` (same reason
+/** Inline (not an alias): the generated `MarkerView` carries `region` /
+ *  `selection` as untyped JSON; the frontend narrows them (same reason
  *  `MarkerListView` is inline). */
 export type BookmarkEntryView =
   | { type: "marker"; marker: MarkerView }
@@ -379,10 +379,9 @@ export type CreatePageReq = Schemas["CreatePageReq"];
 export type UpdatePageReq = Schemas["UpdatePageReq"];
 export type ReorderPagesReq = Schemas["ReorderPagesReq"];
 // Marker types: kept narrower than the codegen because the Rust source
-// uses `String` for `kind` and `serde_json::Value` for `region`/`selection`.
-// MarkerKind / MarkerRegion / MarkerSelection are defined inline below.
-// Move these to aliases once Rust derives ToSchema on the marker enums
-// (audit-remediation residual; see preferences.rs for the template).
+// uses `serde_json::Value` for `region`/`selection`. MarkerRegion /
+// MarkerSelection are defined inline below; `kind` is the codegen
+// `MarkerKind` (AR-7).
 export type MarkerView = {
   id: string;
   user_id: string;
@@ -814,7 +813,7 @@ export type ImportSummary = {
 
 export type CollectionEntryKind = "series" | "issue";
 
-export type MarkerKind = "bookmark" | "note" | "favorite" | "highlight";
+export type MarkerKind = Schemas["MarkerKind"];
 
 export type MarkerShape = "rect" | "text" | "image";
 

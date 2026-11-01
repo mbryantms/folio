@@ -11,7 +11,7 @@ use common::TestApp;
 use entity::{
     issue::ActiveModel as IssueAM,
     library,
-    marker::ActiveModel as MarkerAM,
+    marker::{ActiveModel as MarkerAM, MarkerKind},
     series::{ActiveModel as SeriesAM, normalize_name},
     user::ActiveModel as UserAM,
 };
@@ -223,7 +223,7 @@ fn marker_am(
     user_id: Uuid,
     series_id: Uuid,
     issue_id: &str,
-    kind: &str,
+    kind: MarkerKind,
     page_index: i32,
 ) -> MarkerAM {
     let now = Utc::now().fixed_offset();
@@ -233,7 +233,7 @@ fn marker_am(
         series_id: Set(series_id),
         issue_id: Set(issue_id.to_owned()),
         page_index: Set(page_index),
-        kind: Set(kind.into()),
+        kind: Set(kind),
         is_favorite: Set(false),
         tags: Set(Vec::new()),
         region: Set(None),
@@ -255,23 +255,23 @@ async fn happy_path_each_kind_accepted() {
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
 
     // Bookmark: page-level (region NULL) accepted.
-    marker_am(user_id, series_id, &issue_id, "bookmark", 0)
+    marker_am(user_id, series_id, &issue_id, MarkerKind::Bookmark, 0)
         .insert(&db)
         .await
         .expect("bookmark insert");
 
     // is_favorite is a flag (not a kind) — any kind can be starred.
-    let mut starred = marker_am(user_id, series_id, &issue_id, "bookmark", 1);
+    let mut starred = marker_am(user_id, series_id, &issue_id, MarkerKind::Bookmark, 1);
     starred.is_favorite = Set(true);
     starred.insert(&db).await.expect("starred bookmark insert");
 
     // Note: body required.
-    let mut note = marker_am(user_id, series_id, &issue_id, "note", 2);
+    let mut note = marker_am(user_id, series_id, &issue_id, MarkerKind::Note, 2);
     note.body = Set(Some("Great panel.".into()));
     note.insert(&db).await.expect("note insert");
 
     // Highlight: region required.
-    let mut hl = marker_am(user_id, series_id, &issue_id, "highlight", 3);
+    let mut hl = marker_am(user_id, series_id, &issue_id, MarkerKind::Highlight, 3);
     hl.region = Set(Some(
         serde_json::json!({ "x": 10.0, "y": 20.0, "w": 30.0, "h": 15.0, "shape": "rect" }),
     ));
@@ -285,13 +285,13 @@ async fn note_without_body_rejected() {
     let user_id = seed_user(&app.db_url, "u2@example.com").await;
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
 
-    let bad = marker_am(user_id, series_id, &issue_id, "note", 0)
+    let bad = marker_am(user_id, series_id, &issue_id, MarkerKind::Note, 0)
         .insert(&db)
         .await;
     assert!(bad.is_err(), "note must require body");
 
     // Empty string body is treated as missing (length > 0).
-    let mut empty = marker_am(user_id, series_id, &issue_id, "note", 0);
+    let mut empty = marker_am(user_id, series_id, &issue_id, MarkerKind::Note, 0);
     empty.body = Set(Some(String::new()));
     let bad2 = empty.insert(&db).await;
     assert!(bad2.is_err(), "empty body rejected for note");
@@ -304,7 +304,7 @@ async fn highlight_without_region_rejected() {
     let user_id = seed_user(&app.db_url, "u3@example.com").await;
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
 
-    let bad = marker_am(user_id, series_id, &issue_id, "highlight", 0)
+    let bad = marker_am(user_id, series_id, &issue_id, MarkerKind::Highlight, 0)
         .insert(&db)
         .await;
     assert!(bad.is_err(), "highlight must require region");
@@ -317,8 +317,18 @@ async fn unknown_kind_rejected() {
     let user_id = seed_user(&app.db_url, "u4@example.com").await;
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
 
-    let bad = marker_am(user_id, series_id, &issue_id, "scribble", 0)
+    // `MarkerKind` (AR-7) cannot spell an unknown kind, so go through raw
+    // SQL to pin the `markers_kind_chk` allow-list underneath it.
+    let row = marker_am(user_id, series_id, &issue_id, MarkerKind::Bookmark, 0)
         .insert(&db)
+        .await
+        .expect("bookmark insert");
+    let bad = db
+        .execute_raw(Statement::from_sql_and_values(
+            sea_orm::DatabaseBackend::Postgres,
+            "UPDATE markers SET kind = 'scribble' WHERE id = $1",
+            [row.id.into()],
+        ))
         .await;
     assert!(bad.is_err(), "unknown kind rejected by allow-list");
 }
@@ -331,12 +341,12 @@ async fn body_size_cap_enforced() {
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
 
     // 10 KB body is fine.
-    let mut ten_kb = marker_am(user_id, series_id, &issue_id, "note", 0);
+    let mut ten_kb = marker_am(user_id, series_id, &issue_id, MarkerKind::Note, 0);
     ten_kb.body = Set(Some("a".repeat(10_240)));
     ten_kb.insert(&db).await.expect("10kb body accepted");
 
     // 10 KB + 1 is rejected.
-    let mut over = marker_am(user_id, series_id, &issue_id, "note", 1);
+    let mut over = marker_am(user_id, series_id, &issue_id, MarkerKind::Note, 1);
     over.body = Set(Some("b".repeat(10_241)));
     let bad = over.insert(&db).await;
     assert!(bad.is_err(), "body over 10KB rejected");
@@ -349,7 +359,7 @@ async fn negative_page_index_rejected() {
     let user_id = seed_user(&app.db_url, "u6@example.com").await;
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
 
-    let bad = marker_am(user_id, series_id, &issue_id, "bookmark", -1)
+    let bad = marker_am(user_id, series_id, &issue_id, MarkerKind::Bookmark, -1)
         .insert(&db)
         .await;
     assert!(bad.is_err(), "negative page_index rejected");
@@ -361,7 +371,7 @@ async fn cascade_on_issue_delete_removes_markers() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let user_id = seed_user(&app.db_url, "u7@example.com").await;
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
-    marker_am(user_id, series_id, &issue_id, "bookmark", 0)
+    marker_am(user_id, series_id, &issue_id, MarkerKind::Bookmark, 0)
         .insert(&db)
         .await
         .expect("seed marker");
@@ -394,7 +404,7 @@ async fn cascade_on_user_delete_removes_markers() {
     let db = Database::connect(&app.db_url).await.unwrap();
     let user_id = seed_user(&app.db_url, "u8@example.com").await;
     let (_lib, series_id, issue_id) = seed_library_series_issue(&app.db_url).await;
-    marker_am(user_id, series_id, &issue_id, "bookmark", 0)
+    marker_am(user_id, series_id, &issue_id, MarkerKind::Bookmark, 0)
         .insert(&db)
         .await
         .expect("seed marker");

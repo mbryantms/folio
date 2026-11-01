@@ -121,7 +121,7 @@ async fn insert_marker(
         series_id: Set(series_id),
         issue_id: Set(issue_id.to_owned()),
         page_index: Set(page_index),
-        kind: Set(kind.to_owned()),
+        kind: Set(marker::MarkerKind::parse(kind).expect("marker kind")),
         is_favorite: Set(is_favorite),
         tags: Set(tags.iter().map(|t| (*t).to_owned()).collect()),
         region: Set(region),
