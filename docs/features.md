@@ -340,7 +340,9 @@ cover dates) and proposes the mappings for you to accept.
   you've annotated at either level. Views are pinnable as rails.
 - **Custom pages** — build up to 20 of your own pages out of rails (saved
   views, On Deck, lists), each with its own sidebar entry; the sidebar
-  itself is fully reorderable with custom headers and spacers.
+  itself is fully reorderable with custom headers and spacers; anything
+  you hid from a home rail is listed under Settings → Pages, where one
+  click restores it.
 - **Multi-select everywhere** — bulk mark-read, bulk metadata edit, bulk
   add-to-collection across the major list surfaces.
 - **Markers** — four kinds, all page-anchored: bookmarks, Markdown notes,

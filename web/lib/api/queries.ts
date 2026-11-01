@@ -67,6 +67,7 @@ import type {
   ViewGroupListView,
   ViewGroupScope,
   ContinueReadingView,
+  RailDismissalListView,
   BackupStorageView,
   CrossLibHealthIssueView,
   CrossLibScanRunView,
@@ -2459,6 +2460,25 @@ export function useOnDeck(opts?: { enabled?: boolean }) {
     queryFn: () => jsonFetch<OnDeckView>("/me/on-deck"),
     enabled: opts?.enabled ?? true,
     staleTime: 60_000,
+  });
+}
+
+/** The caller's hidden rail items, newest dismissal first
+ *  (`GET /me/rail-dismissals`). Cursor-paginated; the first page carries
+ *  `total` and `unavailable` (dismissals whose target the caller can no
+ *  longer see, which the server withholds). Backs the Settings → Pages
+ *  "Hidden from rails" section. */
+export function useRailDismissals() {
+  return useInfiniteQuery({
+    queryKey: queryKeys.railDismissals,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<RailDismissalListView>(
+        pageParam
+          ? `/me/rail-dismissals?cursor=${encodeURIComponent(pageParam)}`
+          : "/me/rail-dismissals",
+      ),
+    getNextPageParam: cursorNextPage,
   });
 }
 

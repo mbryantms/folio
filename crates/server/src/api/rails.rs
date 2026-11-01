@@ -8,6 +8,7 @@
 //!   - `GET    /me/recent-history`                 — every issue with recent activity
 //!   - `GET    /me/random-picks`                   — daily shuffle of unstarted series
 //!   - `GET    /me/on-this-day`                    — issues released on today's date
+//!   - `GET    /me/rail-dismissals`                — the caller's hidden items
 //!   - `POST   /me/rail-dismissals`                — hide a target from a rail
 //!   - `DELETE /me/rail-dismissals/{kind}/{id}`    — undo a dismissal
 //!
@@ -26,23 +27,26 @@
 
 use axum::{
     Extension, Json,
-    extract::{Path as AxPath, State},
+    extract::{Path as AxPath, Query, State},
     http::{HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
 use chrono::{Datelike, Utc};
 use entity::{cbl_entry, issue, progress_record, rail_dismissal, series};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbBackend, EntityTrait, FromQueryResult, QueryFilter,
-    QueryOrder, Set, Statement, sea_query::Expr,
+    ActiveModelTrait, ColumnTrait, Condition, DbBackend, EntityTrait, FromQueryResult,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, Statement,
+    sea_query::Expr,
 };
 use serde::{Deserialize, Serialize};
+use shared::pagination::{decode_cursor, encode_cursor};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::{error, not_found};
-use crate::api::series::{IssueSummaryView, SeriesView};
+use crate::api::issue_card::IssueCardRow;
+use crate::api::series::{IssueSummaryView, SeriesView, hydrate_series};
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::middleware::RequestContext;
@@ -61,7 +65,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(recent_history))
         .routes(routes!(random_picks))
         .routes(routes!(on_this_day))
-        .routes(routes!(create_dismissal))
+        .routes(routes!(create_dismissal, list_dismissals))
         .routes(routes!(delete_dismissal))
 }
 
@@ -190,6 +194,130 @@ pub struct CreateDismissalReq {
     /// One of `'issue'`, `'series'`, `'cbl'`.
     pub target_kind: String,
     pub target_id: String,
+}
+
+/// Kind of a hidden rail target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RailDismissalKind {
+    Issue,
+    Series,
+    Cbl,
+}
+
+impl RailDismissalKind {
+    fn from_db(kind: &str) -> Option<Self> {
+        match kind {
+            DISMISS_KIND_ISSUE => Some(Self::Issue),
+            DISMISS_KIND_SERIES => Some(Self::Series),
+            DISMISS_KIND_CBL => Some(Self::Cbl),
+            _ => None,
+        }
+    }
+
+    /// The rails a dismissal of this kind hides its target from. The row
+    /// does not record which rail the click came from, so this is the
+    /// full set the rail queries consult for the kind.
+    fn hidden_from(self) -> Vec<DismissalRail> {
+        match self {
+            Self::Issue => vec![
+                DismissalRail::ContinueReading,
+                DismissalRail::RecentHistory,
+                DismissalRail::OpdsContinueReading,
+            ],
+            Self::Series => vec![
+                DismissalRail::OnDeck,
+                DismissalRail::RandomPicks,
+                DismissalRail::SimilarSeries,
+            ],
+            Self::Cbl => vec![DismissalRail::OnDeck],
+        }
+    }
+}
+
+/// A surface that honours dismissals: the home rails, the series page's
+/// Similar series rail, and the OPDS Continue reading feeds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DismissalRail {
+    ContinueReading,
+    RecentHistory,
+    OnDeck,
+    RandomPicks,
+    SimilarSeries,
+    OpdsContinueReading,
+}
+
+/// The hydrated target of a dismissal. Which link fields are set depends
+/// on the kind: `slug` + `series_slug` for an issue, `slug` for a series,
+/// `saved_view_id` for a CBL reading list (absent when no saved view
+/// wraps the list).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RailDismissalTargetView {
+    /// Display name: `"<series> #<number>"` for an issue, the series name,
+    /// or the reading-list name.
+    pub name: String,
+    /// Secondary line: the issue title, or the series start year.
+    pub subtitle: Option<String>,
+    /// Issue slug (issue) or series slug (series).
+    pub slug: Option<String>,
+    /// Parent series slug (issue only).
+    pub series_slug: Option<String>,
+    /// Saved-view id (kind `cbl`) wrapping the list (cbl only).
+    pub saved_view_id: Option<String>,
+    /// Cover thumbnail URL; `None` for reading lists and coverless series.
+    pub cover_url: Option<String>,
+}
+
+/// One hidden rail item.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RailDismissalView {
+    /// Stable id of the dismissal, `"<kind>:<target_id>"`.
+    pub id: String,
+    pub target_kind: RailDismissalKind,
+    pub target_id: String,
+    /// The rails this dismissal hides the target from.
+    pub hidden_from: Vec<DismissalRail>,
+    /// RFC 3339 timestamp of the (latest) dismissal.
+    pub dismissed_at: String,
+    pub target: RailDismissalTargetView,
+}
+
+/// `GET /me/rail-dismissals` page. The `CursorPage` shape plus one
+/// first-page count: dismissals whose target the caller can no longer
+/// see (soft-removed, outside the library grant, over the age cap, or
+/// deleted) are never listed, and `unavailable` says how many there are.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RailDismissalListView {
+    pub items: Vec<RailDismissalView>,
+    pub next_cursor: Option<String>,
+    /// Listed dismissals in total; first page only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// Dismissals withheld because their target is not visible; first
+    /// page only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListDismissalsQuery {
+    /// Opaque cursor from a previous page's `next_cursor`.
+    pub cursor: Option<String>,
+    /// Page size; default 50, max 200.
+    pub limit: Option<u64>,
+}
+
+const DISMISSALS_DEFAULT_LIMIT: u64 = 50;
+const DISMISSALS_MAX_LIMIT: u64 = 200;
+
+/// Keyset position in the newest-first dismissal order.
+#[derive(Debug, Serialize, Deserialize)]
+struct DismissalCursor {
+    at: chrono::DateTime<chrono::FixedOffset>,
+    kind: String,
+    id: String,
 }
 
 // ───── Handlers ─────
@@ -1639,6 +1767,369 @@ pub async fn create_dismissal(
     .await;
 
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// The caller's hidden rail items, newest dismissal first, each with its
+/// target hydrated for display. Only the caller's own rows, and only those
+/// whose target the caller can currently see (the same live + grant + cap
+/// selects collections use); the rest are counted in `unavailable`.
+#[utoipa::path(
+    operation_id = "rails_list_dismissals",    get,
+    path = "/me/rail-dismissals",
+    params(ListDismissalsQuery),
+    responses(
+        (status = 200, body = RailDismissalListView),
+        (status = 400, description = "invalid cursor"),
+    )
+)]
+#[handler]
+pub async fn list_dismissals(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<ListDismissalsQuery>,
+) -> Response {
+    let after = match q.cursor.as_deref() {
+        Some(c) => match decode_cursor::<DismissalCursor>(c) {
+            Ok(k) => Some(k),
+            Err(_) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        },
+        None => None,
+    };
+    let limit = q
+        .limit
+        .unwrap_or(DISMISSALS_DEFAULT_LIMIT)
+        .clamp(1, DISMISSALS_MAX_LIMIT);
+    let acl = access::for_user(&app, &user).await;
+    let visible = visible_dismissal_condition(&acl, user.id);
+    let internal = |e: sea_orm::DbErr| {
+        tracing::error!(error = %e, "rails: dismissal list failed");
+        error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    };
+
+    // Rows the rails still honour; an auto-restored row is neither listed
+    // nor counted.
+    let hiding = || {
+        rail_dismissal::Entity::find()
+            .filter(rail_dismissal::Column::UserId.eq(user.id))
+            .filter(still_hiding_condition())
+    };
+    let (total, unavailable) = if after.is_none() {
+        let (all, listed) = tokio::join!(
+            hiding().count(&app.db),
+            hiding().filter(visible.clone()).count(&app.db),
+        );
+        match (all, listed) {
+            (Ok(all), Ok(listed)) => (Some(listed), Some(all.saturating_sub(listed))),
+            (Err(e), _) | (_, Err(e)) => return internal(e),
+        }
+    } else {
+        (None, None)
+    };
+
+    let mut select = hiding().filter(visible);
+    if let Some(k) = &after {
+        select = select.filter(Expr::cust_with_values(
+            "(rail_dismissals.dismissed_at, rail_dismissals.target_kind, rail_dismissals.target_id) \
+             < ($1, $2, $3)",
+            [
+                sea_orm::Value::from(k.at),
+                sea_orm::Value::from(k.kind.clone()),
+                sea_orm::Value::from(k.id.clone()),
+            ],
+        ));
+    }
+    let mut rows = match select
+        .order_by_desc(rail_dismissal::Column::DismissedAt)
+        .order_by_desc(rail_dismissal::Column::TargetKind)
+        .order_by_desc(rail_dismissal::Column::TargetId)
+        .limit(limit + 1)
+        .all(&app.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return internal(e),
+    };
+    let has_more = rows.len() as u64 > limit;
+    rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let next_cursor = if has_more {
+        rows.last().and_then(|r| {
+            encode_cursor(&DismissalCursor {
+                at: r.dismissed_at,
+                kind: r.target_kind.clone(),
+                id: r.target_id.clone(),
+            })
+            .ok()
+        })
+    } else {
+        None
+    };
+
+    let items = match hydrate_dismissals(&app, &acl, user.id, rows).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    Json(RailDismissalListView {
+        items,
+        next_cursor,
+        total,
+        unavailable,
+    })
+    .into_response()
+}
+
+/// `rail_dismissals` rows the rails still honour. A dismissal stops hiding
+/// its target once the caller has newer progress on it — on the issue
+/// (Continue reading / Recently read) or on any issue of the series (On
+/// Deck, Similar series; Random picks only lists unstarted series) — so
+/// such a row is not "hidden" any more. CBL rows stay: On Deck's restore
+/// rule for them reads the list's reading frontier, which the walk computes
+/// in Rust, and restoring one that already came back is harmless.
+fn still_hiding_condition() -> Condition {
+    Condition::all()
+        .add(Expr::cust(
+            r#"NOT ("rail_dismissals"."target_kind" = 'issue' AND EXISTS (
+                SELECT 1 FROM progress_records p
+                 WHERE p.user_id = "rail_dismissals"."user_id"
+                   AND p.issue_id = "rail_dismissals"."target_id"
+                   AND p.updated_at > "rail_dismissals"."dismissed_at"))"#,
+        ))
+        .add(Expr::cust(
+            r#"NOT ("rail_dismissals"."target_kind" = 'series' AND EXISTS (
+                SELECT 1 FROM progress_records p
+                  JOIN issues i ON i.id = p.issue_id
+                 WHERE p.user_id = "rail_dismissals"."user_id"
+                   AND i.series_id = CASE WHEN "rail_dismissals"."target_kind" = 'series'
+                                          THEN "rail_dismissals"."target_id"::uuid END
+                   AND p.updated_at > "rail_dismissals"."dismissed_at"))"#,
+        ))
+}
+
+/// `rail_dismissals` rows whose target the caller can currently see: an
+/// active issue through `access::visible_issues_select` (not removed, live
+/// parent series, inside the grant, under the cap), a series through
+/// `access::visible_series_select`, or a CBL list the caller owns or that
+/// is global (the rule `ensure_target_visible` applies on create). Each
+/// leg is a correlated `EXISTS` keyed on the row's `target_id`; the uuid
+/// legs cast `target_id` (create validates it as a UUID for those kinds)
+/// rather than the key, so the primary-key index serves the probe, and the
+/// `CASE` keeps the cast off an issue row's hex id.
+fn visible_dismissal_condition(acl: &access::VisibleLibraries, user_id: Uuid) -> Condition {
+    use entity::cbl_list;
+    // Scoped: at module level `ExprTrait::max` shadows `Ord::max` on ints.
+    use sea_orm::sea_query::ExprTrait;
+    let issue_hit = access::visible_issues_select(acl)
+        .select_only()
+        .column(issue::Column::Id)
+        .filter(issue::Column::State.eq("active"))
+        .filter(
+            Expr::col((issue::Entity, issue::Column::Id))
+                .equals((rail_dismissal::Entity, rail_dismissal::Column::TargetId)),
+        )
+        .into_query();
+    let series_hit = access::visible_series_select(acl)
+        .select_only()
+        .column(series::Column::Id)
+        .filter(Expr::cust(
+            r#""series"."id" = CASE WHEN "rail_dismissals"."target_kind" = 'series'
+                                     THEN "rail_dismissals"."target_id"::uuid END"#,
+        ))
+        .into_query();
+    let cbl_hit = cbl_list::Entity::find()
+        .select_only()
+        .column(cbl_list::Column::Id)
+        .filter(
+            Condition::any()
+                .add(cbl_list::Column::OwnerUserId.is_null())
+                .add(cbl_list::Column::OwnerUserId.eq(user_id)),
+        )
+        .filter(Expr::cust(
+            r#""cbl_lists"."id" = CASE WHEN "rail_dismissals"."target_kind" = 'cbl'
+                                        THEN "rail_dismissals"."target_id"::uuid END"#,
+        ))
+        .into_query();
+    Condition::any()
+        .add(
+            Condition::all()
+                .add(rail_dismissal::Column::TargetKind.eq(DISMISS_KIND_ISSUE))
+                .add(Expr::exists(issue_hit)),
+        )
+        .add(
+            Condition::all()
+                .add(rail_dismissal::Column::TargetKind.eq(DISMISS_KIND_SERIES))
+                .add(Expr::exists(series_hit)),
+        )
+        .add(
+            Condition::all()
+                .add(rail_dismissal::Column::TargetKind.eq(DISMISS_KIND_CBL))
+                .add(Expr::exists(cbl_hit)),
+        )
+}
+
+/// Hydrate one page of dismissal rows. Targets are re-read through the
+/// same visibility selects, so a target that vanished between the page
+/// query and this read is dropped rather than listed without a card.
+async fn hydrate_dismissals(
+    app: &AppState,
+    acl: &access::VisibleLibraries,
+    user_id: Uuid,
+    rows: Vec<rail_dismissal::Model>,
+) -> Result<Vec<RailDismissalView>, Response> {
+    use entity::cbl_list;
+    use std::collections::HashMap;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let internal = |e: sea_orm::DbErr| {
+        tracing::error!(error = %e, "rails: dismissal hydrate failed");
+        error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    };
+    let ids_of = |kind: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|r| r.target_kind == kind)
+            .map(|r| r.target_id.clone())
+            .collect()
+    };
+    let uuids_of = |kind: &str| -> Vec<Uuid> {
+        ids_of(kind)
+            .iter()
+            .filter_map(|id| Uuid::parse_str(id).ok())
+            .collect()
+    };
+
+    // Issues: card projection + parent series slug/name.
+    let issue_ids = ids_of(DISMISS_KIND_ISSUE);
+    let issue_rows: Vec<IssueCardRow> = if issue_ids.is_empty() {
+        Vec::new()
+    } else {
+        access::visible_issues_select(acl)
+            .filter(issue::Column::State.eq("active"))
+            .filter(issue::Column::Id.is_in(issue_ids))
+            .into_partial_model::<IssueCardRow>()
+            .all(&app.db)
+            .await
+            .map_err(internal)?
+    };
+    let parent_ids: Vec<Uuid> = issue_rows.iter().map(|i| i.series_id).collect();
+    let parents: HashMap<Uuid, (String, String)> = if parent_ids.is_empty() {
+        HashMap::new()
+    } else {
+        series::Entity::find()
+            .select_only()
+            .column(series::Column::Id)
+            .column(series::Column::Slug)
+            .column(series::Column::Name)
+            .filter(series::Column::Id.is_in(parent_ids))
+            .into_tuple::<(Uuid, String, String)>()
+            .all(&app.db)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .map(|(id, slug, name)| (id, (slug, name)))
+            .collect()
+    };
+    let issues: HashMap<String, IssueSummaryView> = issue_rows
+        .into_iter()
+        .filter_map(|row| {
+            let (slug, name) = parents.get(&row.series_id)?;
+            let view = row.into_summary_view(slug).with_series_name(name.clone());
+            Some((view.id.clone(), view))
+        })
+        .collect();
+
+    // Series: the shared hydrate gives the same cover the cards paint.
+    let series_ids = uuids_of(DISMISS_KIND_SERIES);
+    let series_models = if series_ids.is_empty() {
+        Vec::new()
+    } else {
+        access::visible_series_select(acl)
+            .filter(series::Column::Id.is_in(series_ids))
+            .all(&app.db)
+            .await
+            .map_err(internal)?
+    };
+    let series_views: HashMap<String, SeriesView> = hydrate_series(app, series_models, user_id)
+        .await
+        .into_iter()
+        .map(|v| (v.id.clone(), v))
+        .collect();
+
+    // CBL lists: own or global, plus the saved view that links them.
+    let cbl_ids = uuids_of(DISMISS_KIND_CBL);
+    let cbl_names: HashMap<Uuid, String> = if cbl_ids.is_empty() {
+        HashMap::new()
+    } else {
+        cbl_list::Entity::find()
+            .select_only()
+            .column(cbl_list::Column::Id)
+            .column(cbl_list::Column::ParsedName)
+            .filter(cbl_list::Column::Id.is_in(cbl_ids.clone()))
+            .filter(
+                Condition::any()
+                    .add(cbl_list::Column::OwnerUserId.is_null())
+                    .add(cbl_list::Column::OwnerUserId.eq(user_id)),
+            )
+            .into_tuple::<(Uuid, String)>()
+            .all(&app.db)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .collect()
+    };
+    let cbl_views = cbl_saved_view_ids_for_candidates(app, user_id, &cbl_ids).await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let kind = RailDismissalKind::from_db(&r.target_kind)?;
+            let target = match kind {
+                RailDismissalKind::Issue => {
+                    let i = issues.get(&r.target_id)?;
+                    let series_name = i.series_name.clone().unwrap_or_default();
+                    RailDismissalTargetView {
+                        name: match &i.number {
+                            Some(n) => format!("{series_name} #{n}"),
+                            None => series_name,
+                        },
+                        subtitle: i.title.clone(),
+                        slug: Some(i.slug.clone()),
+                        series_slug: Some(i.series_slug.clone()),
+                        saved_view_id: None,
+                        cover_url: i.cover_url.clone(),
+                    }
+                }
+                RailDismissalKind::Series => {
+                    let s = series_views.get(&r.target_id)?;
+                    RailDismissalTargetView {
+                        name: s.name.clone(),
+                        subtitle: s.year.map(|y| y.to_string()),
+                        slug: Some(s.slug.clone()),
+                        series_slug: None,
+                        saved_view_id: None,
+                        cover_url: s.cover_url.clone(),
+                    }
+                }
+                RailDismissalKind::Cbl => {
+                    let id = Uuid::parse_str(&r.target_id).ok()?;
+                    RailDismissalTargetView {
+                        name: cbl_names.get(&id)?.clone(),
+                        subtitle: None,
+                        slug: None,
+                        series_slug: None,
+                        saved_view_id: cbl_views.get(&id).map(Uuid::to_string),
+                        cover_url: None,
+                    }
+                }
+            };
+            Some(RailDismissalView {
+                id: format!("{}:{}", r.target_kind, r.target_id),
+                target_kind: kind,
+                hidden_from: kind.hidden_from(),
+                dismissed_at: r.dismissed_at.to_rfc3339(),
+                target_id: r.target_id,
+                target,
+            })
+        })
+        .collect())
 }
 
 #[utoipa::path(

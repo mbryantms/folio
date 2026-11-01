@@ -554,6 +554,10 @@ export const queryKeys = {
   continueReading: ["rails", "continue-reading"] as const,
   /** On-deck rail (`/me/on-deck`). Same invalidation set as continueReading. */
   onDeck: ["rails", "on-deck"] as const,
+  /** Settings → Pages "Hidden from rails" list (`GET /me/rail-dismissals`,
+   *  cursor-paginated). `invalidateRails` drops it, so a dismiss or a
+   *  restore anywhere refreshes the list. */
+  railDismissals: ["rail-dismissals"] as const,
   /** New-issues rail (`/me/recent-issues`) — newest ingests across the
    *  library, per-series-capped server-side. No mutation invalidates it
    *  (data changes only when a scan lands); default staleness re-fetches

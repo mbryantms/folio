@@ -282,8 +282,33 @@ collection). Only the loaded pages are selectable, as on every other
 saved-view surface. `web/tests/dom/issue-filter-view-select.test.tsx`
 covers the issue view.
 
-## Not (yet) covered
+## Hidden from rails
 
-- A "Hidden from rails" settings list for `POST /me/rail-dismissals`
-  (`useRestoreRailItem` exists; the server has no `GET` to list a user's
-  dismissals yet, so the restore surface waits on that endpoint).
+`POST /me/rail-dismissals` hides an issue, series or CBL list from the
+home rails; `GET /me/rail-dismissals` lists the caller's own rows that
+still hide something, newest dismissal first, cursor-paginated (`limit` default 50, max 200; `total`
+and `unavailable` on the first page only). Each item carries the target
+hydrated for display (name, subtitle, slug / series slug / saved-view id,
+cover) and `hidden_from`, the rails that kind is filtered out of — the
+row does not record which rail the click came from, so this is the fixed
+set per kind (issue: Continue reading, Recently read and the OPDS
+Continue reading feeds; series: On Deck, Random picks, Similar series;
+cbl: On Deck). A row the rails already ignore — the caller has progress
+newer than `dismissed_at` on the issue, or on any issue of the series —
+is not listed or counted (`still_hiding_condition`); CBL rows stay,
+since On Deck's restore rule for them reads the list's reading frontier.
+
+Visibility: a row is listed only while its target passes the same
+selects collections use (`access::visible_issues_select` with
+`state = 'active'`, `access::visible_series_select`, and a CBL list the
+caller owns or that is global). A dismissal whose target is soft-removed,
+outside the caller's grant, over the age cap, or deleted is **omitted**
+and counted in `unavailable`, so nothing about it reaches the client; it
+reappears in the list if the target becomes visible again.
+
+The web surface is the "Hidden from rails" section under Settings → Pages
+(`web/components/settings/HiddenRailItems.tsx`, `useRailDismissals` +
+`useRestoreRailItem`, which `DELETE`s the row). `invalidateRails` drops the
+list, so a hide or restore anywhere refreshes it. Tests:
+`crates/server/tests/rail_dismissals.rs`,
+`web/tests/settings/hidden-rail-items.test.tsx`.
