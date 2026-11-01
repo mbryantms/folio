@@ -148,6 +148,7 @@ async fn up_normalises_existing_rows_and_down_drops_the_check() {
     let good = insert_marker(&db, &fx, Some("#336699")).await.unwrap();
     let none = insert_marker(&db, &fx, None).await.unwrap();
     let padded = insert_marker(&db, &fx, Some("  red  ")).await.unwrap();
+    let tabbed = insert_marker(&db, &fx, Some("\tgreen\n")).await.unwrap();
     let blank = insert_marker(&db, &fx, Some("   ")).await.unwrap();
     let cased = insert_marker(&db, &fx, Some("Yellow")).await.unwrap();
     let junk = insert_marker(&db, &fx, Some("chartreuse")).await.unwrap();
@@ -160,6 +161,11 @@ async fn up_normalises_existing_rows_and_down_drops_the_check() {
     assert_eq!(color_of(&db, good).await.as_deref(), Some("#336699"));
     assert_eq!(color_of(&db, none).await, None);
     assert_eq!(color_of(&db, padded).await.as_deref(), Some("red"));
+    assert_eq!(
+        color_of(&db, tabbed).await.as_deref(),
+        Some("green"),
+        "tabs / newlines trim like the API's str::trim"
+    );
     assert_eq!(color_of(&db, blank).await, None, "blank is no colour");
     assert_eq!(color_of(&db, cased).await.as_deref(), Some("yellow"));
     assert_eq!(color_of(&db, junk).await, None, "unknown name dropped");
@@ -167,5 +173,29 @@ async fn up_normalises_existing_rows_and_down_drops_the_check() {
     assert!(
         insert_marker(&db, &fx, Some("chartreuse")).await.is_err(),
         "the CHECK is back after up"
+    );
+}
+
+/// The CHECK and the API's garde rule are one rule: the constraint carries
+/// `MARKER_COLOR_PATTERN` verbatim, so a palette change that forgets the
+/// schema (garde accepts, the INSERT then 500s on the CHECK) fails here.
+#[tokio::test]
+async fn check_pattern_matches_the_api_colour_rule() {
+    let app = TestApp::spawn().await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let def = db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint \
+             WHERE conname = 'markers_color_chk'",
+        ))
+        .await
+        .unwrap()
+        .expect("markers_color_chk exists")
+        .try_get::<String>("", "def")
+        .unwrap();
+    assert!(
+        def.contains(&format!("'{}'", server::api::markers::MARKER_COLOR_PATTERN)),
+        "constraint drifted from MARKER_COLOR_PATTERN: {def}"
     );
 }

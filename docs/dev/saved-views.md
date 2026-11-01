@@ -37,9 +37,9 @@ and the id is reserved so they can land without a wire-format break.
 
 `Op` in `dsl.rs`; which ops a field takes is its registry `allowed_ops`
 (mirrored by `allowedOps` in the web registry, labelled by `OP_LABELS`).
-An unknown op fails when the request body is deserialized (axum's
-`Json` data rejection, 422), before the compiler runs; an op the field
-doesn't allow is 422 `filter_invalid` from the compiler.
+An unknown op fails when the request body is deserialized (422), before
+the compiler runs; an op the field doesn't allow is 422 `filter_invalid`
+from the compiler.
 
 | Op | Builder label | Field kinds | SQL |
 | --- | --- | --- | --- |
@@ -49,7 +49,8 @@ doesn't allow is 422 `filter_invalid` from the compiler.
 | `equals` / `not_equals` | equals / does not equal | text, number | `col = v` / `col <> v` |
 | `is` / `is_not` | is / is not | enum | `col = v` / `col <> v` |
 | `in` / `not_in` | is one of / is not one of | enum | `col [NOT] IN (…)` |
-| `gt` / `gte` / `lt` / `lte` | > / ≥ / < / ≤ | number, date | comparison |
+| `gt` / `lt` | > / < | number, date | comparison |
+| `gte` / `lte` | ≥ / ≤ | number | comparison |
 | `between` | between | number, date | `col >= lo AND col <= hi` |
 | `before` / `after` | before / after | date | `col < v` / `col > v` |
 | `relative` / `not_relative` | in last / not in last | date | see below |

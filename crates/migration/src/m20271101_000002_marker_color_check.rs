@@ -9,8 +9,9 @@
 //!
 //! `up` first normalises what is already there, then adds the CHECK:
 //!
-//! 1. trims surrounding whitespace; blank becomes NULL ("no colour", how
-//!    the handlers store an empty value);
+//! 1. trims surrounding whitespace (tabs and newlines too, as the
+//!    handlers' `str::trim` does); blank becomes NULL ("no colour", how the
+//!    handlers store an empty value);
 //! 2. lower-cases a palette name written in another case (`Yellow`);
 //! 3. sets every value that still breaks the rule to NULL. `color` is
 //!    nullable and NULL means "no colour" (the client falls back to its
@@ -43,8 +44,9 @@ impl MigrationTrait for Migration {
                 nulled  INT;
             BEGIN
                 UPDATE markers
-                   SET color = NULLIF(btrim(color), '')
-                 WHERE color IS DISTINCT FROM NULLIF(btrim(color), '');
+                   SET color = NULLIF(regexp_replace(color, '^[[:space:]]+|[[:space:]]+$', '', 'g'), '')
+                 WHERE color IS DISTINCT FROM
+                       NULLIF(regexp_replace(color, '^[[:space:]]+|[[:space:]]+$', '', 'g'), '');
                 GET DIAGNOSTICS trimmed = ROW_COUNT;
 
                 UPDATE markers
