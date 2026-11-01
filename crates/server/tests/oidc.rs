@@ -258,8 +258,6 @@ async fn start_oidc_flow(app: &TestApp, redirect_after: Option<&str>) -> (String
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER, "/start should 302");
-    let state_cookie =
-        extract_set_cookie(&resp, "__Host-comic_oidc").expect("state cookie present after /start");
     // Pull the state param out of the Location header to feed back to /callback.
     let location = resp
         .headers()
@@ -273,7 +271,37 @@ async fn start_oidc_flow(app: &TestApp, redirect_after: Option<&str>) -> (String
         .find(|(k, _)| k == "state")
         .map(|(_, v)| v.into_owned())
         .expect("state query param");
+    let state_cookie = extract_set_cookie(&resp, &attempt_cookie_name(&state_param))
+        .expect("per-attempt state cookie present after /start");
+    assert!(
+        extract_set_cookie(&resp, LEGACY_SINGLE_STATE_COOKIE).is_none(),
+        "/start must not set the shared pre-2026-11 cookie any more"
+    );
     (state_cookie, state_param)
+}
+
+/// Pre-2026-11 single state cookie; still accepted by /callback as a fallback.
+const LEGACY_SINGLE_STATE_COOKIE: &str = "__Host-comic_oidc";
+
+/// Mirrors `oidc::attempt_cookie_name`: one state cookie per `/start`, keyed by
+/// the first 16 chars of its state.
+fn attempt_cookie_name(state: &str) -> String {
+    format!("__Host-comic_oidc_{}", &state[..16])
+}
+
+/// Cookie name the browser would send `state_cookie` under for `state_param`.
+/// Deliberately malformed states (shorter than an attempt id) fall back to the
+/// legacy name so mismatch tests still exercise the state comparison.
+fn cookie_name_for(state_param: &str) -> String {
+    let well_formed = state_param.len() >= 16
+        && state_param[..16]
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if well_formed {
+        attempt_cookie_name(state_param)
+    } else {
+        LEGACY_SINGLE_STATE_COOKIE.to_string()
+    }
 }
 
 fn parse_state_cookie_nonce(state_cookie: &str) -> String {
@@ -302,7 +330,36 @@ async fn callback_with(
             Request::builder()
                 .method(Method::GET)
                 .uri(uri)
-                .header(header::COOKIE, format!("__Host-comic_oidc={state_cookie}"))
+                .header(
+                    header::COOKIE,
+                    format!("{}={state_cookie}", cookie_name_for(state_param)),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// /callback with an explicit Cookie header (several cookies, custom names).
+async fn callback_with_cookie_header(
+    app: &TestApp,
+    cookie_header: &str,
+    state_param: &str,
+    code: &str,
+) -> Response<Body> {
+    let uri = format!(
+        "/auth/oidc/callback?code={}&state={}",
+        urlencoding::encode(code),
+        urlencoding::encode(state_param)
+    );
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(uri)
+                .header(header::COOKIE, cookie_header)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -464,6 +521,87 @@ async fn callback_happy_path_upserts_user_and_sets_cookies() {
         entity::user::UserRole::Admin,
         "first OIDC-created user should still receive first-admin bootstrap"
     );
+}
+
+/// Regression (2026-11-01, Safari): one click produced several `/start`
+/// requests. Each used to overwrite the single state cookie, so the callback —
+/// carrying the FIRST attempt's state — failed with "oidc state mismatch".
+/// With per-attempt cookies the browser holds both and the first one matches.
+#[tokio::test]
+async fn callback_accepts_first_of_two_concurrent_starts() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let (cookie_a, state_a) = start_oidc_flow(&app, None).await;
+    let (cookie_b, state_b) = start_oidc_flow(&app, None).await;
+    assert_ne!(state_a, state_b, "each /start mints its own state");
+    assert_ne!(attempt_cookie_name(&state_a), attempt_cookie_name(&state_b));
+
+    let nonce = parse_state_cookie_nonce(&cookie_a);
+    let claims = IdTokenClaims::standard(
+        &op.issuer(),
+        "folio-test-client",
+        "subject-dup",
+        &nonce,
+        "dup@example.com",
+    );
+    op.register_token_response(&sign_id_token(&claims)).await;
+
+    // The browser sends every cookie it holds; the callback carries attempt A.
+    let header = format!(
+        "{}={cookie_a}; {}={cookie_b}",
+        attempt_cookie_name(&state_a),
+        attempt_cookie_name(&state_b)
+    );
+    let resp = callback_with_cookie_header(&app, &header, &state_a, "auth-code-dup").await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "first attempt signs in"
+    );
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_some());
+    // The used attempt cookie is cleared; the other expires on its own TTL.
+    assert_eq!(
+        extract_set_cookie(&resp, &attempt_cookie_name(&state_a)).as_deref(),
+        Some(""),
+        "the matched attempt cookie is cleared on success"
+    );
+}
+
+/// A flow started on the previous build (single shared cookie) still finishes.
+#[tokio::test]
+async fn callback_accepts_legacy_single_state_cookie() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
+    let nonce = parse_state_cookie_nonce(&state_cookie);
+    let claims = IdTokenClaims::standard(
+        &op.issuer(),
+        "folio-test-client",
+        "subject-legacy",
+        &nonce,
+        "legacy@example.com",
+    );
+    op.register_token_response(&sign_id_token(&claims)).await;
+
+    let header = format!("{LEGACY_SINGLE_STATE_COOKIE}={state_cookie}");
+    let resp = callback_with_cookie_header(&app, &header, &state_param, "auth-code-legacy").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_some());
+}
+
+/// A state that cannot name an attempt cookie (wrong alphabet) is never used
+/// to build a cookie name; with no legacy cookie either, the flow is rejected.
+#[tokio::test]
+async fn callback_rejects_state_outside_cookie_name_alphabet() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
+    let evil_state = format!("a;b=c\r\nX-Evil:{}", &state_param[..4]);
+    let header = format!("{}={state_cookie}", attempt_cookie_name(&state_param));
+    let resp = callback_with_cookie_header(&app, &header, &evil_state, "any-code").await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.invalid");
 }
 
 #[tokio::test]
