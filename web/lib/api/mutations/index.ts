@@ -116,6 +116,7 @@ import type {
   UpsertSeriesProgressResp,
   IssueCoverPickReq,
   IssueCoverPickResp,
+  FieldLockResp,
   SeriesCoverPickReq,
   SeriesCoverPickResp,
   ConfirmRemovalsReq,
@@ -1174,18 +1175,61 @@ export function useClearIssueFieldPin(seriesSlug: string, issueSlug: string) {
     {
       successMessage: "Pin cleared",
       onSuccess: () => {
-        // Invalidate the diff query so the preview pane re-fetches and
-        // the row's `decision` drops out of `blocked_by_user`.
-        qc.invalidateQueries({
-          queryKey: ["series", seriesSlug, "issues", issueSlug, "metadata"],
-          exact: false,
-        });
+        invalidateIssueFieldPins(qc, seriesSlug, issueSlug);
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug],
         });
       },
     },
   );
+}
+
+/**
+ * Lock (`PUT`) or unlock (`DELETE`)
+ * `/series/{series_slug}/issues/{issue_slug}/field-provenance/{field}` —
+ * the issue Metadata tab's per-field lock (audit 2026-11 §5 #5). A lock
+ * pins the field's current value so provider applies and rescans leave
+ * it alone; the value itself is not edited. Admin only. `field` is a
+ * `MetadataOverviewView.lockable_fields` key.
+ */
+export function useSetIssueFieldLock(seriesSlug: string, issueSlug: string) {
+  const qc = useQueryClient();
+  const router = useRouter();
+  return useApiMutation<
+    FieldLockResp | { cleared: boolean },
+    { field: string; locked: boolean }
+  >(
+    ({ field, locked }) => ({
+      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/field-provenance/${encodeURIComponent(field)}`,
+      method: locked ? "PUT" : "DELETE",
+    }),
+    {
+      successMessage: (_data, { locked }) =>
+        locked ? "Field locked" : "Field unlocked",
+      onSuccess: () => {
+        invalidateIssueFieldPins(qc, seriesSlug, issueSlug);
+        // The server-rendered issue page carries the column pins the
+        // Edit sheet reads.
+        router.refresh();
+      },
+    },
+  );
+}
+
+/** A pin / lock change re-classifies the match preview's rows
+ *  (`blocked_by_user`) and the Metadata tab's lock states, so both
+ *  surfaces refetch whichever one made the change. */
+function invalidateIssueFieldPins(
+  qc: ReturnType<typeof useQueryClient>,
+  seriesSlug: string,
+  issueSlug: string,
+) {
+  qc.invalidateQueries({
+    queryKey: queryKeys.issueMetadataMatchAll(seriesSlug, issueSlug),
+  });
+  qc.invalidateQueries({
+    queryKey: queryKeys.issueMetadataOverview(seriesSlug, issueSlug),
+  });
 }
 
 /**

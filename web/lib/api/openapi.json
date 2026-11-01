@@ -7176,6 +7176,47 @@
         }
       }
     },
+    "/api/me/holdings.csv": {
+      "get": {
+        "operationId": "holdings_export",
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`series` (default) or `issues`; anything else is a 400",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "description": "Library slug; omit for every library the caller can see",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UTF-8 CSV with a byte-order mark, streamed; `Content-Disposition: attachment; filename=\"folio-holdings-<scope>-<date>.csv\"`. Admins get a trailing folder / file path column.",
+            "content": {
+              "text/csv": {}
+            }
+          },
+          "400": {
+            "description": "unknown scope"
+          },
+          "401": {},
+          "404": {
+            "description": "library slug unknown or not visible to the caller"
+          },
+          "429": {}
+        }
+      }
+    },
     "/api/me/issues/bulk-metadata": {
       "patch": {
         "summary": "Bulk-update a per-field patch across a list of issue ids.",
@@ -10222,6 +10263,57 @@
       }
     },
     "/api/series/{series_slug}/issues/{issue_slug}/field-provenance/{field}": {
+      "put": {
+        "summary": "Lock one field of an issue against provider updates without editing\nit: writes the same `set_by='user'` pin an edit of the field writes,\nfor the value the field holds now. A provider apply (DB-direct or\nsidecar) and a rescan then leave the field alone until it is unlocked\nthrough the sibling `DELETE`. The value is unchanged, so a writeback\nlibrary needs no sidecar rewrite: the archive already carries it, and\nthe composer keeps the DB value for a pinned field on the next apply.",
+        "operationId": "issues_lock_field",
+        "parameters": [
+          {
+            "name": "series_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "issue_slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field",
+            "in": "path",
+            "description": "A `MetadataOverviewView.lockable_fields` key — e.g. `title`, `credits`, `cover_date`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FieldLockResp"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "issue not found"
+          },
+          "422": {
+            "description": "the field cannot be locked (unknown, a cover, or an external id)"
+          }
+        }
+      },
       "delete": {
         "operationId": "issues_clear_field_pin",
         "parameters": [
@@ -23343,6 +23435,27 @@
           }
         }
       },
+      "FieldLockResp": {
+        "type": "object",
+        "description": "Response for `PUT …/field-provenance/{field}`.",
+        "required": [
+          "field",
+          "pinned_keys"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The locked `MetadataField` key."
+          },
+          "pinned_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every `field_provenance` key the lock wrote a user row under: the\nfield itself plus the issue columns that roll up into it (a\n`credits` lock also pins `writer`, `penciller`, …). Sorted."
+          }
+        }
+      },
       "FieldProvenanceRow": {
         "type": "object",
         "description": "One field's provenance: which source set it, when, and (for provider\nsources) which external record it came from.",
@@ -26926,6 +27039,9 @@
           "external_ids",
           "provenance",
           "user_pinned_fields",
+          "lockable_fields",
+          "locked_fields",
+          "other_locked_fields",
           "alternate_provider_series"
         ],
         "properties": {
@@ -26969,6 +27085,27 @@
               "string",
               "null"
             ]
+          },
+          "lockable_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`MetadataField` keys the per-field lock accepts\n(`PUT …/field-provenance/{field}`), in display order."
+          },
+          "locked_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The subset of `lockable_fields` currently locked — a provider\napply and a rescan leave these values alone."
+          },
+          "other_locked_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "User pins outside the lockable set (`sort_number`,\n`black_and_white`, `cover_page_index`, an external id, a series-level\nfield pinned on the issue, …) — still honoured, so the UI lists them\nas locked and can release them through the same `DELETE`. Sorted."
           },
           "provenance": {
             "type": "array",

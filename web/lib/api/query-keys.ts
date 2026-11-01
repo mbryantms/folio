@@ -119,6 +119,10 @@ export const queryKeys = {
     ["issues", seriesSlug, issueSlug, "health"] as const,
   issueMetadataOverview: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "metadata-overview"] as const,
+  /** Prefix of every per-issue match query (candidates, diff, composite
+   *  diff) — invalidated when a field pin / lock changes. */
+  issueMetadataMatchAll: (seriesSlug: string, issueSlug: string) =>
+    ["series", seriesSlug, "issues", issueSlug, "metadata"] as const,
   issueAppearances: (seriesSlug: string, issueSlug: string) =>
     ["issues", seriesSlug, issueSlug, "appearances"] as const,
   /** Cursor-paginated scan history (infinite query); `kind` is a server
