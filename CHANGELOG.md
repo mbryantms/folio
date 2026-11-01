@@ -13,6 +13,78 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.71.0](https://github.com/mbryantms/folio/compare/v0.70.0...v0.71.0) (2026-11-01)
+
+
+### Added
+
+* **account:** delete your own account ([#1431](https://github.com/mbryantms/folio/issues/1431)) ([c7a8194](https://github.com/mbryantms/folio/commit/c7a81942ebea6611ee75b2a09b8d18b46c4fbd5c))
+* **admin:** audit log retention with export-and-trim ([#1406](https://github.com/mbryantms/folio/issues/1406)) ([a9b7107](https://github.com/mbryantms/folio/commit/a9b71070062a5e16e205143464b8fafef027d31d))
+* **admin:** bulk re-emit sidecars for a library ([#1433](https://github.com/mbryantms/folio/issues/1433)) ([485543e](https://github.com/mbryantms/folio/commit/485543ea4abb9a255e066194081d19679adef1f9))
+* **admin:** per-library counts and disk usage ([#1427](https://github.com/mbryantms/folio/issues/1427)) ([572df29](https://github.com/mbryantms/folio/commit/572df2998f9e210e5ff1e9c761bb82e3409ea109))
+* **api:** rate limits on search, metadata PATCH, collection writes and reorders ([#1432](https://github.com/mbryantms/folio/issues/1432)) ([c0387c5](https://github.com/mbryantms/folio/commit/c0387c550fc670c8145caf52715a3c374671ee93))
+* **api:** rate-limit the remaining collection and admin metadata writes ([#1435](https://github.com/mbryantms/folio/issues/1435)) ([0e04d53](https://github.com/mbryantms/folio/commit/0e04d533e7c5946127bbc772761a1bbb9cacfca9))
+* **completeness:** annuals and specials count toward completion when you choose ([#1429](https://github.com/mbryantms/folio/issues/1429)) ([69c9317](https://github.com/mbryantms/folio/commit/69c9317ddd89ee3f516a47526bb7d2bb7949cafd))
+* **covers:** set a provider variant as the primary cover ([#1428](https://github.com/mbryantms/folio/issues/1428)) ([547739d](https://github.com/mbryantms/folio/commit/547739df31323b568c5406018e53f4648bc8483f))
+* **export:** holdings CSV of series and issues ([#1419](https://github.com/mbryantms/folio/issues/1419)) ([2e345e2](https://github.com/mbryantms/folio/commit/2e345e28d5460d3de94f126ce09196a1730f7c8a))
+* **metadata:** lock an issue field against provider updates ([#1418](https://github.com/mbryantms/folio/issues/1418)) ([79f1990](https://github.com/mbryantms/folio/commit/79f1990af3e6863f8d79efad25cf5afbc1301e4c))
+* **rails:** list hidden rail items in settings and restore them ([#1414](https://github.com/mbryantms/folio/issues/1414)) ([183da63](https://github.com/mbryantms/folio/commit/183da636492b070598e061ef02dbf1171f32687b))
+* **reader:** grayscale, invert, warmth and contrast filters; colour and zoom prefs follow the account ([#1407](https://github.com/mbryantms/folio/issues/1407)) ([13193f6](https://github.com/mbryantms/folio/commit/13193f66f3688b6d1588f1b236291d49eb1ce787))
+* **reader:** touch pinch is transform zoom; chrome shows on first open for touch ([#1401](https://github.com/mbryantms/folio/issues/1401)) ([2af4b13](https://github.com/mbryantms/folio/commit/2af4b130301b7bc8ba9effe69463a88bca490ccd))
+* **scanner:** encrypted archives raise a health finding and a scan stat ([#1398](https://github.com/mbryantms/folio/issues/1398)) ([68fe13d](https://github.com/mbryantms/folio/commit/68fe13d9ddb4fedac51c120c68869688c83d6919))
+* **scanner:** optionally search providers for series a scan creates ([#1416](https://github.com/mbryantms/folio/issues/1416)) ([2bb63df](https://github.com/mbryantms/folio/commit/2bb63df4e0b37878ea5e1af6def57f74dbfff704))
+* **web:** issue-view multi-select, related-section dedupe, palette actions ([#1395](https://github.com/mbryantms/folio/issues/1395)) ([ab56994](https://github.com/mbryantms/folio/commit/ab5699409f57c672d7f2e4a2ebb3fad6b1f19a4a))
+* **writeback:** fill-missing mode and the primary cover apply on writeback libraries ([#1415](https://github.com/mbryantms/folio/issues/1415)) ([c70e7bb](https://github.com/mbryantms/folio/commit/c70e7bb29951045824b9aca486ee6d3169f76190))
+* **writeback:** MetronInfo v1.x schema output with a tolerant parser ([#1402](https://github.com/mbryantms/folio/issues/1402)) ([0039b5c](https://github.com/mbryantms/folio/commit/0039b5c5f3d9b4499ac137b5076bbb4c484f9468))
+
+
+### Fixed
+
+* **admin:** admin user PATCH cannot demote or disable the last active admin ([#1437](https://github.com/mbryantms/folio/issues/1437)) ([fee505a](https://github.com/mbryantms/folio/commit/fee505a6ee637e7775703b30f34c665ba730ec68))
+* **admin:** scan runs, scan batches and health issues walk every page ([#1399](https://github.com/mbryantms/folio/issues/1399)) ([24bb821](https://github.com/mbryantms/folio/commit/24bb821a8732e742ad530db84286047f4e7e177f))
+* **api:** page uploads get a longer timeout than JSON routes ([#1421](https://github.com/mbryantms/folio/issues/1421)) ([85abeca](https://github.com/mbryantms/folio/commit/85abeca4a01c7e806060c38ef9e3b5a3a9aaec9c))
+* **api:** removed and revoked content is hidden in collections, CBL entries and reading sessions ([#1394](https://github.com/mbryantms/folio/issues/1394)) ([8ab1bb2](https://github.com/mbryantms/folio/commit/8ab1bb2860407b2d506f124940062ed2c0c961fb))
+* **api:** the visibility invariant covers OPDS collections, reading stats, markers, CBL stats and rail dismissals ([#1426](https://github.com/mbryantms/folio/issues/1426)) ([cfbe3dc](https://github.com/mbryantms/folio/commit/cfbe3dce43926b6715f6a26a932abc045de151a8))
+* **auth:** external-id add and unlink require admin ([#1439](https://github.com/mbryantms/folio/issues/1439)) ([7560268](https://github.com/mbryantms/folio/commit/7560268c92843af230fd1c8e20b194927fc6a01d))
+* **auth:** metadata apply, library refresh and bulk metadata edit require admin ([#1444](https://github.com/mbryantms/folio/issues/1444)) ([75b8269](https://github.com/mbryantms/folio/commit/75b82697e2ab010f116dda4f88c5da71b674c475))
+* **auth:** OIDC sign-in survives duplicate /auth/oidc/start requests ([#1446](https://github.com/mbryantms/folio/issues/1446)) ([689ff78](https://github.com/mbryantms/folio/commit/689ff789c2d1b198c2f02bad3fdfc71ed2d8bc8f))
+* **auth:** only active accounts authenticate; a pending admin no longer passes RequireAdmin ([#1443](https://github.com/mbryantms/folio/issues/1443)) ([fe8c23e](https://github.com/mbryantms/folio/commit/fe8c23eba0a412878ba13cf4813f955ffddd067c))
+* **pwa:** offline reading keeps spread overrides and resolves Up Next without the network ([#1390](https://github.com/mbryantms/folio/issues/1390)) ([2c51bda](https://github.com/mbryantms/folio/commit/2c51bdac25f5e941054c99180a8539125b9eb371))
+* **reader:** page-strip spread toggle on touch and keyboard, webtoon fit options, OCR alt text, label sizes ([#1393](https://github.com/mbryantms/folio/issues/1393)) ([d3c47ab](https://github.com/mbryantms/folio/commit/d3c47abfc21554977563c8648b592ecba30078f9))
+* **reader:** settings popover rows fit a phone ([#1436](https://github.com/mbryantms/folio/issues/1436)) ([248ba4b](https://github.com/mbryantms/folio/commit/248ba4b581bbcab63f0c32df5f12cd6e4121194d))
+* **scanner:** deep-validate run lifecycle ([#1442](https://github.com/mbryantms/folio/issues/1442)) ([bbe0ec4](https://github.com/mbryantms/folio/commit/bbe0ec4b517b7db82a7c2ccdc64f9e4761ebfcfd))
+* **scanner:** person-slug race no longer aborts a rollup; batched stamp_done; projected dedupe lookup ([#1403](https://github.com/mbryantms/folio/issues/1403)) ([e7f8496](https://github.com/mbryantms/folio/commit/e7f84964079b6a25cbc837c558c72ae682ae535a))
+* **server:** async upload I/O, explicit request body limits, tracing on every handler ([#1412](https://github.com/mbryantms/folio/issues/1412)) ([5eaa026](https://github.com/mbryantms/folio/commit/5eaa026d6972d8b40aad3fc1da424294a67dd3b2))
+* **views:** text filter ops match LIKE metacharacters literally ([#1440](https://github.com/mbryantms/folio/issues/1440)) ([4316940](https://github.com/mbryantms/folio/commit/4316940f7c52fd3cb978c338080e9440520b38a7))
+* **writeback:** ComicInfo carries the GTIN from UPC or ISBN ids and the arc number from the arc junction ([#1422](https://github.com/mbryantms/folio/issues/1422)) ([6c08b2c](https://github.com/mbryantms/folio/commit/6c08b2c609af4090d252c0d1e7578f2c65c3bd2a))
+* **writeback:** external-ID edits reach the archive, series PATCH pins in one transaction, provenance covers number, notes and web URL ([#1400](https://github.com/mbryantms/folio/issues/1400)) ([60c4db4](https://github.com/mbryantms/folio/commit/60c4db40e4575da1f51a7633c0043446a19850f6))
+* **writeback:** failed rewrites and a busy series mutex retry instead of returning Ok ([#1396](https://github.com/mbryantms/folio/issues/1396)) ([dc787ea](https://github.com/mbryantms/folio/commit/dc787ea7c2cd6ea7087bc4955d70502c80f3373f))
+* **writeback:** sidecar composer reads junctions and the shared CSV splitter ([#1392](https://github.com/mbryantms/folio/issues/1392)) ([adb30ed](https://github.com/mbryantms/folio/commit/adb30ed0d0e00ac772ac659dd8f53badedf09f65))
+
+
+### Changed
+
+* **api:** duplicates page memoised per scan; health backup count cached; both on the perf harness ([#1405](https://github.com/mbryantms/folio/issues/1405)) ([7a51f6e](https://github.com/mbryantms/folio/commit/7a51f6e0c371fd986f7ff1f7ef1974294fd94d5e))
+* **api:** OPDS recent feed pages through IssueCardRow; thumbnails get a five-minute private cache with ETag ([#1413](https://github.com/mbryantms/folio/issues/1413)) ([36440a5](https://github.com/mbryantms/folio/commit/36440a5f2f5c873e3fd39cd35a8d6ee800ac8f6e))
+
+
+### Dependencies
+
+* update dependency @scalar/api-reference-react to v0.9.85 ([#1391](https://github.com/mbryantms/folio/issues/1391)) ([bbdf58b](https://github.com/mbryantms/folio/commit/bbdf58bc435383265276287f1923bafce3cd0732))
+* update dependency @tanstack/react-virtual to v3.14.24 ([#1425](https://github.com/mbryantms/folio/issues/1425)) ([b962f67](https://github.com/mbryantms/folio/commit/b962f673cc01c43b5e4d67d81e5e4200bd097f6f))
+* update dependency @types/node to v26.6.6 ([#1397](https://github.com/mbryantms/folio/issues/1397)) ([3dbc649](https://github.com/mbryantms/folio/commit/3dbc649605f6b7dccc3c1927b4f0bce5af39d49e))
+* update dependency comictagger to v1.6.0b11.dev0 ([#1410](https://github.com/mbryantms/folio/issues/1410)) ([a950a79](https://github.com/mbryantms/folio/commit/a950a79e00690e3b378601e34e1167ae166fcb0d))
+* update dependency lucide-react to v1.64.0 ([#1424](https://github.com/mbryantms/folio/issues/1424)) ([ed710d5](https://github.com/mbryantms/folio/commit/ed710d55344fca5901ea30adef3bde8bef29f3e1))
+* update dependency oasdiff/oasdiff to v1.35.0 ([#1387](https://github.com/mbryantms/folio/issues/1387)) ([f39f25c](https://github.com/mbryantms/folio/commit/f39f25c0001e3653243d532e748481bb253d0168))
+* update dependency python to 3.15 ([#1411](https://github.com/mbryantms/folio/issues/1411)) ([dbb7df8](https://github.com/mbryantms/folio/commit/dbb7df8d7c2613845320b7a9f47345a45ea9dc51))
+* update redis:8-alpine docker digest to 21090af ([#1423](https://github.com/mbryantms/folio/issues/1423)) ([533aa9e](https://github.com/mbryantms/folio/commit/533aa9e2689f4c36dbb3f0bc54a68a4005fd1307))
+
+
+### Build & CI
+
+* Rust test shards fit a 72 GB runner ([#1438](https://github.com/mbryantms/folio/issues/1438)) ([517866a](https://github.com/mbryantms/folio/commit/517866a9a45bf8766d1d37b1b8189725d3e7ebbd))
+* sidecar interop job reads Folio-written archives with ComicTagger and Metron-Tagger ([#1408](https://github.com/mbryantms/folio/issues/1408)) ([40924a9](https://github.com/mbryantms/folio/commit/40924a98ac567591cce9f705fe117dc063fcefe9))
+
 ## [0.70.0](https://github.com/mbryantms/folio/compare/v0.69.1...v0.70.0) (2026-10-31)
 
 
