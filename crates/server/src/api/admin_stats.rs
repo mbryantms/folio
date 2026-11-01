@@ -308,7 +308,10 @@ pub async fn user_reading_stats(
     )
     .await;
 
-    match compute_stats_for_user(&app, target_id, q).await {
+    // The admin sees every library, so only the removed-content rule
+    // narrows the target user's numbers here.
+    let acl = crate::library::access::VisibleLibraries::unrestricted();
+    match compute_stats_for_user(&app, target_id, &acl, q).await {
         Ok(view) => Json(view).into_response(),
         Err(StatsError {
             status,

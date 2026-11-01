@@ -45,7 +45,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use crate::api::collections::ensure_want_to_read_seeded;
+use crate::api::collections::{self, ensure_want_to_read_seeded};
 use crate::api::opds;
 use crate::api::saved_views::{
     KIND_CBL, KIND_COLLECTION, KIND_FILTER_ISSUES, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
@@ -271,7 +271,7 @@ async fn series_list(
     user: CurrentUser,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    let page = q.page.unwrap_or(1).max(1);
+    let page = opds::page_number(q.page);
     let offset = (page - 1) * opds::PAGE_SIZE;
 
     let allowed = match opds::allowed_libraries(&app, &user).await {
@@ -342,7 +342,7 @@ async fn browse(
     user: CurrentUser,
     Query(q): Query<opds::BrowseQuery>,
 ) -> Response {
-    let page = q.page.unwrap_or(1).max(1);
+    let page = opds::page_number(q.page);
     let offset = (page - 1) * opds::PAGE_SIZE;
     let status_filter = q
         .status
@@ -555,7 +555,7 @@ async fn series_one(
         Err(e) => return server_error(e.to_string()),
     };
     let total_pages = total.div_ceil(opds::PAGE_SIZE).max(1);
-    let page = q.page.unwrap_or(1).max(1);
+    let page = opds::page_number(q.page);
     let offset = (page - 1) * opds::PAGE_SIZE;
     let mut issues = match issues_base
         .order_by_asc(issue::Column::SortNumber)
@@ -870,7 +870,7 @@ async fn history(
         issue_id: String,
         library_id: Uuid,
     }
-    let page = q.page.unwrap_or(1).max(1);
+    let page = opds::page_number(q.page);
     let offset = (page - 1) * opds::PAGE_SIZE;
     let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -960,7 +960,7 @@ async fn by_creator(
     let writer = urlencoding::decode(&writer)
         .map(|s| s.into_owned())
         .unwrap_or(writer);
-    let page = q.page.unwrap_or(1).max(1);
+    let page = opds::page_number(q.page);
     let offset = (page - 1) * opds::PAGE_SIZE;
     let allowed = match opds::allowed_libraries(&app, &user).await {
         Ok(v) => v,
@@ -2092,6 +2092,47 @@ async fn render_collection_acq_v2(
         Ok(r) => r,
         Err(e) => return server_error(e.to_string()),
     };
+    let series_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
+    let issue_ids: Vec<String> = rows.iter().filter_map(|r| r.issue_id.clone()).collect();
+
+    // Same visibility selects as the web entries page and the OPDS 1.2
+    // feed (`collections::visible_{series,issues}_select`).
+    let visible = access::for_user(app, user).await;
+    let series_by_id: HashMap<Uuid, series::Model> = if series_ids.is_empty() {
+        HashMap::new()
+    } else {
+        collections::visible_series_select(&visible)
+            .filter(series::Column::Id.is_in(series_ids))
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| (s.id, s))
+            .collect()
+    };
+    let issue_models: Vec<opds::OpdsIssueRow> = if issue_ids.is_empty() {
+        Vec::new()
+    } else {
+        collections::visible_issues_select(&visible)
+            .filter(issue::Column::Id.is_in(issue_ids))
+            .into_partial_model::<opds::OpdsIssueRow>()
+            .all(&app.db)
+            .await
+            .unwrap_or_default()
+    };
+    let issue_by_id: HashMap<String, opds::OpdsIssueRow> = issue_models
+        .iter()
+        .cloned()
+        .map(|i| (i.id.clone(), i))
+        .collect();
+    // Drop entries whose target did not hydrate before picking Up Next.
+    rows.retain(|r| {
+        r.series_id
+            .is_some_and(|sid| series_by_id.contains_key(&sid))
+            || r.issue_id
+                .as_deref()
+                .is_some_and(|iid| issue_by_id.contains_key(iid))
+    });
     let up_next_id = if reorder {
         let up_next = opds::pick_next_in_collection(&app.db, user.id, &rows).await;
         opds::reorder_collection_entries_up_next_first(&mut rows, up_next.as_deref());
@@ -2099,39 +2140,6 @@ async fn render_collection_acq_v2(
     } else {
         None
     };
-    let series_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
-    let issue_ids: Vec<String> = rows.iter().filter_map(|r| r.issue_id.clone()).collect();
-
-    let visible = access::for_user(app, user).await;
-    let series_by_id: HashMap<Uuid, series::Model> = if series_ids.is_empty() {
-        HashMap::new()
-    } else {
-        series::Entity::find()
-            .filter(series::Column::Id.is_in(series_ids))
-            .all(&app.db)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|s| visible.series_ok(s.library_id, s.age_rating.as_deref()))
-            .map(|s| (s.id, s))
-            .collect()
-    };
-    let issue_models: Vec<opds::OpdsIssueRow> = if issue_ids.is_empty() {
-        Vec::new()
-    } else {
-        let rows = issue::Entity::find()
-            .filter(issue::Column::Id.is_in(issue_ids))
-            .into_partial_model::<opds::OpdsIssueRow>()
-            .all(&app.db)
-            .await
-            .unwrap_or_default();
-        access::filter_issues(app, &visible, rows).await
-    };
-    let issue_by_id: HashMap<String, opds::OpdsIssueRow> = issue_models
-        .iter()
-        .cloned()
-        .map(|i| (i.id.clone(), i))
-        .collect();
 
     // Resolve per-series cover + metadata facets for the navigation
     // entries. M1: cover replaces folder icon. M2: dc:publisher /

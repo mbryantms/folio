@@ -2208,13 +2208,19 @@ async fn ensure_target_visible(
 ) -> Result<(), Response> {
     let acl = access::for_user(app, user).await;
     match kind {
+        // Issue and series targets go through the selects
+        // `visible_dismissal_condition` lists with, so a dismissal is only
+        // stored for a target the hidden-items list would show; a removed,
+        // non-active, revoked or over-cap target answers the same 404 as a
+        // missing one.
         DISMISS_KIND_ISSUE => {
-            let row = issue::Entity::find_by_id(target_id.to_owned())
-                .one(&app.db)
+            let hits = access::visible_issues_select(&acl)
+                .filter(issue::Column::Id.eq(target_id.to_owned()))
+                .filter(issue::Column::State.eq("active"))
+                .count(&app.db)
                 .await
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
-            let issue = row.ok_or_else(not_found)?;
-            if !access::issue_allowed(app, &acl, &issue).await {
+            if hits == 0 {
                 return Err(not_found());
             }
             Ok(())
@@ -2227,12 +2233,12 @@ async fn ensure_target_visible(
                     "series target_id must be UUID",
                 )
             })?;
-            let row = series::Entity::find_by_id(id)
-                .one(&app.db)
+            let hits = access::visible_series_select(&acl)
+                .filter(series::Column::Id.eq(id))
+                .count(&app.db)
                 .await
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
-            let series = row.ok_or_else(not_found)?;
-            if !acl.series_ok(series.library_id, series.age_rating.as_deref()) {
+            if hits == 0 {
                 return Err(not_found());
             }
             Ok(())

@@ -277,10 +277,10 @@ pub fn visible_series_select(acl: &VisibleLibraries) -> sea_orm::Select<series::
 /// issues either), and the caller's grant + cap
 /// ([`VisibleLibraries::issue_filter`], own rating first, series rating as
 /// fallback). One predicate for every personal-list surface that keys on
-/// an issue (collection entries, reading sessions; markers carry the same
-/// rule in `api::markers::visible_marker_condition`). Scan `state` is
-/// left to the caller: list surfaces add `state = 'active'`, history
-/// surfaces do not.
+/// an issue (collection entries, reading sessions, markers, reading
+/// stats); [`visible_issues_sql`] is its twin for hand-written SQL. Scan
+/// `state` is left to the caller: list surfaces add `state = 'active'`,
+/// history surfaces do not.
 pub fn visible_issues_select(acl: &VisibleLibraries) -> sea_orm::Select<issue::Entity> {
     let live_parent = series::Entity::find()
         .select_only()
@@ -298,6 +298,51 @@ pub fn visible_issues_select(acl: &VisibleLibraries) -> sea_orm::Select<issue::E
         select = select.filter(cond);
     }
     select
+}
+
+/// [`visible_issues_select`] for hand-written SQL over an `issues` row
+/// aliased `alias` (e.g. `i` in `markers m JOIN issues i ON ...`): not
+/// soft-removed, a live parent series, and the caller's grant + cap.
+/// Bound values are pushed onto `params` and referenced as `$n`; the
+/// fragment starts with ` AND `. Keep the two in step.
+pub fn visible_issues_sql(acl: &VisibleLibraries, alias: &str, params: &mut Vec<Value>) -> String {
+    let mut sql = format!(
+        " AND {alias}.removed_at IS NULL AND EXISTS (SELECT 1 FROM series vis_s \
+         WHERE vis_s.id = {alias}.series_id AND vis_s.removed_at IS NULL)"
+    );
+    if !acl.unrestricted {
+        params.push(Value::from(
+            acl.allowed.iter().copied().collect::<Vec<Uuid>>(),
+        ));
+        sql.push_str(&format!(" AND {alias}.library_id = ANY(${})", params.len()));
+        sql.push_str(&acl.raw_cap_clause(
+            &format!("{alias}.library_id"),
+            &format!(
+                "COALESCE({alias}.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = {alias}.series_id))"
+            ),
+            params,
+        ));
+    }
+    sql
+}
+
+/// [`visible_series_select`] for hand-written SQL over a `series` row
+/// aliased `alias`: not soft-removed, inside the caller's grant, under the
+/// cap. Same `params` / ` AND ` convention as [`visible_issues_sql`].
+pub fn visible_series_sql(acl: &VisibleLibraries, alias: &str, params: &mut Vec<Value>) -> String {
+    let mut sql = format!(" AND {alias}.removed_at IS NULL");
+    if !acl.unrestricted {
+        params.push(Value::from(
+            acl.allowed.iter().copied().collect::<Vec<Uuid>>(),
+        ));
+        sql.push_str(&format!(" AND {alias}.library_id = ANY(${})", params.len()));
+        sql.push_str(&acl.raw_cap_clause(
+            &format!("{alias}.library_id"),
+            &format!("{alias}.age_rating"),
+            params,
+        ));
+    }
+    sql
 }
 
 pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {

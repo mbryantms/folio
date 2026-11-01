@@ -913,42 +913,28 @@ fn decode_cursor(raw: &str) -> Result<(chrono::DateTime<chrono::FixedOffset>, Uu
 
 /// DI-20: markers surface only while their issue is live and still
 /// visible to the caller (library grant + age-rating cap), the same rule
-/// the reading log applies. A revoked grant or a soft-removed issue hides
-/// the marker without deleting it (the notes export and `/me/export` still
-/// carry it). Shared by the list, the count badge and search so the three
-/// agree; the tag index applies the same rule in raw SQL
-/// ([`visible_marker_sql`]).
+/// the reading log applies. A revoked grant, a soft-removed issue or a
+/// removed parent series hides the marker without deleting it (the notes
+/// export and `/me/export` still carry it). Shared by the list, the count
+/// badge and search so the three agree; the predicate itself is
+/// [`access::visible_issues_select`], and the tag index applies its SQL
+/// twin ([`visible_marker_sql`]).
 fn visible_marker_condition(acl: &access::VisibleLibraries) -> sea_orm::sea_query::SimpleExpr {
-    let mut visible_issues = issue::Entity::find()
+    let visible_issues = access::visible_issues_select(acl)
         .select_only()
-        .column(issue::Column::Id)
-        .filter(issue::Column::RemovedAt.is_null());
-    if let Some(cond) = acl.issue_filter() {
-        visible_issues = visible_issues.filter(cond);
-    }
+        .column(issue::Column::Id);
     marker::Column::IssueId.in_subquery(visible_issues.into_query())
 }
 
 /// [`visible_marker_condition`] for hand-written SQL over
-/// `markers m JOIN issues i ON i.id = m.issue_id`. Pushes bind values onto
+/// `markers m JOIN issues i ON i.id = m.issue_id`
+/// ([`access::visible_issues_sql`] on alias `i`). Pushes bind values onto
 /// `params`; the fragment starts with ` AND `.
 pub(crate) fn visible_marker_sql(
     acl: &access::VisibleLibraries,
     params: &mut Vec<sea_orm::Value>,
 ) -> String {
-    let mut sql = String::from(" AND i.removed_at IS NULL");
-    if !acl.unrestricted {
-        params.push(sea_orm::Value::from(
-            acl.allowed.iter().copied().collect::<Vec<Uuid>>(),
-        ));
-        sql.push_str(&format!(" AND i.library_id = ANY(${})", params.len()));
-        sql.push_str(&acl.raw_cap_clause(
-            "i.library_id",
-            "COALESCE(i.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = i.series_id))",
-            params,
-        ));
-    }
-    sql
+    access::visible_issues_sql(acl, "i", params)
 }
 
 // ────────────── handlers ──────────────

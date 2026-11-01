@@ -1759,3 +1759,37 @@ async fn count_search_and_tags_recheck_grant_and_age_cap() {
         .unwrap();
     assert_eq!(count_search_tags(&app, &user).await, (0, 0, vec![]));
 }
+
+/// E7: marker visibility is `access::visible_issues_select` (and its SQL
+/// twin for the tag index), so markers on an issue whose **series** was
+/// soft-removed leave the list, the badge, search and the tag index too —
+/// a removed series never surfaces through its issues.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn markers_hide_when_the_parent_series_is_removed() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let (_l1, _s1, live) = seed_issue(&app, "parent-live").await;
+    let (_l2, gone_series, orphan) = seed_issue(&app, "parent-gone").await;
+    let a = create_bookmark(&app, &auth, &live, 0).await;
+    let b = create_bookmark(&app, &auth, &orphan, 0).await;
+    tag_marker(&app, &auth, &a, &["shared"]).await;
+    tag_marker(&app, &auth, &b, &["shared", "orphaned"]).await;
+    assert_eq!(count_search_tags(&app, &auth).await.0, 2);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let row = entity::series::Entity::find_by_id(gone_series)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::series::ActiveModel = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+
+    let (count, hits, tags) = count_search_tags(&app, &auth).await;
+    assert_eq!((count, hits), (1, 1));
+    assert!(tags.contains(&("shared".into(), 1)), "{tags:?}");
+    assert!(!tags.iter().any(|(t, _)| t == "orphaned"), "{tags:?}");
+    assert_eq!(list_ids(&app, &auth, "").await, vec![a]);
+}

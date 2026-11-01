@@ -1558,9 +1558,12 @@ async fn remote_list_cap_rejects_new_url_import_without_fetching() {
     assert_eq!(status, StatusCode::CREATED, "{body:#?}");
 }
 
-/// N-O2: a matched issue that was soft-removed reads as unmatched on the
-/// entries page. The row keeps its `matched_issue_id` so the card returns
-/// with the file, but no live card is painted for a link that would 404.
+/// N-O2 + E7: a matched issue that was soft-removed reads as **missing**
+/// everywhere: no card on the entries page, `match_status = "missing"` in the
+/// entry view, out of `?status=matched` and into `?status=missing` (so the
+/// Resolution tab lists it), and counted as missing rather than matched in
+/// the list stats. The row keeps its `matched_issue_id`, so the match comes
+/// back with the file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn entries_hide_card_of_removed_matched_issue() {
     let app = TestApp::spawn().await;
@@ -1568,15 +1571,22 @@ async fn entries_hide_card_of_removed_matched_issue() {
     let _lib = seed_matchable_issues(&app).await;
     let (_, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
     let list_id = view["id"].as_str().unwrap();
-    let url = format!("/api/me/cbl-lists/{list_id}/entries?status=matched");
+    let matched_url = format!("/api/me/cbl-lists/{list_id}/entries?status=matched");
+    let missing_url = format!("/api/me/cbl-lists/{list_id}/entries?status=ambiguous,missing");
+    let detail_url = format!("/api/me/cbl-lists/{list_id}");
 
-    let (status, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    let (status, body) = http(&app, Method::GET, &matched_url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
     assert_eq!(items.len(), 3);
     assert!(items.iter().all(|i| i["issue"].is_object()));
     let gone_entry_id = items[0]["id"].as_str().unwrap().to_owned();
     let gone_issue_id = items[0]["matched_issue_id"].as_str().unwrap().to_owned();
+    let (_, detail) = http(&app, Method::GET, &detail_url, Some(&auth), None).await;
+    let stats_before = detail["stats"].clone();
+    assert_eq!(stats_before["matched"].as_i64(), Some(3));
+    let (_, body) = http(&app, Method::GET, &missing_url, Some(&auth), None).await;
+    let unresolved_before = body["total"].as_i64().unwrap();
 
     let db = Database::connect(&app.db_url).await.unwrap();
     let set_removed = |removed: bool| {
@@ -1595,25 +1605,48 @@ async fn entries_hide_card_of_removed_matched_issue() {
     };
 
     set_removed(true).await;
-    let (status, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
+    // Out of the matched filter: two live matches remain, both with cards.
+    let (status, body) = http(&app, Method::GET, &matched_url, Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = body["items"].as_array().unwrap();
-    assert_eq!(items.len(), 3, "the entry row itself stays: {body:#?}");
-    for item in items {
-        if item["id"].as_str() == Some(gone_entry_id.as_str()) {
-            assert!(
-                item["issue"].is_null(),
-                "removed match has no card: {item:#?}"
-            );
-            assert_eq!(
-                item["matched_issue_id"].as_str(),
-                Some(gone_issue_id.as_str()),
-                "the match itself is kept"
-            );
-        } else {
-            assert!(item["issue"].is_object(), "live matches keep their card");
-        }
-    }
+    assert_eq!(items.len(), 2, "{body:#?}");
+    assert_eq!(body["total"].as_i64(), Some(2));
+    assert!(items.iter().all(|i| i["issue"].is_object()));
+    assert!(
+        items
+            .iter()
+            .all(|i| i["id"].as_str() != Some(gone_entry_id.as_str()))
+    );
+
+    // Into the Resolution tab's filter, reading as missing, match kept.
+    let (status, body) = http(&app, Method::GET, &missing_url, Some(&auth), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_i64(), Some(unresolved_before + 1));
+    let gone = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"].as_str() == Some(gone_entry_id.as_str()))
+        .unwrap_or_else(|| panic!("removed match listed for resolution: {body:#?}"));
+    assert!(
+        gone["issue"].is_null(),
+        "removed match has no card: {gone:#?}"
+    );
+    assert_eq!(gone["match_status"], "missing");
+    assert_eq!(
+        gone["matched_issue_id"].as_str(),
+        Some(gone_issue_id.as_str()),
+        "the match itself is kept"
+    );
+
+    // Stats agree with the filters.
+    let (_, detail) = http(&app, Method::GET, &detail_url, Some(&auth), None).await;
+    assert_eq!(detail["stats"]["matched"].as_i64(), Some(2), "{detail:#?}");
+    assert_eq!(
+        detail["stats"]["missing"].as_i64(),
+        Some(stats_before["missing"].as_i64().unwrap() + 1)
+    );
+    assert_eq!(detail["stats"]["total"], stats_before["total"]);
 
     // The issues feed behind Continue / offline downloads drops it too.
     let (status, body) = http(
@@ -1634,16 +1667,14 @@ async fn entries_hide_card_of_removed_matched_issue() {
     assert_eq!(ids.len(), 2, "{body:#?}");
     assert!(!ids.contains(&gone_issue_id.as_str()));
 
-    // File back, card back.
+    // File back, match back.
     set_removed(false).await;
-    let (_, body) = http(&app, Method::GET, &url, Some(&auth), None).await;
-    assert!(
-        body["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|i| i["issue"].is_object())
-    );
+    let (_, body) = http(&app, Method::GET, &matched_url, Some(&auth), None).await;
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().all(|i| i["issue"].is_object()));
+    let (_, detail) = http(&app, Method::GET, &detail_url, Some(&auth), None).await;
+    assert_eq!(detail["stats"], stats_before);
 }
 
 /// Audit 2026-11 N-A4: `POST /me/cbl-lists` validates through
