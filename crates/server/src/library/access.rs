@@ -25,6 +25,7 @@
 use crate::auth::extractor::CurrentUser;
 use crate::library::age_rating;
 use crate::state::AppState;
+use entity::user::UserRole;
 use entity::{issue, library_user_access, series};
 use sea_orm::sea_query::{Condition, Expr, ExprTrait, Func, SimpleExpr};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, QueryTrait, Value};
@@ -301,7 +302,7 @@ pub fn visible_issues_select(acl: &VisibleLibraries) -> sea_orm::Select<issue::E
 }
 
 pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {
-    if user.role == "admin" {
+    if user.role == UserRole::Admin {
         return VisibleLibraries::unrestricted();
     }
     let granted = library_user_access::Entity::find()
@@ -328,7 +329,7 @@ pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {
 /// are unrestricted. Same query count as the old per-module
 /// `visible(app, user, lib_id)` helpers this replaces.
 pub async fn for_library(app: &AppState, user: &CurrentUser, library_id: Uuid) -> VisibleLibraries {
-    if user.role == "admin" {
+    if user.role == UserRole::Admin {
         return VisibleLibraries::unrestricted();
     }
     for_library_by_id(app, user.id, library_id).await

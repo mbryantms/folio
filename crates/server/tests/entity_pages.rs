@@ -213,7 +213,7 @@ async fn fixture(app: &TestApp) -> Fixture {
     // Make sure the second account is a plain user.
     entity::user::ActiveModel {
         id: Unchanged(user.user_id),
-        role: Set("user".into()),
+        role: Set(entity::user::UserRole::User),
         ..Default::default()
     }
     .update(&db)

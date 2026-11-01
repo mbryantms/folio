@@ -6134,12 +6134,12 @@ export interface components {
             email?: string | null;
             excluded_from_aggregates: boolean;
             last_active_at?: string | null;
-            role: string;
+            role: components["schemas"]["UserRole"];
             /** Format: int64 */
             sessions_30d: number;
             /** Format: int64 */
             sessions_all_time: number;
-            state: string;
+            state: components["schemas"]["UserState"];
             top_series_name?: string | null;
             user_id: string;
         };
@@ -6156,8 +6156,8 @@ export interface components {
              *     always reported as 0 since admins implicitly see every library.
              */
             library_count: number;
-            role: string;
-            state: string;
+            role: components["schemas"]["UserRole"];
+            state: components["schemas"]["UserState"];
         };
         /** @description Where this issue maps in one provider, plus its current match state. */
         AlternateProviderSeries: {
@@ -8385,12 +8385,12 @@ export interface components {
                 email?: string | null;
                 excluded_from_aggregates: boolean;
                 last_active_at?: string | null;
-                role: string;
+                role: components["schemas"]["UserRole"];
                 /** Format: int64 */
                 sessions_30d: number;
                 /** Format: int64 */
                 sessions_all_time: number;
-                state: string;
+                state: components["schemas"]["UserState"];
                 top_series_name?: string | null;
                 user_id: string;
             }[];
@@ -11256,7 +11256,7 @@ export interface components {
              * @description M6a: minimum distinct pages before a session is recorded.
              */
             reading_min_pages: number;
-            role: string;
+            role: components["schemas"]["UserRole"];
             /**
              * @description Markers M8: when true, /settings renders a count badge on the
              *     Bookmarks sidebar row. Default false.
@@ -15424,14 +15424,14 @@ export interface components {
             version: number;
         };
         /**
-         * @description Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query
-         *     params + the matching fields on `UpdateUserReq`. Serde rejects bad
-         *     values at deserialize time so handlers never see strings they can't
-         *     trust.
+         * @description A user's role: `admin` | `user`.
          * @enum {string}
          */
         UserRole: "admin" | "user";
-        /** @enum {string} */
+        /**
+         * @description A user account's state: `pending_verification` | `active` | `disabled`.
+         * @enum {string}
+         */
         UserState: "pending_verification" | "active" | "disabled";
         ViewGroupListView: {
             groups: components["schemas"]["ViewGroupView"][];

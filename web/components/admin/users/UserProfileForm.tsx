@@ -13,10 +13,12 @@ import {
   useUpdateUser,
 } from "@/lib/api/mutations";
 import { useMe } from "@/lib/api/queries";
-import type { AdminUserDetailView } from "@/lib/api/types";
+import type { AdminUserDetailView, UserRole, UserState } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
-function stateVariant(state: string): "default" | "secondary" | "destructive" {
+function stateVariant(
+  state: UserState,
+): "default" | "secondary" | "destructive" {
   if (state === "disabled") return "destructive";
   if (state === "pending_verification") return "secondary";
   return "default";
@@ -27,9 +29,7 @@ export function UserProfileForm({ user }: { user: AdminUserDetailView }) {
   const isSelf = me?.id === user.id;
 
   const [displayName, setDisplayName] = React.useState(user.display_name);
-  const [role, setRole] = React.useState<"admin" | "user">(
-    user.role === "admin" ? "admin" : "user",
-  );
+  const [role, setRole] = React.useState<UserRole>(user.role);
   // Re-sync local form state when the upstream user object changes (after a
   // mutation invalidates the query and we re-fetch). Comparing the prev value
   // during render is the React 19 idiom; useEffect would re-render twice.
@@ -37,7 +37,7 @@ export function UserProfileForm({ user }: { user: AdminUserDetailView }) {
   if (user !== prevUser) {
     setPrevUser(user);
     setDisplayName(user.display_name);
-    setRole(user.role === "admin" ? "admin" : "user");
+    setRole(user.role);
   }
 
   const update = useUpdateUser(user.id);
@@ -122,7 +122,7 @@ export function UserProfileForm({ user }: { user: AdminUserDetailView }) {
               variant="ghost"
               onClick={() => {
                 setDisplayName(user.display_name);
-                setRole(user.role === "admin" ? "admin" : "user");
+                setRole(user.role);
               }}
             >
               Reset

@@ -12,16 +12,18 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreateUserDialog } from "@/components/admin/users/CreateUserDialog";
 import { useUserList, type UserListFilters } from "@/lib/api/queries";
-import type { AdminUserView } from "@/lib/api/types";
+import type { AdminUserView, UserRole, UserState } from "@/lib/api/types";
 
-type RoleFilter = "all" | "admin" | "user";
-type StateFilter = "all" | "active" | "disabled" | "pending_verification";
+type RoleFilter = "all" | UserRole;
+type StateFilter = "all" | UserState;
 
-function roleVariant(role: string): "default" | "secondary" {
+function roleVariant(role: UserRole): "default" | "secondary" {
   return role === "admin" ? "default" : "secondary";
 }
 
-function stateVariant(state: string): "default" | "secondary" | "destructive" {
+function stateVariant(
+  state: UserState,
+): "default" | "secondary" | "destructive" {
   if (state === "disabled") return "destructive";
   if (state === "pending_verification") return "secondary";
   return "default";

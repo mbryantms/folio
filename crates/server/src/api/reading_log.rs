@@ -30,6 +30,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, FixedOffset};
+use entity::user::UserRole;
 use entity::{issue, library_user_access, marker, progress_record, reading_session, series};
 use sea_orm::{
     ActiveValue::Set,
@@ -611,7 +612,7 @@ async fn gather_events(
             .collect()
     };
 
-    let allowed_libraries: Option<HashSet<Uuid>> = if user.role == "admin" {
+    let allowed_libraries: Option<HashSet<Uuid>> = if user.role == UserRole::Admin {
         None
     } else {
         Some(

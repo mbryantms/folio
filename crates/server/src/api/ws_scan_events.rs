@@ -25,6 +25,7 @@ use axum::{
     routing::get,
 };
 use entity::user::{self, Entity as UserEntity};
+use entity::user::{UserRole, UserState};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
@@ -88,10 +89,10 @@ pub async fn handler(
             return (StatusCode::INTERNAL_SERVER_ERROR, "internal").into_response();
         }
     };
-    if row.state == "disabled" {
+    if row.state == UserState::Disabled {
         return super::error(StatusCode::FORBIDDEN, "auth.disabled", "Account disabled");
     }
-    if row.role != "admin" {
+    if row.role != UserRole::Admin {
         return super::error(
             StatusCode::FORBIDDEN,
             "auth.permission_denied",

@@ -29,6 +29,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use entity::user::{UserRole, UserState};
 use entity::{issue, user};
 use sea_orm::EntityTrait;
 use serde::Deserialize;
@@ -87,7 +88,7 @@ pub async fn stream(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
         }
     };
-    if user_row.state != "active" {
+    if user_row.state != UserState::Active {
         return error(StatusCode::UNAUTHORIZED, "user_inactive");
     }
 
@@ -105,7 +106,7 @@ pub async fn stream(
 
     // Library ACL — admins always pass, non-admins need an explicit grant
     // and (WP-2.7) the issue must sit at or below the grant's age cap.
-    if user_row.role != "admin" {
+    if user_row.role != UserRole::Admin {
         let acl = crate::library::access::for_library_by_id(&app, u, issue_row.library_id).await;
         if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
             return error(StatusCode::FORBIDDEN, "library_access_denied");

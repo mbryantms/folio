@@ -316,7 +316,7 @@ Items noticed during the audit that are real but small, to be picked up opportun
 - `types.ts` inline-debt guard: a vitest that fails if the inline block grows (AR-1 of audit §4.3).
 - Thumbs `Cache-Control: private, max-age=300` + ETag instead of `no-cache` (OP-7).
 - Variant-backfill drain stall (`backfill.rs:109`) and deactivated primary-cover file cleanup (DI-15): fold into WP-2.9 or WP-3.8.
-- Stringly enums for `user.role`, `user.state`, `issue.state`, `marker.kind` (AR-7): convert opportunistically when a WP touches the entity.
+- Stringly enums (AR-7): `user.role` / `user.state` are typed (`DeriveActiveEnum`, B8); `issue.state`, `marker.kind` and the rest of the E4 backlog in `docs/dev/schema-restructure.md` convert opportunistically when a WP touches the entity.
 - Rail-icon picker fix: PR #876 (open).
 - Stale scanner env defaults noticed during WP-1.5: `docs/dev/library-scanner.md` and `.env.example` say `COMIC_SCAN_WORKER_COUNT` defaults to `min(cpu, 4)` and `COMIC_SCAN_HASH_BUFFER_KB` to 64; `config.rs` has `min(cpu, 8)` and 1024. Fix alongside WP-3.1.
 - `docs/dev/comic-reader-spec.md` and `library-scanner-spec.md` still describe the intended watcher and pub/sub as design; left as specs, not claims.

@@ -87,7 +87,7 @@ async fn register(app: &TestApp, email: &str) -> Authed {
 async fn demote_to_user(db: &DatabaseConnection, user_id: Uuid) {
     entity::user::ActiveModel {
         id: Unchanged(user_id),
-        role: Set("user".into()),
+        role: Set(entity::user::UserRole::User),
         ..Default::default()
     }
     .update(db)

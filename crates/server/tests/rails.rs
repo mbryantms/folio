@@ -102,7 +102,7 @@ async fn demote_to_user(app: &TestApp, user_id: Uuid) {
         .unwrap()
         .unwrap();
     let mut am: entity::user::ActiveModel = user.into();
-    am.role = Set("user".into());
+    am.role = Set(entity::user::UserRole::User);
     am.update(&db).await.unwrap();
 }
 
