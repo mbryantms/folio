@@ -135,6 +135,14 @@ pub struct Model {
     /// Matching-accuracy-1.0 M12.
     #[serde(default)]
     pub metadata_auto_apply_strong_matches: bool,
+    /// When true, a library scan that creates new series enqueues a
+    /// provider search (`trigger_kind = 'scanner'`) for each unmatched one,
+    /// at most 50 per library per 24 h. Spends provider quota; combined with
+    /// `metadata_auto_apply_strong_matches` on a writeback library a
+    /// strong match rewrites the archives. Default false.
+    /// Audit 2026-11 N-M9.
+    #[serde(default)]
+    pub auto_search_new_series: bool,
 }
 
 fn default_archive_backup_retain_count() -> i32 {
