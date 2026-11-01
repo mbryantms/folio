@@ -371,7 +371,9 @@ export function SeriesProviderRangesCard({
 
           {/* Identifiers that are not metadata providers (Marvel, LOCG,
               ISBN, …) — and the one "+ Add ID" entry point for every
-              source, provider or not. */}
+              source, provider or not. Adding and unlinking an id is
+              admin-only (the server answers 403 otherwise); readers see
+              the ids. */}
           <div
             className="border-border/60 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t pt-3"
             data-testid="other-identifiers"
@@ -387,19 +389,21 @@ export function SeriesProviderRangesCard({
               otherIds.map((r) => (
                 <span key={r.source} className="inline-flex items-center gap-1">
                   <IdBadge row={r} />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground/60 hover:text-foreground size-6"
-                    onClick={() => ids.requestRemove(r)}
-                    aria-label={`Remove ${r.source_label} link`}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
+                  {isAdmin && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground/60 hover:text-foreground size-6"
+                      onClick={() => ids.requestRemove(r)}
+                      aria-label={`Remove ${r.source_label} link`}
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  )}
                 </span>
               ))
             )}
-            {!ids.adding && (
+            {isAdmin && !ids.adding && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -708,15 +712,17 @@ function ProviderBlockView({
         {block.id ? (
           <>
             <IdBadge row={block.id} />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground/60 hover:text-foreground size-6"
-              onClick={() => onUnlinkId(block.id!)}
-              aria-label={`Unlink ${block.label}`}
-            >
-              <Trash2 className="size-3" />
-            </Button>
+            {isAdmin && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground/60 hover:text-foreground size-6"
+                onClick={() => onUnlinkId(block.id!)}
+                aria-label={`Unlink ${block.label}`}
+              >
+                <Trash2 className="size-3" />
+              </Button>
+            )}
           </>
         ) : (
           <span className="text-muted-foreground text-xs">no series id</span>

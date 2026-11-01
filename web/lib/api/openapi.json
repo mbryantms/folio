@@ -11206,7 +11206,7 @@
             "description": "malformed JSON body"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "series not found"
@@ -11249,7 +11249,7 @@
             "description": "invalid source"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "series / link not found"
@@ -11466,7 +11466,7 @@
             "description": "malformed JSON body"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "issue not found"
@@ -11517,7 +11517,7 @@
             "description": "invalid source"
           },
           "403": {
-            "description": "library access denied"
+            "description": "admin only"
           },
           "404": {
             "description": "issue / link not found"

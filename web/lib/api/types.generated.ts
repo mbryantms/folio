@@ -26381,7 +26381,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26437,7 +26437,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26654,7 +26654,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26711,7 +26711,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
