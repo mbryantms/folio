@@ -16,9 +16,8 @@
  *       2. **WS payload shapes** (`ScanEvent`) — the OpenAPI surface
  *          excludes WebSocket events.
  *       3. **Typed enums where the Rust source uses bare `String`** —
- *          `MarkerKind`, `MarkerShape`, `LogWidgetKind`, `CblMatchStatus`,
- *          `ThumbnailFormat`, `ScanRunKind`, `SavedViewKind`, etc. Each is
- *          a tracked debt: when the Rust source derives `ToSchema` on an
+ *          `MarkerKind`, `MarkerShape`, `CblMatchStatus`,
+ *          `ThumbnailFormat`, etc. Each is a tracked debt: when the Rust source derives `ToSchema` on an
  *          enum (following the
  *          [`preferences.rs`](../../../crates/server/src/auth/preferences.rs)
  *          template), the inline entry can be promoted to an alias.
@@ -159,6 +158,7 @@ export type ReadingLogEventIssue = Schemas["EventIssue"]; // renamed in codegen 
 export type ReadingLogPayload = Schemas["EventPayload"]; // renamed in codegen as EventPayload
 export type ReadingLogEventView = Schemas["ReadingLogEventView"];
 export type ReadingLogPageView = Schemas["ReadingLogPageView"];
+export type LogWidgetKind = Schemas["LogWidgetKind"];
 export type LogWidgetView = Schemas["LogWidgetView"];
 export type LogWidgetListView = Schemas["CursorPage_LogWidgetView"];
 export type AddLogWidgetReq = Schemas["AddWidgetReq"]; // renamed in codegen as AddWidgetReq
@@ -228,11 +228,15 @@ export type HealthIssueCounts = Schemas["HealthIssueCounts"];
 export type HealthIssueKindFacet = Schemas["HealthIssueKindFacet"];
 export type CrossLibHealthIssueView = Schemas["CrossLibHealthIssueView"];
 export type CrossLibScanRunView = Schemas["CrossLibScanRunView"];
+export type ScanRunKind = Schemas["ScanRunKind"];
+export type ScanRunState = Schemas["ScanRunState"];
 export type ScanRunView = Schemas["ScanRunView"];
 export type ScanResp = Schemas["ScanResp"];
 export type ScanAllReq = Schemas["ScanAllReq"];
 export type ScanAllItem = Schemas["ScanAllItem"];
 export type ScanAllResp = Schemas["ScanAllResp"];
+export type ScanBatchKind = Schemas["ScanBatchKind"];
+export type ScanBatchState = Schemas["ScanBatchState"];
 export type ScanBatchView = Schemas["ScanBatchView"];
 export type ScanBatchDetailView = Schemas["ScanBatchDetailView"];
 export type BatchRunTally = Schemas["BatchRunTally"];
@@ -298,6 +302,7 @@ export type Op = Schemas["Op"];
 export type MatchMode = Schemas["MatchMode"];
 export type Condition = Schemas["Condition"];
 export type FilterDsl = Schemas["FilterDsl"];
+export type SavedViewKind = Schemas["SavedViewKind"];
 export type SavedViewView = Schemas["SavedViewView"];
 export type SavedViewListView = Schemas["SavedViewListView"];
 export type CreateSavedViewReq = Schemas["CreateSavedViewReq"];
@@ -306,6 +311,7 @@ export type PreviewReq = Schemas["PreviewReq"];
 export type PinView = Schemas["PinView"];
 export type PinReq = Schemas["PinReq"];
 export type UnpinReq = Schemas["UnpinReq"];
+export type SidebarEntryKind = Schemas["SidebarEntryKind"];
 export type SidebarEntryView = Schemas["SidebarEntryView"];
 export type SidebarLayoutView = Schemas["SidebarLayoutView"];
 export type UpdateEntryReq = Schemas["UpdateEntryReq"];
@@ -566,20 +572,6 @@ export type ReadingLogFilters = {
   include_hidden?: boolean;
 };
 
-export type LogWidgetKind =
-  | "chrono_feed"
-  | "stats_hero"
-  | "heatmap"
-  | "top_creators"
-  | "top_publishers"
-  | "top_imprints"
-  | "series_finishes"
-  | "pace_chart"
-  | "time_of_day"
-  | "recent_bookmarks"
-  | "currently_reading"
-  | "note";
-
 export type PatchLogWidgetReq = {
   /** Replacement config blob — the server stores it as-is. Clients
    *  merge with the previous value if they want partial updates. */
@@ -634,8 +626,6 @@ export type CreatorRole =
   | "cover_artist"
   | "editor"
   | "translator";
-
-export type ScanRunKind = "library" | "series" | "issue";
 
 export type ScanMode = "normal" | "content_verify";
 
@@ -787,27 +777,12 @@ export type SavedViewSortField =
   | "page_count"
   | "number";
 
-export type SavedViewKind =
-  | "filter_series"
-  | "filter_issues"
-  | "cbl"
-  | "system"
-  | "collection";
-
 export type SystemRailKey =
   | "continue_reading"
   | "on_deck"
   | "new_issues"
   | "similar_series"
   | "want_to_read";
-
-export type SidebarEntryKind =
-  | "builtin"
-  | "library"
-  | "view"
-  | "page"
-  | "header"
-  | "spacer";
 
 export type CblSourceKind = "upload" | "url" | "catalog";
 

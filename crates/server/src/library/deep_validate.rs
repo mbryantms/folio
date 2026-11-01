@@ -31,7 +31,8 @@
 
 use crate::library::health::{HealthCollector, IssueKind};
 use crate::state::AppState;
-use entity::{issue, library, scan_run};
+use entity::scan_run::{self, ScanRunKind, ScanRunState};
+use entity::{issue, library};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -67,7 +68,7 @@ pub async fn run(state: &AppState, library_id: Uuid) -> anyhow::Result<DeepValid
         .ok_or_else(|| anyhow::anyhow!("library not found: {library_id}"))?;
 
     // Open a real `scan_runs` row so the FK from `library_health_issues.scan_id`
-    // resolves and the History tab can show this run. `kind="deep_validate"`
+    // resolves and the History tab can show this run. `ScanRunKind::DeepValidate`
     // is a new kind value — the existing History filter chips (`library`,
     // `series`, `issue`) just won't show it; a future enhancement can add a
     // chip for it.
@@ -77,12 +78,12 @@ pub async fn run(state: &AppState, library_id: Uuid) -> anyhow::Result<DeepValid
     scan_run::ActiveModel {
         id: Set(scan_id),
         library_id: Set(library_id),
-        state: Set("running".into()),
+        state: Set(ScanRunState::Running),
         started_at: Set(started_at),
         ended_at: Set(None),
         stats: Set(serde_json::json!({})),
         error: Set(None),
-        kind: Set("deep_validate".into()),
+        kind: Set(ScanRunKind::DeepValidate),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(None),
@@ -126,7 +127,7 @@ pub async fn run(state: &AppState, library_id: Uuid) -> anyhow::Result<DeepValid
     let elapsed_ms = started_instant.elapsed().as_millis() as i64;
     if let Some(existing) = scan_run::Entity::find_by_id(scan_id).one(&state.db).await? {
         let mut am: scan_run::ActiveModel = existing.into();
-        am.state = Set("complete".into());
+        am.state = Set(ScanRunState::Complete);
         am.ended_at = Set(Some(chrono::Utc::now().fixed_offset()));
         am.stats = Set(serde_json::json!({
             "issues_probed": stats.issues_probed,

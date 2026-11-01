@@ -13973,7 +13973,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanRunKind",
             "description": "`library` | `series` | `issue`."
           },
           "phase": {
@@ -13991,7 +13991,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanRunState",
             "description": "`queued` | `running`."
           },
           "total": {
@@ -19919,7 +19919,7 @@
                   "type": "string"
                 },
                 "kind": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/LogWidgetKind"
                 },
                 "position": {
                   "type": "integer",
@@ -20113,7 +20113,7 @@
                   "type": "string"
                 },
                 "kind": {
-                  "type": "string",
+                  "$ref": "#/components/schemas/ScanBatchKind",
                   "description": "Trigger discriminator — today always `scan_all`."
                 },
                 "library_count": {
@@ -20129,7 +20129,7 @@
                   "type": "string"
                 },
                 "state": {
-                  "type": "string",
+                  "$ref": "#/components/schemas/ScanBatchState",
                   "description": "`running` | `complete` | `partial_failed` | `failed`."
                 }
               }
@@ -20200,8 +20200,8 @@
                   "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
                 },
                 "kind": {
-                  "type": "string",
-                  "description": "`library` | `series` | `issue` — drives the History tab filter chips."
+                  "$ref": "#/components/schemas/ScanRunKind",
+                  "description": "`library` | `series` | `issue` drive the History tab filter chips;\n`deep_validate` runs have no chip."
                 },
                 "series_id": {
                   "type": [
@@ -20221,7 +20221,7 @@
                   "type": "string"
                 },
                 "state": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ScanRunState"
                 },
                 "stats": {}
               }
@@ -22748,7 +22748,7 @@
             "format": "uuid"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/SavedViewKind",
             "description": "`\"filter_series\"`, `\"filter_issues\"` or `\"cbl\"`."
           },
           "match_mode": {
@@ -22892,8 +22892,8 @@
         ],
         "properties": {
           "kind": {
-            "type": "string",
-            "description": "`builtin` / `library` / `view` / `header` / `spacer`."
+            "$ref": "#/components/schemas/SidebarEntryKind",
+            "description": "`builtin` / `library` / `view` / `page` / `header` / `spacer`."
           },
           "label": {
             "type": [
@@ -22965,11 +22965,15 @@
             "format": "uuid"
           },
           "view_kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SavedViewKind",
+                "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "view_name": {
             "type": [
@@ -25804,6 +25808,24 @@
           }
         }
       },
+      "LogWidgetKind": {
+        "type": "string",
+        "description": "Which widget a `/log` page slot renders.",
+        "enum": [
+          "chrono_feed",
+          "stats_hero",
+          "heatmap",
+          "top_creators",
+          "top_publishers",
+          "top_imprints",
+          "series_finishes",
+          "pace_chart",
+          "time_of_day",
+          "recent_bookmarks",
+          "currently_reading",
+          "note"
+        ]
+      },
       "LogWidgetView": {
         "type": "object",
         "required": [
@@ -25823,7 +25845,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/LogWidgetKind"
           },
           "position": {
             "type": "integer",
@@ -31586,6 +31608,17 @@
           }
         }
       },
+      "SavedViewKind": {
+        "type": "string",
+        "description": "What a saved view is: a filter over series or issues, a CBL reading\nlist, a built-in system rail, or a user collection.",
+        "enum": [
+          "filter_series",
+          "filter_issues",
+          "cbl",
+          "system",
+          "collection"
+        ]
+      },
       "SavedViewListView": {
         "type": "object",
         "required": [
@@ -31665,7 +31698,7 @@
             "description": "True for system views (`user_id IS NULL`)."
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/SavedViewKind"
           },
           "match_mode": {
             "type": [
@@ -31909,6 +31942,23 @@
           }
         ]
       },
+      "ScanBatchKind": {
+        "type": "string",
+        "description": "What triggered a batch. Today only the admin \"Scan all\" action.",
+        "enum": [
+          "scan_all"
+        ]
+      },
+      "ScanBatchState": {
+        "type": "string",
+        "description": "A batch's state, derived from its member runs as they finish: all\n`complete` → `complete`, none → `failed`, a mix → `partial_failed`.",
+        "enum": [
+          "running",
+          "complete",
+          "partial_failed",
+          "failed"
+        ]
+      },
       "ScanBatchView": {
         "type": "object",
         "required": [
@@ -31940,7 +31990,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanBatchKind",
             "description": "Trigger discriminator — today always `scan_all`."
           },
           "library_count": {
@@ -31956,7 +32006,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanBatchState",
             "description": "`running` | `complete` | `partial_failed` | `failed`."
           }
         }
@@ -31984,7 +32034,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ScanRunState"
           }
         }
       },
@@ -32018,9 +32068,13 @@
             "minimum": 0
           },
           "last_scan_state": {
-            "type": [
-              "string",
-              "null"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScanRunState"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "mode": {
@@ -32097,6 +32151,27 @@
           }
         }
       },
+      "ScanRunKind": {
+        "type": "string",
+        "description": "What triggered a scan run. `library` is the legacy default for rows\nthat existed before the kind column; `deep_validate` is the opt-in\npage-decode probe (`library::deep_validate`), which the History tab's\nfilter chips do not offer.",
+        "enum": [
+          "library",
+          "series",
+          "issue",
+          "deep_validate"
+        ]
+      },
+      "ScanRunState": {
+        "type": "string",
+        "description": "A scan run's lifecycle state.",
+        "enum": [
+          "queued",
+          "running",
+          "complete",
+          "failed",
+          "cancelled"
+        ]
+      },
       "ScanRunView": {
         "type": "object",
         "required": [
@@ -32137,8 +32212,8 @@
             "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
           },
           "kind": {
-            "type": "string",
-            "description": "`library` | `series` | `issue` — drives the History tab filter chips."
+            "$ref": "#/components/schemas/ScanRunKind",
+            "description": "`library` | `series` | `issue` drive the History tab filter chips;\n`deep_validate` runs have no chip."
           },
           "series_id": {
             "type": [
@@ -32158,7 +32233,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ScanRunState"
           },
           "stats": {}
         }
@@ -34084,6 +34159,18 @@
           "series_group"
         ]
       },
+      "SidebarEntryKind": {
+        "type": "string",
+        "description": "What a sidebar entry points at; decides what `ref_id` means.",
+        "enum": [
+          "builtin",
+          "library",
+          "view",
+          "page",
+          "header",
+          "spacer"
+        ]
+      },
       "SidebarEntryView": {
         "type": "object",
         "required": [
@@ -34103,7 +34190,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/SidebarEntryKind"
           },
           "label": {
             "type": "string"

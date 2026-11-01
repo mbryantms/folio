@@ -27,8 +27,9 @@ pub mod validate;
 use crate::state::AppState;
 use chrono::Utc;
 use entity::{
-    issue, library, scan_batch,
-    scan_run::{ActiveModel as ScanRunAM, Entity as ScanRunEntity},
+    issue, library,
+    scan_batch::{self, ScanBatchState},
+    scan_run::{ActiveModel as ScanRunAM, Entity as ScanRunEntity, ScanRunKind, ScanRunState},
     series,
 };
 use futures::StreamExt;
@@ -120,8 +121,15 @@ async fn scan_library_inner(
         return Err(anyhow::Error::new(e));
     }
 
-    let (scan_id, batch_id) =
-        open_scan_run(state, library_id, "library", None, None, requested_scan_id).await?;
+    let (scan_id, batch_id) = open_scan_run(
+        state,
+        library_id,
+        ScanKind::Library,
+        None,
+        None,
+        requested_scan_id,
+    )
+    .await?;
     // Record `scan_id` on the span so every log emitted under this
     // scan inherits it via the RingLayer's parent-span walk. The
     // Empty field declared in the instrument attr above is what
@@ -204,6 +212,9 @@ async fn scan_library_inner(
 /// scans separately. Issue scans are functionally identical to series
 /// scans — same code path, same scope — but we record the trigger so the
 /// admin can see who clicked which button.
+///
+/// Deliberately narrower than the column type `entity::scan_run::ScanRunKind`:
+/// the scanner never opens a `deep_validate` run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanKind {
     Library,
@@ -212,11 +223,11 @@ pub enum ScanKind {
 }
 
 impl ScanKind {
-    fn as_db_str(self) -> &'static str {
+    fn run_kind(self) -> ScanRunKind {
         match self {
-            ScanKind::Library => "library",
-            ScanKind::Series => "series",
-            ScanKind::Issue => "issue",
+            ScanKind::Library => ScanRunKind::Library,
+            ScanKind::Series => ScanRunKind::Series,
+            ScanKind::Issue => ScanRunKind::Issue,
         }
     }
 }
@@ -273,7 +284,7 @@ struct ProgressState {
 impl ProgressState {
     fn new(kind: ScanKind, total: u64, series_total: u64, files_total: u64) -> Self {
         Self {
-            kind: kind.as_db_str(),
+            kind: kind.run_kind().as_str(),
             completed: 0,
             total: total.max(1),
             series_scanned: 0,
@@ -476,7 +487,7 @@ pub async fn scan_series_folder(
     let (scan_id, batch_id) = open_scan_run(
         state,
         library_id,
-        kind.as_db_str(),
+        kind,
         Some(series_id),
         issue_id.clone().filter(|_| matches!(kind, ScanKind::Issue)),
         requested_scan_id,
@@ -555,7 +566,7 @@ pub async fn scan_issue_file(
     let (scan_id, batch_id) = open_scan_run(
         state,
         library_id,
-        ScanKind::Issue.as_db_str(),
+        ScanKind::Issue,
         Some(row.series_id),
         Some(row.id.clone()),
         requested_scan_id,
@@ -606,7 +617,7 @@ pub async fn scan_issue_file(
 async fn open_scan_run(
     state: &AppState,
     library_id: Uuid,
-    kind: &str,
+    kind: ScanKind,
     series_id: Option<Uuid>,
     issue_id: Option<String>,
     requested_scan_id: Option<Uuid>,
@@ -617,9 +628,9 @@ async fn open_scan_run(
         // A "Scan all" pre-inserts this run with a `batch_id` (M6) — return
         // it so every event/emission under the scan can carry the link.
         let batch_id = existing.batch_id;
-        if existing.state == "queued" {
+        if existing.state == ScanRunState::Queued {
             let mut am: ScanRunAM = existing.into();
-            am.state = Set("running".to_owned());
+            am.state = Set(ScanRunState::Running);
             am.started_at = Set(now);
             am.error = Set(None);
             am.update(&state.db).await?;
@@ -629,12 +640,12 @@ async fn open_scan_run(
     let am = ScanRunAM {
         id: Set(scan_id),
         library_id: Set(library_id),
-        state: Set("running".into()),
+        state: Set(ScanRunState::Running),
         started_at: Set(now),
         ended_at: Set(None),
         stats: Set(serde_json::to_value(ScanStats::default())?),
         error: Set(None),
-        kind: Set(kind.to_owned()),
+        kind: Set(kind.run_kind()),
         series_id: Set(series_id),
         issue_id: Set(issue_id),
         // Stamped by the scan-all path (M6); single/series/issue scans are
@@ -701,13 +712,13 @@ async fn finalize_run(
     // re-emitting (see the event block below).
     let (final_state, error) = if cancelled {
         (
-            "cancelled".to_string(),
+            ScanRunState::Cancelled,
             Some("Cancelled by admin".to_string()),
         )
     } else {
         match result {
-            Ok(()) => ("complete".to_string(), None),
-            Err(e) => ("failed".to_string(), Some(e.to_string())),
+            Ok(()) => (ScanRunState::Complete, None),
+            Err(e) => (ScanRunState::Failed, Some(e.to_string())),
         }
     };
 
@@ -889,23 +900,24 @@ async fn maybe_finalize_batch(db: &impl ConnectionTrait, batch_id: Uuid) {
         }
     };
     // Still in progress — let the run that finishes last close the batch.
-    let pending = runs
-        .iter()
-        .any(|r| r.state == "running" || r.state == "queued");
+    let pending = runs.iter().any(|r| !r.state.is_terminal());
     if runs.is_empty() || pending {
         return;
     }
-    let complete = runs.iter().filter(|r| r.state == "complete").count();
+    let complete = runs
+        .iter()
+        .filter(|r| r.state == ScanRunState::Complete)
+        .count();
     let state = if complete == runs.len() {
-        "complete"
+        ScanBatchState::Complete
     } else if complete == 0 {
-        "failed"
+        ScanBatchState::Failed
     } else {
-        "partial_failed"
+        ScanBatchState::PartialFailed
     };
     let update = scan_batch::ActiveModel {
         id: Set(batch_id),
-        state: Set(state.to_owned()),
+        state: Set(state),
         ended_at: Set(Some(Utc::now().fixed_offset())),
         ..Default::default()
     };
@@ -930,7 +942,7 @@ pub(crate) async fn fail_unstarted_run(
         return;
     };
     let run = match ScanRunEntity::find_by_id(scan_id).one(&state.db).await {
-        Ok(Some(r)) if r.state == "queued" => r,
+        Ok(Some(r)) if r.state == ScanRunState::Queued => r,
         Ok(_) => return,
         Err(e) => {
             tracing::error!(error = %e, %scan_id, "scan: load unstarted run failed");
@@ -939,7 +951,7 @@ pub(crate) async fn fail_unstarted_run(
     };
     let batch_id = run.batch_id;
     let mut am: ScanRunAM = run.into();
-    am.state = Set("failed".to_owned());
+    am.state = Set(ScanRunState::Failed);
     am.ended_at = Set(Some(Utc::now().fixed_offset()));
     am.error = Set(Some(error.to_owned()));
     if let Err(e) = am.update(&state.db).await {
@@ -1835,10 +1847,10 @@ async fn run_phases(
     if let Ok(Some(st)) = ScanRunEntity::find_by_id(scan_id)
         .select_only()
         .column(entity::scan_run::Column::State)
-        .into_tuple::<String>()
+        .into_tuple::<ScanRunState>()
         .one(&state.db)
         .await
-        && st == "cancelled"
+        && st == ScanRunState::Cancelled
     {
         cancel.store(true, Ordering::Relaxed);
         tracing::info!(scan_id = %scan_id, "scan: cancelled before processing — skipping per-folder work");
@@ -2027,10 +2039,10 @@ async fn run_phases(
                         if let Ok(Some(st)) = ScanRunEntity::find_by_id(scan_id)
                             .select_only()
                             .column(entity::scan_run::Column::State)
-                            .into_tuple::<String>()
+                            .into_tuple::<ScanRunState>()
                             .one(&state.db)
                             .await
-                            && st == "cancelled"
+                            && st == ScanRunState::Cancelled
                         {
                             cancel.store(true, Ordering::Relaxed);
                             tracing::info!(scan_id = %scan_id, "scan: cancellation requested — draining in-flight folders");

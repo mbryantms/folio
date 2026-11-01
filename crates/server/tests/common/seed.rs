@@ -618,7 +618,7 @@ impl<'a> CollectionSeed<'a> {
         SavedViewAM {
             id: Set(id),
             user_id: Set(Some(self.owner)),
-            kind: Set("collection".into()),
+            kind: Set(entity::saved_view::SavedViewKind::Collection),
             system_key: Set(None),
             name: Set(self.name.into()),
             description: Set(None),

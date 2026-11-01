@@ -42,7 +42,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{library, saved_view, user_page, user_sidebar_entry, user_view_pin};
+use entity::saved_view::{self, SavedViewKind};
+use entity::{library, user_page, user_sidebar_entry, user_view_pin};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
     TransactionTrait,
@@ -59,19 +60,23 @@ use crate::library::access;
 use crate::state::AppState;
 use server_macros::handler;
 
-pub const KIND_BUILTIN: &str = "builtin";
-pub const KIND_LIBRARY: &str = "library";
-pub const KIND_VIEW: &str = "view";
+// `user_sidebar_entries.kind` values. Since AR-7 the column is the typed
+// `entity::user_sidebar_entry::SidebarEntryKind`; these names stay as
+// aliases of its variants so call sites and `match` arms read as before.
+pub use entity::user_sidebar_entry::SidebarEntryKind;
+pub const KIND_BUILTIN: SidebarEntryKind = SidebarEntryKind::Builtin;
+pub const KIND_LIBRARY: SidebarEntryKind = SidebarEntryKind::Library;
+pub const KIND_VIEW: SidebarEntryKind = SidebarEntryKind::View;
 /// Multi-page rails M4 — a user-created page (`user_page.id`).
 /// `ref_id` carries the page id; the entry surfaces in the sidebar
 /// between the Home built-in and Bookmarks.
-pub const KIND_PAGE: &str = "page";
+pub const KIND_PAGE: SidebarEntryKind = SidebarEntryKind::Page;
 /// Custom section title row. `ref_id` is a client-generated UUID
 /// (composite-PK uniqueness); `label` carries the displayed text.
-pub const KIND_HEADER: &str = "header";
+pub const KIND_HEADER: SidebarEntryKind = SidebarEntryKind::Header;
 /// Visual gap row — no label, no link. `ref_id` is a client-generated
 /// UUID for PK uniqueness.
-pub const KIND_SPACER: &str = "spacer";
+pub const KIND_SPACER: SidebarEntryKind = SidebarEntryKind::Spacer;
 
 /// Built-in sidebar entries, in their default top-down order. The
 /// client maps each `key` to an icon via the same registry used by
@@ -150,7 +155,7 @@ pub struct SidebarLayoutView {
 
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct SidebarEntryView {
-    pub kind: String,
+    pub kind: SidebarEntryKind,
     pub ref_id: String,
     pub label: String,
     pub icon: String,
@@ -212,34 +217,35 @@ pub async fn update_layout(
     // Validate the payload before opening a transaction. `seen` catches
     // duplicate (kind, ref_id) pairs that would otherwise produce
     // conflicting override rows.
-    let mut seen: HashSet<(String, String)> = HashSet::new();
+    let mut seen: HashSet<(SidebarEntryKind, String)> = HashSet::new();
+    let mut kinds: Vec<SidebarEntryKind> = Vec::with_capacity(req.entries.len());
     for e in &req.entries {
-        match e.kind.as_str() {
-            KIND_BUILTIN | KIND_LIBRARY | KIND_VIEW | KIND_PAGE | KIND_HEADER | KIND_SPACER => {}
-            other => {
-                return error(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation",
-                    &format!("unknown sidebar entry kind '{other}'"),
-                );
-            }
-        }
+        // `kind` stays a free string on the request so an unknown value
+        // keeps this 422 + message instead of a body-deserialize error.
+        let Some(kind) = SidebarEntryKind::parse(&e.kind) else {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                &format!("unknown sidebar entry kind '{}'", e.kind),
+            );
+        };
         // Header rows must carry a non-empty label; otherwise the
         // sidebar would render a mute row with no affordance.
-        if e.kind == KIND_HEADER && e.label.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        if kind == KIND_HEADER && e.label.as_deref().map(str::trim).unwrap_or("").is_empty() {
             return error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 "header entries require a non-empty label",
             );
         }
-        if !seen.insert((e.kind.clone(), e.ref_id.clone())) {
+        if !seen.insert((kind, e.ref_id.clone())) {
             return error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "validation",
                 &format!("duplicate {} entry for ref_id={}", e.kind, e.ref_id),
             );
         }
+        kinds.push(kind);
     }
 
     let txn = match app.db.begin().await {
@@ -262,7 +268,7 @@ pub async fn update_layout(
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
 
-    for e in req.entries {
+    for (e, kind) in req.entries.into_iter().zip(kinds) {
         let label = e
             .label
             .as_ref()
@@ -270,7 +276,7 @@ pub async fn update_layout(
             .filter(|s| !s.is_empty());
         let am = user_sidebar_entry::ActiveModel {
             user_id: Set(user.id),
-            kind: Set(e.kind),
+            kind: Set(kind),
             ref_id: Set(e.ref_id),
             visible: Set(e.visible),
             position: Set(e.position),
@@ -308,9 +314,10 @@ pub(crate) async fn compute_layout(
         .filter(user_sidebar_entry::Column::UserId.eq(user.id))
         .all(&app.db)
         .await?;
-    let mut override_by_key: HashMap<(String, String), user_sidebar_entry::Model> = HashMap::new();
+    let mut override_by_key: HashMap<(SidebarEntryKind, String), user_sidebar_entry::Model> =
+        HashMap::new();
     for o in overrides {
-        override_by_key.insert((o.kind.clone(), o.ref_id.clone()), o);
+        override_by_key.insert((o.kind, o.ref_id.clone()), o);
     }
 
     // Multi-page rails M4: pull every user_page row in one query. The
@@ -342,7 +349,7 @@ pub(crate) async fn compute_layout(
             b.label.to_string()
         };
         defaults.push(SidebarEntryView {
-            kind: KIND_BUILTIN.to_string(),
+            kind: KIND_BUILTIN,
             ref_id: b.key.to_string(),
             label,
             icon: b.icon.to_string(),
@@ -358,7 +365,7 @@ pub(crate) async fn compute_layout(
     //    them in one section even though one is virtual.
     defaults.push(default_header("default:libraries", "Libraries"));
     defaults.push(SidebarEntryView {
-        kind: KIND_LIBRARY.to_string(),
+        kind: KIND_LIBRARY,
         ref_id: ALL_LIBRARIES_REF_ID.to_string(),
         label: "All Libraries".to_string(),
         icon: "Library".to_string(),
@@ -376,7 +383,7 @@ pub(crate) async fn compute_layout(
             continue;
         }
         defaults.push(SidebarEntryView {
-            kind: KIND_LIBRARY.to_string(),
+            kind: KIND_LIBRARY,
             ref_id: lib.id.to_string(),
             label: lib.name,
             icon: "Library".to_string(),
@@ -394,7 +401,7 @@ pub(crate) async fn compute_layout(
         defaults.push(default_header("default:pages", "Pages"));
         for page in &custom_pages {
             defaults.push(SidebarEntryView {
-                kind: KIND_PAGE.to_string(),
+                kind: KIND_PAGE,
                 ref_id: page.id.to_string(),
                 label: page.name.clone(),
                 icon: "LayoutGrid".to_string(),
@@ -430,7 +437,7 @@ pub(crate) async fn compute_layout(
                 continue;
             };
             defaults.push(SidebarEntryView {
-                kind: KIND_VIEW.to_string(),
+                kind: KIND_VIEW,
                 ref_id: v.id.to_string(),
                 label: v.name.clone(),
                 icon: p.icon.clone().unwrap_or_else(|| view_default_icon(v)),
@@ -451,7 +458,7 @@ pub(crate) async fn compute_layout(
     let max_default_position = defaults.len() as i32;
     for (idx, entry) in defaults.iter_mut().enumerate() {
         entry.position = idx as i32;
-        if let Some(o) = override_by_key.remove(&(entry.kind.clone(), entry.ref_id.clone())) {
+        if let Some(o) = override_by_key.remove(&(entry.kind, entry.ref_id.clone())) {
             entry.visible = o.visible;
             entry.position = o.position;
             if let Some(label) = o.label
@@ -470,12 +477,12 @@ pub(crate) async fn compute_layout(
     //    stays consistent with the rest of the app.
     let mut leftover_position = max_default_position;
     let mut extras: Vec<user_sidebar_entry::Model> = override_by_key.into_values().collect();
-    extras.sort_by_key(|o| (o.position, o.kind.clone(), o.ref_id.clone()));
+    extras.sort_by_key(|o| (o.position, o.kind.as_str(), o.ref_id.clone()));
     for o in extras {
-        match o.kind.as_str() {
+        match o.kind {
             KIND_HEADER => {
                 defaults.push(SidebarEntryView {
-                    kind: KIND_HEADER.to_string(),
+                    kind: KIND_HEADER,
                     ref_id: o.ref_id,
                     label: o.label.unwrap_or_default(),
                     icon: String::new(),
@@ -486,7 +493,7 @@ pub(crate) async fn compute_layout(
             }
             KIND_SPACER => {
                 defaults.push(SidebarEntryView {
-                    kind: KIND_SPACER.to_string(),
+                    kind: KIND_SPACER,
                     ref_id: o.ref_id,
                     label: String::new(),
                     icon: String::new(),
@@ -513,7 +520,7 @@ pub(crate) async fn compute_layout(
 
 fn default_header(ref_id: &str, label: &str) -> SidebarEntryView {
     SidebarEntryView {
-        kind: KIND_HEADER.to_string(),
+        kind: KIND_HEADER,
         ref_id: ref_id.to_string(),
         label: label.to_string(),
         icon: String::new(),
@@ -524,18 +531,17 @@ fn default_header(ref_id: &str, label: &str) -> SidebarEntryView {
 }
 
 fn view_default_icon(v: &saved_view::Model) -> String {
-    match v.kind.as_str() {
-        "system" => "sparkles",
-        "filter_series" | "filter_issues" => "filter",
-        "cbl" => "list-ordered",
-        "collection" => "Folder",
-        _ => "filter",
+    match v.kind {
+        SavedViewKind::System => "sparkles",
+        SavedViewKind::FilterSeries | SavedViewKind::FilterIssues => "filter",
+        SavedViewKind::Cbl => "list-ordered",
+        SavedViewKind::Collection => "Folder",
     }
     .to_string()
 }
 
 fn view_href(v: &saved_view::Model) -> String {
-    if v.kind == "system"
+    if v.kind == SavedViewKind::System
         && let Some(key) = v.system_key.as_ref()
     {
         return format!("/views/{}", key.replace('_', "-"));
