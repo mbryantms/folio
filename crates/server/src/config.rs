@@ -140,6 +140,12 @@ pub struct Config {
     /// it trusts the IdP's `email_verified` assertion for account linking.
     #[serde(default)]
     pub oidc_link_local_by_verified_email: bool,
+    /// When true (and OIDC is enabled), `/sign-in` sends visitors straight to
+    /// the IdP instead of showing the sign-in page. `?local=1` on the sign-in
+    /// URL, or any OIDC error on the page, suppresses the redirect so the
+    /// local form stays reachable (break-glass when the IdP is down).
+    #[serde(default)]
+    pub oidc_auto_redirect: bool,
 
     // Local
     #[serde(default)]
@@ -553,6 +559,7 @@ impl std::fmt::Debug for Config {
                 "oidc_link_local_by_verified_email",
                 &self.oidc_link_local_by_verified_email,
             )
+            .field("oidc_auto_redirect", &self.oidc_auto_redirect)
             .field("local_registration_open", &self.local_registration_open)
             .field("jwt_access_ttl", &self.jwt_access_ttl)
             .field("jwt_refresh_ttl", &self.jwt_refresh_ttl)
@@ -1237,6 +1244,19 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "bool", &row.value),
         },
+        "auth.oidc.auto_redirect" => match row.value.as_bool() {
+            Some(b) => {
+                if cfg.oidc_auto_redirect != b {
+                    tracing::debug!(
+                        env = cfg.oidc_auto_redirect,
+                        db = b,
+                        "auth.oidc.auto_redirect overridden by DB"
+                    );
+                }
+                cfg.oidc_auto_redirect = b;
+            }
+            None => bad_type(&row.key, "bool", &row.value),
+        },
 
         // ───────── Tokens + hardening + log level (M4) ─────────
         "auth.jwt.access_ttl" => match row.value.as_str() {
@@ -1717,6 +1737,7 @@ mod tests {
             oidc_client_secret: None,
             oidc_trust_unverified_email: false,
             oidc_link_local_by_verified_email: false,
+            oidc_auto_redirect: false,
             local_registration_open: true,
             jwt_access_ttl: "24h".into(),
             jwt_refresh_ttl: "30d".into(),

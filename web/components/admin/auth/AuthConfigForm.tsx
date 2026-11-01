@@ -30,6 +30,7 @@ export type AuthConfigInitial = {
   oidc_client_secret_set: boolean;
   oidc_trust_unverified_email: boolean;
   oidc_link_local_by_verified_email: boolean;
+  oidc_auto_redirect: boolean;
 };
 
 type FormState = AuthConfigInitial & { oidc_client_secret_input: string };
@@ -68,7 +69,8 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     state.oidc_client_secret_input !== "" ||
     state.oidc_trust_unverified_email !== initial.oidc_trust_unverified_email ||
     state.oidc_link_local_by_verified_email !==
-      initial.oidc_link_local_by_verified_email;
+      initial.oidc_link_local_by_verified_email ||
+    state.oidc_auto_redirect !== initial.oidc_auto_redirect;
 
   async function onSave() {
     // `disabled={!dirty}` on the submit button makes the no-op path
@@ -102,6 +104,9 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     ) {
       patch["auth.oidc.link_local_by_verified_email"] =
         state.oidc_link_local_by_verified_email;
+    }
+    if (state.oidc_auto_redirect !== initial.oidc_auto_redirect) {
+      patch["auth.oidc.auto_redirect"] = state.oidc_auto_redirect;
     }
 
     await update.mutateAsync(patch);
@@ -349,6 +354,28 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                 </span>
               </div>
             )}
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label htmlFor={`${ids}-auto-redirect`} className="text-sm">
+                  Skip the sign-in page
+                </Label>
+                <p className="text-muted-foreground text-xs">
+                  When ON, <code>/sign-in</code> sends people straight to your
+                  IdP, so anyone already signed in there lands in Folio without
+                  a click. Add <code>?local=1</code> to the sign-in URL to reach
+                  the password form if the IdP is down.
+                </p>
+              </div>
+              <Switch
+                id={`${ids}-auto-redirect`}
+                checked={state.oidc_auto_redirect}
+                onCheckedChange={(v) =>
+                  setState((s) => ({ ...s, oidc_auto_redirect: v }))
+                }
+                disabled={!oidcEnabled}
+              />
+            </div>
           </CardContent>
         </Card>
       </div>

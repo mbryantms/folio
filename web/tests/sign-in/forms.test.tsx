@@ -66,6 +66,7 @@ describe("credential forms — progressive enhancement", () => {
           oidc_enabled: false,
           registration_open: true,
           password_recovery_enabled: false,
+          oidc_auto_redirect: false,
         },
         next: null,
         banner: null,

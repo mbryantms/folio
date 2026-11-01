@@ -12690,6 +12690,13 @@ export interface components {
             /** @description `'oidc' | 'local' | 'both'` — drives the form/SSO toggle. */
             auth_mode: string;
             /**
+             * @description True when the sign-in page should send visitors straight to the IdP
+             *     (`auth.oidc.auto_redirect`). Only ever true when `oidc_enabled` is.
+             *     The page still honours `?local=1` and never redirects while showing
+             *     an OIDC error.
+             */
+            oidc_auto_redirect: boolean;
+            /**
              * @description True when the OIDC provider is wired AND `auth_mode` permits it.
              *     When false, the sign-in page hides the SSO button.
              */

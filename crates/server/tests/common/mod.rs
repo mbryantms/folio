@@ -582,6 +582,8 @@ pub struct SpawnOpts {
     /// Mirrors `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL` — auto-link an OIDC
     /// identity onto a matching local account on first verified-email login.
     pub oidc_link_local_by_verified_email: bool,
+    /// Mirrors `COMIC_OIDC_AUTO_REDIRECT` — `/sign-in` goes straight to the IdP.
+    pub oidc_auto_redirect: bool,
     /// Override the library root path. Default of `/tmp/library` is a
     /// bogus path that the scanner / fs-list handlers reject as missing
     /// — pass `Some(real_dir)` when the test needs the handler to read
@@ -732,6 +734,25 @@ impl TestApp {
         Self::spawn_inner(SpawnOpts {
             oidc_issuer: Some(issuer.into()),
             oidc_link_local_by_verified_email: true,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// Spawn with OIDC configured and `auth.oidc.auto_redirect` on.
+    pub async fn spawn_with_oidc_auto_redirect(issuer: impl Into<String>) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            oidc_issuer: Some(issuer.into()),
+            oidc_auto_redirect: true,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// Auto-redirect requested with NO IdP configured (misconfiguration guard).
+    pub async fn spawn_with_auto_redirect_without_oidc() -> Self {
+        Self::spawn_inner(SpawnOpts {
+            oidc_auto_redirect: true,
             ..SpawnOpts::default()
         })
         .await
@@ -964,6 +985,7 @@ impl TestApp {
                 .map(|_| "folio-test-secret".to_string()),
             oidc_trust_unverified_email: opts.oidc_trust_unverified_email,
             oidc_link_local_by_verified_email: opts.oidc_link_local_by_verified_email,
+            oidc_auto_redirect: opts.oidc_auto_redirect,
             local_registration_open: true,
             jwt_access_ttl: "15m".into(),
             jwt_refresh_ttl: "30d".into(),

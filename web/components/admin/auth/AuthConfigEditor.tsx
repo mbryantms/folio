@@ -66,5 +66,6 @@ function pickAuthValues(
       "auth.oidc.link_local_by_verified_email",
       false,
     ),
+    oidc_auto_redirect: asBool("auth.oidc.auto_redirect", false),
   };
 }
