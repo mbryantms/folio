@@ -48,8 +48,10 @@ pub struct Model {
     /// the `markers_body_size_chk` constraint.
     #[sea_orm(nullable)]
     pub body: Option<String>,
-    /// Palette token (e.g. `yellow | green | blue | red | violet`).
-    /// Free-form text — the client maps it to its own swatch registry.
+    /// Palette name (`yellow | green | blue | red | violet`) or a
+    /// `#RRGGBB` / `#RRGGBBAA` hex; NULL for "no colour". Validated by the
+    /// markers API and bounded by the `markers_color_chk` CHECK
+    /// (`m20271101_000002_marker_color_check`).
     #[sea_orm(nullable)]
     pub color: Option<String>,
     pub created_at: DateTimeWithTimeZone,

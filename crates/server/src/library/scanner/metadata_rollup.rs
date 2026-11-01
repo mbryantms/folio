@@ -7,7 +7,8 @@
 //!   - `replace_issue_metadata` — called from the per-issue upsert in
 //!     `process::ingest_one_with_fingerprint`. Wipes and re-writes a single
 //!     issue's `issue_genres / issue_tags / issue_credits` rows from the
-//!     ComicInfo CSVs (or the user-edited values if the column is sticky).
+//!     ComicInfo CSVs (or the DB values where `field_provenance` protects
+//!     the column from the file).
 //!   - `rollup_series_metadata` — called once per series after a folder scan
 //!     completes. Recomputes `series_genres / series_tags / series_credits`
 //!     as the distinct union of the series's active issues' junctions.
@@ -68,7 +69,8 @@ impl CreditRole {
     }
 }
 
-/// Resolved per-issue metadata values, post-user-edited check. `genre` /
+/// Resolved per-issue metadata values, after the `field_provenance`
+/// protection check. `genre` /
 /// `tags` carry the raw CSV strings as written to the issue row; each credit
 /// role likewise holds its raw CSV. Splitting + dedup + write happens here.
 #[derive(Debug, Default, Clone)]
@@ -1172,7 +1174,7 @@ pub async fn replace_issue_metadata_from_row<C: ConnectionTrait>(
     issue_id: &str,
 ) -> Result<(), sea_orm::DbErr> {
     // We re-read the row inside the txn so we always reflect the values that
-    // just got written (post user-edited stickiness). Cheap PK lookup.
+    // just got written (after `field_provenance` protection). Cheap PK lookup.
     let row = issue::Entity::find_by_id(issue_id.to_owned())
         .one(db)
         .await?;

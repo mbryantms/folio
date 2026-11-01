@@ -11797,7 +11797,7 @@ export interface components {
             month: number;
         };
         /** @enum {string} */
-        Op: "contains" | "not_contains" | "starts_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "not_relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false" | "is_empty" | "is_not_empty";
+        Op: "contains" | "not_contains" | "starts_with" | "ends_with" | "equals" | "not_equals" | "is" | "is_not" | "in" | "not_in" | "gt" | "gte" | "lt" | "lte" | "between" | "before" | "after" | "relative" | "not_relative" | "includes_any" | "includes_all" | "excludes" | "is_true" | "is_false" | "is_empty" | "is_not_empty";
         OverviewView: {
             /**
              * Format: int64
@@ -14955,8 +14955,8 @@ export interface components {
          *
          *     Every field is optional. For nullable columns the body distinguishes:
          *       - field absent     → leave column untouched
-         *       - field present, null → clear column, mark as user-edited
-         *       - field present, set  → write column, mark as user-edited
+         *       - field present, null → clear column, pin it (`set_by='user'`)
+         *       - field present, set  → write column, pin it (`set_by='user'`)
          *
          *     `additional_links` is replace-all: send the full desired array, or `[]`
          *     to clear. Empty / whitespace-only `url` entries are rejected.
