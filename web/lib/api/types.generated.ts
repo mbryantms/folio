@@ -3789,7 +3789,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * The caller's hidden rail items, newest dismissal first, each with its
+         *     target hydrated for display. Only the caller's own rows, and only those
+         *     whose target the caller can currently see (the same live + grant + cap
+         *     selects collections use); the rest are counted in `unavailable`.
+         */
+        get: operations["rails_list_dismissals"];
         put?: never;
         post: operations["rails_create_dismissal"];
         delete?: never;
@@ -8962,6 +8968,12 @@ export interface components {
             name: string;
             path: string;
         };
+        /**
+         * @description A surface that honours dismissals: the home rails, the series page's
+         *     Similar series rail, and the OPDS Continue reading feeds.
+         * @enum {string}
+         */
+        DismissalRail: "continue_reading" | "recent_history" | "on_deck" | "random_picks" | "similar_series" | "opds_continue_reading";
         DowHourCell: {
             /** Format: int64 */
             active_ms: number;
@@ -12446,6 +12458,67 @@ export interface components {
             remaining_hour?: number | null;
             /** Format: int64 */
             seconds_until_reset?: number | null;
+        };
+        /**
+         * @description Kind of a hidden rail target.
+         * @enum {string}
+         */
+        RailDismissalKind: "issue" | "series" | "cbl";
+        /**
+         * @description `GET /me/rail-dismissals` page. The `CursorPage` shape plus one
+         *     first-page count: dismissals whose target the caller can no longer
+         *     see (soft-removed, outside the library grant, over the age cap, or
+         *     deleted) are never listed, and `unavailable` says how many there are.
+         */
+        RailDismissalListView: {
+            items: components["schemas"]["RailDismissalView"][];
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Listed dismissals in total; first page only.
+             */
+            total?: number | null;
+            /**
+             * Format: int64
+             * @description Dismissals withheld because their target is not visible; first
+             *     page only.
+             */
+            unavailable?: number | null;
+        };
+        /**
+         * @description The hydrated target of a dismissal. Which link fields are set depends
+         *     on the kind: `slug` + `series_slug` for an issue, `slug` for a series,
+         *     `saved_view_id` for a CBL reading list (absent when no saved view
+         *     wraps the list).
+         */
+        RailDismissalTargetView: {
+            /** @description Cover thumbnail URL; `None` for reading lists and coverless series. */
+            cover_url?: string | null;
+            /**
+             * @description Display name: `"<series> #<number>"` for an issue, the series name,
+             *     or the reading-list name.
+             */
+            name: string;
+            /** @description Saved-view id (kind `cbl`) wrapping the list (cbl only). */
+            saved_view_id?: string | null;
+            /** @description Parent series slug (issue only). */
+            series_slug?: string | null;
+            /** @description Issue slug (issue) or series slug (series). */
+            slug?: string | null;
+            /** @description Secondary line: the issue title, or the series start year. */
+            subtitle?: string | null;
+        };
+        /** @description One hidden rail item. */
+        RailDismissalView: {
+            /** @description RFC 3339 timestamp of the (latest) dismissal. */
+            dismissed_at: string;
+            /** @description The rails this dismissal hides the target from. */
+            hidden_from: components["schemas"]["DismissalRail"][];
+            /** @description Stable id of the dismissal, `"<kind>:<target_id>"`. */
+            id: string;
+            target: components["schemas"]["RailDismissalTargetView"];
+            target_id: string;
+            target_kind: components["schemas"]["RailDismissalKind"];
         };
         /**
          * @description Random-picks rail: a daily shuffle of series the caller hasn't
@@ -23028,6 +23101,37 @@ export interface operations {
                 };
             };
             /** @description validation */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rails_list_dismissals: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /** @description Page size; default 50, max 200. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RailDismissalListView"];
+                };
+            };
+            /** @description invalid cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
