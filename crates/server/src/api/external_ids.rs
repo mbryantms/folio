@@ -28,7 +28,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::{external_id, issue, series};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use utoipa_axum::router::OpenApiRouter;
@@ -235,7 +235,7 @@ pub async fn list_issue(
     user: CurrentUser,
     Path((slug, issue_slug)): Path<(String, String)>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((s, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
     if !crate::library::access::series_visible(&app, &user, &s).await {
@@ -245,10 +245,10 @@ pub async fn list_issue(
             "library access denied",
         );
     }
-    let rows = fetch_rows(&app, "issue", &i.id).await;
+    let rows = fetch_rows(&app, "issue", &issue_id).await;
     Json(ExternalIdsListResp {
         entity_type: "issue".into(),
-        entity_id: i.id.clone(),
+        entity_id: issue_id,
         rows,
     })
     .into_response()
@@ -276,10 +276,10 @@ pub async fn add_issue(
     Path((slug, issue_slug)): Path<(String, String)>,
     Validated(req): Validated<AddExternalIdReq>,
 ) -> Response {
-    let Some((_, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    match upsert_user_identifier(&app, &user, &ctx, "issue", &i.id, &req).await {
+    match upsert_user_identifier(&app, &user, &ctx, "issue", &issue_id, &req).await {
         Ok(done) => {
             audit::record(&app.db, done.audit).await;
             done.response
@@ -307,10 +307,10 @@ pub async fn delete_issue(
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug, source)): Path<(String, String, String)>,
 ) -> Response {
-    let Some((_, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    match delete_identifier(&app, &user, &ctx, "issue", &i.id, &source).await {
+    match delete_identifier(&app, &user, &ctx, "issue", &issue_id, &source).await {
         Ok(done) => {
             audit::record(&app.db, done.audit).await;
             done.response
@@ -586,20 +586,25 @@ async fn manual_rewrite(
     }
 }
 
+/// The series and the issue's id. Projects the id only: the full
+/// `issue::Model` carries the large `comic_info_raw`.
 async fn find_series_issue(
     app: &AppState,
     series_slug: &str,
     issue_slug: &str,
-) -> Option<(series::Model, issue::Model)> {
+) -> Option<(series::Model, String)> {
     let s = crate::api::series::find_by_slug(&app.db, series_slug)
         .await
         .ok()?;
-    let i = issue::Entity::find()
+    let issue_id = issue::Entity::find()
+        .select_only()
+        .column(issue::Column::Id)
         .filter(issue::Column::SeriesId.eq(s.id))
         .filter(issue::Column::Slug.eq(issue_slug))
+        .into_tuple::<String>()
         .one(&app.db)
         .await
         .ok()
         .flatten()?;
-    Some((s, i))
+    Some((s, issue_id))
 }

@@ -9823,7 +9823,7 @@
             }
           },
           "403": {
-            "description": "batch not visible / override_user_edits requires admin"
+            "description": "batch not visible / override_user_edits / override_external_id_sources requires admin"
           },
           "404": {
             "description": "batch not found"
@@ -11651,7 +11651,7 @@
             "description": "candidate not found / no providers"
           },
           "403": {
-            "description": "library access denied / override_user_edits requires admin"
+            "description": "library access denied / override_user_edits / override_external_id_sources requires admin"
           },
           "404": {
             "description": "issue / run not found"
@@ -12086,7 +12086,7 @@
             "description": "candidate not found / no providers"
           },
           "403": {
-            "description": "library access denied / override_user_edits requires admin"
+            "description": "library access denied / override_user_edits / override_external_id_sources requires admin"
           },
           "404": {
             "description": "series / run not found"

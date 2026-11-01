@@ -302,8 +302,8 @@ export function SeriesProviderRangesCard({
             </CardTitle>
             <CardDescription className="text-xs">
               Each provider&apos;s series for this run, and where it files
-              annuals, specials and renumbered stretches. Unlinking a provider
-              clears its default series.
+              annuals, specials and renumbered stretches.
+              {isAdmin && " Unlinking a provider clears its default series."}
             </CardDescription>
           </div>
           {isAdmin && !adding && (
@@ -383,7 +383,9 @@ export function SeriesProviderRangesCard({
             </span>
             {otherIds.length === 0 ? (
               <span className="text-muted-foreground text-xs">
-                None linked · Marvel, League of Comic Geeks, ISBN, UPC, ASIN…
+                {isAdmin
+                  ? "None linked · Marvel, League of Comic Geeks, ISBN, UPC, ASIN…"
+                  : "None linked"}
               </span>
             ) : (
               otherIds.map((r) => (
