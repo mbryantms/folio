@@ -248,7 +248,13 @@ Default admin (first registered user becomes admin):
   for the slice-by-slice matrix and the "add a new setting" recipe.
 - **Audit log**: every mutating admin handler emits via `crate::audit::record`.
   Action names are dotted (`admin.user.update`, `admin.user.library_access.set`).
-  Append-only at the role level — never UPDATE/DELETE.
+  Append-only at the role level — never UPDATE/DELETE from a handler. The
+  **one sanctioned deleter** is the scheduled export-and-trim job
+  [`jobs/audit_log_retention.rs`](crates/server/src/jobs/audit_log_retention.rs)
+  (daily 03:45 UTC, `audit_log.retention_days`, default `0` = keep forever,
+  floor 90): it writes rows older than the cutoff to NDJSON under
+  `data_path/audit-log-exports/` and deletes only what the file holds. Don't
+  add a second delete path, and don't turn the job into a handler.
 - **CSRF**: cookie-bound. POST/PATCH/DELETE require `X-CSRF-Token` header
   matching `__Host-comic_csrf` cookie. Bearer-auth requests bypass.
 - **Cursor pagination**: `next_cursor` is opaque (base64). Don't expose ordering

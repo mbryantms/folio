@@ -39,6 +39,26 @@ operator can scan for `internal`, `validation`, etc.
 **Activity feed** is `audit` + `reading` only. Scan + health were removed from
 it (M13) — they're the Library stream.
 
+**Retention.** The ring buffer is bounded by its 5k cap; `reading_sessions`
+are user data and never pruned. `audit_log` is append-only for every handler
+(only [`audit::record`](../../crates/server/src/audit.rs) writes it, nothing
+updates or deletes) and unbounded by default. The one sanctioned deleter is the
+daily 03:45 UTC export-and-trim job
+[`jobs::audit_log_retention`](../../crates/server/src/jobs/audit_log_retention.rs),
+driven by the live `audit_log.retention_days` setting (`/admin/server` → Audit
+log retention; `0` = keep forever, the default; floor 90 days). When set, rows
+older than the cutoff are streamed as newline-delimited JSON (one `audit_log`
+row per line, ordered by `created_at, id`) to
+`${COMIC_DATA_PATH}/audit-log-exports/audit-log-<timestamp>.ndjson` — written
+to a temp file, fsynced, renamed into place, directory fsynced — and only then
+deleted in 1000-row batches bounded to the `(created_at, id)` the export
+reached. A failed export (directory missing, unwritable, write or fsync error)
+logs at `error` and deletes nothing; a second run over the same window is a
+no-op. Counts land on one `info` line (`target = folio::audit_log_retention`)
+and the `folio_audit_log_trimmed_total` counter ([metrics.md](metrics.md)).
+The export directory sits inside the app-data volume, so the weekly
+`comic_data` backup carries it ([backup.md](../install/backup.md#audit-log-exports)).
+
 ## Library stream
 
 | Surface | Route | Source | Durability |
