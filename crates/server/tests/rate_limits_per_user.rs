@@ -142,6 +142,26 @@ async fn drain(
     panic!("{method} {uri}: bucket never tripped");
 }
 
+/// After a [`drain`], whether another route on the same instance answers
+/// 429. The bucket refills while this runs, so a token can appear between
+/// the trip and the request; a shared store still answers 429 within a few
+/// immediate requests, while a separate one would let all of them through.
+async fn shares_drained_bucket(
+    app: &TestApp,
+    auth: &Authed,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> bool {
+    for _ in 0..20 {
+        let (s, _, _) = http(app, method.clone(), uri, auth, body.clone()).await;
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            return true;
+        }
+    }
+    false
+}
+
 fn assert_envelope(body: &Value, bucket: &str) {
     assert_eq!(body["error"]["code"], "rate_limited", "{body:#}");
     let msg = body["error"]["message"].as_str().unwrap_or_default();
@@ -331,6 +351,11 @@ async fn saved_view_write_bucket_is_per_user() {
     let body = drain(&app, &a, Method::PATCH, &uri, patch.clone(), 60).await;
     assert_envelope(&body, "saved_view_write");
 
+    assert!(
+        shares_drained_bucket(&app, &a, Method::DELETE, &uri, None).await,
+        "the saved-view DELETE shares the PATCH's bucket"
+    );
+
     let (s, _, _) = http(&app, Method::PATCH, &uri, &b, patch).await;
     assert_eq!(s, StatusCode::NOT_FOUND, "second user reaches the handler");
 
@@ -362,6 +387,27 @@ async fn field_provenance_lock_is_metadata_bucketed() {
     let uri = format!("{issue}/field-provenance/title");
     let body = drain(&app, &a, Method::PUT, &uri, None, 30).await;
     assert_envelope(&body, "metadata_write");
+    // The pin clear, the issue PATCH and the bulk PATCH spend the same
+    // budget.
+    let siblings = [
+        (Method::DELETE, uri.clone(), None),
+        (
+            Method::PATCH,
+            issue.to_owned(),
+            Some(json!({"summary": "x"})),
+        ),
+        (
+            Method::PATCH,
+            "/api/me/issues/bulk-metadata".to_owned(),
+            Some(json!({"issue_ids": []})),
+        ),
+    ];
+    for (method, sibling, body) in siblings {
+        assert!(
+            shares_drained_bucket(&app, &a, method.clone(), &sibling, body).await,
+            "{method} {sibling} shares the lock's bucket"
+        );
+    }
 
     let (s, _, _) = http(&app, Method::PUT, &uri, &b, None).await;
     assert_ne!(
@@ -400,11 +446,39 @@ async fn cover_pick_and_external_id_writes_are_metadata_bucketed() {
     let pick = Some(json!({"page_index": 0}));
     let body = drain(&app, &a, Method::PATCH, cover, pick, 30).await;
     assert_envelope(&body, "metadata_write");
+    let variant = format!("{cover}/variant/{}", Uuid::now_v7());
+    let cover_siblings = [
+        (Method::POST, variant, None),
+        (Method::DELETE, format!("{cover}/variant"), None),
+        (
+            Method::PATCH,
+            "/api/series/does-not-exist/cover".to_owned(),
+            Some(json!({"issue_id": Uuid::now_v7()})),
+        ),
+    ];
+    for (method, sibling, body) in cover_siblings {
+        assert!(
+            shares_drained_bucket(&app, &a, method.clone(), &sibling, body).await,
+            "{method} {sibling} shares the cover pick's bucket"
+        );
+    }
 
     let ids = "/api/series/does-not-exist/external-ids";
     let add = Some(json!({"source": "comicvine", "external_id": "4050-1"}));
-    let body = drain(&app, &a, Method::POST, ids, add, 30).await;
+    let body = drain(&app, &a, Method::POST, ids, add.clone(), 30).await;
     assert_envelope(&body, "metadata_write");
+    let issue_ids = "/api/series/does-not-exist/issues/nope/external-ids";
+    let id_siblings = [
+        (Method::DELETE, format!("{ids}/comicvine"), None),
+        (Method::POST, issue_ids.to_owned(), add),
+        (Method::DELETE, format!("{issue_ids}/comicvine"), None),
+    ];
+    for (method, sibling, body) in id_siblings {
+        assert!(
+            shares_drained_bucket(&app, &a, method.clone(), &sibling, body).await,
+            "{method} {sibling} shares the external-id add's bucket"
+        );
+    }
 
     let (s, _, _) = http(&app, Method::GET, ids, &a, None).await;
     assert_ne!(

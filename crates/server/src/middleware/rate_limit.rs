@@ -332,7 +332,7 @@ pub const SEARCH: Bucket = Bucket {
 /// picks and id edits are one click each, with the control disabled while
 /// the request is in flight. A person saving issue after issue manages a
 /// few a minute; a writeback library turns each save into an archive
-/// rewrite job, so a script stops at 60 a minute.
+/// rewrite job, so a script stops at 60 a minute on each instance.
 pub const METADATA_WRITE: Bucket = Bucket {
     name: "metadata_write",
     period: Duration::from_secs(1),
@@ -361,8 +361,7 @@ pub const COLLECTION_WRITE: Bucket = Bucket {
 /// one DELETE behind a confirm.
 pub const SAVED_VIEW_WRITE: Bucket = Bucket {
     name: "saved_view_write",
-    period: Duration::from_millis(200),
-    burst: 60,
+    ..COLLECTION_WRITE
 };
 
 /// Collection reorder — per user (E3), 4/s sustained with a burst of 30:

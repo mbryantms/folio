@@ -80,15 +80,17 @@ pub(crate) const PICK_KIND: &str = "pick";
 const PICK_PROVIDER: &str = "user";
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    // Per-user bucket (E12, audit N-A5): every route here is a write, so
-    // the whole router shares one `METADATA_WRITE` instance. A pick is one
-    // click and queues a sidecar rewrite in a writeback library.
-    OpenApiRouter::new()
+    // Per-user bucket (E12, audit N-A5): the cover picks share one
+    // `METADATA_WRITE` instance in their own sub-router, so a read added
+    // here later stays unbucketed. A pick is one click and queues a
+    // sidecar rewrite in a writeback library.
+    let writes = OpenApiRouter::new()
         .routes(routes!(set_issue_cover))
         .routes(routes!(set_issue_variant_cover))
         .routes(routes!(clear_issue_variant_cover))
         .routes(routes!(set_series_cover))
-        .route_layer(rate_limit::METADATA_WRITE.build_per_user())
+        .route_layer(rate_limit::METADATA_WRITE.build_per_user());
+    OpenApiRouter::new().merge(writes)
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
