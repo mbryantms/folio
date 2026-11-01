@@ -59,8 +59,18 @@ use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Pre-2026-11 single state cookie. Still read as a fallback so a flow started
+/// on the previous build can finish; new flows use [`attempt_cookie_name`].
 const OIDC_STATE_COOKIE: &str = "__Host-comic_oidc";
 const LEGACY_OIDC_STATE_COOKIE: &str = "__Secure-comic_oidc";
+/// Per-attempt state cookies: `__Host-comic_oidc_<first 16 chars of state>`.
+/// One shared cookie broke sign-in whenever the browser issued `/start` more
+/// than once for a single click (Safari preloading/prefetching, duplicate
+/// navigations): each `/start` minted a new state and overwrote the cookie, so
+/// the callback carried the first state but found the last one ("oidc state
+/// mismatch"). Keying the cookie by its state lets concurrent attempts coexist.
+const OIDC_STATE_COOKIE_PREFIX: &str = "__Host-comic_oidc_";
+const OIDC_STATE_ID_LEN: usize = 16;
 const OIDC_STATE_TTL_SECS: u64 = 5 * 60;
 // Access + refresh TTLs come from config (`COMIC_JWT_ACCESS_TTL` / `_REFRESH_TTL`).
 // Defaults: 24h / 30d. Validated at startup so unwrapping in handlers is safe.
@@ -128,6 +138,17 @@ pub(crate) async fn clear_discovery_cache() {
     if let Some(cell) = DISCOVERY_CACHE.get() {
         cell.write().await.clear();
     }
+}
+
+/// Cookie name for the attempt that issued `state`. `state` reaches the
+/// callback from the query string, so only accept the base64url alphabet the
+/// CSRF token is drawn from — anything else could smuggle characters into a
+/// cookie name.
+fn attempt_cookie_name(state: &str) -> Option<String> {
+    let id = state.get(..OIDC_STATE_ID_LEN)?;
+    id.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        .then(|| format!("{OIDC_STATE_COOKIE_PREFIX}{id}"))
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -396,7 +417,10 @@ pub async fn start(
         }
     };
 
-    let mut state_cookie = Cookie::new(OIDC_STATE_COOKIE, signed_state);
+    // CsrfToken::new_random() is 32 random bytes, base64url — always ≥ 16 chars.
+    let cookie_name =
+        attempt_cookie_name(csrf.secret()).unwrap_or_else(|| OIDC_STATE_COOKIE.to_string());
+    let mut state_cookie = Cookie::new(cookie_name, signed_state);
     state_cookie.set_http_only(true);
     state_cookie.set_secure(true);
     state_cookie.set_same_site(axum_extra::extract::cookie::SameSite::Lax);
@@ -456,9 +480,21 @@ pub async fn callback(
         );
     };
 
-    // Recover the PKCE verifier and expected CSRF from the cookie.
-    let state_cookie = match jar.get(OIDC_STATE_COOKIE) {
-        Some(c) => c.value().to_owned(),
+    // Recover the PKCE verifier and expected CSRF from this attempt's cookie
+    // (falling back to the pre-2026-11 single cookie for in-flight flows).
+    let attempt_cookie = attempt_cookie_name(&state_param);
+    let found = attempt_cookie
+        .as_deref()
+        .and_then(|name| {
+            jar.get(name)
+                .map(|c| (name.to_owned(), c.value().to_owned()))
+        })
+        .or_else(|| {
+            jar.get(OIDC_STATE_COOKIE)
+                .map(|c| (OIDC_STATE_COOKIE.to_owned(), c.value().to_owned()))
+        });
+    let (used_cookie_name, state_cookie) = match found {
+        Some(found) => found,
         None => {
             return error(
                 StatusCode::BAD_REQUEST,
@@ -890,6 +926,7 @@ pub async fn callback(
 
     let csrf_token = cookies::new_csrf_token();
     let jar = jar
+        .remove(cookies::clear(used_cookie_name, "/"))
         .remove(cookies::clear(OIDC_STATE_COOKIE, "/"))
         .remove(cookies::clear(
             LEGACY_OIDC_STATE_COOKIE,

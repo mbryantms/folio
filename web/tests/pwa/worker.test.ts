@@ -62,6 +62,25 @@ describe("worker isolation", () => {
     expect(event.respondWith).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
   });
+  it.each([
+    "/auth/oidc/start",
+    "/auth/oidc/start?redirect_after=%2Flibrary",
+    "/auth/oidc/callback?code=c&state=s",
+    "/auth/logout",
+  ])("lets the browser perform the %s navigation natively", (path) => {
+    // OIDC start/callback must not be re-fetched by the worker: a duplicate
+    // /start mints a second state and breaks the sign-in (2026-11-01).
+    const event = request(path, { mode: "navigate" });
+    expect(event.stopImmediatePropagation).toHaveBeenCalled();
+    expect(event.respondWith).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("still handles ordinary page navigations (offline fallback)", () => {
+    // Prefix match is on "/auth/", not "/auth": unrelated pages keep the worker.
+    vi.mocked(fetch).mockResolvedValue(new Response("page"));
+    const event = request("/auth-settings", { mode: "navigate" });
+    expect(event.respondWith).toHaveBeenCalled();
+  });
   it("never reissues RSC navigations", () => {
     const event = request("/series/example", { rsc: true });
     expect(event.respondWith).not.toHaveBeenCalled();

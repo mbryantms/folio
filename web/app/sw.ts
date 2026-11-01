@@ -149,11 +149,19 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   const request = event.request;
   const url = new URL(request.url);
   const bypass = () => event.stopImmediatePropagation();
+  // `/auth/*` (OIDC start/callback, logout) are server routes that answer
+  // with redirects and set auth cookies. Let the browser perform them as
+  // native navigations, never through `respondWith(fetch())`: a worker hop
+  // adds nothing (no offline value for a login redirect) and widened the
+  // window for duplicate `/auth/oidc/start` requests that each minted a new
+  // OIDC state ("oidc state mismatch", seen from Safari, 2026-11-01).
   if (
     url.origin !== self.location.origin ||
     request.method !== "GET" ||
     url.pathname === "/api" ||
     url.pathname.startsWith("/api/") ||
+    url.pathname === "/auth" ||
+    url.pathname.startsWith("/auth/") ||
     request.headers.get("RSC") === "1"
   ) {
     bypass();

@@ -63,7 +63,10 @@ pub fn locale_cookie(value: String) -> Cookie<'static> {
     c
 }
 
-pub fn clear(name: &'static str, path: &'static str) -> Cookie<'static> {
+pub fn clear(
+    name: impl Into<std::borrow::Cow<'static, str>>,
+    path: &'static str,
+) -> Cookie<'static> {
     let mut c = Cookie::new(name, "");
     c.set_path(path);
     c.set_max_age(time::Duration::seconds(0));
