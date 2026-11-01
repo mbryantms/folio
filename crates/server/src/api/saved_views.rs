@@ -2277,7 +2277,7 @@ pub enum BatchTargets {
 /// endpoint. Filter views compile to matching series (capped at
 /// [`REFRESH_BATCH_CAP`]); CBL views enumerate their matched library issues.
 /// Returns an `Err(Response)` (404/403/422/500) the caller forwards verbatim.
-pub async fn resolve_metadata_batch_targets(
+pub(crate) async fn resolve_metadata_batch_targets(
     app: &AppState,
     user: &CurrentUser,
     view_id: Uuid,

@@ -47,6 +47,8 @@ use crate::state::AppState;
 use server_macros::handler;
 
 const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
+/// Request-body limit on `POST /me/cbl-lists/upload` (see [`routes`]).
+const UPLOAD_BODY_LIMIT: usize = MAX_UPLOAD_BYTES + 64 * 1024;
 const MAX_BOOKS_PER_FILE: usize = 5_000;
 const CBL_XML_TYPES: &[&str] = &[
     "application/xml",
@@ -123,7 +125,16 @@ pub fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(create_from_json))
-        .routes(routes!(upload))
+        // The multipart import is the one body here bigger than the `api`
+        // group's 2 MiB default (`app::DEFAULT_BODY_LIMIT`): the `file` field
+        // is capped at `MAX_UPLOAD_BYTES` in the handler, plus 64 KiB of
+        // slack for the boundary, part headers and the name/description
+        // fields.
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(upload))
+                .layer(axum::extract::DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
+        )
         .routes(routes!(detail, update))
         .routes(routes!(delete_one))
         .routes(routes!(refresh_one))
@@ -1032,6 +1043,15 @@ pub async fn upload(
                 match read_multipart_field_limited(&mut field, MAX_UPLOAD_BYTES).await {
                     Ok(b) => bytes = Some(b),
                     Err(FieldReadError::TooLarge) => {
+                        return error(
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            "too_large",
+                            "file exceeds 4 MiB",
+                        );
+                    }
+                    // The route's body limit tripping mid-field is the same
+                    // "too large" as the field cap above.
+                    Err(FieldReadError::Read(e)) if e.status() == StatusCode::PAYLOAD_TOO_LARGE => {
                         return error(
                             StatusCode::PAYLOAD_TOO_LARGE,
                             "too_large",

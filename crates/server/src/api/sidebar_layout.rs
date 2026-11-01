@@ -298,7 +298,7 @@ pub async fn update_layout(
 
 /// Resolves the user's effective sidebar: default-built list ∪
 /// override rows, with overrides winning on visibility + position.
-pub async fn compute_layout(
+pub(crate) async fn compute_layout(
     app: &AppState,
     user: &CurrentUser,
 ) -> Result<Vec<SidebarEntryView>, sea_orm::DbErr> {

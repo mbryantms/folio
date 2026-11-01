@@ -57,6 +57,48 @@ use crate::state::AppState;
 /// fallback, a single value is fine.
 pub const PROXY_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Request-body cap on everything the fallback forwards to Next (N-A2).
+/// What Next receives through here is page navigations (no body), Server
+/// Actions and the odd form post: kilobytes, not megabytes. 64 MiB is far
+/// above any of that and well below what lets one client tie up the
+/// proxy with an endless upload inside [`PROXY_TIMEOUT`]. A declared
+/// `Content-Length` over the cap is refused before anything reaches Next;
+/// a chunked body is counted as it streams and the request is cut off at
+/// the cap. Both answer 413 with the canonical envelope (`too_large`).
+pub const MAX_PROXY_BODY_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Marker error for a streamed request body that crossed the cap; found
+/// again in the reqwest error's source chain to answer 413, not 502.
+#[derive(Debug)]
+struct ProxyBodyTooLarge;
+
+impl std::fmt::Display for ProxyBodyTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("request body exceeds the proxy limit")
+    }
+}
+
+impl std::error::Error for ProxyBodyTooLarge {}
+
+fn body_too_large() -> Response {
+    crate::api::respond(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        shared::error::ApiErrorCode::TooLarge,
+        "request body exceeds the size limit",
+    )
+}
+
+fn is_body_too_large(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cur: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = cur {
+        if e.is::<ProxyBodyTooLarge>() {
+            return true;
+        }
+        cur = e.source();
+    }
+    false
+}
+
 /// Hop-by-hop headers per RFC 7230 §6.1 — never forwarded in either
 /// direction. The Connection header itself may also name additional
 /// headers to drop; we accept that tiny gap for now since modern
@@ -114,6 +156,40 @@ pub async fn forward(
     client_ip: Option<IpAddr>,
     csp: Option<HeaderValue>,
 ) -> Response {
+    forward_with_body_limit(
+        client,
+        upstream_url,
+        req,
+        timeout,
+        client_ip,
+        csp,
+        MAX_PROXY_BODY_BYTES,
+    )
+    .await
+}
+
+/// [`forward`] with an explicit request-body cap in bytes. Production
+/// always goes through [`forward`] ([`MAX_PROXY_BODY_BYTES`]); the
+/// parameter exists so `tests/body_limits.rs` can exercise the streamed
+/// cut-off without pushing 64 MiB through a mock.
+pub async fn forward_with_body_limit(
+    client: &reqwest::Client,
+    upstream_url: &str,
+    req: Request<Body>,
+    timeout: Duration,
+    client_ip: Option<IpAddr>,
+    csp: Option<HeaderValue>,
+    max_body: u64,
+) -> Response {
+    let declared_len = req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    if declared_len.is_some_and(|n| n > max_body) {
+        return body_too_large();
+    }
+
     let (parts, body) = req.into_parts();
 
     let target = match build_target_url(upstream_url, &parts.uri) {
@@ -156,7 +232,18 @@ pub async fn forward(
     // Build + stream.
     let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
         .expect("axum http::Method round-trips to reqwest");
-    let body_stream = body.into_data_stream();
+    // Count bytes as they stream; past the cap the stream yields
+    // `ProxyBodyTooLarge`, which aborts the outbound request and is mapped
+    // to 413 below. Nothing is buffered.
+    let mut seen: u64 = 0;
+    let body_stream = futures::StreamExt::map(body.into_data_stream(), move |chunk| {
+        let chunk = chunk.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        seen = seen.saturating_add(chunk.len() as u64);
+        if seen > max_body {
+            return Err(Box::new(ProxyBodyTooLarge) as Box<dyn std::error::Error + Send + Sync>);
+        }
+        Ok(chunk)
+    });
     let request = client
         .request(method, &target)
         .headers(outbound_headers)
@@ -165,6 +252,7 @@ pub async fn forward(
 
     let upstream_resp = match request.send().await {
         Ok(r) => r,
+        Err(e) if is_body_too_large(&e) => return body_too_large(),
         Err(e) => {
             let code = if e.is_timeout() {
                 "upstream_timeout"

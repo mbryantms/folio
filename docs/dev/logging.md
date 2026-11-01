@@ -48,7 +48,14 @@ Handlers that don't carry user identity (health probes, OPDS bytes, etc.)
 get the named span without a `user_id` field — that's fine.
 
 **Convention:** add `#[handler]` to every new `pub async fn` in
-`crates/server/src/api/`. The lint in M10 will flag misses.
+`crates/server/src/api/`. The lint in M10 will flag misses. That includes
+handlers registered with a plain `.route()` and no `#[utoipa::path]`
+(`csp::csp_report`, `ws_scan_events::scan_events`). An async helper that is not
+a route handler is `pub(crate)`, not `pub` (`reading_sessions::compute_stats_for_user`,
+`saved_views::resolve_metadata_batch_targets`, `scan_runs::prune`,
+`sidebar_layout::compute_layout`, `work_targets::resolve`); the one `pub`
+non-handler is `server_releases::fetch_release`, which the wiremock test in
+`tests/server_releases.rs` calls directly.
 
 ### Extending the span with more fields
 

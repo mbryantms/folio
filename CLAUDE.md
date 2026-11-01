@@ -164,6 +164,13 @@ Default admin (first registered user becomes admin):
     archive-download streams and `/ws/*` upgrades are never timed
     out or re-encoded; regression guards in
     `crates/server/tests/http_layers.rs`.
+    **Body limits are explicit:** both groups carry
+    `DefaultBodyLimit::max(app::DEFAULT_BODY_LIMIT)` (2 MiB, 413
+    `too_large` envelope); a multipart route that needs more raises it
+    on its own sub-router (`/uploads` 32 MiB, `/me/cbl-lists/upload`
+    4 MiB), the fallback proxy caps at
+    `upstream::MAX_PROXY_BODY_BYTES` (64 MiB) and `/ws/scan-events`
+    at 64 KiB messages; guards in `crates/server/tests/body_limits.rs`.
   - Anything no explicit route claimed falls through
     `Router::fallback(crate::upstream::proxy)`, which streams the
     request to the Next.js SSR upstream at `cfg.web_upstream_url`
