@@ -277,9 +277,11 @@ Applying metadata is never a blind overwrite:
   provider. Overriding user edits requires an explicit, admin-only,
   audited flag.
 
-An optional weekly refresh keeps recent and stale series current, and the
-whole pipeline is rate-limit-aware — when a provider's API quota runs out
-mid-run, the job parks itself with a resume time instead of failing.
+An optional weekly refresh keeps recent and stale series current, a
+per-library opt-in searches providers for the series a scan creates (up to
+50 a day), and the whole pipeline is rate-limit-aware — when a provider's
+API quota runs out mid-run, the job parks itself with a resume time instead
+of failing.
 
 ### Writeback: your archives stay the source of truth
 

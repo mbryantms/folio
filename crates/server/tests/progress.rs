@@ -141,6 +141,7 @@ async fn seed_issue(app: &TestApp) -> String {
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&db)
     .await
@@ -648,6 +649,7 @@ async fn seed_series_with_issues(app: &TestApp, n_issues: usize) -> (Uuid, Vec<S
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&db)
     .await

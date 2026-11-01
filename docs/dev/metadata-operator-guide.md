@@ -185,6 +185,49 @@ unless `metadata.issue_refresh_enabled` is on, else the Review
 cap}]`) and the job counts (see [Issue-level
 refresh](#issue-level-refresh-admin-metadata--settings--issue-level-refresh)).
 
+### Search new series after a scan (per library)
+
+`/admin/libraries/{slug}/settings` → under **Auto-apply strong matches** → **Search
+providers for new series after a scan** (`libraries.auto_search_new_series`,
+default **off**). When on, every library scan (manual, scheduled or
+file-watcher) that **creates** series queues one provider search per
+created series, exactly as if you had clicked **Match this series…** on
+each: same run rows (`trigger_kind = scanner`, visible on the series'
+Metadata tab), same rate limits, same quota parking and resume. Skipped:
+series the scan only re-homed or renamed (they keep their id), series
+already identified at scan time (a `[cv-…]` folder tag, a ComicInfo /
+MetronInfo id or `series.json` wrote a series-level external id), series
+with no active issue (every archive failed to ingest), paused series, and
+series with a search already queued, running or parked for quota. A
+cancelled scan queues nothing. The flag is read when the scan finishes, so
+turning it off during a long scan stops that scan from queuing anything.
+
+- **Quota cost.** One series search per new series, across every
+  enabled provider (several requests each). A first import is the
+  expensive case, so a library queues at most **50** scan-triggered
+  searches per rolling 24 hours (`SCAN_AUTO_SEARCH_CAP`), counted across
+  every scan — a first import the file watcher splits into many small
+  scans is bounded the same as one big scan. The rest stay unmatched and
+  are not re-queued by later scans (each scan only looks at the series it
+  created). Run a refresh with `scope=unmatched` (above) to search them;
+  the weekly refresh also reaches them when
+  `metadata.weekly_refresh_enabled` is on, but both walk unmatched /
+  stale series **oldest first**, 200 per call, so on a library with an
+  older unmatched backlog the new ones come last. When a provider runs
+  out of quota the search parks `awaiting_quota` and resumes on its own;
+  nothing is lost.
+- **What gets written.** A search on its own writes nothing: candidates
+  wait on the series' Metadata tab. With **Auto-apply strong matches**
+  also on for the library, a strong single match applies automatically
+  (scanner is a non-manual trigger, like the weekly refresh), and on a
+  library with both archive-writeback flags on that apply **rewrites the
+  archives' ComicInfo / MetronInfo** and rescans them. Leave auto-apply
+  off if new folders should always be reviewed by hand.
+- Turning the flag on or off writes an
+  `admin.library.auto_search_new_series.set` audit row. Server logs carry
+  one `scan auto-search: provider searches queued for new series` line
+  per scan with the enqueued / skipped / deferred counts.
+
 ### Pause a series's auto-sync
 
 Paused series are excluded from both the weekly cron and bulk

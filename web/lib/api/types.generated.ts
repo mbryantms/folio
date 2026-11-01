@@ -10592,6 +10592,14 @@ export interface components {
              */
             auto_convert_cbr_on_scan: boolean;
             /**
+             * @description When true, a library scan that creates new series enqueues a
+             *     provider search (`trigger_kind = scanner`) for each unmatched one,
+             *     at most 50 per library per 24 h. Spends provider quota; with
+             *     `metadata_auto_apply_strong_matches` on a writeback library a
+             *     strong match rewrites the archives. Audit 2026-11 N-M9.
+             */
+            auto_search_new_series: boolean;
+            /**
              * @description RFC3339 timestamp of the operator's first acknowledgement of the
              *     CBR→CBZ conversion for this library, or `null` if they haven't
              *     acknowledged yet. The page editor uses this to decide whether to
@@ -14995,6 +15003,12 @@ export interface components {
              *     the master toggle resolves false returns 422.
              */
             auto_convert_cbr_on_scan?: boolean | null;
+            /**
+             * @description Toggle the scan-time provider search for newly created series
+             *     (audit 2026-11 N-M9). Changing it writes an
+             *     `admin.library.auto_search_new_series.set` audit row.
+             */
+            auto_search_new_series?: boolean | null;
             /**
              * @description When true (default), a second copy of an already-ingested file in
              *     this library is skipped with a `DuplicateContent` health row. When
