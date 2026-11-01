@@ -84,7 +84,10 @@ async fn concurrent_first_registrations_create_only_one_admin() {
 
     let state = app.state();
     let users = entity::user::Entity::find().all(&state.db).await.unwrap();
-    let admin_count = users.iter().filter(|u| u.role == "admin").count();
+    let admin_count = users
+        .iter()
+        .filter(|u| u.role == entity::user::UserRole::Admin)
+        .count();
     assert_eq!(admin_count, 1, "exactly one first signup may become admin");
     assert_eq!(users.len(), 4);
 }
@@ -322,6 +325,117 @@ async fn logout_clears_cookies_and_revokes_session() {
     // Replaying the refresh after logout should fail.
     let replay = refresh_call(&app, &refresh, &csrf).await;
     assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// AR-7 (audit 2026-11 B8): `users.role` / `users.state` load as typed
+/// enums. A row holding a string outside the enum (hand-edited DB, a value
+/// from a future version after a downgrade) must fail loudly: the row is
+/// unreadable, so the auth extractor, `/auth/me` and login answer 500. It
+/// must never be coerced into a reader (or an admin), and never look like
+/// "no such user".
+#[tokio::test]
+async fn unknown_role_in_db_fails_loudly() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "first@example.com", "correctly-horse-battery").await;
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    let session_cookie = extract_cookie(&reg, "__Host-comic_session").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    use sea_orm::ConnectionTrait;
+    db.execute_unprepared(&format!(
+        "UPDATE users SET role = 'superuser' WHERE id = '{user_id}'"
+    ))
+    .await
+    .unwrap();
+
+    // The entity load itself is an error, not a defaulted role.
+    let loaded = entity::user::Entity::find_by_id(user_id).one(&db).await;
+    assert!(loaded.is_err(), "unknown role must not decode: {loaded:?}");
+
+    let get = |uri: &str| {
+        Request::builder()
+            .uri(uri)
+            .header(
+                header::COOKIE,
+                format!("__Host-comic_session={session_cookie}"),
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    let me = app.router.clone().oneshot(get("/auth/me")).await.unwrap();
+    assert_eq!(me.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let admin = app
+        .router
+        .clone()
+        .oneshot(get("/api/admin/users"))
+        .await
+        .unwrap();
+    assert_eq!(admin.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    // Login reports the unreadable row instead of "invalid credentials".
+    let login = login(&app, "first@example.com", "correctly-horse-battery").await;
+    assert_eq!(login.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    // Restoring a known value makes the account usable again.
+    db.execute_unprepared(&format!(
+        "UPDATE users SET role = 'admin' WHERE id = '{user_id}'"
+    ))
+    .await
+    .unwrap();
+    let me = app.router.clone().oneshot(get("/auth/me")).await.unwrap();
+    assert_eq!(me.status(), StatusCode::OK);
+    assert_eq!(body_json(me.into_body()).await["role"], "admin");
+
+    // An admin opening another user's unreadable row gets a 500, not a 404
+    // that would make the account look deleted. Surfaces that only need the
+    // name / email (audit-log actor labels) project those columns and keep
+    // working.
+    let reg2 = register(&app, "second@example.com", "another-strong-password").await;
+    assert_eq!(reg2.status(), StatusCode::CREATED);
+    let second_id: uuid::Uuid = body_json(reg2.into_body()).await["user"]["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    server::audit::record(
+        &app.state().db,
+        server::audit::AuditEntry {
+            actor_id: second_id,
+            action: "test.unreadable_actor",
+            target_type: None,
+            target_id: None,
+            payload: serde_json::json!({}),
+            ip: None,
+            user_agent: None,
+        },
+    )
+    .await;
+    db.execute_unprepared(&format!(
+        "UPDATE users SET state = 'banned' WHERE id = '{second_id}'"
+    ))
+    .await
+    .unwrap();
+    let one = app
+        .router
+        .clone()
+        .oneshot(get(&format!("/api/admin/users/{second_id}")))
+        .await
+        .unwrap();
+    assert_eq!(one.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let audit = app
+        .router
+        .clone()
+        .oneshot(get("/api/admin/audit"))
+        .await
+        .unwrap();
+    assert_eq!(audit.status(), StatusCode::OK);
+    let audit = body_json(audit.into_body()).await;
+    assert!(
+        audit.to_string().contains("second@example.com"),
+        "actor label still resolves: {audit}"
+    );
 }
 
 // ───── helpers ─────

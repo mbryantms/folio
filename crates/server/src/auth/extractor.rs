@@ -3,7 +3,7 @@
 //! [`CurrentUser`] for handler signatures.
 //!
 //! Admin-only handlers should take [`RequireAdmin`] instead of `CurrentUser` —
-//! that extractor returns 403 if the resolved user's role isn't `"admin"`, so
+//! that extractor returns 403 if the resolved user's role isn't `UserRole::Admin`, so
 //! the check is structural and impossible to forget.
 
 use axum::{
@@ -16,14 +16,14 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
 use crate::state::AppState;
-use entity::user::{self, Entity as UserEntity};
+use entity::user::{self, Entity as UserEntity, UserRole, UserState};
 
 use super::cookies::SESSION_COOKIE;
 
 #[derive(Clone, Debug)]
 pub struct CurrentUser {
     pub id: Uuid,
-    pub role: String,
+    pub role: UserRole,
     pub display_name: String,
     pub email: Option<String>,
     /// `Some(scope)` only when this user resolved through an
@@ -108,7 +108,7 @@ where
             .map_err(|_| AuthRejection::Internal)?
             .ok_or(AuthRejection::Invalid)?;
 
-        if row.state == "disabled" {
+        if row.state == UserState::Disabled {
             return Err(AuthRejection::UserDisabled);
         }
         if row.token_version != claims.tv {
@@ -143,7 +143,7 @@ async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser
         .await
         .map_err(|_| AuthRejection::Internal)?
         .ok_or(AuthRejection::Invalid)?;
-    if row.state == "disabled" {
+    if row.state == UserState::Disabled {
         return Err(AuthRejection::UserDisabled);
     }
     Ok(CurrentUser {
@@ -204,7 +204,7 @@ where
 }
 
 /// Admin-only wrapper around [`CurrentUser`]. Returns 403 with code
-/// `auth.permission_denied` when the resolved user's role isn't `"admin"`.
+/// `auth.permission_denied` when the resolved user's role isn't `UserRole::Admin`.
 /// Use this for every `/admin/*` handler so the role check is impossible to
 /// forget on a new route.
 #[derive(Clone, Debug)]
@@ -227,7 +227,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let user = CurrentUser::from_request_parts(parts, state).await?;
-        if user.role != "admin" {
+        if user.role != UserRole::Admin {
             return Err(AuthRejection::Forbidden);
         }
         Ok(Self(user))

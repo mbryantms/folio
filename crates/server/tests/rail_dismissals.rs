@@ -88,9 +88,9 @@ async fn register_reader(app: &TestApp, db: &DatabaseConnection, email: &str) ->
         .await
         .unwrap()
         .unwrap();
-    if row.role != "user" {
+    if row.role != entity::user::UserRole::User {
         let mut am: user::ActiveModel = row.into();
-        am.role = Set("user".into());
+        am.role = Set(entity::user::UserRole::User);
         am.update(db).await.unwrap();
     }
     a

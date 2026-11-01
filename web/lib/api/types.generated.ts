@@ -6140,12 +6140,12 @@ export interface components {
             email?: string | null;
             excluded_from_aggregates: boolean;
             last_active_at?: string | null;
-            role: string;
+            role: components["schemas"]["UserRole"];
             /** Format: int64 */
             sessions_30d: number;
             /** Format: int64 */
             sessions_all_time: number;
-            state: string;
+            state: components["schemas"]["UserState"];
             top_series_name?: string | null;
             user_id: string;
         };
@@ -6162,8 +6162,8 @@ export interface components {
              *     always reported as 0 since admins implicitly see every library.
              */
             library_count: number;
-            role: string;
-            state: string;
+            role: components["schemas"]["UserRole"];
+            state: components["schemas"]["UserState"];
         };
         /** @description Where this issue maps in one provider, plus its current match state. */
         AlternateProviderSeries: {
@@ -8391,12 +8391,12 @@ export interface components {
                 email?: string | null;
                 excluded_from_aggregates: boolean;
                 last_active_at?: string | null;
-                role: string;
+                role: components["schemas"]["UserRole"];
                 /** Format: int64 */
                 sessions_30d: number;
                 /** Format: int64 */
                 sessions_all_time: number;
-                state: string;
+                state: components["schemas"]["UserState"];
                 top_series_name?: string | null;
                 user_id: string;
             }[];
@@ -10604,6 +10604,14 @@ export interface components {
              */
             auto_convert_cbr_on_scan: boolean;
             /**
+             * @description When true, a library scan that creates new series enqueues a
+             *     provider search (`trigger_kind = scanner`) for each unmatched one,
+             *     at most 50 per library per 24 h. Spends provider quota; with
+             *     `metadata_auto_apply_strong_matches` on a writeback library a
+             *     strong match rewrites the archives. Audit 2026-11 N-M9.
+             */
+            auto_search_new_series: boolean;
+            /**
              * @description RFC3339 timestamp of the operator's first acknowledgement of the
              *     CBR→CBZ conversion for this library, or `null` if they haven't
              *     acknowledged yet. The page editor uses this to decide whether to
@@ -11268,7 +11276,7 @@ export interface components {
              * @description M6a: minimum distinct pages before a session is recorded.
              */
             reading_min_pages: number;
-            role: string;
+            role: components["schemas"]["UserRole"];
             /**
              * @description Markers M8: when true, /settings renders a count badge on the
              *     Bookmarks sidebar row. Default false.
@@ -15069,6 +15077,12 @@ export interface components {
              */
             auto_convert_cbr_on_scan?: boolean | null;
             /**
+             * @description Toggle the scan-time provider search for newly created series
+             *     (audit 2026-11 N-M9). Changing it writes an
+             *     `admin.library.auto_search_new_series.set` audit row.
+             */
+            auto_search_new_series?: boolean | null;
+            /**
              * @description When true (default), a second copy of an already-ingested file in
              *     this library is skipped with a `DuplicateContent` health row. When
              *     false, every copy is ingested as its own issue and the Duplicates
@@ -15497,14 +15511,14 @@ export interface components {
             version: number;
         };
         /**
-         * @description Audit-remediation M9.4 typed enums for the `?role=` / `?state=` query
-         *     params + the matching fields on `UpdateUserReq`. Serde rejects bad
-         *     values at deserialize time so handlers never see strings they can't
-         *     trust.
+         * @description A user's role: `admin` | `user`.
          * @enum {string}
          */
         UserRole: "admin" | "user";
-        /** @enum {string} */
+        /**
+         * @description A user account's state: `pending_verification` | `active` | `disabled`.
+         * @enum {string}
+         */
         UserState: "pending_verification" | "active" | "disabled";
         ViewGroupListView: {
             groups: components["schemas"]["ViewGroupView"][];

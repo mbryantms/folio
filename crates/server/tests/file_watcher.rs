@@ -86,6 +86,7 @@ async fn create_library(app: &TestApp, root: &Path, watch: bool) -> Uuid {
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&app.state().db)
     .await

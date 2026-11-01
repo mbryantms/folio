@@ -14,6 +14,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use entity::user::UserRole;
 use entity::{issue, library, library_user_access, scan_batch, scan_run, series};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, Condition, EntityTrait, ModelTrait, PaginatorTrait,
@@ -153,6 +154,12 @@ pub struct LibraryView {
     /// SingleGood outcome auto-apply the top candidate. User-edit
     /// precedence still fires. Matching-accuracy-1.0 M12.
     pub metadata_auto_apply_strong_matches: bool,
+    /// When true, a library scan that creates new series enqueues a
+    /// provider search (`trigger_kind = scanner`) for each unmatched one,
+    /// at most 50 per library per 24 h. Spends provider quota; with
+    /// `metadata_auto_apply_strong_matches` on a writeback library a
+    /// strong match rewrites the archives. Audit 2026-11 N-M9.
+    pub auto_search_new_series: bool,
 }
 
 impl From<library::Model> for LibraryView {
@@ -204,6 +211,7 @@ impl From<library::Model> for LibraryView {
             filename_ignore_leading_numbers: m.filename_ignore_leading_numbers,
             filename_assume_issue_one: m.filename_assume_issue_one,
             metadata_auto_apply_strong_matches: m.metadata_auto_apply_strong_matches,
+            auto_search_new_series: m.auto_search_new_series,
         }
     }
 }
@@ -325,6 +333,12 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub metadata_auto_apply_strong_matches: Option<bool>,
+    /// Toggle the scan-time provider search for newly created series
+    /// (audit 2026-11 N-M9). Changing it writes an
+    /// `admin.library.auto_search_new_series.set` audit row.
+    #[serde(default)]
+    #[garde(skip)]
+    pub auto_search_new_series: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -626,6 +640,7 @@ pub async fn create(
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(req.trust_fingerprint_on_first_import),
+        auto_search_new_series: Set(false),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -836,6 +851,15 @@ pub async fn update_settings(
     if let Some(b) = req.metadata_auto_apply_strong_matches {
         am.metadata_auto_apply_strong_matches = Set(b);
     }
+    // Only a real flip is audited: the settings form PATCHes every field on
+    // each save, so an unchanged value must not write a row.
+    let prev_auto_search = matches!(am.auto_search_new_series, ActiveValue::Unchanged(true));
+    let auto_search_changed = req
+        .auto_search_new_series
+        .filter(|b| *b != prev_auto_search);
+    if let Some(b) = req.auto_search_new_series {
+        am.auto_search_new_series = Set(b);
+    }
     if let Some(cron_opt) = req.scan_schedule_cron {
         let normalized = cron_opt.and_then(|s| {
             let trimmed = s.trim();
@@ -858,6 +882,21 @@ pub async fn update_settings(
             // root or new ignore globs without a restart. The supervisor
             // diffs each library's watch spec, so a no-op PATCH is free.
             app.watchers.nudge();
+            if let Some(enabled) = auto_search_changed {
+                audit::record(
+                    &app.db,
+                    AuditEntry {
+                        actor_id: user.id,
+                        action: "admin.library.auto_search_new_series.set",
+                        target_type: Some("library"),
+                        target_id: Some(uuid.to_string()),
+                        payload: serde_json::json!({ "enabled": enabled }),
+                        ip: ctx.ip_string(),
+                        user_agent: ctx.user_agent.clone(),
+                    },
+                )
+                .await;
+            }
             if let Some(s) = new_slug {
                 audit::record(
                     &app.db,
@@ -1460,7 +1499,7 @@ async fn filter_visible(
     user: &CurrentUser,
     rows: Vec<library::Model>,
 ) -> Vec<library::Model> {
-    if user.role == "admin" {
+    if user.role == UserRole::Admin {
         return rows;
     }
     let lib_ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
@@ -1478,7 +1517,7 @@ async fn filter_visible(
 }
 
 async fn user_can_see(app: &AppState, user: &CurrentUser, lib: &library::Model) -> bool {
-    if user.role == "admin" {
+    if user.role == UserRole::Admin {
         return true;
     }
     library_user_access::Entity::find_by_id((lib.id, user.id))

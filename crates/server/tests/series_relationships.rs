@@ -81,7 +81,7 @@ async fn register(app: &TestApp, email: &str) -> Authed {
 async fn demote_to_user(db: &DatabaseConnection, user_id: Uuid) {
     entity::user::ActiveModel {
         id: Unchanged(user_id),
-        role: Set("user".into()),
+        role: Set(entity::user::UserRole::User),
         ..Default::default()
     }
     .update(db)
@@ -180,6 +180,7 @@ async fn mk_library(app: &TestApp, db: &DatabaseConnection, name: &str) -> Uuid 
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(db)
     .await

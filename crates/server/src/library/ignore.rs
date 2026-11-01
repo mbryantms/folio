@@ -188,6 +188,7 @@ mod tests {
             auto_convert_cbr_on_scan: false,
             auto_convert_cb7_on_scan: false,
             trust_fingerprint_on_first_import: false,
+            auto_search_new_series: false,
         }
     }
 

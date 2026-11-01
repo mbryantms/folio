@@ -55,6 +55,7 @@ async fn seed(app: &TestApp, with_thumbs_for_state: &str) -> String {
         auto_convert_cbr_on_scan: Set(false),
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
     }
     .insert(&db)
     .await
