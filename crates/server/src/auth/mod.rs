@@ -18,6 +18,7 @@ pub mod email_token;
 pub mod extractor;
 pub mod failed_auth;
 pub mod jwt;
+pub mod last_admin;
 pub mod local;
 pub mod oidc;
 pub mod password;

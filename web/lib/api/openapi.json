@@ -2888,6 +2888,9 @@
           },
           "404": {
             "description": "user not found"
+          },
+          "409": {
+            "description": "the change would leave the instance without an active admin"
           }
         }
       }
@@ -2920,6 +2923,9 @@
           },
           "404": {
             "description": "user not found"
+          },
+          "409": {
+            "description": "the user is the instance's only active admin"
           }
         }
       }

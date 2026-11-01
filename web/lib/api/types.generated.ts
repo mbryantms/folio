@@ -18959,6 +18959,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description the change would leave the instance without an active admin */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     admin_users_disable: {
@@ -18989,6 +18996,13 @@ export interface operations {
             };
             /** @description user not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the user is the instance's only active admin */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
