@@ -279,6 +279,11 @@ Applying metadata is never a blind overwrite:
   provider, and a per-field **lock** on the issue Metadata tab protects a
   field the same way without editing it. Overriding user edits requires
   an explicit, admin-only, audited flag.
+- Changing shared metadata is an admin action: applying (single, batch
+  or library-wide refresh), marking an issue's metadata complete, pausing
+  a series' sync, and adding or unlinking an external ID. Readers can
+  still search the providers and open the candidates, previews and
+  compare view, read-only.
 
 An optional weekly refresh keeps recent and stale series current, a
 per-library opt-in searches providers for the series a scan creates (up to
@@ -350,8 +355,8 @@ cover dates) and proposes the mappings for you to accept.
   itself is fully reorderable with custom headers and spacers; anything
   you hid from a home rail is listed under Settings → Pages, where one
   click restores it.
-- **Multi-select everywhere** — bulk mark-read, bulk metadata edit, bulk
-  add-to-collection across the major list surfaces.
+- **Multi-select everywhere** — bulk mark-read, bulk metadata edit
+  (admins), bulk add-to-collection across the major list surfaces.
 - **Markers** — four kinds, all page-anchored: bookmarks, Markdown notes,
   region highlights, and page favorites. All searchable from one
   Bookmarks surface (including full-text over note bodies and captured
@@ -376,7 +381,8 @@ One search box (`Ctrl/Cmd+K` or `/`) covers series, issues, markers, and
 people, backed by Postgres full-text search with field weighting (a title
 hit ranks above a summary hit) and trigram fallback so typos still land.
 Results come back with highlighted snippets. Prefixing the query with `>`
-turns the box into a command palette with 27 actions. Creator pages give
+turns the box into a command palette with 30 actions (16 for everyone,
+14 more admin pages for admins). Creator pages give
 every writer and artist a browsable presence of their own.
 Characters, teams, story arcs, and publishers get the same treatment:
 `/characters/<slug>`, `/teams/<slug>`, `/arcs/<slug>` and
@@ -464,13 +470,16 @@ per-list opt-out to preserve curated orders).
   Kids' libraries stay invisible, not just hidden, to accounts without
   access (denied lookups 404 so nothing leaks).
 - Local accounts (argon2id) and **OIDC/SSO** (Authentik, Dex, etc.), with
-  refresh-token rotation; a replayed refresh token is rejected.
+  refresh-token rotation; a replayed refresh token is rejected. Only an
+  active account gets in: an unverified or disabled one is refused on
+  every credential (session, token, app password, OPDS).
 - **App passwords** per device/app, individually revocable, with
   last-used tracking.
 - **Self-service account deletion**: Settings → Account → Delete account
   points at the JSON export first, re-checks the password (identity-provider
   accounts type their email), and removes every personal row while the audit
-  log keeps its history; an instance's last admin can't delete itself.
+  log keeps its history. The instance always keeps an active admin: the
+  last one can't delete itself, and no one can demote or disable it.
 - A complete admin area: users, libraries (each with its series and issue
   counts, archive size and `.bak` backup footprint), scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every

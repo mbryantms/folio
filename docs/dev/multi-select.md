@@ -219,6 +219,12 @@ dropped and the all-empty check then rejects the request.
 Returns `{ updated, skipped, forbidden, not_found }`. Single
 `admin.issue.bulk_metadata_update` audit row per call.
 
+Admin-only since audit 2026-11 E16 (`RequireAdmin`, the same gate as the
+issue `PATCH`): a reader gets `403 auth.permission_denied` and the
+Issues-tab selection toolbar hides its Editing group (Edit metadata…,
+Fetch metadata, Edit archives…). The path keeps its `/me/` prefix, and
+`forbidden` stays on the wire, always `0`.
+
 ## How a new list page wires it up
 
 The minimum recipe:

@@ -357,6 +357,8 @@ A series surfaces a `completion_state` derived per-user at query time:
 
 Specials, annuals, and one-shots are counted only if their ComicInfo `<Format>` is in the user's "count toward completion" preference set (default: only `Series` issues count; `Annual`, `Special`, `One-Shot` excluded). Per-series override available.
 
+**As shipped (audit 2026-11 B9):** one switch, not a per-format set. Settings → Reading → *Count annuals and specials* (`users.count_specials_in_completeness`, default off) adds every issue with a `special_type` (annual, one-shot, special, TPB) to the owned count; the series ⋯ menu overrides it per series (include / exclude / inherit, `PUT /me/series/{id}/completion-prefs`). Details: [saved-views.md](saved-views.md) "Collection completeness and specials".
+
 ### 5.6 Reviews
 - Per-issue and per-series reviews supported. User has at most one review per target.
 - **Permissions:** author can edit/delete their own review. Server admin can delete any review (no edit, only delete with reason logged). No community flagging in v1.
@@ -1262,7 +1264,7 @@ Available only when `COMIC_AUTH_MODE` includes `local` AND SMTP is configured (�
 
 **Email-verification on signup:**
 1. Local registration creates the user row in `pending_verification` state. Server sends a signed verification link valid for 24 h.
-2. User clicks the link → `GET /auth/local/verify-email?token=<…>` flips the user to `active`. Until then, login is rejected with `account.unverified`.
+2. User clicks the link → `GET /auth/local/verify-email?token=<…>` flips the user to `active`. Until then, login is rejected with `403 auth.email_unverified`.
 3. Re-send button on the login page (rate-limited per §17.7: 3 / hour / email).
 
 **Password reset:**
@@ -1292,6 +1294,7 @@ Available only when `COMIC_AUTH_MODE` includes `local` AND SMTP is configured (�
 ### 17.2 Sessions, JWT, and revocation
 - Access JWT TTL = 15 min (`COMIC_JWT_ACCESS_TTL`). Refresh token TTL = 30 days, **rotated on every use**. Refresh token hashes stored in `auth_sessions(id, user_id, refresh_token_hash, last_used_at, ua, ip, revoked_at)`.
 - `users.token_version` column embedded in JWT claims; bumped on password reset, admin-revoke, or scope change. Mismatched version on any request → 401, force re-auth.
+- **Only `active` accounts authenticate (audit 2026-11 E15).** One rule, `auth::extractor::admit_state`, for the session cookie, Bearer JWT, app-password Bearer and OPDS Basic, so `RequireAdmin` inherits it: `disabled` is 403 `auth.disabled`, `pending_verification` is 403 `auth.email_unverified`. The OIDC callback and the `/ws/scan-events` upgrade apply it too, and `/auth/refresh` refuses a non-active account with 401. An OIDC sign-in whose IdP sends `email_verified = true` activates a pending row (dropping any local password the unverified registrant chose); without that claim the pending row is refused.
 - `POST /auth/logout` revokes the current refresh row and bumps `token_version`. Admin "log out all sessions" available at `POST /admin/users/{id}/revoke-sessions`.
 - **Web app**: session JWT lives in an `httpOnly`, `Secure`, `SameSite=Lax` cookie (`__Host-comic_session`). Refresh token lives in a separate `__Host-comic_refresh` cookie with `Path=/`. CSRF token lives in `__Host-comic_csrf` (not HttpOnly so JS can read it for the double-submit header). Cookie domain is host-only (no wildcard).
 - **Mobile / API / OPDS-Bearer**: JWT in `Authorization: Bearer …`.

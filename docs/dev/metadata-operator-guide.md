@@ -552,7 +552,8 @@ candidate WILL appear in the dialog with a MEDIUM badge. Preview
 ### A series keeps getting wrong matches assigned
 
 Add the correct external_id by hand via the `<ExternalIdsCard>` on
-the series page; that pins the row as `set_by='user'` and prevents
+the series page (admins only since audit 2026-11 E13; readers see the
+ids without the Add / Unlink controls); that pins the row as `set_by='user'` and prevents
 future auto-matches from overwriting. If the series shouldn't be
 touched by the weekly cron at all, turn its auto-sync off on the
 series Metadata tab (it defaults off — it has to be opted in).
@@ -718,8 +719,10 @@ drop the legacy DB-direct apply branch — flag a maintainer.
   lower `archive_backup_retain_count`, to reclaim space sooner. The
   library health page's backup-storage card shows the current
   footprint.
-- **`MetadataDriftFromXml` row appeared unexpectedly**: any user PATCH
-  through the Edit sheet creates drift until the next apply. The
+- **`MetadataDriftFromXml` row appeared unexpectedly**: a hand edit
+  queues its own sidecar rewrite (WP-2.10), so drift means that rewrite
+  never landed: it was refused (CBR / CB7 without conversion), failed
+  all its attempts, or the pin predates WP-2.10. The
   Flush button is the operator-side resolution; the next provider
   apply would carry the pins forward anyway via the composer.
 - **Rewrite stuck on a busy archive**: per-issue Redis mutex
