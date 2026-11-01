@@ -30,6 +30,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use super::extractors::Validated;
 use crate::audit::{self, AuditEntry};
 use crate::auth::CurrentUser;
 use crate::metadata::identifier::{Identifier, Source};
@@ -66,16 +67,36 @@ pub struct ExternalIdsListResp {
     pub rows: Vec<ExternalIdRow>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct AddExternalIdReq {
     /// `"comicvine" | "metron" | "gcd" | "marvel" | "locg" | "mal" |
     /// "anilist" | "mangaupdates" | "isbn" | "upc" | "asin" | "doi"`.
     /// Aliases accepted (`"cv"` → ComicVine, etc.).
+    #[garde(custom(known_source))]
     pub source: String,
+    /// Non-empty after trimming.
+    #[garde(custom(external_id_present))]
     pub external_id: String,
     /// Optional override; defaults to the canonical URL template for
     /// `(source, entity_type)` when one exists.
+    #[garde(skip)]
     pub external_url: Option<String>,
+}
+
+/// Same parser the handler uses, so the 422 names `source` in
+/// `error.details` and the handler's later `parse()` cannot disagree.
+fn known_source(value: &str, _: &()) -> garde::Result {
+    if Source::from_str(value).is_err() {
+        return Err(garde::Error::new("unknown source"));
+    }
+    Ok(())
+}
+
+fn external_id_present(value: &str, _: &()) -> garde::Result {
+    if value.trim().is_empty() {
+        return Err(garde::Error::new("external_id required"));
+    }
+    Ok(())
 }
 
 // ───────── series ─────────
@@ -123,7 +144,8 @@ pub async fn list_series(
     request_body = AddExternalIdReq,
     responses(
         (status = 201, body = ExternalIdRow),
-        (status = 400, description = "invalid source"),
+        (status = 400, description = "malformed JSON body"),
+        (status = 422, description = "unknown source or empty external_id (field-level `details`)"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
     )
@@ -134,7 +156,7 @@ pub async fn add_series(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     Path(slug): Path<String>,
-    Json(req): Json<AddExternalIdReq>,
+    Validated(req): Validated<AddExternalIdReq>,
 ) -> Response {
     let s = match crate::api::series::find_by_slug(&app.db, &slug).await {
         Ok(s) => s,
@@ -226,7 +248,8 @@ pub async fn list_issue(
     request_body = AddExternalIdReq,
     responses(
         (status = 201, body = ExternalIdRow),
-        (status = 400, description = "invalid source"),
+        (status = 400, description = "malformed JSON body"),
+        (status = 422, description = "unknown source or empty external_id (field-level `details`)"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "issue not found"),
     )
@@ -237,7 +260,7 @@ pub async fn add_issue(
     user: CurrentUser,
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug)): Path<(String, String)>,
-    Json(req): Json<AddExternalIdReq>,
+    Validated(req): Validated<AddExternalIdReq>,
 ) -> Response {
     let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
@@ -320,21 +343,16 @@ async fn upsert_user_identifier(
     entity_id: &str,
     req: &AddExternalIdReq,
 ) -> Response {
+    // `Validated<AddExternalIdReq>` already ran `known_source`, so this
+    // parse only recovers the typed value; a failure is a server bug.
     let Ok(source) = req.source.parse::<Source>() else {
         return error(
-            StatusCode::BAD_REQUEST,
-            "metadata.invalid_source",
-            "unknown source",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            "validated source failed to parse",
         );
     };
     let id_value = req.external_id.trim();
-    if id_value.is_empty() {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "metadata.invalid_external_id",
-            "external_id required",
-        );
-    }
     let url = req
         .external_url
         .clone()

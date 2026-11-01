@@ -1645,3 +1645,74 @@ async fn entries_hide_card_of_removed_matched_issue() {
             .all(|i| i["issue"].is_object())
     );
 }
+
+/// Audit 2026-11 N-A4: `POST /me/cbl-lists` validates through
+/// `Validated<T>` — a URL list without a `url` and a catalog list without
+/// a `catalog_path` are 422s whose `error.details` names the field, and
+/// they fail before the remote-list cap or the import quota is touched.
+/// Malformed JSON stays a plain 400.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_from_json_validation_names_the_field() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cbl-garde@example.com").await;
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists",
+        Some(&auth),
+        Some(serde_json::json!({ "kind": "url", "url": "   " })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["message"], "url: url required");
+    assert_eq!(body["error"]["details"][0]["field"], "url");
+    assert_eq!(body["error"]["details"][0]["message"], "url required");
+
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists",
+        Some(&auth),
+        Some(serde_json::json!({
+            "kind": "catalog",
+            "catalog_source_id": Uuid::now_v7(),
+            "catalog_path": "",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["details"][0]["field"], "catalog_path");
+    assert_eq!(
+        body["error"]["details"][0]["message"],
+        "catalog_path required"
+    );
+
+    // Parse-shape failure stays 400 (no field to bind).
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/me/cbl-lists")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &auth.csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "validation");
+    assert!(body["error"]["details"].is_null(), "{body:#?}");
+}

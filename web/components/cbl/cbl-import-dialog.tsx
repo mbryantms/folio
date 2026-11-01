@@ -38,6 +38,7 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { collectServerErrors } from "@/lib/api/form-errors";
 import { useCatalogEntries, useCatalogSources } from "@/lib/api/queries";
 import {
   useCreateCblList,
@@ -584,11 +585,14 @@ function FileRow({
 function UrlTab({ onImported }: { onImported: (list: CblListView) => void }) {
   const [url, setUrl] = React.useState("");
   const [name, setName] = React.useState("");
+  // Server 422 field errors (`error.details`) bound under their inputs.
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
   const create = useCreateCblList();
 
   async function submit(ev: React.FormEvent) {
     ev.preventDefault();
     if (!url.trim()) return;
+    setErrors({});
     try {
       const list = await create.mutateAsync({
         kind: "url",
@@ -597,6 +601,7 @@ function UrlTab({ onImported }: { onImported: (list: CblListView) => void }) {
       });
       if (list) onImported(list);
     } catch (e) {
+      setErrors(collectServerErrors(e, ["url"]));
       toast.error(e instanceof Error ? e.message : "Failed to import from URL");
     }
   }
@@ -612,7 +617,14 @@ function UrlTab({ onImported }: { onImported: (list: CblListView) => void }) {
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://example.com/reading-order.cbl"
           required
+          aria-invalid={errors.url ? true : undefined}
+          aria-describedby={errors.url ? "cbl-url-error" : undefined}
         />
+        {errors.url ? (
+          <p id="cbl-url-error" className="text-destructive text-sm">
+            {errors.url}
+          </p>
+        ) : null}
       </div>
       <div className="flex flex-col gap-1">
         <Label htmlFor="cbl-name-override">Name (optional)</Label>

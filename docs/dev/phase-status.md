@@ -376,7 +376,11 @@ Highlights:
   `from_garde` helper; 6 DTOs migrated; 4 path/query enums replace
   stringly-typed params (`MarkerKindFilter`, `TagMatchMode`,
   `UserRole`, `UserState`); semantic 400→422 reclassification across
-  migrated files + markers + reading_sessions.
+  migrated files + markers + reading_sessions. Audit 2026-11 E2 moved
+  the last four hand-validated bodies (collection create/rename, issue
+  PATCH, external-id add, CBL create) onto `Validated<T>`; an unknown
+  external-id `source` is now 422 `validation` with `details`, not 400
+  `metadata.invalid_source`.
 - **M10** — CI gates wired: spec-drift (openapi.json +
   types.generated.ts), audit-check binary, schema-parity / pagination /
   audit-log / perf-regressions all running via `cargo test --workspace`.

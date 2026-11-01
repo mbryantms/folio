@@ -490,35 +490,116 @@ async fn patch_validation_rejects_bad_input() {
     )
     .await;
 
+    // Every rule failure is a 422 whose `error.details` names the field
+    // (audit 2026-11 N-A4: the body validates through `Validated<T>`, so
+    // the edit sheet can bind the message to its input) and whose
+    // `message` is still a complete summary.
+    let field_error = |body: &serde_json::Value| {
+        (
+            body["error"]["details"][0]["field"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            body["error"]["details"][0]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        )
+    };
+
     // Out-of-range year.
-    let (s, _) = patch(
+    let (s, body) = patch(
         &app,
         &auth,
         &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({ "year": 1500 }),
     )
     .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["message"], "year: year out of range");
+    assert_eq!(
+        field_error(&body),
+        ("year".to_owned(), "year out of range".to_owned())
+    );
 
     // Invalid month.
-    let (s, _) = patch(
+    let (s, body) = patch(
         &app,
         &auth,
         &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({ "month": 13 }),
     )
     .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(
+        field_error(&body),
+        ("month".to_owned(), "month must be 1..=12".to_owned())
+    );
 
     // Manga must be one of the canonical values.
-    let (s, _) = patch(
+    let (s, body) = patch(
         &app,
         &auth,
         &format!("/api/series/{series_slug}/issues/issue-1"),
         serde_json::json!({ "manga": "Maybe" }),
     )
     .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    assert_eq!(
+        field_error(&body),
+        (
+            "manga".to_owned(),
+            "manga must be Yes, YesAndRightToLeft, or No".to_owned()
+        )
+    );
+
+    // Several failures report every field, not just the first.
+    let (s, body) = patch(
+        &app,
+        &auth,
+        &format!("/api/series/{series_slug}/issues/issue-1"),
+        serde_json::json!({
+            "day": 0,
+            "volume": 10000,
+            "language_code": "x".repeat(17),
+            "additional_links": [{ "url": "  " }],
+        }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body:#?}");
+    let mut fields: Vec<&str> = body["error"]["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["field"].as_str().unwrap())
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        ["additional_links", "day", "language_code", "volume"]
+    );
+
+    // Parse-shape failure stays 400 (no field to bind).
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(format!("/api/series/{series_slug}/issues/issue-1"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, auth.cookie())
+                .header("X-CSRF-Token", auth.csrf.clone())
+                .body(Body::from("{not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "validation");
+    assert!(body["error"]["details"].is_null(), "{body:#?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

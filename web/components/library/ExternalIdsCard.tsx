@@ -44,6 +44,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/folio/select";
+import { collectServerErrors } from "@/lib/api/form-errors";
 import {
   useAddExternalIdIssue,
   useAddExternalIdSeries,
@@ -131,17 +132,26 @@ export function useExternalIdsEditor(
   const [extId, setExtId] = React.useState("");
   const [confirmRemove, setConfirmRemove] =
     React.useState<ExternalIdRow | null>(null);
+  // Server 422 field errors (`error.details`) bound under their inputs;
+  // the mutation hook still toasts the summary.
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   const cancelAdding = () => {
     setAdding(false);
     setExtId("");
+    setErrors({});
   };
   const onAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (!extId.trim()) return;
+    setErrors({});
     add.mutate(
       { source, external_id: extId.trim() },
-      { onSuccess: () => cancelAdding() },
+      {
+        onSuccess: () => cancelAdding(),
+        onError: (err) =>
+          setErrors(collectServerErrors(err, ["source", "external_id"])),
+      },
     );
   };
   const onConfirmRemove = () => {
@@ -163,7 +173,10 @@ export function useExternalIdsEditor(
           Source
         </Label>
         <Select value={source} onValueChange={setSource}>
-          <SelectTrigger id={`${idPrefix}-source`}>
+          <SelectTrigger
+            id={`${idPrefix}-source`}
+            aria-invalid={errors.source ? true : undefined}
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -174,6 +187,9 @@ export function useExternalIdsEditor(
             ))}
           </SelectContent>
         </Select>
+        {errors.source ? (
+          <p className="text-destructive text-xs">{errors.source}</p>
+        ) : null}
       </div>
       <div className="grid flex-[2] gap-1.5">
         <Label htmlFor={`${idPrefix}-id`} className="text-xs">
@@ -185,7 +201,16 @@ export function useExternalIdsEditor(
           onChange={(e) => setExtId(e.target.value)}
           placeholder="e.g. 12345"
           autoFocus
+          aria-invalid={errors.external_id ? true : undefined}
+          aria-describedby={
+            errors.external_id ? `${idPrefix}-id-error` : undefined
+          }
         />
+        {errors.external_id ? (
+          <p id={`${idPrefix}-id-error`} className="text-destructive text-xs">
+            {errors.external_id}
+          </p>
+        ) : null}
       </div>
       <div className="flex gap-1">
         <Button

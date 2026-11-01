@@ -273,22 +273,68 @@ async fn external_ids_add_then_list_then_delete_round_trip() {
     assert_eq!(body["rows"].as_array().unwrap().len(), 0);
 }
 
+/// Audit 2026-11 N-A4: the add body validates through `Validated<T>`, so
+/// an unknown source / empty id is a 422 whose `error.details` names the
+/// field (the `<ExternalIdsCard>` add form binds it to the input), not
+/// the old 400 `metadata.invalid_source`. Malformed JSON stays 400.
 #[tokio::test]
-async fn external_ids_add_400_when_source_unknown() {
+async fn external_ids_add_422_names_the_field() {
     let app = TestApp::spawn().await;
     let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let series_id = seed_series(&app).await;
+    let path = format!("/api/series/{series_id}/external-ids");
+
     let resp = send(
         &app,
         &admin,
         Method::POST,
-        &format!("/api/series/{series_id}/external-ids"),
+        &path,
         Some(json!({"source": "wat", "external_id": "x"})),
     )
     .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "validation", "{body:#?}");
+    assert_eq!(body["error"]["message"], "source: unknown source");
+    assert_eq!(body["error"]["details"][0]["field"], "source");
+    assert_eq!(body["error"]["details"][0]["message"], "unknown source");
+
+    let resp = send(
+        &app,
+        &admin,
+        Method::POST,
+        &path,
+        Some(json!({"source": "metron", "external_id": "   "})),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["details"][0]["field"], "external_id");
+    assert_eq!(
+        body["error"]["details"][0]["message"],
+        "external_id required"
+    );
+
+    // Parse-shape failure stays 400 (no field to bind).
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(&path)
+                .header(header::COOKIE, admin.cookie())
+                .header("x-csrf-token", &admin.csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{not json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error"]["code"], "metadata.invalid_source");
+    assert_eq!(body["error"]["code"], "validation");
+    assert!(body["error"]["details"].is_null(), "{body:#?}");
 }
 
 #[tokio::test]
