@@ -29,7 +29,7 @@ use entity::{
     series::{ActiveModel as SeriesAM, normalize_name},
     user::Entity as UserEntity,
 };
-use sea_orm::{ActiveModelTrait, Database, EntityTrait, Set, Unchanged};
+use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set, Unchanged};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -367,6 +367,16 @@ async fn grant_access(app: &TestApp, user_id: Uuid, library_id: Uuid) {
     .unwrap();
 }
 
+async fn revoke_access(app: &TestApp, user_id: Uuid, library_id: Uuid) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    library_user_access::Entity::delete_many()
+        .filter(library_user_access::Column::UserId.eq(user_id))
+        .filter(library_user_access::Column::LibraryId.eq(library_id))
+        .exec(&db)
+        .await
+        .unwrap();
+}
+
 async fn finish_issue(app: &TestApp, user_id: Uuid, issue_id: &str) {
     let db = Database::connect(&app.db_url).await.unwrap();
     let now = Utc::now().fixed_offset();
@@ -557,14 +567,18 @@ async fn collection_skips_an_issue_the_caller_cannot_open() {
     let user = register(&app, "nuc-acl@example.com").await;
     demote_to_user(&app, user.user_id).await;
     let (lib_a, _sa, a1) = seed_one_issue(&app, "nuc-acl-a").await;
-    let (_lib_hidden, _sh, hidden) = seed_one_issue(&app, "nuc-acl-h").await;
+    let (lib_hidden, _sh, hidden) = seed_one_issue(&app, "nuc-acl-h").await;
     let (lib_c, _sc, c1) = seed_one_issue(&app, "nuc-acl-c").await;
     grant_access(&app, user.user_id, lib_a).await;
+    grant_access(&app, user.user_id, lib_hidden).await;
     grant_access(&app, user.user_id, lib_c).await;
     let cid = create_collection(&app, &user, "ACL").await;
     add_entry(&app, &user, cid, "issue", &a1).await;
     add_entry(&app, &user, cid, "issue", &hidden).await;
     add_entry(&app, &user, cid, "issue", &c1).await;
+    // Adding an invisible issue is refused, so the entry goes in while the
+    // caller still has the grant; revoking it afterwards makes it invisible.
+    revoke_access(&app, user.user_id, lib_hidden).await;
 
     let body = next_up(&app, &user, &a1, cid).await;
     assert_eq!(body["source"], "collection");
