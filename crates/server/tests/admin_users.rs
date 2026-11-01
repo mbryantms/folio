@@ -4,6 +4,8 @@
 //!   - Non-admin → 403
 //!   - Admin → 200/201
 //!   - Self-demote / self-disable → 403
+//!   - Demoting / deactivating the last active admin → 409, including two
+//!     admins demoting each other concurrently
 //!   - Library-access set replaces the user's grants and triggers an audit row
 
 mod common;
@@ -13,6 +15,8 @@ use axum::{
     http::{Method, Request, StatusCode, header},
 };
 use common::TestApp;
+use entity::{audit_log, user};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -686,4 +690,306 @@ async fn admin_create_user_rejects_bad_email() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+// ───────── last active admin (audit-2026-11 E10) ─────────
+
+const PW: &str = "correctly-horse-battery";
+
+async fn user_id_of(app: &TestApp, auth: &Authed) -> String {
+    get_me(app, auth).await["id"].as_str().unwrap().to_owned()
+}
+
+/// `(role, state)` straight from the row.
+async fn role_state(app: &TestApp, id: &str) -> (user::UserRole, user::UserState) {
+    let row = user::Entity::find_by_id(uuid::Uuid::parse_str(id).unwrap())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    (row.role, row.state)
+}
+
+async fn active_admin_count(app: &TestApp) -> u64 {
+    user::Entity::find()
+        .filter(user::Column::Role.eq(user::UserRole::Admin))
+        .filter(user::Column::State.eq(user::UserState::Active))
+        .count(&app.state().db)
+        .await
+        .unwrap()
+}
+
+async fn patch_user(app: &TestApp, actor: &Authed, id: &str, body: Value) -> StatusCode {
+    admin_send(
+        app,
+        actor,
+        Method::PATCH,
+        &format!("/api/admin/users/{id}"),
+        Some(body),
+    )
+    .await
+    .status()
+}
+
+/// A signed-in admin whose state is `pending_verification`: it still passes
+/// `RequireAdmin` but is not an *active* admin, so the bootstrap admin stays
+/// the instance's only active one.
+async fn pending_admin(app: &TestApp, admin: &Authed, email: &str) -> Authed {
+    let other = register_authed(app, email, PW).await;
+    let id = user_id_of(app, &other).await;
+    assert_eq!(
+        patch_user(app, admin, &id, serde_json::json!({ "role": "admin" })).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        patch_user(
+            app,
+            admin,
+            &id,
+            serde_json::json!({ "state": "pending_verification" })
+        )
+        .await,
+        StatusCode::OK
+    );
+    other
+}
+
+async fn assert_last_admin_conflict(resp: axum::http::Response<Body>) {
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "conflict", "{body}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("only active admin")),
+        "{body}"
+    );
+}
+
+async fn audit_count(app: &TestApp, action: &str, target_id: &str) -> u64 {
+    audit_log::Entity::find()
+        .filter(audit_log::Column::Action.eq(action))
+        .filter(audit_log::Column::TargetId.eq(target_id))
+        .count(&app.state().db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn demoting_the_last_active_admin_is_409_and_writes_nothing() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", PW).await;
+    let admin_id = user_id_of(&app, &admin).await;
+    let pending = pending_admin(&app, &admin, "pending@example.com").await;
+
+    let resp = admin_send(
+        &app,
+        &pending,
+        Method::PATCH,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(serde_json::json!({ "role": "user" })),
+    )
+    .await;
+    assert_last_admin_conflict(resp).await;
+    assert_eq!(
+        role_state(&app, &admin_id).await,
+        (user::UserRole::Admin, user::UserState::Active)
+    );
+
+    // A combined change (rename + demote) is refused whole: the name stays.
+    let resp = admin_send(
+        &app,
+        &pending,
+        Method::PATCH,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(serde_json::json!({ "role": "user", "display_name": "Renamed" })),
+    )
+    .await;
+    assert_last_admin_conflict(resp).await;
+    assert_ne!(get_me(&app, &admin).await["display_name"], "Renamed");
+
+    // No audit row for the refused changes.
+    assert_eq!(audit_count(&app, "admin.user.update", &admin_id).await, 0);
+}
+
+#[tokio::test]
+async fn disabling_the_last_active_admin_is_409() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", PW).await;
+    let admin_id = user_id_of(&app, &admin).await;
+    let pending = pending_admin(&app, &admin, "pending@example.com").await;
+
+    for state in ["disabled", "pending_verification"] {
+        let resp = admin_send(
+            &app,
+            &pending,
+            Method::PATCH,
+            &format!("/api/admin/users/{admin_id}"),
+            Some(serde_json::json!({ "state": state })),
+        )
+        .await;
+        assert_last_admin_conflict(resp).await;
+    }
+    let resp = admin_send(
+        &app,
+        &pending,
+        Method::POST,
+        &format!("/api/admin/users/{admin_id}/disable"),
+        None,
+    )
+    .await;
+    assert_last_admin_conflict(resp).await;
+
+    // No admin moves itself out of `active`: the self-disable 403 covers
+    // `pending_verification` too, whoever else is an admin.
+    let resp = admin_send(
+        &app,
+        &admin,
+        Method::PATCH,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(serde_json::json!({ "state": "pending_verification" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "self_disable", "{body}");
+
+    assert_eq!(
+        role_state(&app, &admin_id).await,
+        (user::UserRole::Admin, user::UserState::Active)
+    );
+    assert_eq!(audit_count(&app, "admin.user.disable", &admin_id).await, 0);
+    // The session survived: no token_version bump on a refused change.
+    get_me(&app, &admin).await;
+}
+
+#[tokio::test]
+async fn demoting_one_of_two_admins_succeeds_then_the_remaining_one_is_409() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", PW).await;
+    let admin_id = user_id_of(&app, &admin).await;
+    let second = register_authed(&app, "second@example.com", PW).await;
+    let second_id = user_id_of(&app, &second).await;
+    assert_eq!(
+        patch_user(
+            &app,
+            &admin,
+            &second_id,
+            serde_json::json!({ "role": "admin" })
+        )
+        .await,
+        StatusCode::OK
+    );
+    let pending = pending_admin(&app, &admin, "pending@example.com").await;
+    assert_eq!(active_admin_count(&app).await, 2);
+
+    // Two active admins: demoting one is fine, and audited.
+    assert_eq!(
+        patch_user(
+            &app,
+            &admin,
+            &second_id,
+            serde_json::json!({ "role": "user" })
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(role_state(&app, &second_id).await.0, user::UserRole::User);
+    let resp = admin_get(&app, &admin, "/api/admin/audit?action=admin.user.update").await;
+    let body = body_json(resp.into_body()).await;
+    assert!(
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["target_id"] == second_id.as_str() && i["payload"]["role"] == "user"),
+        "demotion audit entry: {body}"
+    );
+
+    // Now one active admin remains, and it can't be demoted.
+    let resp = admin_send(
+        &app,
+        &pending,
+        Method::PATCH,
+        &format!("/api/admin/users/{admin_id}"),
+        Some(serde_json::json!({ "role": "user" })),
+    )
+    .await;
+    assert_last_admin_conflict(resp).await;
+    assert_eq!(active_admin_count(&app).await, 1);
+}
+
+#[tokio::test]
+async fn disabling_one_of_two_admins_succeeds_and_is_audited() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", PW).await;
+    let second = register_authed(&app, "second@example.com", PW).await;
+    let second_id = user_id_of(&app, &second).await;
+    assert_eq!(
+        patch_user(
+            &app,
+            &admin,
+            &second_id,
+            serde_json::json!({ "role": "admin" })
+        )
+        .await,
+        StatusCode::OK
+    );
+    let resp = admin_send(
+        &app,
+        &admin,
+        Method::POST,
+        &format!("/api/admin/users/{second_id}/disable"),
+        None,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        role_state(&app, &second_id).await,
+        (user::UserRole::Admin, user::UserState::Disabled)
+    );
+    assert_eq!(audit_count(&app, "admin.user.disable", &second_id).await, 1);
+}
+
+/// Two admins demote each other at the same moment. Without the lock both
+/// requests pass the extractor and the check, and the instance ends with no
+/// admin; with it the second waits, re-reads, and is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_cross_demotion_leaves_an_admin() {
+    let app = TestApp::spawn().await;
+    let a = register_authed(&app, "a@example.com", PW).await;
+    let a_id = user_id_of(&app, &a).await;
+    let b = register_authed(&app, "b@example.com", PW).await;
+    let b_id = user_id_of(&app, &b).await;
+    assert_eq!(
+        patch_user(&app, &a, &b_id, serde_json::json!({ "role": "admin" })).await,
+        StatusCode::OK
+    );
+    assert_eq!(active_admin_count(&app).await, 2);
+
+    let demote = |actor: &Authed, target: &str| {
+        let req = Request::builder()
+            .method(Method::PATCH)
+            .uri(format!("/api/admin/users/{target}"))
+            .header(header::COOKIE, actor.cookie())
+            .header("x-csrf-token", &actor.csrf)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"role":"user"}"#))
+            .unwrap();
+        let router = app.router.clone();
+        tokio::spawn(async move { router.oneshot(req).await.unwrap().status() })
+    };
+    let a_demotes_b = demote(&a, &b_id);
+    let b_demotes_a = demote(&b, &a_id);
+    let (sa, sb) = (a_demotes_b.await.unwrap(), b_demotes_a.await.unwrap());
+
+    let ok = [sa, sb].iter().filter(|s| **s == StatusCode::OK).count();
+    assert_eq!(ok, 1, "exactly one demotion lands: {sa} / {sb}");
+    for s in [sa, sb] {
+        assert!(
+            [StatusCode::OK, StatusCode::FORBIDDEN, StatusCode::CONFLICT].contains(&s),
+            "unexpected status {s}"
+        );
+    }
+    assert_eq!(active_admin_count(&app).await, 1);
 }

@@ -10,6 +10,13 @@
 //!
 //! All endpoints require `role == UserRole::Admin`. Mutating endpoints emit an
 //! audit_log row keyed on the actor and the affected user.
+//!
+//! **Last admin.** `PATCH` and `disable` refuse (`409 conflict`) a change
+//! that would leave the instance without an active admin — demoting, or
+//! moving out of `active`, the only active admin. The check and the write
+//! share one transaction with every admin row locked
+//! ([`crate::auth::last_admin`], the same guard `DELETE /me` uses), so two
+//! admins demoting each other at once can't both pass it.
 
 use axum::{
     Extension, Json,
@@ -19,8 +26,8 @@ use axum::{
 };
 use entity::{library, library_user_access, user};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -32,6 +39,7 @@ use super::extractors::Validated;
 use super::{error, respond};
 use crate::audit::{self, AuditEntry};
 use crate::auth::RequireAdmin;
+use crate::auth::last_admin::{self, LockedAdmins};
 use crate::auth::password;
 use crate::config::AuthMode;
 use crate::middleware::RequestContext;
@@ -548,6 +556,7 @@ pub async fn get_one(
         (status = 200, body = AdminUserDetailView),
         (status = 400, description = "validation"),
         (status = 403, description = "admin only / cannot demote self"),
+        (status = 409, description = "the change would leave the instance without an active admin"),
         (status = 404, description = "user not found"),
     )
 )]
@@ -568,28 +577,14 @@ pub async fn update(
             "invalid id",
         );
     };
-    let target = match user::Entity::find_by_id(uuid).one(&app.db).await {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return respond(
-                StatusCode::NOT_FOUND,
-                ApiErrorCode::UserNotFound,
-                "user not found",
-            );
-        }
-        Err(e) => {
-            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-    };
-
     // Garde enforces: display_name non-empty-after-trim, role ∈
     // {admin, user}, state ∈ {pending_verification, active, disabled}.
 
     // Self-demotion guard: an admin cannot strip their own admin role or
-    // disable their own account through this endpoint. Locks them out of
-    // /admin entirely with no recovery path through the UI.
-    if target.id == actor.id {
+    // move their own account out of `active` (disabled, or back to
+    // pending_verification) through this endpoint. Locks them out of /admin
+    // entirely with no recovery path through the UI.
+    if uuid == actor.id {
         if matches!(req.role, Some(UserRole::User)) {
             return respond(
                 StatusCode::FORBIDDEN,
@@ -597,7 +592,7 @@ pub async fn update(
                 "cannot demote yourself",
             );
         }
-        if matches!(req.state, Some(UserState::Disabled)) {
+        if req.state.is_some_and(|s| s != UserState::Active) {
             return respond(
                 StatusCode::FORBIDDEN,
                 ApiErrorCode::SelfDisable,
@@ -605,6 +600,46 @@ pub async fn update(
             );
         }
     }
+
+    // Read the target, decide, and write in one transaction with the admin
+    // rows locked, so two admins demoting each other at once can't both pass
+    // the last-active-admin check.
+    let txn = match app.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "admin user update: begin failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let target = match lock_for_change(&txn, actor.id, uuid).await {
+        Ok(Locked::Target(t, admins)) => {
+            let to = (req.role.unwrap_or(t.role), req.state.unwrap_or(t.state));
+            if last_admin::leaves_active_admins((t.role, t.state), to)
+                && admins.is_last_active_admin(t.id)
+            {
+                let _ = txn.rollback().await;
+                return last_admin_conflict();
+            }
+            *t
+        }
+        Ok(Locked::NotFound) => {
+            let _ = txn.rollback().await;
+            return respond(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::UserNotFound,
+                "user not found",
+            );
+        }
+        Ok(Locked::ActorNotAdmin) => {
+            let _ = txn.rollback().await;
+            return actor_not_admin();
+        }
+        Err(e) => {
+            let _ = txn.rollback().await;
+            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
 
     let mut changed = serde_json::Map::new();
     let mut bump_token_version = false;
@@ -634,6 +669,7 @@ pub async fn update(
 
     if changed.is_empty() {
         // Idempotent no-op.
+        let _ = txn.rollback().await;
         let counts = library_counts_for(&app, vec![uuid])
             .await
             .unwrap_or_default();
@@ -650,9 +686,10 @@ pub async fn update(
         am.token_version = Set(target.token_version + 1);
     }
 
-    let updated = match am.update(&app.db).await {
+    let updated = match am.update(&txn).await {
         Ok(m) => m,
         Err(e) => {
+            let _ = txn.rollback().await;
             tracing::error!(error = %e, user_id = %uuid, "update user failed");
             return respond(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -661,6 +698,14 @@ pub async fn update(
             );
         }
     };
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, user_id = %uuid, "update user commit failed");
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiErrorCode::Internal,
+            "internal",
+        );
+    }
 
     // AUTH-1: when an admin update bumps token_version (password/role/state
     // change), revoke the target's sessions so a stolen refresh token can't
@@ -696,6 +741,7 @@ pub async fn update(
     responses(
         (status = 200, body = AdminUserView),
         (status = 403, description = "admin only / cannot disable self"),
+        (status = 409, description = "the user is the instance's only active admin"),
         (status = 404, description = "user not found"),
     )
 )]
@@ -739,15 +785,7 @@ async fn set_state(
     let Ok(uuid) = Uuid::parse_str(&id) else {
         return error(StatusCode::BAD_REQUEST, "validation", "invalid id");
     };
-    let target = match user::Entity::find_by_id(uuid).one(&app.db).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "user not found"),
-        Err(e) => {
-            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-    };
-    if target.id == actor.id && new_state == UserState::Disabled {
+    if uuid == actor.id && new_state == UserState::Disabled {
         return error(
             StatusCode::FORBIDDEN,
             "self_disable",
@@ -755,7 +793,41 @@ async fn set_state(
         );
     }
 
+    // Same locked read-decide-write as `update`.
+    let txn = match app.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "admin user set state: begin failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let target = match lock_for_change(&txn, actor.id, uuid).await {
+        Ok(Locked::Target(t, admins)) => {
+            if last_admin::leaves_active_admins((t.role, t.state), (t.role, new_state))
+                && admins.is_last_active_admin(t.id)
+            {
+                let _ = txn.rollback().await;
+                return last_admin_conflict();
+            }
+            *t
+        }
+        Ok(Locked::NotFound) => {
+            let _ = txn.rollback().await;
+            return error(StatusCode::NOT_FOUND, "not_found", "user not found");
+        }
+        Ok(Locked::ActorNotAdmin) => {
+            let _ = txn.rollback().await;
+            return actor_not_admin();
+        }
+        Err(e) => {
+            let _ = txn.rollback().await;
+            tracing::error!(error = %e, user_id = %uuid, "admin user lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+
     if target.state == new_state {
+        let _ = txn.rollback().await;
         let counts = library_counts_for(&app, vec![uuid])
             .await
             .unwrap_or_default();
@@ -768,13 +840,18 @@ async fn set_state(
     if new_state == UserState::Disabled {
         am.token_version = Set(target.token_version + 1);
     }
-    let updated = match am.update(&app.db).await {
+    let updated = match am.update(&txn).await {
         Ok(m) => m,
         Err(e) => {
+            let _ = txn.rollback().await;
             tracing::error!(error = %e, user_id = %uuid, new_state = new_state.as_str(), "set state failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, user_id = %uuid, new_state = new_state.as_str(), "set state commit failed");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
 
     // AUTH-1: disabling a user revokes their sessions so an already-issued
     // refresh token can't keep rotating (the token_version bump only stops
@@ -805,6 +882,57 @@ async fn set_state(
         .await
         .unwrap_or_default();
     Json(AdminUserView::from_model(updated, &counts)).into_response()
+}
+
+/// What [`lock_for_change`] found under the lock.
+enum Locked {
+    /// The target row (locked) and every admin row (locked).
+    Target(Box<user::Model>, LockedAdmins),
+    NotFound,
+    /// The actor lost the admin role, or was disabled, after the extractor
+    /// ran — another admin changed them while this request was in flight.
+    ActorNotAdmin,
+}
+
+/// Lock every admin row (id order), re-check the actor is still an admin
+/// that `RequireAdmin` would admit (not disabled), then lock the target
+/// row. Admins-first is the order every last-admin path uses
+/// ([`crate::auth::last_admin`]).
+async fn lock_for_change(
+    txn: &DatabaseTransaction,
+    actor_id: Uuid,
+    target_id: Uuid,
+) -> Result<Locked, sea_orm::DbErr> {
+    let admins = LockedAdmins::lock(txn).await?;
+    if admins
+        .get(actor_id)
+        .is_none_or(|a| a.state == UserState::Disabled)
+    {
+        return Ok(Locked::ActorNotAdmin);
+    }
+    let Some(target) = user::Entity::find_by_id(target_id)
+        .lock_exclusive()
+        .one(txn)
+        .await?
+    else {
+        return Ok(Locked::NotFound);
+    };
+    Ok(Locked::Target(Box::new(target), admins))
+}
+
+/// `409` for a change that would leave the instance without an active admin.
+fn last_admin_conflict() -> axum::response::Response {
+    respond(
+        StatusCode::CONFLICT,
+        ApiErrorCode::Conflict,
+        "this is the only active admin; make another account an admin first",
+    )
+}
+
+/// The `RequireAdmin` rejection, for an actor that stopped being an admin
+/// mid-request.
+fn actor_not_admin() -> axum::response::Response {
+    crate::auth::extractor::AuthRejection::Forbidden.into_response()
 }
 
 #[utoipa::path(

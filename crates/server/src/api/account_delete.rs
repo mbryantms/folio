@@ -25,6 +25,8 @@
 //! deletion would leave none gets `409 conflict`. The check runs inside the
 //! deletion transaction with every admin row locked (`FOR UPDATE`, id
 //! order), so two admins deleting themselves at once can't both pass it.
+//! The admin user PATCH / disable handlers share the same check
+//! ([`crate::auth::last_admin`]).
 //!
 //! **What goes.** One transaction:
 //!
@@ -72,20 +74,18 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
-    Statement, TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, Statement, TransactionTrait};
 use serde::Deserialize;
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use entity::user::{self, UserRole, UserState};
+use entity::user;
 
 use crate::api::extractors::Validated;
 use crate::api::{respond, respond_with_field_errors};
 use crate::audit::{self, AuditEntry};
+use crate::auth::last_admin::LockedAdmins;
 use crate::auth::local::has_local_password;
 use crate::auth::{CurrentUser, cookies, failed_auth, password};
 use crate::middleware::{RequestContext, rate_limit};
@@ -341,20 +341,10 @@ async fn delete_account(
     let txn = app.db.begin().await?;
 
     // Lock every admin row in id order before deciding: a concurrent
-    // self-delete by another admin waits here, then re-reads, so the two
+    // self-delete (or admin demotion) waits here, then re-reads, so the two
     // can't each see the other as "the remaining admin".
-    let admins = user::Entity::find()
-        .filter(user::Column::Role.eq(UserRole::Admin))
-        .order_by_asc(user::Column::Id)
-        .lock_exclusive()
-        .all(&txn)
-        .await?;
-    let is_admin = admins.iter().any(|a| a.id == row.id);
-    if is_admin
-        && !admins
-            .iter()
-            .any(|a| a.id != row.id && a.state == UserState::Active)
-    {
+    let admins = LockedAdmins::lock(&txn).await?;
+    if admins.is_last_active_admin(row.id) {
         txn.rollback().await?;
         return Ok(Outcome::LastAdmin);
     }

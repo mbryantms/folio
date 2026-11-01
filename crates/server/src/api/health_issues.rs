@@ -1062,6 +1062,7 @@ async fn enqueue_drift_flush_for_series(app: &AppState, series_ids: &[Uuid]) -> 
                     // No provider decisions to record: the flush only
                     // pushes existing DB truth (user pins) into the XML.
                     post_apply: None,
+                    reemit: None,
                 })
                 .await;
             match push {

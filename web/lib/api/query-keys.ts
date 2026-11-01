@@ -221,6 +221,9 @@ export const queryKeys = {
   /** First-import content-hash backfill progress (WP-3.2). */
   hashBackfill: (librarySlug: string) =>
     ["admin", "libraries", librarySlug, "hash-backfill"] as const,
+  /** Latest library-wide sidecar re-emit run (audit 2026-11 A7). */
+  sidecarReemit: (librarySlug: string) =>
+    ["admin", "libraries", librarySlug, "sidecar-reemit"] as const,
   users: (filters: UserListFilters) => ["admin", "users", filters] as const,
   user: (id: string) => ["admin", "users", id] as const,
   audit: (filters: AuditFilters) => ["admin", "audit", filters] as const,

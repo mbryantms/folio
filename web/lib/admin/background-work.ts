@@ -30,6 +30,7 @@ export const QUEUE_LABELS: Record<string, string> = {
   relationship_suggest: "Relationship suggestions",
   provider_coverage: "Provider coverage",
   entity_enrich: "Entity profiles",
+  sidecar_reemit: "Sidecar re-emit",
 };
 
 export function queueLabel(queue: string): string {
@@ -55,6 +56,7 @@ const PILL_NOUNS: Record<string, string> = {
   relationship_suggest: "relationship suggestions",
   provider_coverage: "provider coverage",
   entity_enrich: "entity profiles",
+  sidecar_reemit: "sidecar re-emit",
 };
 
 /** `16,204` → `16.2k`; small numbers stay exact. */

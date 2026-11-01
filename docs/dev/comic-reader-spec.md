@@ -1002,6 +1002,7 @@ The container runs **two processes** under `tini` (PID 1):
 ### 12.8 Default admin bootstrap
 - The **first user to authenticate successfully** on a fresh database is granted the `admin` role automatically. The choice is logged at `info` (`first_admin_bootstrap`) and recorded in `audit_log` (`user.role_change`, `actor_type='system'`).
 - After that first login, no further admin grants happen automatically; subsequent admins require an existing admin to grant via `POST /admin/users/{id}/role`.
+- **The instance always keeps an active admin (audit 2026-11 E10).** Demoting or moving out of `active` the only active admin (`PATCH /admin/users/{id}`, `POST /admin/users/{id}/disable`) and that admin deleting their own account (`DELETE /me`) return `409 conflict` with nothing written. Each path checks and writes in one transaction with every admin row locked (`crates/server/src/auth/last_admin.rs`), so two admins demoting each other at once can't both succeed.
 - **Mandatory hardening at install time** — documented as a check in the install guide:
   - In OIDC mode, ensure the Authentik application is restricted to the intended user pool *before* opening the app to the network. Otherwise a stranger could be the "first" user.
   - In local mode, set `COMIC_LOCAL_REGISTRATION_OPEN=true` only long enough to register the admin, then set it to `false` and restart.

@@ -89,6 +89,7 @@ pub mod rewrite_sidecars;
 pub mod scan;
 pub mod scan_series;
 pub mod scheduler;
+pub mod sidecar_reemit;
 
 /// Owned by [`AppState`]. Cloneable handle into the apalis storages and a
 /// raw Redis connection (used for the coalescing keys, which live outside
@@ -112,6 +113,7 @@ pub struct JobRuntime {
     pub relationship_suggest_storage: RedisStorage<relationship_suggest::RelationshipSuggestJob>,
     pub provider_coverage_storage: RedisStorage<provider_coverage::ProviderCoverageJob>,
     pub entity_enrich_storage: RedisStorage<entity_enrich::EntityEnrichJob>,
+    pub sidecar_reemit_storage: RedisStorage<sidecar_reemit::SidecarReemitJob>,
     pub redis: ConnectionManager,
 }
 
@@ -141,6 +143,7 @@ impl JobRuntime {
         let provider_coverage_storage =
             storage::<provider_coverage::ProviderCoverageJob>(conn.clone());
         let entity_enrich_storage = storage::<entity_enrich::EntityEnrichJob>(conn.clone());
+        let sidecar_reemit_storage = storage::<sidecar_reemit::SidecarReemitJob>(conn.clone());
         let rt = Self {
             db,
             scan_storage,
@@ -159,6 +162,7 @@ impl JobRuntime {
             relationship_suggest_storage,
             provider_coverage_storage,
             entity_enrich_storage,
+            sidecar_reemit_storage,
             redis: conn,
         };
         rt.purge_legacy_queue_state().await?;
@@ -601,6 +605,16 @@ impl JobRuntime {
             1,
             entity_enrich::handle
         );
+        // Library-wide sidecar re-emit ticks — concurrency=1. A tick only
+        // composes and queues rewrites (bounded by the run's own throttle);
+        // the archive work happens on the sidecar rewrite workers above.
+        let monitor = register!(
+            monitor,
+            "sidecar_reemit",
+            self.sidecar_reemit_storage,
+            1,
+            sidecar_reemit::handle
+        );
 
         let shutdown_fut = {
             let token = shutdown.clone();
@@ -1003,6 +1017,30 @@ impl JobRuntime {
         Ok(active + due)
     }
 
+    /// Every unfinished job of one queue: waiting, retry-delayed, and held
+    /// by a worker — [`Self::queue_counts`]'s `outstanding()` for a single
+    /// queue, without reading the other sixteen.
+    pub async fn queue_outstanding<T>(&self, storage: &RedisStorage<T>) -> redis::RedisResult<i64> {
+        let cfg = storage.get_config();
+        let mut conn = self.redis.clone();
+        let (active, scheduled, workers): (i64, i64, Vec<String>) = redis::pipe()
+            .llen(cfg.active_jobs_list())
+            .zcard(cfg.scheduled_jobs_set())
+            .zrange(cfg.workers_set(), 0, -1)
+            .query_async(&mut conn)
+            .await?;
+        let mut held = 0;
+        if !workers.is_empty() {
+            let mut pipe = redis::pipe();
+            for w in &workers {
+                pipe.scard(inflight_set_key(cfg, w));
+            }
+            let sizes: Vec<i64> = pipe.query_async(&mut conn).await?;
+            held = sizes.iter().sum();
+        }
+        Ok(active + scheduled + held)
+    }
+
     /// Boot-time sweep of queue state written by apalis-redis 0.7 (folio ≤
     /// 0.61). The key names are unchanged, but 0.7 stored each job as a
     /// whole `Request` JSON and kept per-worker sets in a `{queue}:consumers`
@@ -1087,6 +1125,7 @@ impl JobRuntime {
                 self.provider_coverage_storage.get_config(),
             ),
             ("entity_enrich", self.entity_enrich_storage.get_config()),
+            ("sidecar_reemit", self.sidecar_reemit_storage.get_config()),
         ]
     }
 
@@ -1205,7 +1244,7 @@ impl JobRuntime {
 }
 
 /// Number of apalis queues [`JobRuntime`] owns.
-pub const QUEUE_COUNT: usize = 16;
+pub const QUEUE_COUNT: usize = 17;
 
 /// One queue's outstanding jobs — see [`JobRuntime::queue_counts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

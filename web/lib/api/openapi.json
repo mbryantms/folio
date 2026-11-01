@@ -2888,6 +2888,9 @@
           },
           "404": {
             "description": "user not found"
+          },
+          "409": {
+            "description": "the change would leave the instance without an active admin"
           }
         }
       }
@@ -2920,6 +2923,9 @@
           },
           "404": {
             "description": "user not found"
+          },
+          "409": {
+            "description": "the user is the instance's only active admin"
           }
         }
       }
@@ -5628,6 +5634,71 @@
           },
           "409": {
             "description": "scan run already terminal"
+          }
+        }
+      }
+    },
+    "/api/libraries/{slug}/sidecar-reemit": {
+      "get": {
+        "operationId": "libraries_sidecar_reemit_status",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SidecarReemitStatusView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "libraries_sidecar_reemit_start",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SidecarReemitRunView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "404": {
+            "description": "library not found"
+          },
+          "409": {
+            "description": "writeback is off on this library, or a run is already in progress"
           }
         }
       }
@@ -15355,7 +15426,8 @@
           "libraries",
           "queues",
           "metadata_batches",
-          "tasks"
+          "tasks",
+          "sidecar_reemits"
         ],
         "properties": {
           "generated_at": {
@@ -15380,6 +15452,13 @@
               "$ref": "#/components/schemas/QueueWorkView"
             },
             "description": "Every queue, in a stable order."
+          },
+          "sidecar_reemits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SidecarReemitWorkView"
+            },
+            "description": "Sidecar re-emit runs that are live or finished in the last 24 h,\nnewest first."
           },
           "tasks": {
             "type": "array",
@@ -29907,6 +29986,7 @@
           "relationship_suggest",
           "provider_coverage",
           "entity_enrich",
+          "sidecar_reemit",
           "total",
           "in_flight",
           "queues"
@@ -29996,6 +30076,11 @@
           "scan_series": {
             "type": "integer",
             "format": "int64"
+          },
+          "sidecar_reemit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Library-wide sidecar re-emit ticks (one chain per running run)."
           },
           "total": {
             "type": "integer",
@@ -34791,6 +34876,124 @@
             "items": {
               "$ref": "#/components/schemas/SidebarEntryView"
             }
+          }
+        }
+      },
+      "SidecarReemitRunView": {
+        "type": "object",
+        "description": "One library-wide sidecar re-emit run.",
+        "required": [
+          "run_id",
+          "library_id",
+          "status",
+          "started_at",
+          "total",
+          "enqueued",
+          "skipped_refused",
+          "skipped_gone",
+          "rewritten",
+          "failed",
+          "outstanding",
+          "stalled"
+        ],
+        "properties": {
+          "enqueued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rewrites queued so far."
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rewrites that gave up after their retries."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "library_id": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why an aborted run stopped."
+          },
+          "outstanding": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rewrites queued or running right now."
+          },
+          "rewritten": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Archives whose sidecars were rewritten."
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "skipped_gone": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Issues removed between the walk and the compose."
+          },
+          "skipped_refused": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Archives the sidecar path refused (CBR / CB7 without conversion,\nunsupported formats): skipped, never queued."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "Live, but no tick has run for 15 minutes (a dead-lettered tick or a\ncleared queue): nothing will advance it, and starting a new run\nsupersedes it."
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`running` (queueing rewrites) | `draining` (all queued, waiting for\nthe last rewrites) | `completed` | `aborted`."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Active, non-removed issues when the run started."
+          }
+        }
+      },
+      "SidecarReemitStatusView": {
+        "type": "object",
+        "description": "`GET /libraries/{slug}/sidecar-reemit`.",
+        "properties": {
+          "run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SidecarReemitRunView",
+                "description": "The library's newest run still on record; `None` when there is none."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SidecarReemitWorkView": {
+        "type": "object",
+        "description": "A library-wide sidecar re-emit run ([`crate::jobs::sidecar_reemit`]).\nA stalled run (`run.stalled`) is excluded from `busy`.",
+        "required": [
+          "library_name",
+          "run"
+        ],
+        "properties": {
+          "library_name": {
+            "type": "string"
+          },
+          "run": {
+            "$ref": "#/components/schemas/SidecarReemitRunView"
           }
         }
       },

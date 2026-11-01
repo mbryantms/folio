@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { LibraryDangerZone } from "@/components/admin/library/LibraryDangerZone";
 import { LibrarySettingsForm } from "@/components/admin/library/LibrarySettingsForm";
+import { SidecarReemitCard } from "@/components/admin/library/SidecarReemitCard";
 import { ApiError, apiGet } from "@/lib/api/fetch";
 import type { LibraryView } from "@/lib/api/types";
 
@@ -21,6 +22,7 @@ export default async function LibrarySettingsPage({
   return (
     <div className="space-y-6">
       <LibrarySettingsForm id={slug} />
+      <SidecarReemitCard slug={slug} />
       <LibraryDangerZone id={slug} name={library.name} />
     </div>
   );
