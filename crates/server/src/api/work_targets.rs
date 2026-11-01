@@ -146,7 +146,10 @@ pub struct Resolved {
     pub runs: HashMap<Uuid, WorkTargetView>,
 }
 
-pub async fn resolve(app: &AppState, mut refs: TargetRefs) -> Result<Resolved, sea_orm::DbErr> {
+pub(crate) async fn resolve(
+    app: &AppState,
+    mut refs: TargetRefs,
+) -> Result<Resolved, sea_orm::DbErr> {
     let mut out = Resolved::default();
 
     // Runs first: they add their scope entities to the issue / series sets.

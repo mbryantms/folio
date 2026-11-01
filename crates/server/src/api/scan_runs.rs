@@ -596,7 +596,7 @@ pub(crate) async fn resolve_joins(
 ///   - Uses a single SQL statement keyed off `ROW_NUMBER() OVER (PARTITION BY
 ///     library_id ORDER BY started_at DESC)` so the per-library "last N"
 ///     behavior is one round-trip rather than one-per-library.
-pub async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<u64> {
+pub(crate) async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<u64> {
     // Postgres-only — the workspace already pins sea-orm to sqlx-postgres.
     let stmt = Statement::from_sql_and_values(
         DbBackend::Postgres,

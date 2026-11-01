@@ -9,6 +9,7 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::middleware::rate_limit;
 use crate::state::AppState;
+use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
     // CSP report endpoint isn't in the spec — the body shape is
@@ -22,6 +23,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
 }
 
 // Note: no #[utoipa::path] — the body shape is browser-defined and varies by user-agent.
+#[handler]
 pub async fn csp_report(State(_state): State<AppState>, body: Bytes) -> impl IntoResponse {
     metrics::counter!("folio_csp_violations_total").increment(1);
     let parsed: serde_json::Value = serde_json::from_slice(&body)

@@ -9,6 +9,7 @@ use crate::middleware::security_headers::{self, CspTemplate};
 use crate::observability::ObservabilityHandles;
 use crate::state::AppState;
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::response::IntoResponse;
 use sea_orm::{ColumnTrait, ConnectOptions, Database, EntityTrait, PaginatorTrait, QueryFilter};
 use std::sync::Arc;
@@ -72,6 +73,10 @@ pub struct ApiDoc;
 /// the bytes going out verbatim) and the `/ws/*` upgrades. The
 /// `Router::fallback` proxy in [`router`] sits outside both groups, so
 /// its WebSocket passthrough is untouched too.
+///
+/// **Body limits (N-A2):** both groups declare [`DEFAULT_BODY_LIMIT`]
+/// explicitly. It only bounds buffering extractors, so the bare streams
+/// are unaffected.
 pub fn build_openapi_router() -> OpenApiRouter<AppState> {
     let bare = OpenApiRouter::<AppState>::new()
         .merge(api::health::routes())
@@ -96,7 +101,12 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
         .merge(OpenApiRouter::from(api::opds::routes()))
         .merge(OpenApiRouter::from(api::opds_v2::routes()))
         .merge(OpenApiRouter::from(api::komga_compat::routes()))
-        .merge(OpenApiRouter::from(api::opds_progression::routes()));
+        .merge(OpenApiRouter::from(api::opds_progression::routes()))
+        // Applied before the `api` group is nested, so it covers the bare
+        // routes only; the `api` group carries its own copy inside
+        // `with_json_layers`.
+        .layer(axum::middleware::map_response(envelope_payload_too_large))
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT));
 
     let api = OpenApiRouter::<AppState>::new()
         .merge(auth::local::routes())
@@ -190,10 +200,52 @@ pub fn build_openapi_router() -> OpenApiRouter<AppState> {
 /// healthy approaches.
 pub const JSON_ROUTE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Wrap a JSON route group with the WP-1.6 tower layers.
+/// Request-body limit for every buffered extractor (`Json`, `Bytes`,
+/// `String`, `Form`, `Multipart`) on both route groups: 2 MiB, the value
+/// axum applied implicitly before it was declared (N-A2). JSON bodies in
+/// this API are small; the two multipart imports that need more raise it
+/// on their own sub-routers (`POST /uploads` 32 MiB + framing in
+/// `api::archive_edit`, `POST /me/cbl-lists/upload` 4 MiB + framing in
+/// `api::cbl_lists`). Over-limit bodies answer 413 with the canonical
+/// envelope (see [`envelope_payload_too_large`]). Streaming handlers that
+/// never buffer — page bytes, the upstream proxy (capped separately by
+/// `upstream::MAX_PROXY_BODY_BYTES`) — are unaffected; `/ws/*` frames are
+/// bounded by `api::ws_scan_events::{WS_MAX_MESSAGE_BYTES,
+/// WS_MAX_FRAME_BYTES}`.
+pub const DEFAULT_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+/// Rewrites axum's plain-text `413 Payload Too Large` body-limit rejection
+/// (`Failed to buffer the request body: length limit exceeded`) into the
+/// canonical `{"error": {...}}` envelope, code `too_large`. A 413 a handler
+/// already built through `api::error` / `api::respond` is JSON and passes
+/// through untouched.
+async fn envelope_payload_too_large(resp: axum::response::Response) -> axum::response::Response {
+    if resp.status() != axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+        return resp;
+    }
+    let is_json = resp
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("application/json"));
+    if is_json {
+        return resp;
+    }
+    api::respond(
+        axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+        shared::error::ApiErrorCode::TooLarge,
+        "request body exceeds the size limit",
+    )
+}
+
+/// Wrap a JSON route group with the WP-1.6 tower layers plus the explicit
+/// [`DEFAULT_BODY_LIMIT`] (N-A2).
 ///
 /// Order: `.layer(A).layer(B)` makes `B` the outer layer, so requests
-/// pass **timeout → compression → handler**. The timeout is outermost so
+/// pass **timeout → compression → body limit → 413 envelope → handler**.
+/// The body limit only inserts a request extension that extractors read,
+/// so a per-route `DefaultBodyLimit` layer further in (the multipart
+/// imports) overrides it. The timeout is outermost so
 /// a `408` is produced by the layer that owns the deadline and never
 /// waits on compression; compression sits directly on the handler so
 /// it sees the handler's own headers.
@@ -214,6 +266,8 @@ where
     S: Clone + Send + Sync + 'static,
 {
     router
+        .layer(axum::middleware::map_response(envelope_payload_too_large))
+        .layer(DefaultBodyLimit::max(DEFAULT_BODY_LIMIT))
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
