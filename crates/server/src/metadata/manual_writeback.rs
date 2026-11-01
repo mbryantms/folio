@@ -242,6 +242,7 @@ async fn push_from_db(
         issue_user_pins: &issue_user_pins,
         series_user_pins: &series.user_pins,
         issue_junctions: &issue_junctions,
+        fill_missing: false,
     };
     let comic_info = crate::metadata::sidecar_compose::compose_comicinfo(&ctx);
     let metron_info = crate::metadata::sidecar_compose::compose_metroninfo(&ctx);

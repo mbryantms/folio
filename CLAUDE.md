@@ -440,7 +440,8 @@ Default admin (first registered user becomes admin):
     scanner ingest is the canonical path; direct writers from the
     sidecar apply path are reserved for **metadata-only** rows the
     XML schemas don't carry (today: variant covers via
-    `set_issue_variants`, per-field provenance via
+    `set_issue_variants`, the provider primary cover via
+    `apply_cover`, reprints, per-field provenance via
     `write_field_provenance` over `SIDECAR_ISSUE_PROVENANCE_FIELDS`,
     and the `last_metadata_sync_at` stamp — the XML can't say
     "ComicVine set this on date X", so the apply *decides* it and hands
