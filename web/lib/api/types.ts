@@ -904,6 +904,7 @@ export type BatchListRow = Schemas["BatchListRow"];
 export type BatchApplyResp = Schemas["BatchApplyResp"];
 export type MetadataOverviewView = Schemas["MetadataOverviewView"];
 export type FieldProvenanceRow = Schemas["FieldProvenanceRow"];
+export type FieldLockResp = Schemas["FieldLockResp"];
 export type SourceFilesView = Schemas["SourceFilesView"];
 export type CompletenessReport = Schemas["CompletenessReport"];
 export type CompletenessTier = Schemas["CompletenessTier"];
