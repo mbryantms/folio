@@ -6,8 +6,11 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub issue_id: String,
-    /// One of: `writer`, `penciller`, `inker`, `colorist`, `letterer`,
-    /// `cover_artist`, `editor`, `translator`.
+    /// Usually one of: `writer`, `penciller`, `inker`, `colorist`,
+    /// `letterer`, `cover_artist`, `editor`, `translator`. Open set: a
+    /// provider role outside those is kept snake_cased (`journalist`) by
+    /// `metadata::provider::canonical_credit_role`, so this stays a
+    /// `String` (AR-7 notes in `docs/dev/schema-restructure.md`).
     #[sea_orm(primary_key, auto_increment = false)]
     pub role: String,
     #[sea_orm(primary_key, auto_increment = false)]

@@ -9612,7 +9612,7 @@ export interface components {
             id: string;
             is_favorite: boolean;
             issue: components["schemas"]["IssueRef"];
-            kind: string;
+            kind: components["schemas"]["MarkerKind"];
             /**
              * @description Hex BLAKE3 of the page image at `page_index` (WP-6.2). `None` until
              *     the page could be hashed.
@@ -11312,6 +11312,12 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
+        /**
+         * @description What a `markers` row is. The markers API adds a shape rule per kind:
+         *     a note needs `body`, a highlight needs `region`.
+         * @enum {string}
+         */
+        MarkerKind: "bookmark" | "note" | "favorite" | "highlight";
         MarkerListView: {
             items: components["schemas"]["MarkerView"][];
             next_cursor?: string | null;
@@ -11323,7 +11329,7 @@ export interface components {
             issue_slug?: string | null;
             issue_title?: string | null;
             /** @description `'bookmark' | 'note' | 'favorite' | 'highlight'`. */
-            kind: string;
+            kind: components["schemas"]["MarkerKind"];
             /** Format: int32 */
             page_index: number;
             /**
@@ -11389,7 +11395,7 @@ export interface components {
              *     both a kind (re-introduced 2026-05-20) and, for any marker, a
              *     flag — see `is_favorite`.
              */
-            kind: string;
+            kind: components["schemas"]["MarkerKind"];
             /**
              * @description Hex BLAKE3 of the page image the marker is anchored to (WP-6.2).
              *     `None` until the page could be hashed; the Undo flow sends it

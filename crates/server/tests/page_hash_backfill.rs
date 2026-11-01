@@ -173,7 +173,7 @@ async fn legacy_marker(app: &TestApp, user: Uuid, row: &issue::Model, page: i32)
         series_id: Set(row.series_id),
         issue_id: Set(row.id.clone()),
         page_index: Set(page),
-        kind: Set("bookmark".into()),
+        kind: Set(marker::MarkerKind::Bookmark),
         is_favorite: Set(false),
         tags: Set(vec![]),
         region: Set(None),

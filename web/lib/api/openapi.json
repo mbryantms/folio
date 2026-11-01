@@ -22741,7 +22741,7 @@
             "$ref": "#/components/schemas/IssueRef"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/MarkerKind"
           },
           "page_hash": {
             "type": [
@@ -26765,6 +26765,16 @@
           }
         }
       },
+      "MarkerKind": {
+        "type": "string",
+        "description": "What a `markers` row is. The markers API adds a shape rule per kind:\na note needs `body`, a highlight needs `region`.",
+        "enum": [
+          "bookmark",
+          "note",
+          "favorite",
+          "highlight"
+        ]
+      },
       "MarkerListView": {
         "type": "object",
         "required": [
@@ -26820,7 +26830,7 @@
             ]
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/MarkerKind",
             "description": "`'bookmark' | 'note' | 'favorite' | 'highlight'`."
           },
           "page_index": {
@@ -26950,7 +26960,7 @@
             ]
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/MarkerKind",
             "description": "`'bookmark' | 'note' | 'highlight' | 'favorite'`. Favorite is\nboth a kind (re-introduced 2026-05-20) and, for any marker, a\nflag — see `is_favorite`."
           },
           "page_hash": {

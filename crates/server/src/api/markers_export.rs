@@ -38,6 +38,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
+use entity::marker::MarkerKind;
 use entity::{issue, marker, user_issue_note, user_rating};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
@@ -444,13 +445,12 @@ async fn build(
 
 // ───────── Markdown ─────────
 
-fn kind_label(kind: &str) -> &str {
+fn kind_label(kind: MarkerKind) -> &'static str {
     match kind {
-        "bookmark" => "Bookmark",
-        "note" => "Note",
-        "favorite" => "Favorite",
-        "highlight" => "Highlight",
-        other => other,
+        MarkerKind::Bookmark => "Bookmark",
+        MarkerKind::Note => "Note",
+        MarkerKind::Favorite => "Favorite",
+        MarkerKind::Highlight => "Highlight",
     }
 }
 
@@ -526,7 +526,7 @@ fn render_closing_note(out: &mut String, note: &NotesExportClosingNote) {
 fn render_marker(out: &mut String, nm: &NotesExportMarker) {
     let m = &nm.marker;
     let star = if m.is_favorite { " ★" } else { "" };
-    let _ = write!(out, "\n**{}**{star} · ", kind_label(&m.kind));
+    let _ = write!(out, "\n**{}**{star} · ", kind_label(m.kind));
     match (&nm.jump_url, nm.available) {
         (Some(url), true) => {
             let _ = write!(out, "[Jump to page]({url})");
