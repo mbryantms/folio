@@ -69,21 +69,28 @@ use crate::library::thumbnails;
 use crate::metadata::writers::{self, CoverWrite};
 use crate::metadata::{Identifier, Source};
 use crate::middleware::RequestContext;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
 /// `series_cover.kind` of a user pick. Distinct from the provider image
 /// kinds (`primary` / `logo` / `banner`) so a pick never collides with a
 /// downloaded banner on the `(series_id, kind, ordinal)` unique index.
-pub(crate) const PICK_KIND: &str = "pick";
+pub(crate) const PICK_KIND: series_cover::SeriesCoverKind = series_cover::SeriesCoverKind::Pick;
 const PICK_PROVIDER: &str = "user";
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
+    // Per-user bucket (E12, audit N-A5): the cover picks share one
+    // `METADATA_WRITE` instance in their own sub-router, so a read added
+    // here later stays unbucketed. A pick is one click and queues a
+    // sidecar rewrite in a writeback library.
+    let writes = OpenApiRouter::new()
         .routes(routes!(set_issue_cover))
         .routes(routes!(set_issue_variant_cover))
         .routes(routes!(clear_issue_variant_cover))
         .routes(routes!(set_series_cover))
+        .route_layer(rate_limit::METADATA_WRITE.build_per_user());
+    OpenApiRouter::new().merge(writes)
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -152,6 +159,7 @@ pub struct SeriesCoverPickResp {
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
         (status = 422, description = "page_index outside the archive"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -277,6 +285,7 @@ async fn refresh_cover_thumbnail(app: &AppState, row: &issue::Model) -> bool {
         (status = 404, description = "issue or variant not found"),
         (status = 422, description = "the variant has no image to use, or it is not a recognised image"),
         (status = 502, description = "the variant image could not be downloaded"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -292,7 +301,7 @@ pub async fn set_issue_variant_cover(
     };
     let variant = match issue_cover::Entity::find_by_id(variant_id)
         .filter(issue_cover::Column::IssueId.eq(&row.id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .filter(issue_cover::Column::IsActive.eq(true))
         .one(&app.db)
         .await
@@ -326,7 +335,7 @@ pub async fn set_issue_variant_cover(
         });
     let write = CoverWrite {
         issue_id: &row.id,
-        kind: "primary",
+        kind: issue_cover::IssueCoverKind::Primary,
         ordinal: 0,
         identifier: identifier.as_ref(),
         source_url: variant.source_url.as_deref(),
@@ -395,6 +404,7 @@ pub async fn set_issue_variant_cover(
         (status = 200, body = IssueVariantCoverClearResp),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -496,6 +506,7 @@ async fn variant_image_bytes(
         (status = 403, description = "admin only"),
         (status = 404, description = "series not found"),
         (status = 422, description = "issue_id is not an active issue of this series"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -550,7 +561,7 @@ pub async fn set_series_cover(
             series_cover::ActiveModel {
                 id: Set(Uuid::now_v7()),
                 series_id: Set(series_row.id),
-                kind: Set(PICK_KIND.into()),
+                kind: Set(PICK_KIND),
                 ordinal: Set(0),
                 source_provider: Set(Some(PICK_PROVIDER.into())),
                 source_external_id: Set(Some(issue_id.to_owned())),

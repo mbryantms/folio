@@ -612,13 +612,13 @@ async fn clear_scans_cancels_queued_runs_and_finalizes_their_batch() {
     let batch_id = Uuid::now_v7();
     entity::scan_batch::ActiveModel {
         id: Set(batch_id),
-        kind: Set("scan_all".into()),
+        kind: Set(entity::scan_batch::ScanBatchKind::ScanAll),
         actor_id: Set(None),
         force: Set(false),
         started_at: Set(now),
         ended_at: Set(None),
         library_count: Set(1),
-        state: Set("running".into()),
+        state: Set(entity::scan_batch::ScanBatchState::Running),
     }
     .insert(&st.db)
     .await
@@ -627,12 +627,12 @@ async fn clear_scans_cancels_queued_runs_and_finalizes_their_batch() {
     entity::scan_run::ActiveModel {
         id: Set(run_id),
         library_id: Set(lib_id),
-        state: Set("queued".into()),
+        state: Set(entity::scan_run::ScanRunState::Queued),
         started_at: Set(now),
         ended_at: Set(None),
         stats: Set(json!({})),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(Some(batch_id)),
@@ -658,14 +658,18 @@ async fn clear_scans_cancels_queued_runs_and_finalizes_their_batch() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(run.state, "cancelled");
+    assert_eq!(run.state, entity::scan_run::ScanRunState::Cancelled);
     assert!(run.ended_at.is_some());
     let batch = entity::scan_batch::Entity::find_by_id(batch_id)
         .one(&st.db)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(batch.state, "failed", "no member completed");
+    assert_eq!(
+        batch.state,
+        entity::scan_batch::ScanBatchState::Failed,
+        "no member completed"
+    );
     assert!(batch.ended_at.is_some());
 }
 
@@ -686,12 +690,12 @@ async fn scan_that_fails_before_opening_closes_its_queued_run() {
     entity::scan_run::ActiveModel {
         id: Set(run_id),
         library_id: Set(lib_id),
-        state: Set("queued".into()),
+        state: Set(entity::scan_run::ScanRunState::Queued),
         started_at: Set(Utc::now().fixed_offset()),
         ended_at: Set(None),
         stats: Set(json!({})),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(None),
@@ -717,7 +721,7 @@ async fn scan_that_fails_before_opening_closes_its_queued_run() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(run.state, "failed");
+    assert_eq!(run.state, entity::scan_run::ScanRunState::Failed);
     assert!(run.ended_at.is_some());
     assert!(run.error.is_some());
 }

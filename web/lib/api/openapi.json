@@ -3128,6 +3128,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -3714,6 +3717,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -4466,6 +4472,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -4510,6 +4519,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -5768,6 +5780,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -5945,6 +5960,41 @@
             }
           },
           "404": {}
+        }
+      }
+    },
+    "/api/me": {
+      "delete": {
+        "operationId": "account_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Account and personal data deleted; session, CSRF and refresh cookies cleared"
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "403": {
+            "description": "password incorrect, or the caller used an app password"
+          },
+          "409": {
+            "description": "the caller is the instance's last active admin"
+          },
+          "422": {
+            "description": "password or confirmation missing / confirmation does not match"
+          },
+          "429": {
+            "description": "rate limited or locked out after failed attempts"
+          }
         }
       }
     },
@@ -6872,6 +6922,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -6890,7 +6943,10 @@
           }
         ],
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "collection write rate limit"
+          }
         }
       },
       "patch": {
@@ -6924,6 +6980,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -7002,6 +7061,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -7030,7 +7092,10 @@
           "required": true
         },
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "collection reorder rate limit"
+          }
         }
       }
     },
@@ -7056,7 +7121,10 @@
           }
         ],
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "collection write rate limit"
+          }
         }
       }
     },
@@ -7127,6 +7195,9 @@
           },
           "404": {
             "description": "collection not found"
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -7170,6 +7241,9 @@
           },
           "404": {
             "description": "collection not found"
+          },
+          "429": {
+            "description": "collection write rate limit"
           }
         }
       }
@@ -7363,6 +7437,9 @@
           },
           "400": {
             "description": "validation"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -7991,6 +8068,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -8996,7 +9076,10 @@
           }
         ],
         "responses": {
-          "204": {}
+          "204": {},
+          "429": {
+            "description": "saved-view write rate limit"
+          }
         }
       },
       "patch": {
@@ -9030,6 +9113,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "saved-view write rate limit"
           }
         }
       }
@@ -9248,6 +9334,83 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/me/series/{series_id}/completion-prefs": {
+      "get": {
+        "summary": "Whether annuals and specials count toward this series' completion for\nthe caller.",
+        "operationId": "series_completion_prefs_get",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesCompletionPrefsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "404": {
+            "description": "series not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Set (`include` / `exclude`) or clear (`inherit`) the caller's override\nfor this series.",
+        "operationId": "series_completion_prefs_put",
+        "parameters": [
+          {
+            "name": "series_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeriesCompletionPrefsReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeriesCompletionPrefsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "not authenticated"
+          },
+          "404": {
+            "description": "series not found"
+          },
+          "422": {
+            "description": "unknown value"
           }
         }
       }
@@ -9780,6 +9943,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -9939,6 +10105,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -10012,6 +10181,9 @@
           },
           "422": {
             "description": "issue_id is not an active issue of this series"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10101,6 +10273,9 @@
           },
           "422": {
             "description": "validation error (field-level `details`)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10224,6 +10399,9 @@
           },
           "422": {
             "description": "page_index outside the archive"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10265,6 +10443,9 @@
           },
           "404": {
             "description": "issue not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10319,6 +10500,9 @@
           },
           "422": {
             "description": "the variant has no image to use, or it is not a recognised image"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           },
           "502": {
             "description": "the variant image could not be downloaded"
@@ -10451,6 +10635,9 @@
           },
           "422": {
             "description": "the field cannot be locked (unknown, a cover, or an external id)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       },
@@ -10492,6 +10679,9 @@
           },
           "404": {
             "description": "issue not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -10945,6 +11135,9 @@
           },
           "404": {
             "description": "series not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11085,6 +11278,9 @@
           },
           "422": {
             "description": "unknown source or empty external_id (field-level `details`)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11122,6 +11318,9 @@
           },
           "404": {
             "description": "series / link not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11339,6 +11538,9 @@
           },
           "422": {
             "description": "unknown source or empty external_id (field-level `details`)"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -11384,6 +11586,9 @@
           },
           "404": {
             "description": "issue / link not found"
+          },
+          "429": {
+            "description": "metadata write rate limit"
           }
         }
       }
@@ -13578,6 +13783,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "search rate limit"
           }
         }
       }
@@ -14190,7 +14398,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanRunKind",
             "description": "`library` | `series` | `issue`."
           },
           "phase": {
@@ -14208,7 +14416,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanRunState",
             "description": "`queued` | `running`."
           },
           "total": {
@@ -17786,6 +17994,8 @@
         "description": "Collection-completeness report for a series: how many issues are owned\nversus expected, and **which** main-run issue numbers are missing.\n\nThe denominator (`total_expected`) comes from `series.total_issues`, which\nthe scanner resolves from a `series.json` sidecar or the max ComicInfo\n`<Count>`. series.json carries only the *count*, never a per-issue\nmanifest — so without provider data interior `missing` numbers are\n*inferred* by interpolating the integer run between the lowest and highest\nowned issue (`expected_source = \"series_total\"`). When the series has\naccepted provider coverage and those providers' issue lists are cached,\nthe expected set comes from them instead\n([`crate::metadata::issue_manifest`], `expected_source =\n\"provider_manifest\"`): `missing` is what every such provider lists and\nno local issue carries, `possibly_missing` what only some list.",
         "required": [
           "total_owned",
+          "counted_owned",
+          "specials_counted",
           "completeness_state",
           "main_run",
           "specials",
@@ -17804,6 +18014,11 @@
           "completeness_state": {
             "type": "string",
             "description": "`\"complete\"` | `\"incomplete\"` | `\"unknown\"` — same vocabulary and CASE\nsemantics as the `collection_completeness` saved-view predicate."
+          },
+          "counted_owned": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The owned issues that count toward completion for the caller: the\nmain run (`special_type IS NULL`), plus the tagged specials when\n[`Self::specials_counted`]. `completeness_state` and\n`completeness_pct` compare this with `total_expected` — the same\nrule as the saved-view `collection_completeness` filter (active,\nnon-removed issues, `aic.main_count` + `aic.special_count`)."
           },
           "expected_source": {
             "type": "string",
@@ -17837,6 +18052,10 @@
             },
             "description": "Annuals, one-shots, TPBs, point issues (`#2.5`), and unnumbered files —\nlisted but excluded from the integer gap math."
           },
+          "specials_counted": {
+            "type": "boolean",
+            "description": "Whether annuals / specials count toward completion for the caller\non this series (per-series override, else the account setting; B9)."
+          },
           "total_expected": {
             "type": [
               "integer",
@@ -17848,7 +18067,7 @@
           "total_owned": {
             "type": "integer",
             "format": "int64",
-            "description": "Active (non-removed) issues owned. Matches the saved-view\n`collection_completeness` `active_count`, so this report and the\nSeriesCard collection dot never disagree."
+            "description": "Every active (non-removed) issue owned — main run, specials, point\nand unnumbered issues alike. The Collection tab's metadata bars\ncount over this set."
           }
         }
       },
@@ -20144,7 +20363,7 @@
                   "type": "string"
                 },
                 "kind": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/LogWidgetKind"
                 },
                 "position": {
                   "type": "integer",
@@ -20338,7 +20557,7 @@
                   "type": "string"
                 },
                 "kind": {
-                  "type": "string",
+                  "$ref": "#/components/schemas/ScanBatchKind",
                   "description": "Trigger discriminator — today always `scan_all`."
                 },
                 "library_count": {
@@ -20354,7 +20573,7 @@
                   "type": "string"
                 },
                 "state": {
-                  "type": "string",
+                  "$ref": "#/components/schemas/ScanBatchState",
                   "description": "`running` | `complete` | `partial_failed` | `failed`."
                 }
               }
@@ -20425,8 +20644,8 @@
                   "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
                 },
                 "kind": {
-                  "type": "string",
-                  "description": "`library` | `series` | `issue` — drives the History tab filter chips."
+                  "$ref": "#/components/schemas/ScanRunKind",
+                  "description": "`library` | `series` | `issue` drive the History tab filter chips;\n`deep_validate` runs have no chip."
                 },
                 "series_id": {
                   "type": [
@@ -20446,7 +20665,7 @@
                   "type": "string"
                 },
                 "state": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ScanRunState"
                 },
                 "stats": {}
               }
@@ -20841,6 +21060,26 @@
           },
           "state": {
             "type": "string"
+          }
+        }
+      },
+      "DeleteAccountReq": {
+        "type": "object",
+        "description": "Body of `DELETE /me`. Exactly one field is required, depending on how\nthe account signs in (`password_editable` on `/auth/me`).",
+        "properties": {
+          "confirm": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For accounts that sign in through an identity provider: the\naccount's email, typed to confirm (case-insensitive), or its display\nname when the account has no email."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The account's current password. Required for accounts with a local\npassword."
           }
         }
       },
@@ -22973,7 +23212,7 @@
             "format": "uuid"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/SavedViewKind",
             "description": "`\"filter_series\"`, `\"filter_issues\"` or `\"cbl\"`."
           },
           "match_mode": {
@@ -23117,8 +23356,8 @@
         ],
         "properties": {
           "kind": {
-            "type": "string",
-            "description": "`builtin` / `library` / `view` / `header` / `spacer`."
+            "$ref": "#/components/schemas/SidebarEntryKind",
+            "description": "`builtin` / `library` / `view` / `page` / `header` / `spacer`."
           },
           "label": {
             "type": [
@@ -23190,11 +23429,15 @@
             "format": "uuid"
           },
           "view_kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SavedViewKind",
+                "description": "The pinned view's `kind` (`filter_series` / `cbl` / `system` /\n`collection`), hydrated so a system rail is recognisable after a\nrebuild. `null` when the view no longer exists."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "view_name": {
             "type": [
@@ -24180,6 +24423,16 @@
           }
         }
       },
+      "IssueCoverKind": {
+        "type": "string",
+        "description": "What an `issue_cover` row is. Writers today store `primary` (the\narchive / provider / admin-picked display cover) and `variant`\n(provider variant covers); `back` and `incentive` are the gallery\nkinds the M0 schema reserved.",
+        "enum": [
+          "primary",
+          "variant",
+          "back",
+          "incentive"
+        ]
+      },
       "IssueCoverPickReq": {
         "type": "object",
         "required": [
@@ -24254,8 +24507,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
-            "description": "`\"primary\" | \"variant\" | \"back\" | \"incentive\"`."
+            "$ref": "#/components/schemas/IssueCoverKind"
           },
           "ordinal": {
             "type": "integer",
@@ -26149,6 +26401,24 @@
           }
         }
       },
+      "LogWidgetKind": {
+        "type": "string",
+        "description": "Which widget a `/log` page slot renders.",
+        "enum": [
+          "chrono_feed",
+          "stats_hero",
+          "heatmap",
+          "top_creators",
+          "top_publishers",
+          "top_imprints",
+          "series_finishes",
+          "pace_chart",
+          "time_of_day",
+          "recent_bookmarks",
+          "currently_reading",
+          "note"
+        ]
+      },
       "LogWidgetView": {
         "type": "object",
         "required": [
@@ -26168,7 +26438,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/LogWidgetKind"
           },
           "position": {
             "type": "integer",
@@ -26824,7 +27094,8 @@
           "language",
           "exclude_from_aggregates",
           "show_marker_count",
-          "max_rails_per_page"
+          "max_rails_per_page",
+          "count_specials_in_completeness"
         ],
         "properties": {
           "accent_color": {
@@ -26852,6 +27123,10 @@
                 "type": "null"
               }
             ]
+          },
+          "count_specials_in_completeness": {
+            "type": "boolean",
+            "description": "Count annuals / one-shots / specials / TPBs toward a series'\ncollection completeness (remediation B9). Default false: only the\nmain run is compared with the publisher total. A per-series\noverride (`PUT /me/series/{series_id}/completion-prefs`) wins."
           },
           "csrf_token": {
             "type": "string"
@@ -28629,6 +28904,13 @@
                 "type": "null"
               }
             ]
+          },
+          "count_specials_in_completeness": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Count annuals and specials toward series completion (B9)."
           },
           "default_cover_solo": {
             "type": [
@@ -31938,6 +32220,17 @@
           }
         }
       },
+      "SavedViewKind": {
+        "type": "string",
+        "description": "What a saved view is: a filter over series or issues, a CBL reading\nlist, a built-in system rail, or a user collection.",
+        "enum": [
+          "filter_series",
+          "filter_issues",
+          "cbl",
+          "system",
+          "collection"
+        ]
+      },
       "SavedViewListView": {
         "type": "object",
         "required": [
@@ -32017,7 +32310,7 @@
             "description": "True for system views (`user_id IS NULL`)."
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/SavedViewKind"
           },
           "match_mode": {
             "type": [
@@ -32261,6 +32554,23 @@
           }
         ]
       },
+      "ScanBatchKind": {
+        "type": "string",
+        "description": "What triggered a batch. Today only the admin \"Scan all\" action.",
+        "enum": [
+          "scan_all"
+        ]
+      },
+      "ScanBatchState": {
+        "type": "string",
+        "description": "A batch's state, derived from its member runs as they finish: all\n`complete` → `complete`, none → `failed`, a mix → `partial_failed`.",
+        "enum": [
+          "running",
+          "complete",
+          "partial_failed",
+          "failed"
+        ]
+      },
       "ScanBatchView": {
         "type": "object",
         "required": [
@@ -32292,7 +32602,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanBatchKind",
             "description": "Trigger discriminator — today always `scan_all`."
           },
           "library_count": {
@@ -32308,7 +32618,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string",
+            "$ref": "#/components/schemas/ScanBatchState",
             "description": "`running` | `complete` | `partial_failed` | `failed`."
           }
         }
@@ -32336,7 +32646,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ScanRunState"
           }
         }
       },
@@ -32370,9 +32680,13 @@
             "minimum": 0
           },
           "last_scan_state": {
-            "type": [
-              "string",
-              "null"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScanRunState"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
           "mode": {
@@ -32449,6 +32763,27 @@
           }
         }
       },
+      "ScanRunKind": {
+        "type": "string",
+        "description": "What triggered a scan run. `library` is the legacy default for rows\nthat existed before the kind column; `deep_validate` is the opt-in\npage-decode probe (`library::deep_validate`), which the History tab's\nfilter chips do not offer.",
+        "enum": [
+          "library",
+          "series",
+          "issue",
+          "deep_validate"
+        ]
+      },
+      "ScanRunState": {
+        "type": "string",
+        "description": "A scan run's lifecycle state.",
+        "enum": [
+          "queued",
+          "running",
+          "complete",
+          "failed",
+          "cancelled"
+        ]
+      },
       "ScanRunView": {
         "type": "object",
         "required": [
@@ -32489,8 +32824,8 @@
             "description": "Joined issue label shaped as `{series} #{number}` (or `{series} —\n{title}` when there's no number). `null` when the issue row was\nsince deleted, or when this scan isn't issue-kinded."
           },
           "kind": {
-            "type": "string",
-            "description": "`library` | `series` | `issue` — drives the History tab filter chips."
+            "$ref": "#/components/schemas/ScanRunKind",
+            "description": "`library` | `series` | `issue` drive the History tab filter chips;\n`deep_validate` runs have no chip."
           },
           "series_id": {
             "type": [
@@ -32510,7 +32845,7 @@
             "type": "string"
           },
           "state": {
-            "type": "string"
+            "$ref": "#/components/schemas/ScanRunState"
           },
           "stats": {}
         }
@@ -32757,6 +33092,36 @@
           },
           "series": {
             "$ref": "#/components/schemas/SeriesView"
+          }
+        }
+      },
+      "SeriesCompletionPrefsReq": {
+        "type": "object",
+        "required": [
+          "count_specials"
+        ],
+        "properties": {
+          "count_specials": {
+            "$ref": "#/components/schemas/SpecialsCompletion",
+            "description": "`inherit` clears the override. An unknown value is a 422 at\ndeserialisation."
+          }
+        }
+      },
+      "SeriesCompletionPrefsView": {
+        "type": "object",
+        "description": "The caller's choice for one series and what it resolves to.",
+        "required": [
+          "count_specials",
+          "effective"
+        ],
+        "properties": {
+          "count_specials": {
+            "$ref": "#/components/schemas/SpecialsCompletion",
+            "description": "`inherit` | `include` | `exclude`."
+          },
+          "effective": {
+            "type": "boolean",
+            "description": "The resolved setting: true when this series' annuals and specials\ncount toward its completion for the caller."
           }
         }
       },
@@ -33887,6 +34252,8 @@
           "slug",
           "status",
           "language_code",
+          "specials_count_toward_completion",
+          "specials_completion",
           "created_at",
           "updated_at"
         ],
@@ -34139,6 +34506,14 @@
             ],
             "format": "int64",
             "description": "Non-removed annuals / one-shots / specials / TPBs (`special_type`\nset). Rendered as \"+N specials\" next to the main-run count."
+          },
+          "specials_completion": {
+            "$ref": "#/components/schemas/SpecialsCompletion",
+            "description": "The caller's per-series choice behind\n[`Self::specials_count_toward_completion`]: `inherit` (follow the\naccount setting), `include` or `exclude`."
+          },
+          "specials_count_toward_completion": {
+            "type": "boolean",
+            "description": "Viewer-scoped (remediation B9): true when this series' specials\ncount toward its collection completeness for the caller — the\nper-series override, else the account's\n`count_specials_in_completeness`. When true the owned figure the\ncompleteness verdict compares with `total_issues` is\n`main_issue_count + special_issue_count`; otherwise the main run\nalone. Same rule as the `collection_completeness` filter and the\ncollection report."
           },
           "status": {
             "type": "string"
@@ -34436,6 +34811,18 @@
           "series_group"
         ]
       },
+      "SidebarEntryKind": {
+        "type": "string",
+        "description": "What a sidebar entry points at; decides what `ref_id` means.",
+        "enum": [
+          "builtin",
+          "library",
+          "view",
+          "page",
+          "header",
+          "spacer"
+        ]
+      },
       "SidebarEntryView": {
         "type": "object",
         "required": [
@@ -34455,7 +34842,7 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
+            "$ref": "#/components/schemas/SidebarEntryKind"
           },
           "label": {
             "type": "string"
@@ -34850,6 +35237,15 @@
             "description": "Spec §6.5 tag (`\"Annual\"`, `\"OneShot\"`, `\"TPB\"`, `\"Special\"`) when the\nscanner classified it; `None` for plain point/unnumbered issues."
           }
         }
+      },
+      "SpecialsCompletion": {
+        "type": "string",
+        "description": "The caller's per-series choice. `inherit` (no stored row) follows the\naccount setting; `include` / `exclude` override it for this series.",
+        "enum": [
+          "inherit",
+          "include",
+          "exclude"
+        ]
       },
       "SuggestionBucket": {
         "type": "string",

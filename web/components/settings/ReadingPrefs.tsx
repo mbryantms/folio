@@ -14,6 +14,7 @@ import { useUpdatePreferences } from "@/lib/api/mutations";
 import type { PreferencesReq } from "@/lib/api/types";
 
 import { SegmentedControl } from "./SegmentedControl";
+import { SeriesCompletionPref } from "./SeriesCompletionPref";
 import { SettingsSection } from "./SettingsSection";
 
 type DirectionPref = "auto" | "ltr" | "rtl";
@@ -209,6 +210,8 @@ export function ReadingPrefs() {
           />
         </div>
       </SettingsSection>
+
+      <SeriesCompletionPref />
 
       <ActivityThresholdsCard />
 

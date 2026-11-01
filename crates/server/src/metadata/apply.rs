@@ -1962,7 +1962,7 @@ pub(crate) async fn write_issue_fields(
                     .cloned();
                 let cover_write = CoverWrite {
                     issue_id: &entity_id_str,
-                    kind: "primary",
+                    kind: entity::issue_cover::IssueCoverKind::Primary,
                     ordinal: 0,
                     identifier: primary_ident.as_ref(),
                     source_url: Some(url),

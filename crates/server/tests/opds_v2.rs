@@ -332,7 +332,7 @@ async fn seed_collection(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uu
     SavedViewAM {
         id: Set(id),
         user_id: Set(Some(owner)),
-        kind: Set("collection".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Collection),
         system_key: Set(None),
         name: Set(name.into()),
         description: Set(None),
@@ -459,7 +459,7 @@ async fn seed_filter_view(
     SavedViewAM {
         id: Set(id),
         user_id: Set(Some(owner)),
-        kind: Set("filter_series".into()),
+        kind: Set(entity::saved_view::SavedViewKind::FilterSeries),
         system_key: Set(None),
         name: Set(name.into()),
         description: Set(None),
@@ -1767,4 +1767,83 @@ async fn v2_publication_carries_alternate_json_link() {
         .expect("rel=alternate present");
     assert_eq!(alt["href"], format!("/api/issues/{issue_id}"));
     assert_eq!(alt["type"], "application/json");
+}
+
+/// Soft-remove a row by id (`issues` / `series`) through raw SQL.
+async fn mark_removed(db: &DatabaseConnection, table: &str, id: &str) {
+    use sea_orm::ConnectionTrait;
+    db.execute_unprepared(&format!(
+        "UPDATE {table} SET removed_at = now() WHERE id::text = '{id}'"
+    ))
+    .await
+    .unwrap();
+}
+
+/// E7: the OPDS 2.0 collection feed hides soft-removed targets (and issues
+/// of a removed series), the rule the web entries page applies.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_acq_hides_removed_targets() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-col-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let live_series = seed_series(&db, lib_id, "Live Run").await;
+    let gone_series = seed_series(&db, lib_id, "Gone Run").await;
+    let live =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("l.cbz"), b"l").await;
+    let removed =
+        seed_issue_with_file(&db, lib_id, live_series, &tmp.path().join("r.cbz"), b"r").await;
+    let orphan =
+        seed_issue_with_file(&db, lib_id, gone_series, &tmp.path().join("o.cbz"), b"o").await;
+    mark_removed(&db, "issues", &removed).await;
+    mark_removed(&db, "series", &gone_series.to_string()).await;
+
+    let view_id = seed_collection(&db, auth.user_id, "With removed").await;
+    seed_collection_entry(&db, view_id, 0, Some(live_series), None).await;
+    seed_collection_entry(&db, view_id, 1, Some(gone_series), None).await;
+    seed_collection_entry(&db, view_id, 2, None, Some(&removed)).await;
+    seed_collection_entry(&db, view_id, 3, None, Some(&orphan)).await;
+    seed_collection_entry(&db, view_id, 4, None, Some(&live)).await;
+
+    let (s, body) = get_json(&app, &auth, &format!("/opds/v2/collections/{view_id}")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["navigation"].as_array().unwrap().len(), 1, "{body}");
+    let pubs = body["publications"].as_array().unwrap();
+    assert_eq!(pubs.len(), 1, "{body}");
+    assert_eq!(
+        pubs[0]["metadata"]["identifier"].as_str().unwrap(),
+        format!("urn:folio:issue:{live}")
+    );
+    assert_eq!(body["metadata"]["numberOfItems"], 2);
+}
+
+/// E7: every paged OPDS 2.0 feed clamps `?page=` (`opds::page_number`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paged_feeds_clamp_an_absurd_page() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-page-clamp@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Clamp Run").await;
+    seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("c.cbz"), b"c").await;
+
+    let page = u64::MAX;
+    for path in [
+        "/opds/v2/series".to_owned(),
+        format!("/opds/v2/series/{series_id}"),
+        "/opds/v2/browse".to_owned(),
+        "/opds/v2/history".to_owned(),
+        "/opds/v2/by-creator/Nobody".to_owned(),
+        "/opds/v2/characters".to_owned(),
+        "/opds/v2/teams".to_owned(),
+        "/opds/v2/arcs".to_owned(),
+        "/opds/v2/publishers".to_owned(),
+    ] {
+        let (s, _) = get_json(&app, &auth, &format!("{path}?page={page}")).await;
+        assert_eq!(s, StatusCode::OK, "{path}");
+    }
 }

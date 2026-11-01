@@ -547,7 +547,7 @@ async fn apply_issue_with_writeback_writes_variant_covers_to_issue_cover_table()
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .filter(issue_cover::Column::IsActive.eq(true))
         .order_by_asc(issue_cover::Column::Ordinal)
         .all(&app.state().db)
@@ -644,7 +644,7 @@ async fn apply_issue_variant_covers_idempotent_no_dupes() {
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
     let active_rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .filter(issue_cover::Column::IsActive.eq(true))
         .all(&app.state().db)
         .await
@@ -656,7 +656,7 @@ async fn apply_issue_variant_covers_idempotent_no_dupes() {
     );
     let inactive_rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .filter(issue_cover::Column::IsActive.eq(false))
         .all(&app.state().db)
         .await
@@ -1159,7 +1159,7 @@ async fn apply_issue_keeps_ssrf_rejected_variant_covers_as_hotlinks() {
 
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .order_by_asc(issue_cover::Column::Ordinal)
         .all(&app.state().db)
         .await
@@ -1261,7 +1261,7 @@ async fn variant_cover_backfill_skips_ssrf_rejected_hotlink_rows() {
     issue_cover::ActiveModel {
         id: Set(cover_id),
         issue_id: Set(issue_id.clone()),
-        kind: Set("variant".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Variant),
         ordinal: Set(1),
         source_provider: Set(Some("comicvine".into())),
         source_external_id: Set(None),
@@ -2261,7 +2261,7 @@ async fn failed_rewrite_writes_no_provenance_variants_or_sync_stamp() {
     use sea_orm::{ColumnTrait, QueryFilter};
     let variants = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .all(&app.state().db)
         .await
         .unwrap();

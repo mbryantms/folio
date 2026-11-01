@@ -260,7 +260,7 @@ async fn edges(db: &DatabaseConnection) -> Vec<(Uuid, Uuid, String)> {
             (
                 r.from_series_id,
                 r.to_series_id.expect("series edge"),
-                r.kind,
+                r.kind.as_str().to_owned(),
             )
         })
         .collect();
@@ -531,7 +531,7 @@ async fn create_pair_helper_is_idempotent_and_db_rejects_self_edges() {
     .await
     .unwrap();
     assert!(first.created);
-    assert_eq!(first.inverse.kind, "has_spin_off");
+    assert_eq!(first.inverse.kind.as_str(), "has_spin_off");
     assert_eq!(first.forward.source, "suggested");
     assert_eq!(first.forward.confidence, Some(0.8));
     let again = relationships::create_pair(
@@ -580,7 +580,7 @@ async fn create_pair_helper_is_idempotent_and_db_rejects_self_edges() {
         from_series_id: Set(a),
         to_series_id: Set(Some(a)),
         to_arc_id: Set(None),
-        kind: Set("see_also".into()),
+        kind: Set(entity::series_relationship::RelationshipKind::SeeAlso),
         source: Set("manual".into()),
         confidence: Set(None),
         created_by: Set(None),
@@ -1138,7 +1138,7 @@ async fn scope_is_validated_per_kind_and_mirrored_on_the_inverse() {
     assert_eq!(body["group"], "editions");
     let fwd = row(&db, tpb, a).await;
     let inv = row(&db, a, tpb).await;
-    assert_eq!(inv.kind, "collected_in");
+    assert_eq!(inv.kind.as_str(), "collected_in");
     assert_eq!(inv.from_range.as_deref(), Some("1-6,Annual 1"));
     assert_eq!(inv.to_range.as_deref(), Some("1"));
     assert_eq!(inv.coverage, fwd.coverage);
@@ -1156,7 +1156,7 @@ async fn scope_is_validated_per_kind_and_mirrored_on_the_inverse() {
     assert_eq!(status, StatusCode::CREATED, "{body}");
     assert_eq!(body["qualifier"], "relaunch");
     assert_eq!(body["qualifier_label"], "Relaunch");
-    assert_eq!(row(&db, a, b).await.kind, "continued_by");
+    assert_eq!(row(&db, a, b).await.kind.as_str(), "continued_by");
     assert_eq!(row(&db, a, b).await.qualifier.as_deref(), Some("relaunch"));
 
     // The DB CHECKs back the API up.

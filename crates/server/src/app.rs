@@ -134,6 +134,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(auth::local::routes())
         .merge(auth::ws_ticket::routes())
         .merge(api::account::routes())
+        .merge(api::account_delete::routes())
         .merge(api::account_export::routes())
         .merge(api::holdings_export::routes())
         .merge(api::libraries::routes())
@@ -154,6 +155,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(api::series::routes())
         .merge(api::series_similar::routes())
         .merge(api::series_reader_prefs::routes())
+        .merge(api::series_completion_prefs::routes())
         .merge(api::issues::routes())
         .merge(api::appearances::routes())
         .merge(api::archive_edit::routes())
@@ -800,6 +802,11 @@ pub fn router_with_timeouts(state: AppState, timeouts: RouteTimeouts) -> Router 
         // sits outside CSRF so a preflight never reaches the CSRF check.
         // Regression guards: `tests/http_layers.rs::cors_*`.
         .layer(deny_all_cors())
+        // The access-token verifier the per-user rate-limit key reads
+        // (`rate_limit::UserKey`); a key extractor can't reach `AppState`.
+        .layer(axum::Extension(crate::middleware::rate_limit::RateLimitIdentity(
+            state.jwt_keys.clone(),
+        )))
         // Order matters: outermost wraps innermost. `set_context` needs to run
         // before handlers so `Request::extensions::get::<RequestContext>()`
         // works inside extractors and handlers.

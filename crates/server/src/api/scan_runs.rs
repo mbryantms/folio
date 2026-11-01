@@ -11,7 +11,8 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::{DateTime, FixedOffset};
-use entity::{library, scan_run, series};
+use entity::scan_run::{self, ScanRunKind, ScanRunState};
+use entity::{library, series};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
     DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
@@ -43,13 +44,14 @@ pub fn routes() -> OpenApiRouter<AppState> {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ScanRunView {
     pub id: String,
-    pub state: String,
+    pub state: ScanRunState,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub stats: serde_json::Value,
     pub error: Option<String>,
-    /// `library` | `series` | `issue` — drives the History tab filter chips.
-    pub kind: String,
+    /// `library` | `series` | `issue` drive the History tab filter chips;
+    /// `deep_validate` runs have no chip.
+    pub kind: ScanRunKind,
     /// Target series id for `series` / `issue` kinds. `null` on library scans.
     pub series_id: Option<String>,
     /// Joined `series.name` so the table can render a target label without
@@ -134,16 +136,9 @@ pub async fn list(
     let uuid = lib.id;
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
-    let kind_filter = match q.kind.as_deref() {
-        None | Some("") | Some("all") => None,
-        Some(k @ ("library" | "series" | "issue")) => Some(k.to_owned()),
-        Some(_) => {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation.kind",
-                "kind must be one of: library, series, issue, all",
-            );
-        }
+    let kind_filter = match parse_kind_filter(q.kind.as_deref()) {
+        Ok(k) => k,
+        Err(resp) => return resp,
     };
 
     // Decode the keyset cursor — (started_at, id) of the last row of the
@@ -169,7 +164,7 @@ pub async fn list(
         .order_by_desc(scan_run::Column::StartedAt)
         .order_by_desc(scan_run::Column::Id)
         .limit(limit + 1);
-    if let Some(kind) = kind_filter.as_deref() {
+    if let Some(kind) = kind_filter {
         query = query.filter(scan_run::Column::Kind.eq(kind));
     }
     if let Some((c_at, c_id)) = cursor {
@@ -269,6 +264,25 @@ pub struct CrossLibScanRunView {
     pub library_slug: String,
 }
 
+/// The History tab's `?kind=` filter: absent / empty / `all` → no filter;
+/// otherwise one of the chip kinds. `deep_validate` stays rejected, as it
+/// was before the column was typed.
+fn parse_kind_filter(raw: Option<&str>) -> Result<Option<ScanRunKind>, axum::response::Response> {
+    match raw {
+        None | Some("") | Some("all") => Ok(None),
+        Some(k) => match ScanRunKind::parse(k) {
+            Some(kind @ (ScanRunKind::Library | ScanRunKind::Series | ScanRunKind::Issue)) => {
+                Ok(Some(kind))
+            }
+            Some(ScanRunKind::DeepValidate) | None => Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation.kind",
+                "kind must be one of: library, series, issue, all",
+            )),
+        },
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AdminListQuery {
     /// Restrict to one library (UUID). Omit / `all` for cross-library.
@@ -315,30 +329,23 @@ pub async fn admin_list(
 ) -> impl IntoResponse {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
-    let kind_filter = match q.kind.as_deref() {
-        None | Some("") | Some("all") => None,
-        Some(k @ ("library" | "series" | "issue")) => Some(k.to_owned()),
-        Some(_) => {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation.kind",
-                "kind must be one of: library, series, issue, all",
-            );
-        }
+    let kind_filter = match parse_kind_filter(q.kind.as_deref()) {
+        Ok(k) => k,
+        Err(resp) => return resp,
     };
 
     let state_filter = match q.state.as_deref() {
         None | Some("") | Some("all") => None,
-        Some(s @ ("queued" | "running" | "complete" | "failed" | "cancelled")) => {
-            Some(s.to_owned())
-        }
-        Some(_) => {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation.state",
-                "state must be one of: queued, running, complete, failed, cancelled, all",
-            );
-        }
+        Some(s) => match ScanRunState::parse(s) {
+            Some(state) => Some(state),
+            None => {
+                return error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "validation.state",
+                    "state must be one of: queued, running, complete, failed, cancelled, all",
+                );
+            }
+        },
     };
 
     let library_filter = match q.library_id.as_deref() {
@@ -381,10 +388,10 @@ pub async fn admin_list(
     if let Some(lib_id) = library_filter {
         query = query.filter(scan_run::Column::LibraryId.eq(lib_id));
     }
-    if let Some(kind) = kind_filter.as_deref() {
+    if let Some(kind) = kind_filter {
         query = query.filter(scan_run::Column::Kind.eq(kind));
     }
-    if let Some(state) = state_filter.as_deref() {
+    if let Some(state) = state_filter {
         query = query.filter(scan_run::Column::State.eq(state));
     }
     if let Some(ts) = since_filter {
@@ -621,7 +628,7 @@ pub(crate) async fn prune(db: &DatabaseConnection, keep: u64) -> anyhow::Result<
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ScanCancelResp {
     pub id: String,
-    pub state: String,
+    pub state: ScanRunState,
     pub ended_at: Option<String>,
     pub error: Option<String>,
 }
@@ -686,17 +693,17 @@ pub async fn cancel(
     if row.library_id != lib.id {
         return error(StatusCode::NOT_FOUND, "not_found", "scan run not found");
     }
-    if matches!(row.state.as_str(), "complete" | "failed" | "cancelled") {
+    if row.state.is_terminal() {
         return error(
             StatusCode::CONFLICT,
             "already_terminal",
-            &format!("scan run already in terminal state: {}", row.state),
+            &format!("scan run already in terminal state: {}", row.state.as_str()),
         );
     }
     let now = chrono::Utc::now().fixed_offset();
     let cancel_msg = "Cancelled by admin".to_string();
     let mut am: scan_run::ActiveModel = row.into();
-    am.state = Set("cancelled".into());
+    am.state = Set(ScanRunState::Cancelled);
     am.ended_at = Set(Some(now));
     am.error = Set(Some(cancel_msg.clone()));
     let updated = match am.update(&app.db).await {

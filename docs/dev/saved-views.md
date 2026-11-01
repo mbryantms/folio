@@ -148,6 +148,44 @@ series-level probe is served by `markers_user_series_kind_idx`
 (`m20270307`); the favourite flag arm filters within the same
 `(user_id, series_id)` prefix.
 
+### Collection completeness and specials (B9)
+
+`collection_completeness` (`complete` / `incomplete` / `unknown`)
+compares the owned count with `series.total_issues`. The owned count is
+the active main run (`aic.main_count`, `special_type IS NULL` — point
+issues included) plus, only when the **viewer** counts specials, the
+series' tagged annuals / one-shots / specials / TPBs
+(`aic.special_count`). Whether they count is
+`COALESCE(cpo.count_specials, cpu.count_specials_in_completeness, FALSE)`:
+
+- `cpu` — the caller's `users` row, LEFT JOINed once on its PK
+  (`users.count_specials_in_completeness`, default false, the account
+  setting from `PATCH /me/preferences`);
+- `cpo` — the caller's `user_series_completion_prefs` row for the series,
+  LEFT JOINed on the `(user_id, series_id)` PK (written by
+  `PUT /me/series/{id}/completion-prefs`: `include` = true, `exclude` =
+  false, `inherit` deletes the row).
+
+Both joins are emitted only when a condition references
+`collection_completeness` (`needs_completion_pref_join`), like the `aic`
+aggregate — no per-row subquery. The same rule, resolved in Rust by
+`api::series_completion_prefs::CompletionPrefs`, drives
+`SeriesView.specials_count_toward_completion` (series cards and the
+series page via `hydrate_series` / `get_one`; the web helper
+`ownedCompletionCount` in `web/lib/series-status.ts` adds
+`special_issue_count` when it is true) and the collection report's
+`counted_owned` / `completeness_state` / `completeness_pct`
+(`GET /series/{slug}/collection`; `total_owned` stays every owned issue).
+A shared system view evaluates per viewer, so two users can get different
+"Incomplete collections" results from the same view.
+
+Surfaces deliberately left out: the reading-progress rollups
+(`read_status`, `unread_issues`, "Caught up") count every active issue
+and are about reading, not collecting; admin dashboards
+(`/admin/stats`, the metadata coverage pages) have no per-user
+completeness figure; OPDS shows no completeness of its own (its
+saved-view feeds go through this compiler and so follow the setting).
+
 ## The compiler
 
 `crates/server/src/views/compile.rs` has two roots:
@@ -343,6 +381,35 @@ caller owns or that is global). A dismissal whose target is soft-removed,
 outside the caller's grant, over the age cap, or deleted is **omitted**
 and counted in `unavailable`, so nothing about it reaches the client; it
 reappears in the list if the target becomes visible again.
+Creating a dismissal applies the same selects: a target the list would
+omit (soft-removed, non-active issue, outside the grant, over the cap)
+answers the same 404 as a missing one and stores nothing.
+The rails themselves (Continue reading, Recently read, On this day,
+Recently added, On Deck series) also skip issues of a removed series, so
+nothing a rail shows is undismissable.
+
+## Visibility on the other personal surfaces
+
+- **Collections**: `POST /me/collections/{id}/entries` and
+  `…/members/bulk-add` accept only a target the entries page would list
+  (`collections::visible_{series,issues}_select`); an invisible target is
+  a 404 (single add) or `not_found` (bulk add), exactly like a missing one.
+- **CBL lists**: a match whose issue (or its series) was soft-removed reads
+  as **missing**: `stats.matched` drops it and `stats.missing` gains it,
+  `?status=matched` leaves it out and `?status=missing` (the Resolution
+  tab) lists it, and the entry view says `match_status: "missing"` while
+  keeping `matched_issue_id`, so the match returns with the file.
+  A manual match to such an issue (or one outside the grant) answers
+  like an unknown id, and the create response reads its counts through
+  the same `stats_for`.
+- **Markers**: list, count, search and the tag index use
+  `access::visible_issues_select` / its SQL twin `access::visible_issues_sql`,
+  so a removed parent series hides its issues' markers too.
+- **Reading stats**: `/me/reading-stats` counts only sessions on issues the
+  caller can see (`access::visible_issues_sql`), totals and streaks
+  included, because the page links its rankings to series and issues and
+  the totals must agree with them. The admin's per-user view applies the
+  removed rule only. Session rows are kept, so a restore brings them back.
 
 The web surface is the "Hidden from rails" section under Settings → Pages
 (`web/components/settings/HiddenRailItems.tsx`, `useRailDismissals` +

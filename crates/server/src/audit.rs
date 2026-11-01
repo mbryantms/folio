@@ -8,7 +8,7 @@
 
 use crate::middleware::RequestContext;
 use entity::audit_log;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbErr, Set};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -23,6 +23,19 @@ pub struct AuditEntry<'a> {
 }
 
 pub async fn record(db: &DatabaseConnection, entry: AuditEntry<'_>) {
+    let action = entry.action;
+    if let Err(e) = record_in(db, entry).await {
+        tracing::error!(error = %e, action, "audit_log write failed");
+    }
+}
+
+/// [`record`] on a caller-supplied connection — typically an open
+/// transaction, so the audit row commits or rolls back with the change it
+/// describes (`DELETE /me` writes its `account.self_delete` row this way:
+/// the deletion and its record land together or not at all). Unlike
+/// [`record`] the error is returned: the caller decides whether a failed
+/// audit write aborts the transaction.
+pub async fn record_in<C: ConnectionTrait>(db: &C, entry: AuditEntry<'_>) -> Result<(), DbErr> {
     let am = audit_log::ActiveModel {
         id: Set(Uuid::now_v7()),
         actor_id: Set(entry.actor_id),
@@ -35,9 +48,7 @@ pub async fn record(db: &DatabaseConnection, entry: AuditEntry<'_>) {
         user_agent: Set(entry.user_agent),
         created_at: Set(chrono::Utc::now().fixed_offset()),
     };
-    if let Err(e) = am.insert(db).await {
-        tracing::error!(error = %e, action = entry.action, "audit_log write failed");
-    }
+    am.insert(db).await.map(|_| ())
 }
 
 /// Convenience: builder-shaped audit entry that fills `ip` + `user_agent`

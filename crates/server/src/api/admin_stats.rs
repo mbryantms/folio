@@ -206,12 +206,12 @@ pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Resp
     };
 
     let scans_in_flight = scan_run::Entity::find()
-        .filter(scan_run::Column::State.eq("running"))
+        .filter(scan_run::Column::State.eq(scan_run::ScanRunState::Running))
         .count(&app.db)
         .await
         .unwrap_or(0) as i64;
     let scans_queued = scan_run::Entity::find()
-        .filter(scan_run::Column::State.eq("queued"))
+        .filter(scan_run::Column::State.eq(scan_run::ScanRunState::Queued))
         .count(&app.db)
         .await
         .unwrap_or(0) as i64;
@@ -309,7 +309,10 @@ pub async fn user_reading_stats(
     )
     .await;
 
-    match compute_stats_for_user(&app, target_id, q).await {
+    // The admin sees every library, so only the removed-content rule
+    // narrows the target user's numbers here.
+    let acl = crate::library::access::VisibleLibraries::unrestricted();
+    match compute_stats_for_user(&app, target_id, &acl, q).await {
         Ok(view) => Json(view).into_response(),
         Err(StatsError {
             status,

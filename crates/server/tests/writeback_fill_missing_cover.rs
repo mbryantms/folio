@@ -313,7 +313,7 @@ async fn provenance(app: &TestApp, issue_id: &str) -> HashMap<String, String> {
 async fn active_primary(app: &TestApp, issue_id: &str) -> Option<issue_cover::Model> {
     issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Primary))
         .filter(issue_cover::Column::Ordinal.eq(0))
         .filter(issue_cover::Column::IsActive.eq(true))
         .one(&app.state().db)

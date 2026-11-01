@@ -45,7 +45,7 @@ use uuid::Uuid;
 
 mod entities;
 
-use crate::api::collections::ensure_want_to_read_seeded;
+use crate::api::collections::{self, ensure_want_to_read_seeded};
 use crate::api::saved_views::{
     KIND_CBL, KIND_COLLECTION, KIND_FILTER_ISSUES, KIND_FILTER_SERIES, SYSTEM_KEY_WANT_TO_READ,
 };
@@ -412,7 +412,7 @@ async fn series_list(
     user: CurrentUser,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    let page = q.page.unwrap_or(1).max(1);
+    let page = page_number(q.page);
     let offset = (page - 1) * PAGE_SIZE;
 
     let allowed = match allowed_libraries(&app, &user).await {
@@ -631,7 +631,7 @@ async fn browse(
     user: CurrentUser,
     Query(q): Query<BrowseQuery>,
 ) -> Response {
-    let page = q.page.unwrap_or(1).max(1);
+    let page = page_number(q.page);
     let offset = (page - 1) * PAGE_SIZE;
 
     // Validate status if supplied — silently drop unknown values
@@ -761,7 +761,7 @@ async fn series_one(
         Err(e) => return server_error(e.to_string()),
     };
     let total_pages = total.div_ceil(PAGE_SIZE).max(1);
-    let page = q.page.unwrap_or(1).max(1);
+    let page = page_number(q.page);
     let offset = (page - 1) * PAGE_SIZE;
     let mut issues = match issues_base
         .order_by_asc(issue::Column::SortNumber)
@@ -1188,7 +1188,7 @@ async fn history(
         issue_id: String,
         library_id: Uuid,
     }
-    let page = q.page.unwrap_or(1).max(1);
+    let page = page_number(q.page);
     let offset = (page - 1) * PAGE_SIZE;
     // Hard cap at PAGE_SIZE per page — even an aggressive completionist's
     // history fits in a handful of pages with `next` rel pagination.
@@ -1298,7 +1298,7 @@ async fn by_creator(
     let writer = urlencoding::decode(&writer)
         .map(|s| s.into_owned())
         .unwrap_or(writer);
-    let page = q.page.unwrap_or(1).max(1);
+    let page = page_number(q.page);
     let offset = (page - 1) * PAGE_SIZE;
 
     let allowed = match allowed_libraries(&app, &user).await {
@@ -1450,7 +1450,7 @@ async fn search(
     // external-client surface. Same count + offset + `paginate_links` dance
     // as `series_list`.
     use crate::util::search::{col_ilike, ilike_pattern};
-    let page = q.page.unwrap_or(1).max(1);
+    let page = page_number(q.page);
     let offset = (page - 1) * PAGE_SIZE;
 
     let mut count_sel = access::active_series_select();
@@ -3453,7 +3453,7 @@ async fn page_acq(
         let Some(v) = view_by_id.get(&pin.view_id) else {
             continue;
         };
-        let (urn, href) = match v.kind.as_str() {
+        let (urn, href) = match v.kind {
             KIND_CBL => match v.cbl_list_id {
                 Some(list_id) => (
                     format!("urn:cbl:{list_id}"),
@@ -3517,46 +3517,56 @@ async fn render_collection_acq(
         Err(e) => return server_error(e.to_string()),
     };
 
-    let up_next_id = if reorder {
-        let up_next = pick_next_in_collection(&app.db, user.id, &rows).await;
-        reorder_collection_entries_up_next_first(&mut rows, up_next.as_deref());
-        up_next
-    } else {
-        None
-    };
-
     let series_ids: Vec<Uuid> = rows.iter().filter_map(|r| r.series_id).collect();
     let issue_ids: Vec<String> = rows.iter().filter_map(|r| r.issue_id.clone()).collect();
 
+    // Targets go through the collection entries page's visibility selects
+    // (`collections::visible_{series,issues}_select`): a removed series or
+    // issue, a revoked grant, or an issue over the age cap never renders,
+    // so the OPDS feed and the web entries page list the same rows.
     let visible = access::for_user(app, user).await;
 
     let series_by_id: HashMap<Uuid, series::Model> = if series_ids.is_empty() {
         HashMap::new()
     } else {
-        series::Entity::find()
+        collections::visible_series_select(&visible)
             .filter(series::Column::Id.is_in(series_ids))
             .all(&app.db)
             .await
             .unwrap_or_default()
             .into_iter()
-            .filter(|s| visible.series_ok(s.library_id, s.age_rating.as_deref()))
             .map(|s| (s.id, s))
             .collect()
     };
     let issue_by_id: HashMap<String, OpdsIssueRow> = if issue_ids.is_empty() {
         HashMap::new()
     } else {
-        let rows = issue::Entity::find()
+        collections::visible_issues_select(&visible)
             .filter(issue::Column::Id.is_in(issue_ids))
             .into_partial_model::<OpdsIssueRow>()
             .all(&app.db)
             .await
-            .unwrap_or_default();
-        access::filter_issues(app, &visible, rows)
-            .await
+            .unwrap_or_default()
             .into_iter()
             .map(|i| (i.id.clone(), i))
             .collect()
+    };
+    // Drop entries whose target did not hydrate before picking Up Next, so
+    // an invisible issue can neither be promoted nor shift the order.
+    rows.retain(|r| {
+        r.series_id
+            .is_some_and(|sid| series_by_id.contains_key(&sid))
+            || r.issue_id
+                .as_deref()
+                .is_some_and(|iid| issue_by_id.contains_key(iid))
+    });
+
+    let up_next_id = if reorder {
+        let up_next = pick_next_in_collection(&app.db, user.id, &rows).await;
+        reorder_collection_entries_up_next_first(&mut rows, up_next.as_deref());
+        up_next
+    } else {
+        None
     };
     // Series slug lookup for `related` links on issue entries.
     let issue_series_ids: Vec<Uuid> = issue_by_id.values().map(|i| i.series_id).collect();
@@ -3644,14 +3654,15 @@ pub(crate) async fn fetch_visible_issues_preserving_order(
     if ids.is_empty() {
         return Vec::new();
     }
-    let rows = issue::Entity::find()
+    // `access::visible_issues_select`: a soft-removed issue, or one of a
+    // removed series, drops out of every personal feed (CBL lists,
+    // continue / on-deck / history, issue views) like it does on the web.
+    let by_id: HashMap<String, OpdsIssueRow> = access::visible_issues_select(visible)
         .filter(issue::Column::Id.is_in(ids.to_vec()))
         .into_partial_model::<OpdsIssueRow>()
         .all(&app.db)
         .await
-        .unwrap_or_default();
-    let by_id: HashMap<String, OpdsIssueRow> = access::filter_issues(app, visible, rows)
-        .await
+        .unwrap_or_default()
         .into_iter()
         .map(|i| (i.id.clone(), i))
         .collect();

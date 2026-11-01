@@ -1,4 +1,5 @@
 pub mod account;
+pub mod account_delete;
 pub mod account_export;
 pub mod admin_activity;
 pub mod admin_email;
@@ -76,6 +77,7 @@ pub mod saved_views;
 pub mod scan_batches;
 pub mod scan_runs;
 pub mod series;
+pub mod series_completion_prefs;
 pub mod series_external_relationships;
 pub mod series_metadata_tab;
 pub mod series_reader_prefs;

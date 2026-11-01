@@ -18,6 +18,8 @@ type SearchParams = {
   verified?: string;
   reset?: string;
   pending?: string;
+  /** Set by the Settings → Account deletion flow after `DELETE /me`. */
+  deleted?: string;
   /** Surfaced when an OIDC callback returns a structured error. */
   error?: string;
 };
@@ -56,9 +58,11 @@ export default async function SignInPage({
       ? ("reset" as const)
       : sp.pending
         ? ("pending" as const)
-        : sp.error
-          ? ("error" as const)
-          : null;
+        : sp.deleted
+          ? ("deleted" as const)
+          : sp.error
+            ? ("error" as const)
+            : null;
 
   return (
     <SignInClient

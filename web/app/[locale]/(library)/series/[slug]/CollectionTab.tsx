@@ -137,6 +137,10 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
     (e) => chipStatusOf(e) === "complete",
   ).length;
   const ownedCount = total_owned;
+  // What counts toward the publisher total: the main run, plus the
+  // annuals / specials when the viewer counts them (B9). Older payloads
+  // without the field fall back to everything owned.
+  const countedOwned = data.counted_owned ?? total_owned;
   // Denominator for the bars: the publisher total when known, else what we own.
   const denom = total_expected ?? ownedCount;
   const overallPct = denom > 0 ? (completeCount / denom) * 100 : 0;
@@ -181,8 +185,8 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {total_expected != null && (
             <SubBar
-              label="Owned"
-              value={ownedCount}
+              label={data.specials_counted ? "Owned (incl. specials)" : "Owned"}
+              value={countedOwned}
               total={total_expected}
               barClassName="bg-muted-foreground/50"
             />

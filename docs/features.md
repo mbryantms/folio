@@ -451,9 +451,11 @@ per-list opt-out to preserve curated orders).
   owned / read counts, read state and ComicVine / Metron / GCD ids, for a
   spreadsheet, an insurance record or a want-list comparison.
 - **Series completion** is collector-aware: "Caught up — series ongoing"
-  is distinct from "Complete", and annuals/specials don't count toward
-  completion of the main run. Planned (remediation WP B9): a per-user
-  preference to count them, with a per-series override.
+  is distinct from "Complete", and annuals/specials only count toward
+  completion if you want them to: a per-user setting (Settings → Reading,
+  off by default so only the main run counts) with a per-series override
+  in the series ⋯ menu. Series cards, the series page, the Collection tab
+  and the "Collection Completeness" filter all follow your choice.
 
 ## Multi-user and self-hosting
 
@@ -465,6 +467,10 @@ per-list opt-out to preserve curated orders).
   refresh-token rotation; a replayed refresh token is rejected.
 - **App passwords** per device/app, individually revocable, with
   last-used tracking.
+- **Self-service account deletion**: Settings → Account → Delete account
+  points at the JSON export first, re-checks the password (identity-provider
+  accounts type their email), and removes every personal row while the audit
+  log keeps its history; an instance's last admin can't delete itself.
 - A complete admin area: users, libraries (each with its series and issue
   counts, archive size and `.bak` backup footprint), scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every

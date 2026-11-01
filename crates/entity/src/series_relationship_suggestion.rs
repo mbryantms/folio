@@ -12,6 +12,8 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::series_relationship::RelationshipKind;
+
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "series_relationship_suggestion")]
 pub struct Model {
@@ -28,8 +30,9 @@ pub struct Model {
     pub to_arc_id: Option<Uuid>,
     /// Canonical kind only (DB CHECK): one direction of each directional
     /// pair (`sequel_of`, `continues`, `collects`, …) or a self-inverse kind
-    /// stored with `from < to` (WP-7.5, `m20270505`).
-    pub kind: String,
+    /// stored with `from < to` (WP-7.5, `m20270505`); see
+    /// [`RelationshipKind::is_canonical`].
+    pub kind: RelationshipKind,
     /// 0.0–1.0.
     pub confidence: f32,
     /// `high | medium | low`, derived from `confidence`.

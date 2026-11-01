@@ -437,7 +437,7 @@ pub async fn list(
         .into_iter()
         .filter_map(|e| {
             let view = views.get(&e.to_series_id?.to_string())?.clone();
-            edge_view(e, view)
+            Some(edge_view(e, view))
         })
         .collect();
 
@@ -634,9 +634,7 @@ pub async fn create(
     else {
         return readback_failed();
     };
-    let Some(body) = edge_view(outcome.forward, view) else {
-        return readback_failed();
-    };
+    let body = edge_view(outcome.forward, view);
     let status = if outcome.created {
         StatusCode::CREATED
     } else {
@@ -766,10 +764,7 @@ pub async fn update(
             "no such relationship for this series",
         );
     };
-    let Ok(old_kind) = forward.kind.parse::<RelationshipKind>() else {
-        return internal(&sea_orm::DbErr::Custom("bad relationship kind".into()));
-    };
-    let kind = req.kind.unwrap_or(old_kind);
+    let kind = req.kind.unwrap_or(forward.kind);
     let old = Scope::of(&forward);
     let scope = Scope {
         from_range: req.from_range.unwrap_or(old.from_range),
@@ -838,10 +833,7 @@ pub async fn update(
     else {
         return readback_failed();
     };
-    match edge_view(out.forward, view) {
-        Some(body) => Json(body).into_response(),
-        None => readback_failed(),
-    }
+    Json(edge_view(out.forward, view)).into_response()
 }
 
 #[utoipa::path(
@@ -1085,7 +1077,7 @@ pub(crate) async fn arc_tie_ins_handler(
                 r.id,
             ));
             let series = views.get(&r.from_series_id.to_string())?.clone();
-            let kind: RelationshipKind = r.kind.parse().ok()?;
+            let kind = r.kind;
             let scope = Scope::of(&r);
             Some(ArcTieInView {
                 id: r.id.to_string(),
@@ -1335,7 +1327,7 @@ pub(crate) async fn visible_related_arcs(
     edges
         .into_iter()
         .filter_map(|e| {
-            let kind = e.kind.parse::<RelationshipKind>().ok()?;
+            let kind = e.kind;
             let qualifier = e.qualifier.as_deref().and_then(|q| q.parse().ok());
             Some(RelatedArcLink {
                 label: kind.display_label(qualifier),
@@ -1374,7 +1366,7 @@ pub(crate) async fn visible_related(
     edges
         .into_iter()
         .filter_map(|e| {
-            let kind = e.kind.parse::<RelationshipKind>().ok()?;
+            let kind = e.kind;
             let qualifier = e.qualifier.as_deref().and_then(|q| q.parse().ok());
             Some(RelatedLink {
                 kind,
@@ -1386,15 +1378,15 @@ pub(crate) async fn visible_related(
 }
 
 /// [`edge_view`] for sibling modules (the external-link promotion answer).
-pub(crate) fn edge_view_pub(e: rel::Model, series: SeriesView) -> Option<SeriesRelationshipView> {
+pub(crate) fn edge_view_pub(e: rel::Model, series: SeriesView) -> SeriesRelationshipView {
     edge_view(e, series)
 }
 
-fn edge_view(e: rel::Model, series: SeriesView) -> Option<SeriesRelationshipView> {
-    let kind: RelationshipKind = e.kind.parse().ok()?;
+fn edge_view(e: rel::Model, series: SeriesView) -> SeriesRelationshipView {
+    let kind = e.kind;
     let source: RelationshipSource = e.source.parse().unwrap_or(RelationshipSource::Manual);
     let scope = Scope::of(&e);
-    Some(SeriesRelationshipView {
+    SeriesRelationshipView {
         id: e.id.to_string(),
         kind,
         kind_label: kind.display_label(scope.qualifier),
@@ -1409,11 +1401,11 @@ fn edge_view(e: rel::Model, series: SeriesView) -> Option<SeriesRelationshipView
         qualifier_label: scope.qualifier.map(|q| q.label().to_owned()),
         note: scope.note,
         series,
-    })
+    }
 }
 
 fn arc_edge_view(e: rel::Model, arc: RelationshipArcRef) -> SeriesArcRelationshipView {
-    let kind: RelationshipKind = e.kind.parse().unwrap_or(RelationshipKind::TieInTo);
+    let kind = e.kind;
     let scope = Scope::of(&e);
     SeriesArcRelationshipView {
         id: e.id.to_string(),

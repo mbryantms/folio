@@ -458,6 +458,7 @@ async fn progress_cards(
               {extra_where}
               AND i.state     = 'active'
               AND i.removed_at IS NULL
+              AND s.removed_at IS NULL
               {acl_clause}{cap_clause}
               AND (d.dismissed_at IS NULL OR p.updated_at > d.dismissed_at)
             ORDER BY p.updated_at DESC
@@ -673,6 +674,7 @@ pub async fn on_this_day(
               JOIN series s ON s.id = i.series_id
              WHERE i.state = 'active'
                AND i.removed_at IS NULL
+               AND s.removed_at IS NULL
                AND i.month = $1 AND i.day = $2
                {acl_clause}{cap_clause}
              ORDER BY i.year ASC NULLS LAST, s.name ASC, i.sort_number ASC NULLS LAST, i.id ASC
@@ -848,6 +850,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
             JOIN series s ON s.id = i.series_id
             WHERE i.state = 'active'
               AND i.removed_at IS NULL
+              AND s.removed_at IS NULL
               {acl_clause}{cap_clause}
               {keyset}
             ORDER BY i.created_at DESC, i.id DESC
@@ -1010,6 +1013,7 @@ pub(crate) async fn compute_on_deck(
                  AND d.target_kind = 'series'
                  AND d.target_id = s.id::text
                 WHERE started.series_id NOT IN (SELECT series_id FROM in_progress)
+                  AND s.removed_at IS NULL
                   {acl_clause}{cap_clause}
                   AND (d.dismissed_at IS NULL OR started.last_activity > d.dismissed_at)
                 ORDER BY started.last_activity DESC
@@ -1460,7 +1464,7 @@ async fn cbl_saved_view_ids_for_candidates(
     use sea_orm::Condition;
 
     let rows = match saved_view::Entity::find()
-        .filter(saved_view::Column::Kind.eq("cbl"))
+        .filter(saved_view::Column::Kind.eq(saved_view::SavedViewKind::Cbl))
         .filter(saved_view::Column::CblListId.is_in(list_ids.to_vec()))
         .filter(
             Condition::any()
@@ -2208,13 +2212,19 @@ async fn ensure_target_visible(
 ) -> Result<(), Response> {
     let acl = access::for_user(app, user).await;
     match kind {
+        // Issue and series targets go through the selects
+        // `visible_dismissal_condition` lists with, so a dismissal is only
+        // stored for a target the hidden-items list would show; a removed,
+        // non-active, revoked or over-cap target answers the same 404 as a
+        // missing one.
         DISMISS_KIND_ISSUE => {
-            let row = issue::Entity::find_by_id(target_id.to_owned())
-                .one(&app.db)
+            let hits = access::visible_issues_select(&acl)
+                .filter(issue::Column::Id.eq(target_id.to_owned()))
+                .filter(issue::Column::State.eq("active"))
+                .count(&app.db)
                 .await
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
-            let issue = row.ok_or_else(not_found)?;
-            if !access::issue_allowed(app, &acl, &issue).await {
+            if hits == 0 {
                 return Err(not_found());
             }
             Ok(())
@@ -2227,12 +2237,12 @@ async fn ensure_target_visible(
                     "series target_id must be UUID",
                 )
             })?;
-            let row = series::Entity::find_by_id(id)
-                .one(&app.db)
+            let hits = access::visible_series_select(&acl)
+                .filter(series::Column::Id.eq(id))
+                .count(&app.db)
                 .await
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
-            let series = row.ok_or_else(not_found)?;
-            if !acl.series_ok(series.library_id, series.age_rating.as_deref()) {
+            if hits == 0 {
                 return Err(not_found());
             }
             Ok(())

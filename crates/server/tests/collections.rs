@@ -1260,6 +1260,11 @@ async fn entries_hide_removed_and_revoked_targets() {
         )
     );
 
+    // The admin's own collection holds issue A too (added while it is
+    // live: an add of a removed target is a 404 since E7).
+    let admin_cid = create_collection(&app, &admin, "Admin pile").await;
+    add_entry(&app, &admin, admin_cid, "issue", &issue_a).await;
+
     // Soft-removed issue: gone from the page and from `total`; the row stays.
     set_issue_removed(&app, &issue_a, true).await;
     assert_eq!(
@@ -1278,8 +1283,6 @@ async fn entries_hide_removed_and_revoked_targets() {
     );
 
     // Removal hides for every role: the admin's own collection too.
-    let admin_cid = create_collection(&app, &admin, "Admin pile").await;
-    add_entry(&app, &admin, admin_cid, "issue", &issue_a).await;
     assert_eq!(
         list_entry_ids(&app, &admin, admin_cid).await,
         (vec![], Some(0))
@@ -1430,4 +1433,76 @@ async fn create_and_rename_validation_name_the_field() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "validation");
     assert!(body["error"]["details"].is_null(), "{body:#?}");
+}
+
+/// E7: adding an entry whose target the caller cannot see — a library
+/// outside the grant, a soft-removed series or issue, an issue of a removed
+/// series — answers the same 404 as a missing target (single add) or counts
+/// as `not_found` (bulk add), so neither endpoint is an existence oracle and
+/// no invisible entry is stored.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_rejects_invisible_targets_like_missing_ones() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "add-vis-admin@example.com").await;
+    let reader = register(&app, "add-vis-reader@example.com").await;
+    let (lib_ok, series_ok, issue_ok) = seed_series_with_issue(&app, "add-ok").await;
+    let (_lib_no, series_no, issue_no) = seed_series_with_issue(&app, "add-no").await;
+    let (lib_gone, series_gone, issue_orphan) = seed_series_with_issue(&app, "add-gone").await;
+    let (lib_rm, _series_rm, issue_rm) = seed_series_with_issue(&app, "add-rm").await;
+    for lib in [lib_ok, lib_gone, lib_rm] {
+        grant_library(&app, reader.user_id, lib).await;
+    }
+    set_series_removed(&app, series_gone, true).await;
+    set_issue_removed(&app, &issue_rm, true).await;
+
+    let cid = create_collection(&app, &reader, "Invisible adds").await;
+    let single_url = format!("/api/me/collections/{cid}/entries");
+    let invisible: Vec<(&str, String)> = vec![
+        ("series", Uuid::now_v7().to_string()),
+        ("series", series_no.to_string()),
+        ("issue", issue_no.clone()),
+        ("series", series_gone.to_string()),
+        ("issue", issue_orphan.clone()),
+        ("issue", issue_rm.clone()),
+    ];
+    for (kind, ref_id) in &invisible {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            &single_url,
+            Some(&reader),
+            Some(serde_json::json!({ "entry_kind": kind, "ref_id": ref_id })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{kind}:{ref_id}: {body:#?}");
+        assert_eq!(body["error"]["code"], "not_found");
+    }
+
+    let mut members: Vec<serde_json::Value> = invisible
+        .iter()
+        .map(|(kind, ref_id)| serde_json::json!({ "entry_kind": kind, "ref_id": ref_id }))
+        .collect();
+    members.push(serde_json::json!({ "entry_kind": "series", "ref_id": series_ok.to_string() }));
+    members.push(serde_json::json!({ "entry_kind": "issue", "ref_id": &issue_ok }));
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/members/bulk-add"),
+        Some(&reader),
+        Some(serde_json::json!({ "members": members })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["added"].as_u64(), Some(2), "{body:#?}");
+    assert_eq!(body["not_found"].as_u64(), Some(6), "{body:#?}");
+    assert_eq!(body["already_present"].as_u64(), Some(0));
+
+    // Only the two visible targets were stored.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let stored = entity::collection_entry::Entity::find()
+        .filter(entity::collection_entry::Column::SavedViewId.eq(cid))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(stored, 2);
 }

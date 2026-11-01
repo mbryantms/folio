@@ -23,6 +23,7 @@ use utoipa_axum::routes;
 use super::error;
 use crate::auth::CurrentUser;
 use crate::library::access;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -31,7 +32,12 @@ const DEFAULT_LIMIT: i64 = 20;
 const MAX_LIMIT: i64 = 100;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(list))
+    // Free-text credit search: per-user `SEARCH` bucket (E3, audit N-A5),
+    // in its own sub-router so a route added here later doesn't inherit it.
+    let search = OpenApiRouter::new()
+        .routes(routes!(list))
+        .route_layer(rate_limit::SEARCH.build_per_user());
+    OpenApiRouter::new().merge(search)
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,7 +80,7 @@ struct Row {
         ("q" = Option<String>, Query,),
         ("limit" = Option<i64>, Query,),
     ),
-    responses((status = 200, body = PeopleListView))
+    responses((status = 200, body = PeopleListView), (status = 429, description = "search rate limit"))
 )]
 #[handler]
 pub async fn list(

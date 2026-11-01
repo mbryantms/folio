@@ -35,6 +35,7 @@ use uuid::Uuid;
 
 use super::error;
 use crate::auth::CurrentUser;
+use crate::library::access;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
@@ -495,7 +496,7 @@ pub async fn upsert(
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
+    if !access::issue_visible(&app, &user, &issue_row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -613,10 +614,11 @@ pub async fn list(
     // Sessions surface only while their issue is live and still visible
     // to the caller (library grant + age cap) — the rule markers and the
     // reading log apply (`markers::visible_marker_condition`). A revoked
-    // grant or a soft-removed issue hides the row without deleting it;
-    // the stats and the account export still count it.
-    let acl = crate::library::access::for_user(&app, &user).await;
-    let visible_issues = crate::library::access::visible_issues_select(&acl)
+    // grant or a soft-removed issue hides the row without deleting it
+    // (`/me/reading-stats` applies the same rule); the account export
+    // still carries it.
+    let acl = access::for_user(&app, &user).await;
+    let visible_issues = access::visible_issues_select(&acl)
         .select_only()
         .column(issue::Column::Id);
     let mut query = ReadingSessionEntity::find()
@@ -741,7 +743,8 @@ pub async fn stats(
     user: CurrentUser,
     Query(q): Query<StatsQuery>,
 ) -> Response {
-    match compute_stats_for_user(&app, user.id, q).await {
+    let acl = access::for_user(&app, &user).await;
+    match compute_stats_for_user(&app, user.id, &acl, q).await {
         Ok(view) => Json(view).into_response(),
         Err(e) => e.into_response(),
     }
@@ -797,10 +800,13 @@ pub async fn clear_history(
 /// Reusable stats computation. Used by `GET /me/reading-stats` (callee = self)
 /// and `GET /admin/users/{id}/reading-stats` (callee = admin acting on a
 /// target user). Validation + error mapping lives here so both endpoints stay
-/// thin.
+/// thin. `acl` is the viewer's visibility: sessions on issues it cannot see
+/// (soft-removed, removed parent series, revoked grant, over the age cap)
+/// are left out of every number (see `append_visibility`).
 pub(crate) async fn compute_stats_for_user(
     app: &AppState,
     user_id: Uuid,
+    acl: &access::VisibleLibraries,
     q: StatsQuery,
 ) -> Result<ReadingStatsView, StatsError> {
     let range = q.range.as_deref().unwrap_or("30d").to_string();
@@ -842,6 +848,7 @@ pub(crate) async fn compute_stats_for_user(
         since: since.as_ref(),
         issue_filter: issue_filter.as_deref(),
         series_filter: series_filter.as_ref(),
+        acl,
     };
 
     let totals_row = compute_totals(app, &filter).await?;
@@ -852,7 +859,7 @@ pub(crate) async fn compute_stats_for_user(
     // Streak math always operates on the user's full history, never
     // the requested range — a "30d" view shouldn't make a 10-month
     // streak vanish.
-    let active_days = compute_active_days(app, backend, user_id, tz).await?;
+    let active_days = compute_active_days(app, &filter, tz).await?;
     let today_local = Utc::now().with_timezone(&tz).date_naive();
     let (current_streak, longest_streak) = streak_lengths(&active_days, today_local);
 
@@ -874,31 +881,13 @@ pub(crate) async fn compute_stats_for_user(
     let top_genres = if scope_is_issue {
         Vec::new()
     } else {
-        top_csv_column(
-            app,
-            backend,
-            user_id,
-            "i.genre",
-            since.as_ref(),
-            issue_filter.as_deref(),
-            series_filter.as_ref(),
-        )
-        .await
+        top_csv_column(app, &filter, "i.genre").await
     };
 
     let top_tags = if scope_is_issue {
         Vec::new()
     } else {
-        top_csv_column(
-            app,
-            backend,
-            user_id,
-            "i.tags",
-            since.as_ref(),
-            issue_filter.as_deref(),
-            series_filter.as_ref(),
-        )
-        .await
+        top_csv_column(app, &filter, "i.tags").await
     };
 
     let top_publishers = if scope_is_series_or_issue {
@@ -921,78 +910,28 @@ pub(crate) async fn compute_stats_for_user(
         .await
     };
 
-    let top_creators = compute_top_creators(
-        app,
-        backend,
-        user_id,
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-    )
-    .await;
+    let top_creators = compute_top_creators(app, &filter).await;
 
-    let dow_hour = compute_dow_hour(
-        app,
-        backend,
-        user_id,
-        tz,
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-    )
-    .await;
+    let dow_hour = compute_dow_hour(app, &filter, tz).await;
     let time_of_day = time_of_day_from(&dow_hour);
 
-    let pace_series = compute_pace_series(
-        app,
-        backend,
-        user_id,
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-    )
-    .await;
+    let pace_series = compute_pace_series(app, &filter).await;
 
     // When scope is series, the grid heatmap wants every issue the user
     // has touched in that series (not just top 10). For all-scope and
     // issue-scope, stay capped at 10.
     let reread_limit = if series_filter.is_some() { 500 } else { 10 };
-    let reread_top_issues = compute_reread_top_issues(
-        app,
-        backend,
-        user_id,
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-        reread_limit,
-    )
-    .await;
+    let reread_top_issues = compute_reread_top_issues(app, &filter, reread_limit).await;
 
     let reread_top_series = if scope_is_series_or_issue {
         Vec::new()
     } else {
-        compute_reread_top_series(app, backend, user_id, since.as_ref()).await
+        compute_reread_top_series(app, &filter).await
     };
 
-    let completion = compute_completion(
-        app,
-        backend,
-        user_id,
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-    )
-    .await;
+    let completion = compute_completion(app, &filter).await;
 
-    let (first_read_at, last_read_at) = compute_first_last(
-        app,
-        backend,
-        user_id,
-        since.as_ref(),
-        issue_filter.as_deref(),
-        series_filter.as_ref(),
-    )
-    .await;
+    let (first_read_at, last_read_at) = compute_first_last(app, &filter).await;
 
     Ok(ReadingStatsView {
         range,
@@ -1069,15 +1008,7 @@ async fn compute_totals(app: &AppState, filter: &StatsFilter<'_>) -> Result<Tota
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "",
-        filter.since,
-        filter.issue_filter,
-        filter.series_filter,
-    );
+    append_scope(&mut sql, &mut params, "", filter);
     match TotalsRow::find_by_statement(Statement::from_sql_and_values(filter.backend, &sql, params))
         .one(&app.db)
         .await
@@ -1114,15 +1045,7 @@ async fn compute_per_day(
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into(), tz.name().to_string().into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        3,
-        "",
-        filter.since,
-        filter.issue_filter,
-        filter.series_filter,
-    );
+    append_scope(&mut sql, &mut params, "", filter);
     sql.push_str(" GROUP BY 1 ORDER BY 1 ASC");
     let rows = match DayRow::find_by_statement(Statement::from_sql_and_values(
         filter.backend,
@@ -1150,22 +1073,25 @@ async fn compute_per_day(
 }
 
 /// All distinct user-local dates with at least one session, globally
-/// (no range/scope filter). Feeds `streak_lengths` — current + longest
-/// streaks are intentionally lifetime metrics.
+/// (no range/scope filter, only visibility). Feeds `streak_lengths` —
+/// current + longest streaks are intentionally lifetime metrics.
 async fn compute_active_days(
     app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
+    filter: &StatsFilter<'_>,
     tz: Tz,
 ) -> Result<Vec<NaiveDate>, StatsError> {
-    let sql = "SELECT DISTINCT (started_at AT TIME ZONE $2)::date AS d \
+    let mut sql = String::from(
+        "SELECT DISTINCT (started_at AT TIME ZONE $2)::date AS d \
          FROM reading_sessions \
-         WHERE user_id = $1 \
-         ORDER BY d ASC";
+         WHERE user_id = $1",
+    );
+    let mut params: Vec<Value> = vec![filter.user_id.into(), tz.name().to_string().into()];
+    append_visibility(&mut sql, &mut params, "", filter.acl);
+    sql.push_str(" ORDER BY d ASC");
     let rows = match StreakRow::find_by_statement(Statement::from_sql_and_values(
-        backend,
-        sql,
-        vec![user_id.into(), tz.name().to_string().into()],
+        filter.backend,
+        &sql,
+        params,
     ))
     .all(&app.db)
     .await
@@ -1193,15 +1119,7 @@ async fn compute_top_series_ranking(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "rs.",
-        filter.since,
-        filter.issue_filter,
-        filter.series_filter,
-    );
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(" GROUP BY s.id, s.name ORDER BY active_ms DESC, sessions DESC LIMIT 10");
 
     #[derive(FromQueryResult)]
@@ -1248,15 +1166,7 @@ async fn compute_top_publishers_ranking(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![filter.user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "rs.",
-        filter.since,
-        filter.issue_filter,
-        filter.series_filter,
-    );
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(
         " AND COALESCE(NULLIF(s.publisher,''), NULLIF(i.publisher,'')) IS NOT NULL \
          GROUP BY 1 ORDER BY active_ms DESC, sessions DESC LIMIT 10",
@@ -1310,51 +1220,62 @@ struct StreakRow {
 
 // ────────────── Helpers ──────────────
 
-/// Append the standard scope filter (since / issue / series) to a SQL
-/// builder, mutating `params` to include any newly-bound values. `prefix`
-/// is the table alias to prepend to the column references — `""` for the
-/// non-joined queries (totals + per-day) and `"rs."` for the top-N
-/// queries that join through `reading_sessions rs`.
-fn append_scope(
-    sql: &mut String,
-    params: &mut Vec<Value>,
-    start_idx: usize,
-    prefix: &str,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
-) -> usize {
-    let mut idx = start_idx;
-    if let Some(s) = since {
-        sql.push_str(&format!(" AND {prefix}started_at >= ${idx}"));
+/// Append the standard scope filter (visibility, since / issue / series)
+/// to a SQL builder, mutating `params` to include any newly-bound values.
+/// `prefix` is the table alias to prepend to the column references — `""`
+/// for the non-joined queries (totals + per-day) and `"rs."` for the top-N
+/// queries that join through `reading_sessions rs`. Placeholders continue
+/// from `params.len()`, so the caller binds its own values first.
+fn append_scope(sql: &mut String, params: &mut Vec<Value>, prefix: &str, filter: &StatsFilter<'_>) {
+    append_visibility(sql, params, prefix, filter.acl);
+    if let Some(s) = filter.since {
         params.push((*s).into());
-        idx += 1;
+        sql.push_str(&format!(" AND {prefix}started_at >= ${}", params.len()));
     }
-    if let Some(iss) = issue_filter {
-        sql.push_str(&format!(" AND {prefix}issue_id = ${idx}"));
+    if let Some(iss) = filter.issue_filter {
         params.push(iss.to_string().into());
-        idx += 1;
+        sql.push_str(&format!(" AND {prefix}issue_id = ${}", params.len()));
     }
-    if let Some(sid) = series_filter {
-        sql.push_str(&format!(" AND {prefix}series_id = ${idx}"));
+    if let Some(sid) = filter.series_filter {
         params.push((*sid).into());
-        idx += 1;
+        sql.push_str(&format!(" AND {prefix}series_id = ${}", params.len()));
     }
-    idx
 }
 
-/// Filter cluster shared by the stats helpers. Folded into one struct
-/// during code-quality-cleanup M3 so individual helpers don't keep
-/// growing positional-args ladders. M3 only threads this through
-/// `top_column_with_alias` (the sole helper that crossed the 8-arg
-/// clippy threshold); the sibling helpers stay at 6-7 args until the
-/// next pass picks them up.
+/// Sessions count only while their issue is visible to the viewer
+/// ([`access::visible_issues_sql`]: not soft-removed, a live parent series,
+/// inside the grant and under the age cap). Stats link their rankings to
+/// series and issues, so a removed or revoked issue drops out of every
+/// number, totals and streaks included, rather than leaving totals that
+/// the rankings cannot account for. The session rows are kept: restoring
+/// the issue or the grant brings them back.
+fn append_visibility(
+    sql: &mut String,
+    params: &mut Vec<Value>,
+    prefix: &str,
+    acl: &access::VisibleLibraries,
+) {
+    let issue_col = if prefix.is_empty() {
+        "reading_sessions.issue_id".to_owned()
+    } else {
+        format!("{prefix}issue_id")
+    };
+    let visible = access::visible_issues_sql(acl, "vis_i", params);
+    sql.push_str(&format!(
+        " AND EXISTS (SELECT 1 FROM issues vis_i WHERE vis_i.id = {issue_col}{visible})"
+    ));
+}
+
+/// Filter cluster shared by the stats helpers: who, which window, which
+/// scope, and the viewer's visibility (`acl`).
+#[derive(Clone, Copy)]
 struct StatsFilter<'a> {
     backend: sea_orm::DbBackend,
     user_id: Uuid,
     since: Option<&'a DateTime<FixedOffset>>,
     issue_filter: Option<&'a str>,
     series_filter: Option<&'a Uuid>,
+    acl: &'a access::VisibleLibraries,
 }
 
 /// Top-N for a scalar column reachable from `reading_sessions rs` via an
@@ -1367,11 +1288,7 @@ async fn top_column_with_alias(
     join: &str,
 ) -> Vec<TopNameEntry> {
     let StatsFilter {
-        backend,
-        user_id,
-        since,
-        issue_filter,
-        series_filter,
+        backend, user_id, ..
     } = *filter;
     let mut sql = format!(
         "SELECT NULLIF(TRIM(COALESCE({column_expr}, '')), '') AS name, \
@@ -1382,15 +1299,7 @@ async fn top_column_with_alias(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "rs.",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(" AND NULLIF(TRIM(COALESCE(");
     sql.push_str(column_expr);
     sql.push_str(
@@ -1425,14 +1334,10 @@ async fn top_column_with_alias(
 
 /// Top creators across read series, partitioned per role. Uses a window
 /// function so each role gets its own top-10. Single SQL round-trip.
-async fn compute_top_creators(
-    app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
-) -> Vec<TopCreatorEntry> {
+async fn compute_top_creators(app: &AppState, filter: &StatsFilter<'_>) -> Vec<TopCreatorEntry> {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut inner = String::from(
         "SELECT sc.role AS role, sc.person AS person, \
            COUNT(*)::bigint AS sessions, \
@@ -1442,15 +1347,7 @@ async fn compute_top_creators(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut inner,
-        &mut params,
-        2,
-        "rs.",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut inner, &mut params, "rs.", filter);
     inner.push_str(" GROUP BY sc.role, sc.person");
 
     let sql = format!(
@@ -1489,15 +1386,10 @@ async fn compute_top_creators(
 
 /// 7×24 sparse grid of day-of-week × hour. `dow` follows Postgres EXTRACT:
 /// 0 = Sunday … 6 = Saturday. Times bucketed in user's timezone.
-async fn compute_dow_hour(
-    app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
-    tz: Tz,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
-) -> Vec<DowHourCell> {
+async fn compute_dow_hour(app: &AppState, filter: &StatsFilter<'_>, tz: Tz) -> Vec<DowHourCell> {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut sql = String::from(
         "SELECT EXTRACT(DOW FROM (started_at AT TIME ZONE $2))::int AS dow, \
            EXTRACT(HOUR FROM (started_at AT TIME ZONE $2))::int AS hour, \
@@ -1507,15 +1399,7 @@ async fn compute_dow_hour(
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into(), tz.name().to_string().into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        3,
-        "",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut sql, &mut params, "", filter);
     sql.push_str(" GROUP BY 1, 2 ORDER BY 1, 2");
 
     #[derive(FromQueryResult)]
@@ -1564,14 +1448,10 @@ fn time_of_day_from(cells: &[DowHourCell]) -> TimeOfDayBuckets {
 
 /// Per-session pace samples (sec/page) in scope. Sessions with
 /// `distinct_pages_read < 3` are filtered to drop noise.
-async fn compute_pace_series(
-    app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
-) -> Vec<PacePoint> {
+async fn compute_pace_series(app: &AppState, filter: &StatsFilter<'_>) -> Vec<PacePoint> {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut sql = String::from(
         "SELECT started_at AS started_at, \
            (active_ms::float8 / NULLIF(distinct_pages_read, 0)::float8 / 1000.0) AS sec_per_page \
@@ -1579,15 +1459,7 @@ async fn compute_pace_series(
          WHERE user_id = $1 AND distinct_pages_read >= 3 AND active_ms > 0",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut sql, &mut params, "", filter);
     sql.push_str(" ORDER BY started_at ASC LIMIT 1000");
 
     #[derive(FromQueryResult)]
@@ -1618,13 +1490,12 @@ async fn compute_pace_series(
 /// grid heatmap on the series page can color every issue the user has read.
 async fn compute_reread_top_issues(
     app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
+    filter: &StatsFilter<'_>,
     limit: i64,
 ) -> Vec<RereadIssueEntry> {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut sql = String::from(
         "SELECT rs.issue_id::text AS issue_id, i.title AS title, i.number_raw AS number_raw, \
            s.id::text AS series_id, s.name AS series_name, \
@@ -1636,15 +1507,7 @@ async fn compute_reread_top_issues(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "rs.",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut sql, &mut params, "rs.", filter);
     // L-4 (WP-6.3): bound, not interpolated.
     params.push(Value::from(limit));
     sql.push_str(&format!(
@@ -1690,10 +1553,11 @@ async fn compute_reread_top_issues(
 /// count. Skipped when scope is issue/series (tautological).
 async fn compute_reread_top_series(
     app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
-    since: Option<&DateTime<FixedOffset>>,
+    filter: &StatsFilter<'_>,
 ) -> Vec<RereadSeriesEntry> {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut sql = String::from(
         "SELECT s.id::text AS series_id, s.name AS name, \
            COUNT(DISTINCT rs.issue_id)::bigint AS distinct_issues, \
@@ -1704,7 +1568,12 @@ async fn compute_reread_top_series(
          WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(&mut sql, &mut params, 2, "rs.", since, None, None);
+    let all_scope = StatsFilter {
+        issue_filter: None,
+        series_filter: None,
+        ..*filter
+    };
+    append_scope(&mut sql, &mut params, "rs.", &all_scope);
     sql.push_str(
         " GROUP BY s.id, s.name \
          ORDER BY reads DESC, active_ms DESC LIMIT 10",
@@ -1742,14 +1611,10 @@ async fn compute_reread_top_series(
 /// Completion rate: (distinct issues finished) / (distinct issues touched)
 /// within the scope. Finished := `progress_records.finished = TRUE` OR a
 /// session whose `furthest_page` reached `page_count - 1` (last index).
-async fn compute_completion(
-    app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
-) -> CompletionView {
+async fn compute_completion(app: &AppState, filter: &StatsFilter<'_>) -> CompletionView {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut sql = String::from(
         "WITH touched AS ( \
            SELECT DISTINCT rs.issue_id AS issue_id \
@@ -1757,15 +1622,7 @@ async fn compute_completion(
            WHERE rs.user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "rs.",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(
         " ), max_page AS ( \
            SELECT rs.issue_id AS issue_id, MAX(rs.furthest_page) AS furthest \
@@ -1820,27 +1677,18 @@ async fn compute_completion(
 /// `None` when no sessions match.
 async fn compute_first_last(
     app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
+    filter: &StatsFilter<'_>,
 ) -> (Option<String>, Option<String>) {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut sql = String::from(
         "SELECT MIN(started_at) AS first_at, MAX(started_at) AS last_at \
          FROM reading_sessions \
          WHERE user_id = $1",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut sql, &mut params, "", filter);
 
     #[derive(FromQueryResult)]
     struct Row {
@@ -1864,13 +1712,12 @@ async fn compute_first_last(
 /// sorted by accumulated active_ms desc, sessions desc.
 async fn top_csv_column(
     app: &AppState,
-    backend: sea_orm::DbBackend,
-    user_id: Uuid,
+    filter: &StatsFilter<'_>,
     column_expr: &str,
-    since: Option<&DateTime<FixedOffset>>,
-    issue_filter: Option<&str>,
-    series_filter: Option<&Uuid>,
 ) -> Vec<TopNameEntry> {
+    let StatsFilter {
+        backend, user_id, ..
+    } = *filter;
     let mut sql = format!(
         "SELECT TRIM(g.name) AS name, \
            COUNT(*)::bigint AS sessions, \
@@ -1881,15 +1728,7 @@ async fn top_csv_column(
          WHERE rs.user_id = $1 AND TRIM(g.name) <> ''",
     );
     let mut params: Vec<Value> = vec![user_id.into()];
-    append_scope(
-        &mut sql,
-        &mut params,
-        2,
-        "rs.",
-        since,
-        issue_filter,
-        series_filter,
-    );
+    append_scope(&mut sql, &mut params, "rs.", filter);
     sql.push_str(" GROUP BY TRIM(g.name) ORDER BY active_ms DESC, sessions DESC LIMIT 10");
 
     #[derive(FromQueryResult)]

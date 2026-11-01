@@ -1,10 +1,6 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  clearPrivateState,
-  broadcastPrivateReset,
-} from "@/lib/pwa/private-state";
 import { getOutbox, replayWithin } from "@/lib/pwa/outbox";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -62,8 +58,7 @@ export function UserFooter({
   async function signOut() {
     // Deliver queued offline progress/sessions while the session is still
     // valid; whatever cannot go out is dropped with the account below.
-    const outbox = getOutbox();
-    await replayWithin(outbox, 2000);
+    await replayWithin(getOutbox(), 2000);
     const csrf = readCsrfCookie();
     const ok = await fetch("/auth/logout", {
       method: "POST",
@@ -73,17 +68,10 @@ export function UserFooter({
       .then((r) => r.ok)
       .catch(() => false);
     if (ok) {
-      broadcastPrivateReset();
-      await outbox.clear().catch(() => undefined);
-      // Offline downloads belong to the account: explicit sign-out removes
-      // them from the device (session expiry keeps them for offline reads).
-      await import("@/lib/pwa/downloads")
-        .then(({ getDownloadManager }) => getDownloadManager().clearAll())
-        .catch(() => undefined);
-      await clearPrivateState(queryClient);
-      // A hard navigation drops private state outside the query cache too.
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-      window.location.assign("/sign-in");
+      // Loaded on demand: the footer ships on the reader route, whose first
+      // load has a bundle ceiling; sign-out cleanup isn't needed until here.
+      const { forgetAccountOnDevice } = await import("@/lib/pwa/forget-device");
+      await forgetAccountOnDevice(queryClient, "/sign-in");
       return;
     }
     toast.error("Could not sign out. Check your connection and try again.");

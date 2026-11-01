@@ -798,7 +798,7 @@ async fn cover_hash_confirms_or_rejects_a_direct_lookup() {
     entity::issue_cover::ActiveModel {
         id: Set(Uuid::now_v7()),
         issue_id: Set(issue_id.clone()),
-        kind: Set("primary".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Primary),
         ordinal: Set(0),
         source_provider: Set(Some("archive_extracted".into())),
         source_external_id: Set(None),

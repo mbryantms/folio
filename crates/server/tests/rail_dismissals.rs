@@ -20,8 +20,11 @@ use axum::{
 use chrono::{Duration, Utc};
 use common::TestApp;
 use common::seed::{CblListSeed, IssueSeed, LibrarySeed, SeriesSeed};
-use entity::{library_user_access, rail_dismissal, saved_view, series, user};
-use sea_orm::{ActiveModelTrait, Database, DatabaseConnection, EntityTrait, Set};
+use entity::{issue, library_user_access, rail_dismissal, saved_view, series, user};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Database, DatabaseConnection, EntityTrait, PaginatorTrait,
+    QueryFilter, Set,
+};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -204,7 +207,7 @@ async fn seed_cbl_view(db: &DatabaseConnection, owner: Uuid, list_id: Uuid) -> U
     saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(Some(owner)),
-        kind: Set("cbl".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Cbl),
         system_key: Set(None),
         name: Set("Event order".into()),
         description: Set(None),
@@ -529,4 +532,73 @@ async fn auto_restored_dismissals_are_not_listed() {
     assert_eq!(ids(&page), vec![format!("series:{}", untouched.series_id)]);
     assert_eq!(page["total"], 1);
     assert_eq!(page["unavailable"], 0);
+}
+
+/// E7: creating a dismissal for a target the hidden-items list would not
+/// show — a soft-removed series, an issue of a removed series, a
+/// soft-removed or non-active issue — answers the same 404 as a missing
+/// target and stores nothing.
+#[tokio::test]
+async fn create_rejects_invisible_targets_like_missing_ones() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let _admin = register(&app, "admin@example.com").await;
+    let alice = register_reader(&app, &db, "alice@example.com").await;
+    let gone = fixture(&db, "gone").await;
+    let removed_issue = fixture(&db, "removed-issue").await;
+    let missing_file = fixture(&db, "missing-file").await;
+    for f in [&gone, &removed_issue, &missing_file] {
+        grant(&db, alice.user_id, f.lib_id).await;
+    }
+    let row = series::Entity::find_by_id(gone.series_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: series::ActiveModel = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+    for (id, removed, state) in [
+        (&removed_issue.issue_id, true, "active"),
+        (&missing_file.issue_id, false, "missing"),
+    ] {
+        let row = issue::Entity::find_by_id(id.clone())
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut am: issue::ActiveModel = row.into();
+        am.removed_at = Set(removed.then(|| Utc::now().fixed_offset()));
+        am.state = Set(state.into());
+        am.update(&db).await.unwrap();
+    }
+
+    let missing = Uuid::now_v7().to_string();
+    for (kind, id) in [
+        ("series", missing.as_str()),
+        ("series", &gone.series_id.to_string()),
+        ("issue", &gone.issue_id),
+        ("issue", &removed_issue.issue_id),
+        ("issue", &missing_file.issue_id),
+    ] {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            "/api/me/rail-dismissals",
+            &alice,
+            Some(json!({ "target_kind": kind, "target_id": id })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{kind}:{id}: {body}");
+        assert_eq!(body["error"]["code"], "not_found", "{kind}:{id}: {body}");
+    }
+    let stored = rail_dismissal::Entity::find()
+        .filter(rail_dismissal::Column::UserId.eq(alice.user_id))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+
+    // A live target still dismisses.
+    dismiss(&app, &alice, "series", &missing_file.series_id.to_string()).await;
 }

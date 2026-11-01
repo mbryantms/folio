@@ -922,7 +922,7 @@ async fn hydrate(
     Ok(rows
         .into_iter()
         .filter_map(|r| {
-            let kind: RelationshipKind = r.kind.parse().ok()?;
+            let kind = r.kind;
             let qualifier: Option<RelationshipQualifier> =
                 r.qualifier.as_deref().and_then(|q| q.parse().ok());
             let (to_series, to_arc) = match (r.to_series_id, r.to_arc_id) {

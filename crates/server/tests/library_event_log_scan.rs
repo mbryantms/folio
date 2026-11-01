@@ -186,13 +186,13 @@ async fn batch_scan_events_carry_batch_id() {
     let batch_id = Uuid::now_v7();
     scan_batch::ActiveModel {
         id: Set(batch_id),
-        kind: Set("scan_all".into()),
+        kind: Set(entity::scan_batch::ScanBatchKind::ScanAll),
         actor_id: Set(None),
         force: Set(false),
         started_at: Set(now),
         ended_at: Set(None),
         library_count: Set(1),
-        state: Set("running".into()),
+        state: Set(entity::scan_batch::ScanBatchState::Running),
     }
     .insert(&state.db)
     .await
@@ -201,12 +201,12 @@ async fn batch_scan_events_carry_batch_id() {
     scan_run::ActiveModel {
         id: Set(scan_id),
         library_id: Set(lib),
-        state: Set("queued".into()),
+        state: Set(entity::scan_run::ScanRunState::Queued),
         started_at: Set(now),
         ended_at: Set(None),
         stats: Set(serde_json::json!({})),
         error: Set(None),
-        kind: Set("library".into()),
+        kind: Set(entity::scan_run::ScanRunKind::Library),
         series_id: Set(None),
         issue_id: Set(None),
         batch_id: Set(Some(batch_id)),

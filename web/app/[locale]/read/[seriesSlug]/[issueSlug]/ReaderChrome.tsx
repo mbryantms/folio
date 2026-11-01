@@ -682,7 +682,10 @@ function SettingsButton({
       <PopoverContent
         align="end"
         sideOffset={8}
-        className="w-80 origin-top-right border-neutral-800 bg-neutral-950/95 text-neutral-100 transition-[opacity,transform] duration-150 ease-out data-[state=closed]:scale-95 data-[state=closed]:opacity-0 data-[state=open]:scale-100 data-[state=open]:opacity-100 motion-reduce:transition-none"
+        // 20rem, but never wider than the room Radix has inside the
+        // safe-area collision padding: on a 320px phone a fixed w-80
+        // overran the screen edge.
+        className="w-[min(20rem,var(--radix-popover-content-available-width))] origin-top-right border-neutral-800 bg-neutral-950/95 text-neutral-100 transition-[opacity,transform] duration-150 ease-out data-[state=closed]:scale-95 data-[state=closed]:opacity-0 data-[state=open]:scale-100 data-[state=open]:opacity-100 motion-reduce:transition-none"
       >
         <ReaderSettings seriesId={seriesId} />
       </PopoverContent>

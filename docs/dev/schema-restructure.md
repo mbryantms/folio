@@ -477,28 +477,53 @@ Rust enum, not a `String`, so a typo is a compile error and an
   still binds and reads plain strings; those sites keep working and can
   be typed later.
 
+**E4 batch 1** converted `scan_runs.{state,kind}`
+(`ScanRunState`, `ScanRunKind`), `scan_batch.{kind,state}`
+(`ScanBatchKind`, `ScanBatchState`), `saved_views.kind`
+(`SavedViewKind`), `log_widgets.kind` (`LogWidgetKind`) and
+`user_sidebar_entries.kind` (`SidebarEntryKind`, part of the composite
+primary key). Conventions it added:
+
+- Each enum has `as_str()` and `parse(&str) -> Option<Self>`; the unit
+  tests go through `entity::enum_contract::assert_exact_strings`, which
+  pins every variant both ways and rejects a list of unknown strings.
+- **Request bodies and query params keep `String`** and the handler
+  calls `parse`, so an unknown value keeps its existing 422 + message
+  (not a body-deserialize error) and the OpenAPI request side does not
+  narrow. Only response fields carry the enum.
+- Existing `KIND_*` constants (`api::saved_views`, `api::sidebar_layout`)
+  became typed aliases of the variants, so call sites and `match` arms
+  read as before.
+- `scan_runs.kind` also holds `deep_validate` (the page-decode probe);
+  the History filter still rejects it as a `?kind=` value.
+
+**E4 batch 2** converted `issue_cover.kind` (`IssueCoverKind`:
+`primary | variant | back | incentive`), `series_cover.kind`
+(`SeriesCoverKind`: `primary | logo | banner | pick`) and the three
+relationship `kind` columns — `series_relationship`,
+`series_external_relationship`, `series_relationship_suggestion` — which
+share one enum, `RelationshipKind` (31 kinds; the suggestion CHECK narrows
+it to the canonical half). `RelationshipKind`, its `RelationshipGroup` and
+`RelationshipQualifier` moved from `server::relationships` into
+`entity::series_relationship` so the inverse-pair mapping (`inverse()`,
+`is_canonical()`) stays a method on the column type; `server::relationships`
+re-exports all three, so callers are unchanged. `CoverWrite::kind` and the
+cover-pick `PICK_KIND` constant are typed too. Only `primary` and `variant`
+(issue) and `pick` (series) are written today; the other cover kinds are the
+reserved M0 values, kept so a row holding one still loads.
+`series_relationship_suggestion.accepted_kind` (same value set, nullable)
+is still a `String`.
+
 **E4 backlog** — the remaining stringly `role` / `state` / `kind`
-entity fields, as of `main` at the B8 merge:
+entity fields, after E4 batch 2:
 
 | Column | Entity field |
 |---|---|
 | `issues.state` | `crates/entity/src/issue.rs:28` |
-| `issue_covers.kind` | `crates/entity/src/issue_cover.rs:16` |
 | `issue_credits.role` | `crates/entity/src/issue_credit.rs:12` |
 | `library_health_issues.kind` | `crates/entity/src/library_health_issue.rs:26` |
-| `log_widgets.kind` | `crates/entity/src/log_widget.rs:22` |
 | `markers.kind` | `crates/entity/src/marker.rs:26` |
-| `saved_views.kind` | `crates/entity/src/saved_view.rs:26` |
-| `scan_batches.kind` | `crates/entity/src/scan_batch.rs:16` |
-| `scan_batches.state` | `crates/entity/src/scan_batch.rs:30` |
-| `scan_runs.state` | `crates/entity/src/scan_run.rs:11` |
-| `scan_runs.kind` | `crates/entity/src/scan_run.rs:21` |
-| `series_covers.kind` | `crates/entity/src/series_cover.rs:15` |
 | `series_credits.role` | `crates/entity/src/series_credit.rs:13` |
-| `series_external_relationships.kind` | `crates/entity/src/series_external_relationship.rs:22` |
-| `series_relationships.kind` | `crates/entity/src/series_relationship.rs:29` |
-| `series_relationship_suggestions.kind` | `crates/entity/src/series_relationship_suggestion.rs:32` |
-| `user_sidebar_entries.kind` | `crates/entity/src/user_sidebar_entry.rs:19` |
 
 The two credit `role` columns hold the canonical credit-role table
 (`metadata::provider::canonical_credit_role`); check whether any
@@ -510,9 +535,9 @@ Beyond `role` / `state` / `kind`, the same shape fits the `status`,
 `metadata_match_outcome.rs:24`, `metadata_run_candidate.rs:24`,
 `external_id.rs:29,37`, `field_provenance.rs:34`,
 `library_event.rs:37,53`, `library_health_issue.rs:29`,
-`series.rs:33`, `series_external_relationship.rs:28,40`,
-`series_provider_range.rs:23,48`, `series_relationship.rs:31`,
-`series_relationship_suggestion.rs:38,43`, `saved_view_group.rs:17`,
+`series.rs:33`, `series_external_relationship.rs:30,42`,
+`series_provider_range.rs:23,48`, `series_relationship.rs:550`,
+`series_relationship_suggestion.rs:39,46`, `saved_view_group.rs:17`,
 `saved_view_group_item.rs:20`, `app_password.rs:23`,
 `cbl_refresh_log.rs:15`). `audit_log.action` and
 `library_event.action` are open-ended dotted names and stay strings.

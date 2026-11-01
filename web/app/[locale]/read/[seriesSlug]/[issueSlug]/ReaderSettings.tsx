@@ -113,16 +113,18 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
           checked={awake.enabled}
           onChange={awake.setEnabled}
         />
-        <Field label="View">
+        <Field label="View" stacked>
           <SegmentedControl
+            fill
             value={viewMode}
             onChange={setViewMode}
             options={VIEW_OPTIONS}
             ariaLabel="View mode"
           />
         </Field>
-        <Field label="Fit">
+        <Field label="Fit" stacked>
           <SegmentedControl
+            fill
             // Webtoon shows the fit the reader actually applies: a stored
             // `contain` renders as width there, so Width is the pressed pill.
             value={
@@ -292,17 +294,32 @@ function Section({
   );
 }
 
+/** Label + control row. `stacked` puts the label above a full-width
+ *  control: the popover is 20rem at most (less on a 320px phone), and the
+ *  three- and four-option groups don't fit beside a label at that width —
+ *  Fit ran off the popover's edge with Screen clipped. A short control
+ *  (Direction) stays beside its label. */
 function Field({
   label,
+  stacked = false,
   children,
 }: {
   label: string;
+  stacked?: boolean;
   children: React.ReactNode;
 }) {
+  if (stacked) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-neutral-300">{label}</span>
+        <div className="flex min-w-0">{children}</div>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="text-xs text-neutral-300">{label}</span>
-      <div className="flex justify-end">{children}</div>
+      <div className="flex min-w-0 justify-end">{children}</div>
     </div>
   );
 }

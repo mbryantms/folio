@@ -59,6 +59,7 @@ export function SeriesActions({
         libraryId={libraryId}
         firstIssue={firstIssue}
         readIncognitoHref={readIncognitoHref}
+        specialsCompletion={series.specials_completion}
         onEdit={() => setEditOpen(true)}
         onForceRecreatePageMap={() => setConfirmForceRecreate(true)}
       />

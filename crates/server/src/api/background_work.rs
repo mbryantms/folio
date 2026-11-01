@@ -25,7 +25,8 @@
 //! Read-only admin GET → allowlisted in the audit-check tool.
 
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use entity::{library, scan_run};
+use entity::library;
+use entity::scan_run::{self, ScanRunKind, ScanRunState};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DbErr, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
     Statement,
@@ -86,9 +87,9 @@ pub struct BackgroundWorkTotals {
 pub struct ActiveScanView {
     pub id: String,
     /// `queued` | `running`.
-    pub state: String,
+    pub state: ScanRunState,
     /// `library` | `series` | `issue`.
-    pub kind: String,
+    pub kind: ScanRunKind,
     pub started_at: String,
     /// The scan-all batch this run belongs to, if any.
     pub batch_id: Option<String>,
@@ -321,8 +322,8 @@ fn active_scan_view(run: &scan_run::Model, stalled: bool) -> ActiveScanView {
     let u64_of = |k: &str| progress.and_then(|p| p.get(k)).and_then(|v| v.as_u64());
     ActiveScanView {
         id: run.id.to_string(),
-        state: run.state.clone(),
-        kind: run.kind.clone(),
+        state: run.state,
+        kind: run.kind,
         started_at: run.started_at.to_rfc3339(),
         batch_id: run.batch_id.map(|b| b.to_string()),
         phase: str_of("phase"),
@@ -342,7 +343,7 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
         .all(&app.db)
         .await?;
     let runs = scan_run::Entity::find()
-        .filter(scan_run::Column::State.is_in(["queued", "running"]))
+        .filter(scan_run::Column::State.is_in([ScanRunState::Queued, ScanRunState::Running]))
         .order_by_asc(scan_run::Column::StartedAt)
         .all(&app.db)
         .await?;
@@ -368,7 +369,7 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
     let library_scans_live = outstanding("scan") > 0;
     let scoped_scans_live = outstanding("scan_series") > 0;
     let is_stalled = |run: &scan_run::Model| {
-        if run.kind == "library" {
+        if run.kind == ScanRunKind::Library {
             !library_scans_live
         } else {
             !scoped_scans_live
@@ -387,7 +388,7 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
     for run in &runs {
         if is_stalled(run) {
             totals.scans_stalled += 1;
-        } else if run.state == "running" {
+        } else if run.state == ScanRunState::Running {
             totals.scans_running += 1;
         } else {
             totals.scans_queued += 1;
@@ -423,11 +424,11 @@ async fn snapshot(app: &AppState) -> anyhow::Result<BackgroundWorkView> {
             let lib_runs = || runs.iter().filter(|r| r.library_id == lib.id);
             // Running beats queued; within a state the oldest run wins.
             let scan = lib_runs()
-                .filter(|r| r.kind == "library")
-                .min_by_key(|r| r.state != "running")
+                .filter(|r| r.kind == ScanRunKind::Library)
+                .min_by_key(|r| r.state != ScanRunState::Running)
                 .map(|r| active_scan_view(r, is_stalled(r)));
             let scoped_scans = lib_runs()
-                .filter(|r| r.kind != "library" && !is_stalled(r))
+                .filter(|r| r.kind != ScanRunKind::Library && !is_stalled(r))
                 .count() as i64;
             let c = issues.get(&lib.id);
             let ready = c.map_or(0, |c| c.ready);

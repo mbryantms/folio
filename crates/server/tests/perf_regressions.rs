@@ -557,7 +557,7 @@ async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cb
         saved_view::ActiveModel {
             id: Set(Uuid::now_v7()),
             user_id: Set(None),
-            kind: Set("cbl".into()),
+            kind: Set(entity::saved_view::SavedViewKind::Cbl),
             system_key: Set(None),
             name: Set(format!("CBL {i} view")),
             description: Set(None),
@@ -714,7 +714,10 @@ const MAX_QUERIES_BULK_ADD: u64 = 5; // observed 3 (was 104)
 // are curated). The guard seeds ~500 direct links plus a 6-deep chain each
 // way on one series: every edge, chain node and card must come from a fixed
 // number of set-based queries — a per-edge hydrate would add ~500.
-const MAX_QUERIES_RELATIONSHIPS: u64 = 15; // observed 13 (+1 progress batch)
+// B9: +1 — `hydrate_series` resolves whether specials count toward
+// completion for the viewer: one `users` LEFT JOIN
+// `user_series_completion_prefs` query per page, constant in the link count.
+const MAX_QUERIES_RELATIONSHIPS: u64 = 16; // observed 16 (15 before the completion-prefs lookup)
 const RELATIONSHIPS_WALL: Duration = Duration::from_secs(5);
 // WP-2.1: the export is 10 section reads + 1 pinned-view hydrate + 3
 // identity batches (issues / series / libraries) + the user row + auth.

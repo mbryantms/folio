@@ -2758,6 +2758,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["account_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/account": {
         parameters: {
             query?: never;
@@ -4256,6 +4272,30 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["saved_views_unpin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/series/{series_id}/completion-prefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether annuals and specials count toward this series' completion for
+         *     the caller.
+         */
+        get: operations["series_completion_prefs_get"];
+        /**
+         * Set (`include` / `exclude`) or clear (`inherit`) the caller's override
+         *     for this series.
+         */
+        put: operations["series_completion_prefs_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6134,7 +6174,7 @@ export interface components {
             files_per_sec?: number | null;
             id: string;
             /** @description `library` | `series` | `issue`. */
-            kind: string;
+            kind: components["schemas"]["ScanRunKind"];
             /**
              * @description Scanner phase (`planning`, `scanning`, `reconciling`,
              *     `enqueueing_thumbnails`, …); `None` until the first progress write.
@@ -6150,7 +6190,7 @@ export interface components {
             stalled: boolean;
             started_at: string;
             /** @description `queued` | `running`. */
-            state: string;
+            state: components["schemas"]["ScanRunState"];
             /** Format: int64 */
             total?: number | null;
         };
@@ -7761,6 +7801,16 @@ export interface components {
              */
             completeness_state: string;
             /**
+             * Format: int64
+             * @description The owned issues that count toward completion for the caller: the
+             *     main run (`special_type IS NULL`), plus the tagged specials when
+             *     [`Self::specials_counted`]. `completeness_state` and
+             *     `completeness_pct` compare this with `total_expected` — the same
+             *     rule as the saved-view `collection_completeness` filter (active,
+             *     non-removed issues, `aic.main_count` + `aic.special_count`).
+             */
+            counted_owned: number;
+            /**
              * @description `"series_total"` (count-only; `missing` interpolated) or
              *     `"provider_manifest"` (`missing` from the providers' issue lists —
              *     see [`Self::manifest`]).
@@ -7782,6 +7832,11 @@ export interface components {
              */
             specials: components["schemas"]["SpecialEntry"][];
             /**
+             * @description Whether annuals / specials count toward completion for the caller
+             *     on this series (per-series override, else the account setting; B9).
+             */
+            specials_counted: boolean;
+            /**
              * Format: int32
              * @description Publisher-claimed total from `series.total_issues`. `None` when the
              *     scanner couldn't resolve a count.
@@ -7789,9 +7844,9 @@ export interface components {
             total_expected?: number | null;
             /**
              * Format: int64
-             * @description Active (non-removed) issues owned. Matches the saved-view
-             *     `collection_completeness` `active_count`, so this report and the
-             *     SeriesCard collection dot never disagree.
+             * @description Every active (non-removed) issue owned — main run, specials, point
+             *     and unnumbered issues alike. The Collection tab's metadata bars
+             *     count over this set.
              */
             total_owned: number;
         };
@@ -8657,7 +8712,7 @@ export interface components {
                 config: unknown;
                 created_at: string;
                 id: string;
-                kind: string;
+                kind: components["schemas"]["LogWidgetKind"];
                 /** Format: int32 */
                 position: number;
                 updated_at: string;
@@ -8729,7 +8784,7 @@ export interface components {
                 force: boolean;
                 id: string;
                 /** @description Trigger discriminator — today always `scan_all`. */
-                kind: string;
+                kind: components["schemas"]["ScanBatchKind"];
                 /**
                  * Format: int32
                  * @description Number of runs that adopted the batch (newly-enqueued libraries).
@@ -8739,7 +8794,7 @@ export interface components {
                 runs: components["schemas"]["BatchRunTally"];
                 started_at: string;
                 /** @description `running` | `complete` | `partial_failed` | `failed`. */
-                state: string;
+                state: components["schemas"]["ScanBatchState"];
             }[];
             next_cursor?: string | null;
             /** Format: int64 */
@@ -8762,8 +8817,11 @@ export interface components {
                  *     since deleted, or when this scan isn't issue-kinded.
                  */
                 issue_label?: string | null;
-                /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
-                kind: string;
+                /**
+                 * @description `library` | `series` | `issue` drive the History tab filter chips;
+                 *     `deep_validate` runs have no chip.
+                 */
+                kind: components["schemas"]["ScanRunKind"];
                 /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
                 series_id?: string | null;
                 /**
@@ -8773,7 +8831,7 @@ export interface components {
                  */
                 series_name?: string | null;
                 started_at: string;
-                state: string;
+                state: components["schemas"]["ScanRunState"];
                 stats: unknown;
             }[];
             next_cursor?: string | null;
@@ -8938,6 +8996,23 @@ export interface components {
         DeepValidateResp: {
             library_id: string;
             state: string;
+        };
+        /**
+         * @description Body of `DELETE /me`. Exactly one field is required, depending on how
+         *     the account signs in (`password_editable` on `/auth/me`).
+         */
+        DeleteAccountReq: {
+            /**
+             * @description For accounts that sign in through an identity provider: the
+             *     account's email, typed to confirm (case-insensitive), or its display
+             *     name when the account has no email.
+             */
+            confirm?: string | null;
+            /**
+             * @description The account's current password. Required for accounts with a local
+             *     password.
+             */
+            password?: string | null;
         };
         DeleteAllResp: {
             deleted: number;
@@ -9682,7 +9757,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @description `"filter_series"`, `"filter_issues"` or `"cbl"`. */
-            kind: string;
+            kind: components["schemas"]["SavedViewKind"];
             match_mode?: string | null;
             name: string;
             /** Format: int32 */
@@ -9730,8 +9805,8 @@ export interface components {
             want_to_read?: components["schemas"]["ExportCollection"] | null;
         };
         ExportSidebarEntry: {
-            /** @description `builtin` / `library` / `view` / `header` / `spacer`. */
-            kind: string;
+            /** @description `builtin` / `library` / `view` / `page` / `header` / `spacer`. */
+            kind: components["schemas"]["SidebarEntryKind"];
             label?: string | null;
             /** Format: int32 */
             position: number;
@@ -9752,12 +9827,7 @@ export interface components {
             show_in_sidebar: boolean;
             /** Format: uuid */
             view_id: string;
-            /**
-             * @description The pinned view's `kind` (`filter_series` / `cbl` / `system` /
-             *     `collection`), hydrated so a system rail is recognisable after a
-             *     rebuild. `null` when the view no longer exists.
-             */
-            view_kind?: string | null;
+            view_kind?: components["schemas"]["SavedViewKind"] | null;
             view_name?: string | null;
             /**
              * @description `system_key` of the pinned view (e.g. `continue_reading`), when it
@@ -10174,6 +10244,14 @@ export interface components {
             story_arcs: components["schemas"]["EntityRefView"][];
             teams: components["schemas"]["EntityRefView"][];
         };
+        /**
+         * @description What an `issue_cover` row is. Writers today store `primary` (the
+         *     archive / provider / admin-picked display cover) and `variant`
+         *     (provider variant covers); `back` and `incentive` are the gallery
+         *     kinds the M0 schema reserved.
+         * @enum {string}
+         */
+        IssueCoverKind: "primary" | "variant" | "back" | "incentive";
         IssueCoverPickReq: {
             /**
              * Format: int32
@@ -10210,8 +10288,7 @@ export interface components {
             image_url?: string | null;
             is_active: boolean;
             issue_id: string;
-            /** @description `"primary" | "variant" | "back" | "incentive"`. */
-            kind: string;
+            kind: components["schemas"]["IssueCoverKind"];
             /** Format: int32 */
             ordinal: number;
             source_external_id?: string | null;
@@ -11075,11 +11152,16 @@ export interface components {
             target: string;
             timestamp: string;
         };
+        /**
+         * @description Which widget a `/log` page slot renders.
+         * @enum {string}
+         */
+        LogWidgetKind: "chrono_feed" | "stats_hero" | "heatmap" | "top_creators" | "top_publishers" | "top_imprints" | "series_finishes" | "pace_chart" | "time_of_day" | "recent_bookmarks" | "currently_reading" | "note";
         LogWidgetView: {
             config: unknown;
             created_at: string;
             id: string;
-            kind: string;
+            kind: components["schemas"]["LogWidgetKind"];
             /** Format: int32 */
             position: number;
             updated_at: string;
@@ -11387,6 +11469,13 @@ export interface components {
             /** @description M6a: per-user opt-out for reading-activity capture. */
             activity_tracking_enabled: boolean;
             corner_radius?: components["schemas"]["CornerRadius"] | null;
+            /**
+             * @description Count annuals / one-shots / specials / TPBs toward a series'
+             *     collection completeness (remediation B9). Default false: only the
+             *     main run is compared with the publisher total. A per-series
+             *     override (`PUT /me/series/{series_id}/completion-prefs`) wins.
+             */
+            count_specials_in_completeness: boolean;
             csrf_token: string;
             /**
              * @description Default for the reader's "cover stands alone in double-page view"
@@ -12236,6 +12325,8 @@ export interface components {
             /** @description M6a: opt-out toggle. `false` disables the client tracker hook. */
             activity_tracking_enabled?: boolean | null;
             corner_radius?: components["schemas"]["CornerRadius"] | null;
+            /** @description Count annuals and specials toward series completion (B9). */
+            count_specials_in_completeness?: boolean | null;
             /** @description Default cover-solo toggle; absent leaves the prior value untouched. */
             default_cover_solo?: boolean | null;
             default_fit_mode?: components["schemas"]["FitMode"] | null;
@@ -13566,6 +13657,12 @@ export interface components {
             /** Format: uuid */
             saved_view_id: string;
         };
+        /**
+         * @description What a saved view is: a filter over series or issues, a CBL reading
+         *     list, a built-in system rail, or a user collection.
+         * @enum {string}
+         */
+        SavedViewKind: "filter_series" | "filter_issues" | "cbl" | "system" | "collection";
         SavedViewListView: {
             items: components["schemas"]["SavedViewView"][];
         };
@@ -13589,7 +13686,7 @@ export interface components {
             id: string;
             /** @description True for system views (`user_id IS NULL`). */
             is_system: boolean;
-            kind: string;
+            kind: components["schemas"]["SavedViewKind"];
             match_mode?: string | null;
             name: string;
             /** @description Whether the calling user has this view pinned to their home rail. */
@@ -13718,13 +13815,24 @@ export interface components {
             /** @description Aggregated counters across the member runs. */
             totals: components["schemas"]["BatchTotals"];
         };
+        /**
+         * @description What triggered a batch. Today only the admin "Scan all" action.
+         * @enum {string}
+         */
+        ScanBatchKind: "scan_all";
+        /**
+         * @description A batch's state, derived from its member runs as they finish: all
+         *     `complete` → `complete`, none → `failed`, a mix → `partial_failed`.
+         * @enum {string}
+         */
+        ScanBatchState: "running" | "complete" | "partial_failed" | "failed";
         ScanBatchView: {
             actor_id?: string | null;
             ended_at?: string | null;
             force: boolean;
             id: string;
             /** @description Trigger discriminator — today always `scan_all`. */
-            kind: string;
+            kind: components["schemas"]["ScanBatchKind"];
             /**
              * Format: int32
              * @description Number of runs that adopted the batch (newly-enqueued libraries).
@@ -13734,13 +13842,13 @@ export interface components {
             runs: components["schemas"]["BatchRunTally"];
             started_at: string;
             /** @description `running` | `complete` | `partial_failed` | `failed`. */
-            state: string;
+            state: components["schemas"]["ScanBatchState"];
         };
         ScanCancelResp: {
             ended_at?: string | null;
             error?: string | null;
             id: string;
-            state: string;
+            state: components["schemas"]["ScanRunState"];
         };
         ScanPreviewView: {
             /** Format: int64 */
@@ -13749,7 +13857,7 @@ export interface components {
             known_issue_count: number;
             /** Format: int64 */
             last_scan_duration_ms?: number | null;
-            last_scan_state?: string | null;
+            last_scan_state?: components["schemas"]["ScanRunState"] | null;
             mode: string;
             reason: string;
             /** Format: int64 */
@@ -13775,6 +13883,19 @@ export interface components {
             series_id?: string | null;
             state: string;
         };
+        /**
+         * @description What triggered a scan run. `library` is the legacy default for rows
+         *     that existed before the kind column; `deep_validate` is the opt-in
+         *     page-decode probe (`library::deep_validate`), which the History tab's
+         *     filter chips do not offer.
+         * @enum {string}
+         */
+        ScanRunKind: "library" | "series" | "issue" | "deep_validate";
+        /**
+         * @description A scan run's lifecycle state.
+         * @enum {string}
+         */
+        ScanRunState: "queued" | "running" | "complete" | "failed" | "cancelled";
         ScanRunView: {
             ended_at?: string | null;
             error?: string | null;
@@ -13787,8 +13908,11 @@ export interface components {
              *     since deleted, or when this scan isn't issue-kinded.
              */
             issue_label?: string | null;
-            /** @description `library` | `series` | `issue` — drives the History tab filter chips. */
-            kind: string;
+            /**
+             * @description `library` | `series` | `issue` drive the History tab filter chips;
+             *     `deep_validate` runs have no chip.
+             */
+            kind: components["schemas"]["ScanRunKind"];
             /** @description Target series id for `series` / `issue` kinds. `null` on library scans. */
             series_id?: string | null;
             /**
@@ -13798,7 +13922,7 @@ export interface components {
              */
             series_name?: string | null;
             started_at: string;
-            state: string;
+            state: components["schemas"]["ScanRunState"];
             stats: unknown;
         };
         /**
@@ -13910,6 +14034,23 @@ export interface components {
              */
             provider_splits: components["schemas"]["ChainSplitView"][];
             series: components["schemas"]["SeriesView"];
+        };
+        SeriesCompletionPrefsReq: {
+            /**
+             * @description `inherit` clears the override. An unknown value is a 422 at
+             *     deserialisation.
+             */
+            count_specials: components["schemas"]["SpecialsCompletion"];
+        };
+        /** @description The caller's choice for one series and what it resolves to. */
+        SeriesCompletionPrefsView: {
+            /** @description `inherit` | `include` | `exclude`. */
+            count_specials: components["schemas"]["SpecialsCompletion"];
+            /**
+             * @description The resolved setting: true when this series' annuals and specials
+             *     count toward its completion for the caller.
+             */
+            effective: boolean;
         };
         SeriesCount: {
             /** Format: int64 */
@@ -14481,6 +14622,23 @@ export interface components {
              *     set). Rendered as "+N specials" next to the main-run count.
              */
             special_issue_count?: number | null;
+            /**
+             * @description The caller's per-series choice behind
+             *     [`Self::specials_count_toward_completion`]: `inherit` (follow the
+             *     account setting), `include` or `exclude`.
+             */
+            specials_completion: components["schemas"]["SpecialsCompletion"];
+            /**
+             * @description Viewer-scoped (remediation B9): true when this series' specials
+             *     count toward its collection completeness for the caller — the
+             *     per-series override, else the account's
+             *     `count_specials_in_completeness`. When true the owned figure the
+             *     completeness verdict compares with `total_issues` is
+             *     `main_issue_count + special_issue_count`; otherwise the main run
+             *     alone. Same rule as the `collection_completeness` filter and the
+             *     collection report.
+             */
+            specials_count_toward_completion: boolean;
             status: string;
             summary?: string | null;
             tags?: string[];
@@ -14650,10 +14808,15 @@ export interface components {
          * @enum {string}
          */
         SharedUniverseVia: "universe" | "series_group";
+        /**
+         * @description What a sidebar entry points at; decides what `ref_id` means.
+         * @enum {string}
+         */
+        SidebarEntryKind: "builtin" | "library" | "view" | "page" | "header" | "spacer";
         SidebarEntryView: {
             href: string;
             icon: string;
-            kind: string;
+            kind: components["schemas"]["SidebarEntryKind"];
             label: string;
             /** Format: int32 */
             position: number;
@@ -14833,6 +14996,12 @@ export interface components {
              */
             special_type?: string | null;
         };
+        /**
+         * @description The caller's per-series choice. `inherit` (no stored row) follows the
+         *     account setting; `include` / `exclude` override it for this series.
+         * @enum {string}
+         */
+        SpecialsCompletion: "inherit" | "include" | "exclude";
         /**
          * @description Confidence bucket shown to reviewers (spec §5.7 "grouped by confidence").
          * @enum {string}
@@ -19014,6 +19183,13 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     arcs_get_one: {
@@ -19594,6 +19770,13 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     characters_get_one: {
@@ -20134,6 +20317,13 @@ export interface operations {
                     "application/json": components["schemas"]["IssueListView"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     issues_search: {
@@ -20156,6 +20346,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueSearchView"];
                 };
+            };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -21361,6 +21558,13 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     locations_get_one: {
@@ -21510,6 +21714,63 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    account_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteAccountReq"];
+            };
+        };
+        responses: {
+            /** @description Account and personal data deleted; session, CSRF and refresh cookies cleared */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description password incorrect, or the caller used an app password */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the caller is the instance's last active admin */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description password or confirmation missing / confirmation does not match */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description rate limited or locked out after failed attempts */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22291,6 +22552,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_delete_one: {
@@ -22305,6 +22573,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22334,6 +22609,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -22384,6 +22666,13 @@ export interface operations {
                     "application/json": components["schemas"]["CollectionEntryView"];
                 };
             };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_reorder_entries: {
@@ -22407,6 +22696,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description collection reorder rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_remove_entry: {
@@ -22422,6 +22718,13 @@ export interface operations {
         requestBody?: never;
         responses: {
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22495,6 +22798,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description collection write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     collections_bulk_remove_members: {
@@ -22529,6 +22839,13 @@ export interface operations {
             };
             /** @description collection not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description collection write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22734,6 +23051,13 @@ export interface operations {
             };
             /** @description validation */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23325,6 +23649,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MarkerSearchView"];
                 };
+            };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -24214,6 +24545,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description saved-view write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_update: {
@@ -24238,6 +24576,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+            /** @description saved-view write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -24380,6 +24725,87 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["PinView"];
                 };
+            };
+        };
+    };
+    series_completion_prefs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesCompletionPrefsView"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    series_completion_prefs_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeriesCompletionPrefsReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesCompletionPrefsView"];
+                };
+            };
+            /** @description not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown value */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -24909,6 +25335,13 @@ export interface operations {
                     "application/json": components["schemas"]["PeopleListView"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     publishers_list: {
@@ -25028,6 +25461,13 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
             };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     series_appearances: {
@@ -25096,6 +25536,13 @@ export interface operations {
             };
             /** @description issue_id is not an active issue of this series */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25178,6 +25625,13 @@ export interface operations {
             };
             /** @description validation error (field-level `details`) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25293,6 +25747,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     cover_pick_clear_issue_variant_cover: {
@@ -25324,6 +25785,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25369,6 +25837,13 @@ export interface operations {
             };
             /** @description the variant has no image to use, or it is not a recognised image */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25500,6 +25975,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     issues_clear_field_pin: {
@@ -25532,6 +26014,13 @@ export interface operations {
             };
             /** @description issue not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25920,6 +26409,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     series_collection_report: {
@@ -26077,6 +26573,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     external_ids_delete_series: {
@@ -26114,6 +26617,13 @@ export interface operations {
             };
             /** @description series / link not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -26336,6 +26846,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description metadata write rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     external_ids_delete_issue: {
@@ -26374,6 +26891,13 @@ export interface operations {
             };
             /** @description issue / link not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description metadata write rate limit */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28384,6 +28908,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CursorPage_EntityListItem"];
                 };
+            };
+            /** @description search rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

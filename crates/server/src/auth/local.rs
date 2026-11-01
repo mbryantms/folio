@@ -40,8 +40,8 @@ use crate::state::AppState;
 
 use super::CurrentUser;
 use super::cookies::{
-    self, CSRF_COOKIE, LEGACY_REFRESH_COOKIE, REFRESH_COOKIE, REFRESH_PATH, SESSION_COOKIE,
-    csrf_cookie, new_csrf_token, new_refresh_token_raw, refresh_cookie, session_cookie, sha256_hex,
+    self, CSRF_COOKIE, REFRESH_COOKIE, csrf_cookie, new_csrf_token, new_refresh_token_raw,
+    refresh_cookie, session_cookie, sha256_hex,
 };
 use super::email_token::{self, TokenPurpose};
 use super::password;
@@ -221,6 +221,11 @@ pub struct MeResp {
     pub reader_contrast: Option<i32>,
     /// "Keep zoom between pages" in the reader.
     pub reader_zoom_persist: Option<bool>,
+    /// Count annuals / one-shots / specials / TPBs toward a series'
+    /// collection completeness (remediation B9). Default false: only the
+    /// main run is compared with the publisher total. A per-series
+    /// override (`PUT /me/series/{series_id}/completion-prefs`) wins.
+    pub count_specials_in_completeness: bool,
 }
 
 /// `PATCH /me/preferences` request body. Every field is optional; when a key
@@ -300,6 +305,8 @@ pub struct PreferencesReq {
     pub reader_contrast: Option<Option<i32>>,
     #[serde(default, deserialize_with = "deserialize_some")]
     pub reader_zoom_persist: Option<Option<bool>>,
+    /// Count annuals and specials toward series completion (B9).
+    pub count_specials_in_completeness: Option<bool>,
 }
 
 /// `serde` helper: distinguish "absent" (None) from "explicit null"
@@ -535,6 +542,7 @@ pub async fn register(
         reader_warmth: Set(None),
         reader_contrast: Set(None),
         reader_zoom_persist: Set(None),
+        count_specials_in_completeness: Set(false),
     };
 
     let inserted = match am.insert(&txn).await {
@@ -982,11 +990,7 @@ pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::respon
             .exec(&app.db)
             .await;
     }
-    let cleared = jar
-        .remove(cookies::clear(SESSION_COOKIE, "/"))
-        .remove(cookies::clear(CSRF_COOKIE, "/"))
-        .remove(cookies::clear(REFRESH_COOKIE, REFRESH_PATH))
-        .remove(cookies::clear(LEGACY_REFRESH_COOKIE, REFRESH_PATH));
+    let cleared = cookies::clear_auth(jar);
 
     // RP-initiated logout (OIDC sessions only). If the session row was
     // born from an OIDC login AND the issuer publishes an
@@ -1268,6 +1272,9 @@ pub async fn update_preferences(
     }
     if let Some(v) = req.reader_zoom_persist {
         am.reader_zoom_persist = Set(v);
+    }
+    if let Some(v) = req.count_specials_in_completeness {
+        am.count_specials_in_completeness = Set(v);
     }
     am.updated_at = Set(chrono::Utc::now().fixed_offset());
     let updated = match am.update(&app.db).await {
@@ -1809,6 +1816,14 @@ fn finalize_session(
     }
 }
 
+/// Whether the account signs in with a Folio password: a `local:` account
+/// with a stored hash. Drives `MeResp.password_editable`, and `DELETE /me`
+/// re-authenticates with the password exactly when this holds — the web
+/// dialog picks its input from that flag, so the two must never disagree.
+pub(crate) fn has_local_password(row: &user::Model) -> bool {
+    row.external_id.starts_with("local:") && row.password_hash.is_some()
+}
+
 /// Build a `MeResp` from a fully-loaded user row. Used by login, refresh,
 /// and the preferences PATCH so the response shape stays consistent.
 pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp {
@@ -1817,7 +1832,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         id: row.id.to_string(),
         email: row.email.clone(),
         email_editable: is_local,
-        password_editable: is_local && row.password_hash.is_some(),
+        password_editable: has_local_password(row),
         display_name: row.display_name.clone(),
         role: row.role,
         csrf_token,
@@ -1849,6 +1864,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         reader_warmth: row.reader_warmth,
         reader_contrast: row.reader_contrast,
         reader_zoom_persist: row.reader_zoom_persist,
+        count_specials_in_completeness: row.count_specials_in_completeness,
     }
 }
 
@@ -1895,6 +1911,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             reader_warmth: None,
             reader_contrast: None,
             reader_zoom_persist: None,
+            count_specials_in_completeness: false,
         }
     }
 }

@@ -36,17 +36,24 @@ use crate::auth::CurrentUser;
 use crate::metadata::identifier::{Identifier, Source};
 use crate::metadata::writers::{self, SetBy};
 use crate::middleware::RequestContext;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new()
-        .routes(routes!(list_series))
+    // Per-user bucket (E12, audit N-A5): the add / unlink writes share one
+    // `METADATA_WRITE` instance in their own sub-router, so the lists stay
+    // unbucketed. Each edit is one click in the external-ids card.
+    let writes = OpenApiRouter::new()
         .routes(routes!(add_series))
         .routes(routes!(delete_series))
-        .routes(routes!(list_issue))
         .routes(routes!(add_issue))
         .routes(routes!(delete_issue))
+        .route_layer(rate_limit::METADATA_WRITE.build_per_user());
+    OpenApiRouter::new()
+        .routes(routes!(list_series))
+        .routes(routes!(list_issue))
+        .merge(writes)
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -148,6 +155,7 @@ pub async fn list_series(
         (status = 422, description = "unknown source or empty external_id (field-level `details`)"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -181,6 +189,7 @@ pub async fn add_series(
         (status = 400, description = "invalid source"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "series / link not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -252,6 +261,7 @@ pub async fn list_issue(
         (status = 422, description = "unknown source or empty external_id (field-level `details`)"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "issue not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]
@@ -284,6 +294,7 @@ pub async fn add_issue(
         (status = 400, description = "invalid source"),
         (status = 403, description = "library access denied"),
         (status = 404, description = "issue / link not found"),
+        (status = 429, description = "metadata write rate limit"),
     )
 )]
 #[handler]

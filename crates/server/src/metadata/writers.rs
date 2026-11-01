@@ -2128,7 +2128,7 @@ pub async fn set_series_universes<C: ConnectionTrait>(
 #[derive(Debug)]
 pub struct CoverWrite<'a> {
     pub issue_id: &'a str,
-    pub kind: &'a str,
+    pub kind: issue_cover::IssueCoverKind,
     pub ordinal: i32,
     pub identifier: Option<&'a Identifier>,
     pub source_url: Option<&'a str>,
@@ -2173,7 +2173,7 @@ pub async fn apply_cover(
     write: CoverWrite<'_>,
     policy: CoverOverwritePolicy,
 ) -> Result<Option<Uuid>, std::io::Error> {
-    let is_primary = write.kind == "primary" && write.ordinal == 0;
+    let is_primary = write.kind == issue_cover::IssueCoverKind::Primary && write.ordinal == 0;
 
     // SE-6 (WP-6.3): magic-sniff before anything is persisted. A provider /
     // CDN that answers with HTML, JSON, SVG, or an error page must not land
@@ -2275,7 +2275,7 @@ pub async fn set_user_primary_cover(
     data_path: &std::path::Path,
     write: CoverWrite<'_>,
 ) -> Result<Uuid, std::io::Error> {
-    if write.kind != "primary" || write.ordinal != 0 {
+    if write.kind != issue_cover::IssueCoverKind::Primary || write.ordinal != 0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "a chosen cover always takes the primary slot",
@@ -2365,7 +2365,7 @@ pub async fn clear_user_primary_cover(
     }
     let displaced = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Primary))
         .filter(issue_cover::Column::Ordinal.eq(0))
         .filter(issue_cover::Column::IsActive.eq(false))
         .filter(
@@ -2404,7 +2404,7 @@ pub async fn user_primary_cover<C: ConnectionTrait>(
     }
     issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Primary))
         .filter(issue_cover::Column::Ordinal.eq(0))
         .filter(issue_cover::Column::IsActive.eq(true))
         .filter(issue_cover::Column::LocalPath.ne(""))
@@ -2451,7 +2451,7 @@ async fn lock_active_primary(
         .await?;
     issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Primary))
         .filter(issue_cover::Column::Ordinal.eq(0))
         .filter(issue_cover::Column::IsActive.eq(true))
         .lock_exclusive()
@@ -2538,7 +2538,7 @@ async fn insert_cover_row(
     let am = issue_cover::ActiveModel {
         id: Set(cover_id),
         issue_id: Set(write.issue_id.into()),
-        kind: Set(write.kind.into()),
+        kind: Set(write.kind),
         ordinal: Set(write.ordinal),
         source_provider: Set(write.identifier.map(|i| i.source.as_str().into())),
         source_external_id: Set(write.identifier.map(|i| i.id.clone())),
@@ -3143,7 +3143,7 @@ pub async fn set_issue_variants(
         rows.push(issue_cover::ActiveModel {
             id: Set(id),
             issue_id: Set(issue_id.to_owned()),
-            kind: Set("variant".into()),
+            kind: Set(issue_cover::IssueCoverKind::Variant),
             ordinal: Set(ordinal),
             source_provider: Set(provider_str.clone()),
             source_external_id: Set(source_external_id),
@@ -3193,7 +3193,7 @@ async fn replace_variant_rows(
     let txn = db.begin().await?;
     let prior_paths: Vec<String> = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .all(&txn)
         .await?
         .into_iter()
@@ -3202,7 +3202,7 @@ async fn replace_variant_rows(
         .collect();
     issue_cover::Entity::delete_many()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .exec(&txn)
         .await?;
     for am in rows {
@@ -3267,7 +3267,7 @@ pub async fn run_variant_cover_backfill_page<C: ConnectionTrait>(
     after: Option<Uuid>,
 ) -> Result<(VariantCoverBackfillOutcome, Option<Uuid>), sea_orm::DbErr> {
     let mut query = issue_cover::Entity::find()
-        .filter(issue_cover::Column::Kind.eq("variant"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Variant))
         .filter(issue_cover::Column::SourceUrl.is_not_null());
     if let Some(after) = after {
         query = query.filter(issue_cover::Column::Id.gt(after));

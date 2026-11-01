@@ -431,7 +431,7 @@ async fn seed_cbl_saved_view(
     saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(owner_user_id),
-        kind: Set("cbl".into()),
+        kind: Set(entity::saved_view::SavedViewKind::Cbl),
         system_key: Set(None),
         name: Set(name.into()),
         description: Set(None),

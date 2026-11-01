@@ -40,6 +40,7 @@ use crate::api::series::{IssueListView, IssueSummaryView, SeriesListView};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
 use crate::middleware::RequestContext;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use crate::views::{
     compile::{self, CompileError, CompileInput, Cursor, IssueCompileInput},
@@ -49,15 +50,19 @@ use crate::views::{
 use super::error;
 use server_macros::handler;
 
-pub const KIND_FILTER_SERIES: &str = "filter_series";
+// `saved_views.kind` values. Since AR-7 the column is the typed
+// `entity::saved_view::SavedViewKind`; these names stay as aliases of its
+// variants so call sites and `match` arms read as before.
+pub use entity::saved_view::SavedViewKind;
+pub const KIND_FILTER_SERIES: SavedViewKind = SavedViewKind::FilterSeries;
 /// Issue-level filter view (WP-5.4): same DSL shape as `filter_series`,
 /// compiled against `issues` by `views::compile::compile_issues`.
-pub const KIND_FILTER_ISSUES: &str = "filter_issues";
-pub const KIND_SYSTEM: &str = "system";
-pub const KIND_CBL: &str = "cbl";
+pub const KIND_FILTER_ISSUES: SavedViewKind = SavedViewKind::FilterIssues;
+pub const KIND_SYSTEM: SavedViewKind = SavedViewKind::System;
+pub const KIND_CBL: SavedViewKind = SavedViewKind::Cbl;
 /// User-owned manual list of mixed series + issue refs (markers +
 /// collections M1). Backed by the `collection_entries` join table.
-pub const KIND_COLLECTION: &str = "collection";
+pub const KIND_COLLECTION: SavedViewKind = SavedViewKind::Collection;
 /// `system_key` for the per-user Want to Read collection (auto-seeded
 /// on first GET in M2).
 pub const SYSTEM_KEY_WANT_TO_READ: &str = "want_to_read";
@@ -81,11 +86,11 @@ pub const DEFAULT_HOME_PIN_ORDER: &[&str] = &[
 
 /// The DSL root a filter-view kind compiles against; `None` for non-filter
 /// kinds (CBL, collection, system).
-pub fn filter_entity(kind: &str) -> Option<ViewEntity> {
+pub fn filter_entity(kind: SavedViewKind) -> Option<ViewEntity> {
     match kind {
-        KIND_FILTER_SERIES => Some(ViewEntity::Series),
-        KIND_FILTER_ISSUES => Some(ViewEntity::Issue),
-        _ => None,
+        SavedViewKind::FilterSeries => Some(ViewEntity::Series),
+        SavedViewKind::FilterIssues => Some(ViewEntity::Issue),
+        SavedViewKind::Cbl | SavedViewKind::System | SavedViewKind::Collection => None,
     }
 }
 
@@ -99,11 +104,18 @@ const MIN_RESULT_LIMIT: u64 = 1;
 const DEFAULT_MAX_RAILS_PER_PAGE: i64 = 12;
 
 pub fn routes() -> OpenApiRouter<AppState> {
+    // Per-user bucket (E12, audit N-A5): the PATCH and DELETE also edit
+    // and delete collection rows, so they get the collection-write budget
+    // (`SAVED_VIEW_WRITE`, same numbers as `COLLECTION_WRITE`). Own
+    // sub-router so the `route_layer` stays off the reads.
+    let writes = OpenApiRouter::new()
+        .routes(routes!(update))
+        .routes(routes!(delete_one))
+        .route_layer(rate_limit::SAVED_VIEW_WRITE.build_per_user());
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(create))
-        .routes(routes!(update))
-        .routes(routes!(delete_one))
+        .merge(writes)
         .routes(routes!(pin))
         .routes(routes!(unpin))
         .routes(routes!(set_sidebar))
@@ -124,7 +136,7 @@ pub struct SavedViewView {
     pub id: String,
     /// `None` for system views (admin-curated, visible to every user).
     pub user_id: Option<String>,
-    pub kind: String,
+    pub kind: SavedViewKind,
     pub name: String,
     pub description: Option<String>,
     pub custom_year_start: Option<i32>,
@@ -317,7 +329,9 @@ pub struct ResultsQuery {
 /// `kind` discriminator, which is awkward to express in garde
 /// attributes. Kept as a free function; all responses are 422
 /// (semantic-validation) per audit-remediation M9.3.
-fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static str, String)> {
+fn validate_create(
+    req: &CreateSavedViewReq,
+) -> Result<SavedViewKind, (StatusCode, &'static str, String)> {
     if req.name.trim().is_empty() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -325,7 +339,15 @@ fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static
             "name required".into(),
         ));
     }
-    match req.kind.as_str() {
+    let bad_kind = || {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "kind must be filter_series, filter_issues or cbl".to_owned(),
+        )
+    };
+    let kind = SavedViewKind::parse(&req.kind).ok_or_else(bad_kind)?;
+    match kind {
         KIND_FILTER_SERIES | KIND_FILTER_ISSUES => {
             if req.cbl_list_id.is_some() {
                 return Err((
@@ -366,15 +388,11 @@ fn validate_create(req: &CreateSavedViewReq) -> Result<(), (StatusCode, &'static
                 ));
             }
         }
-        _ => {
-            return Err((
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation",
-                "kind must be filter_series, filter_issues or cbl".into(),
-            ));
-        }
+        // `system` / `collection` are created by migrations and the
+        // collections endpoints, never through this body.
+        KIND_SYSTEM | KIND_COLLECTION => return Err(bad_kind()),
     }
-    Ok(())
+    Ok(kind)
 }
 
 async fn fetch_view(
@@ -505,7 +523,7 @@ fn to_view(
     SavedViewView {
         id: model.id.to_string(),
         user_id: model.user_id.map(|u| u.to_string()),
-        kind: model.kind.clone(),
+        kind: model.kind,
         name: model.name.clone(),
         description: model.description.clone(),
         custom_year_start: model.custom_year_start,
@@ -740,11 +758,12 @@ async fn create_inner(
     req: &CreateSavedViewReq,
     is_admin_caller: bool,
 ) -> axum::response::Response {
-    if let Err((status, code, msg)) = validate_create(req) {
-        return error(status, code, &msg);
-    }
+    let kind = match validate_create(req) {
+        Ok(kind) => kind,
+        Err((status, code, msg)) => return error(status, code, &msg),
+    };
     // Compile-validate the DSL on filter views before persisting.
-    let entity = filter_entity(&req.kind);
+    let entity = filter_entity(kind);
     if let Some(entity) = entity
         && let Some(filter) = &req.filter
         && let Err(e) = compile::validate(
@@ -769,7 +788,7 @@ async fn create_inner(
     // the caller passed *either* bound explicitly, we respect their
     // intent rather than blending halves.
     let (mut year_start, mut year_end) = (req.custom_year_start, req.custom_year_end);
-    if req.kind == KIND_CBL
+    if kind == KIND_CBL
         && year_start.is_none()
         && year_end.is_none()
         && let Some(list_id) = req.cbl_list_id
@@ -782,7 +801,7 @@ async fn create_inner(
     let am = saved_view::ActiveModel {
         id: Set(id),
         user_id: Set(owner),
-        kind: Set(req.kind.clone()),
+        kind: Set(kind),
         name: Set(req.name.trim().to_owned()),
         description: Set(req
             .description
@@ -913,7 +932,7 @@ async fn cbl_year_range(
     path = "/me/saved-views/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateSavedViewReq,
-    responses((status = 200, body = SavedViewView))
+    responses((status = 200, body = SavedViewView), (status = 429, description = "saved-view write rate limit"))
 )]
 #[handler]
 pub async fn update(
@@ -1002,7 +1021,7 @@ async fn apply_update(
     // For filter views, validate the new DSL + sort via compile. The sort
     // falls back to the stored one so an issue view can't be PATCHed onto
     // a series-only sort (or a new filter checked against the wrong sort).
-    let entity = filter_entity(&row.kind);
+    let entity = filter_entity(row.kind);
     if let Some(entity) = entity
         && (req.filter.is_some() || req.sort_field.is_some())
     {
@@ -1131,7 +1150,7 @@ async fn apply_update(
     operation_id = "saved_views_delete_one",    delete,
     path = "/me/saved-views/{id}",
     params(("id" = String, Path,)),
-    responses((status = 204))
+    responses((status = 204), (status = 429, description = "saved-view write rate limit"))
 )]
 #[handler]
 pub async fn delete_one(
@@ -2301,7 +2320,7 @@ pub(crate) async fn resolve_metadata_batch_targets(
         return Err(error(StatusCode::FORBIDDEN, "forbidden", "not your view"));
     }
 
-    match view.kind.as_str() {
+    match view.kind {
         KIND_FILTER_SERIES => {
             let filter = dsl_from_view(&view)
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;

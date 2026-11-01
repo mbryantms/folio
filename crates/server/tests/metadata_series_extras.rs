@@ -376,7 +376,7 @@ async fn issue_covers_lists_active_rows_with_fallback_url() {
     entity::issue_cover::ActiveModel {
         id: Set(Uuid::now_v7()),
         issue_id: Set(issue_id.clone()),
-        kind: Set("primary".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Primary),
         ordinal: Set(0),
         source_provider: Set(Some("comicvine".into())),
         source_external_id: Set(Some("67890".into())),
@@ -398,7 +398,7 @@ async fn issue_covers_lists_active_rows_with_fallback_url() {
     entity::issue_cover::ActiveModel {
         id: Set(Uuid::now_v7()),
         issue_id: Set(issue_id.clone()),
-        kind: Set("variant".into()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Variant),
         ordinal: Set(1),
         source_provider: Set(Some("comicvine".into())),
         source_external_id: Set(Some("67891".into())),

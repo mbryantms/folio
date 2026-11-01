@@ -4,6 +4,7 @@ import {
   collectionStatus,
   collectionTooltip,
   formatSpecialsSuffix,
+  ownedCompletionCount,
   ownedMainCount,
 } from "@/lib/series-status";
 
@@ -64,5 +65,35 @@ describe("collectionStatus — main run vs specials", () => {
         total_issues: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("collectionStatus — specials counted (B9)", () => {
+  const annualled = {
+    issue_count: 5,
+    main_issue_count: 4,
+    special_issue_count: 1,
+    total_issues: 5,
+  };
+
+  it("lets an annual complete the run when the viewer counts specials", () => {
+    const series = { ...annualled, specials_count_toward_completion: true };
+    expect(ownedMainCount(series)).toBe(4);
+    expect(ownedCompletionCount(series)).toBe(5);
+    expect(collectionStatus(series)).toBe("complete");
+    expect(formatSpecialsSuffix(series)).toBe("incl. 1 special");
+    expect(collectionTooltip(series)).toBe(
+      "Complete: 5 of 5 issues (incl. 1 special)",
+    );
+  });
+
+  it("keeps the main-run rule when the flag is off or absent", () => {
+    for (const series of [
+      annualled,
+      { ...annualled, specials_count_toward_completion: false },
+    ]) {
+      expect(ownedCompletionCount(series)).toBe(4);
+      expect(collectionStatus(series)).toBe("incomplete");
+    }
   });
 });

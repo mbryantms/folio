@@ -214,7 +214,7 @@ pub async fn upsert_archive_cover_hashes_from_parts<C: ConnectionTrait>(
     let (p, d, a) = hashes;
     let existing = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(issue_id))
-        .filter(issue_cover::Column::Kind.eq("primary"))
+        .filter(issue_cover::Column::Kind.eq(issue_cover::IssueCoverKind::Primary))
         .filter(issue_cover::Column::Ordinal.eq(0))
         .filter(issue_cover::Column::SourceProvider.eq("archive_extracted"))
         .one(db)
@@ -237,7 +237,7 @@ pub async fn upsert_archive_cover_hashes_from_parts<C: ConnectionTrait>(
     issue_cover::ActiveModel {
         id: Set(id),
         issue_id: Set(issue_id.into()),
-        kind: Set("primary".into()),
+        kind: Set(issue_cover::IssueCoverKind::Primary),
         ordinal: Set(0),
         source_provider: Set(Some("archive_extracted".into())),
         source_external_id: Set(None),
