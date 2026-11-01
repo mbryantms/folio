@@ -20,7 +20,6 @@ import { collectServerErrors } from "@/lib/api/form-errors";
 import { useDeleteAccount } from "@/lib/api/mutations";
 import { ApiMutationError } from "@/lib/api/mutations/_core";
 import type { MeView } from "@/lib/api/types";
-import { forgetAccountOnDevice } from "@/lib/pwa/forget-device";
 
 import { EXPORT_HREF } from "./DataExportCard";
 import { SettingsSection } from "./SettingsSection";
@@ -94,7 +93,10 @@ export function DeleteAccountCard({
     del.mutate(usesPassword ? { password: value } : { confirm: value }, {
       onSuccess: () => {
         setLeaving(true);
-        void forgetAccountOnDevice(queryClient, DELETED_HREF);
+        void import("@/lib/pwa/forget-device").then(
+          ({ forgetAccountOnDevice }) =>
+            forgetAccountOnDevice(queryClient, DELETED_HREF),
+        );
       },
       onError: (err) => {
         const fields = collectServerErrors(err, ["password", "confirm"]);

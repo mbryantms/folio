@@ -467,7 +467,8 @@ per-list opt-out to preserve curated orders).
   points at the JSON export first, re-checks the password (identity-provider
   accounts type their email), and removes every personal row while the audit
   log keeps its history; an instance's last admin can't delete itself.
-- A complete admin area: users, libraries, scan monitoring with live
+- A complete admin area: users, libraries (each with its series and issue
+  counts, archive size and `.bak` backup footprint), scan monitoring with live
   progress, job queues, server logs, an append-only **audit log** of every
   admin action (kept forever by default; an optional retention exports old
   entries to NDJSON in the data volume before trimming them), runtime

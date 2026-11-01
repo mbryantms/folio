@@ -47,6 +47,7 @@ pub mod komga_compat;
 pub mod libraries;
 pub mod library_events;
 pub mod library_hash_backfill;
+pub mod library_stats;
 pub mod locations;
 pub mod log_widgets;
 pub mod markers;

@@ -56,3 +56,8 @@ duplicates-number       | /api/libraries/{library_slug}/duplicates?kind=number&l
 health-issues           | /api/libraries/{library_slug}/health-issues?limit=50
 backup-storage-cold     | /api/libraries/{library_slug}/backup-storage | cold
 backup-storage-warm     | /api/libraries/{library_slug}/backup-storage
+# Library figures (audit 2026-11 §5 #16): every library at once for the list,
+# then one library for the overview tab. Fixed statement count; each
+# aggregate reads the issue rows once (file_size is not in any index).
+library-stats-all       | /api/admin/libraries/stats
+library-stats-one       | /api/admin/libraries/{library_slug}/stats

@@ -196,6 +196,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/libraries/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_library_stats_all"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/libraries/{slug}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_library_stats_one"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/libraries/{slug}/thumbnails": {
         parameters: {
             query?: never;
@@ -10633,6 +10665,58 @@ export interface components {
             /** Format: int64 */
             without_metron: number;
         };
+        /** @description Counts and disk usage for one library. */
+        LibraryStatsView: {
+            /**
+             * Format: int64
+             * @description Readable issues still on disk (`state = 'active'`, not removed).
+             *     Encrypted or malformed archives count in neither this nor
+             *     `removed_issue_count`.
+             */
+            active_issue_count: number;
+            /**
+             * Format: int64
+             * @description Sum of the stored file size of the active issues, in bytes. Removed
+             *     and unreadable issues are left out, so this is the readable
+             *     collection's size, not every byte under the root.
+             */
+            archive_bytes: number;
+            /**
+             * Format: int64
+             * @description Bytes of `.bak` / `.bak.N` archive backups from the stored tally;
+             *     `null` until the daily backup sweep (or the health page) has
+             *     counted this library.
+             */
+            backup_bytes?: number | null;
+            /** @description RFC 3339 — when the backup tally was counted. */
+            backup_counted_at?: string | null;
+            /** Format: int64 */
+            backup_file_count?: number | null;
+            /**
+             * @description A scan changed the library since the tally was counted, so the
+             *     backup figures may be behind until the next recount (the health
+             *     page or the daily sweep). `false` when there is no tally.
+             */
+            backup_stale: boolean;
+            /**
+             * @description RFC 3339 — when the library's last full, completed scan finished
+             *     (`libraries.last_scan_at`; scoped and cancelled scans leave it).
+             */
+            last_scan_at?: string | null;
+            library_id: string;
+            /**
+             * Format: int64
+             * @description Soft-removed issues (`removed_at` set, confirmed or not): the file
+             *     left the disk, or a duplicate copy was removed from the catalogue.
+             */
+            removed_issue_count: number;
+            /**
+             * Format: int64
+             * @description Series still on disk (`removed_at IS NULL`).
+             */
+            series_count: number;
+            slug: string;
+        };
         LibraryView: {
             /**
              * @description Hard prerequisite for any code path that mutates archive bytes
@@ -16164,6 +16248,67 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_library_stats_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryStatsView"][];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_library_stats_one: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryStatsView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description library not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

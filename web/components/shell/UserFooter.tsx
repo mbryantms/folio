@@ -1,7 +1,6 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { forgetAccountOnDevice } from "@/lib/pwa/forget-device";
 import { getOutbox, replayWithin } from "@/lib/pwa/outbox";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -69,6 +68,9 @@ export function UserFooter({
       .then((r) => r.ok)
       .catch(() => false);
     if (ok) {
+      // Loaded on demand: the footer ships on the reader route, whose first
+      // load has a bundle ceiling; sign-out cleanup isn't needed until here.
+      const { forgetAccountOnDevice } = await import("@/lib/pwa/forget-device");
       await forgetAccountOnDevice(queryClient, "/sign-in");
       return;
     }

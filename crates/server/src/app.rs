@@ -145,6 +145,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(api::scan_batches::routes())
         .merge(api::library_events::routes())
         .merge(api::library_hash_backfill::routes())
+        .merge(api::library_stats::routes())
         .merge(api::admin_queue::routes())
         .merge(api::background_work::routes())
         .merge(api::admin_thumbs::routes())
