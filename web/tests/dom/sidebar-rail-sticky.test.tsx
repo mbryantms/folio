@@ -26,6 +26,12 @@ describe("AppSidebar rail positioning", () => {
     expect(cls).toContain("sticky");
     expect(cls).not.toContain("fixed");
     expect(cls).toContain("top-(--topbar-h)");
-    expect(cls).toContain("h-[calc(100svh-var(--topbar-h))]");
+    // Sized from the measured visible viewport, not `100svh`: the installed
+    // iPad app's viewport is shorter than the screen when the OS reserves
+    // the status bar, and the footer fell off the bottom (2026-11-01).
+    expect(cls).toContain(
+      "h-[calc(var(--visual-height,100svh)-var(--topbar-h))]",
+    );
+    expect(cls).toContain("pb-(--safe-bottom)");
   });
 });

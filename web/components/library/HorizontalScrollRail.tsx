@@ -243,8 +243,12 @@ export function HorizontalScrollRail({
         // styles below if the plugin isn't loaded). The bottom padding
         // is density-driven so compact mode can trim the otherwise-
         // empty strip beneath the cards. `-my-1` hands the track's
-        // vertical ring room back (see `RAIL_RING_ROOM_PX`).
-        className="-my-1 [scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden"
+        // vertical ring room back (see `RAIL_RING_ROOM_PX`). `relative`
+        // makes the scroller the containing block for absolutely
+        // positioned descendants (each card's `sr-only` label): without it
+        // they resolved against the wrapper, escaped the overflow clip,
+        // and widened the whole page (side-scroll at iPad width).
+        className="relative -my-1 [scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden"
         style={{
           scrollbarWidth: "none",
           paddingBottom: "var(--density-rail-pb)",
