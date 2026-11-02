@@ -31,6 +31,7 @@ export type AuthConfigInitial = {
   oidc_trust_unverified_email: boolean;
   oidc_link_local_by_verified_email: boolean;
   oidc_auto_redirect: boolean;
+  oidc_grant_all_libraries: boolean;
 };
 
 type FormState = AuthConfigInitial & { oidc_client_secret_input: string };
@@ -70,7 +71,8 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     state.oidc_trust_unverified_email !== initial.oidc_trust_unverified_email ||
     state.oidc_link_local_by_verified_email !==
       initial.oidc_link_local_by_verified_email ||
-    state.oidc_auto_redirect !== initial.oidc_auto_redirect;
+    state.oidc_auto_redirect !== initial.oidc_auto_redirect ||
+    state.oidc_grant_all_libraries !== initial.oidc_grant_all_libraries;
 
   async function onSave() {
     // `disabled={!dirty}` on the submit button makes the no-op path
@@ -107,6 +109,9 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
     }
     if (state.oidc_auto_redirect !== initial.oidc_auto_redirect) {
       patch["auth.oidc.auto_redirect"] = state.oidc_auto_redirect;
+    }
+    if (state.oidc_grant_all_libraries !== initial.oidc_grant_all_libraries) {
+      patch["auth.oidc.grant_all_libraries"] = state.oidc_grant_all_libraries;
     }
 
     await update.mutateAsync(patch);
@@ -373,6 +378,28 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                 checked={state.oidc_auto_redirect}
                 onCheckedChange={(v) =>
                   setState((s) => ({ ...s, oidc_auto_redirect: v }))
+                }
+                disabled={!oidcEnabled}
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label htmlFor={`${ids}-grant-all`} className="text-sm">
+                  Open every library to new IdP accounts
+                </Label>
+                <p className="text-muted-foreground text-xs">
+                  When ON, someone signing in through your IdP for the first
+                  time gets access to every library that exists then, with no
+                  age cap. When OFF, new accounts see nothing until you grant
+                  access in Users. Libraries you add later still need granting.
+                </p>
+              </div>
+              <Switch
+                id={`${ids}-grant-all`}
+                checked={state.oidc_grant_all_libraries}
+                onCheckedChange={(v) =>
+                  setState((s) => ({ ...s, oidc_grant_all_libraries: v }))
                 }
                 disabled={!oidcEnabled}
               />

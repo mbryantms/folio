@@ -1370,3 +1370,85 @@ async fn callback_rejects_nonce_mismatch() {
         "nonce mismatch must not upsert a user"
     );
 }
+
+/// Sign in `subject` through the mock IdP; returns that user's id.
+async fn sign_in_new_user(app: &TestApp, op: &MockOp, subject: &str) -> uuid::Uuid {
+    let (state_cookie, state_param) = start_oidc_flow(app, None).await;
+    let nonce = parse_state_cookie_nonce(&state_cookie);
+    let claims = IdTokenClaims::standard(
+        &op.issuer(),
+        "folio-test-client",
+        subject,
+        &nonce,
+        &format!("{subject}@example.com"),
+    );
+    // One code per attempt: the mock IdP keeps the first token registered for a code.
+    let code = format!("code-{subject}-{}", &nonce[..8.min(nonce.len())]);
+    op.register_token_response_for_code(&code, &sign_id_token(&claims))
+        .await;
+    let resp = callback_with(app, &state_cookie, &state_param, &code).await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    use sea_orm::EntityTrait;
+    entity::user::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|u| u.email.as_deref() == Some(&format!("{subject}@example.com")))
+        .expect("oidc user created")
+        .id
+}
+
+async fn grants_for(app: &TestApp, user_id: uuid::Uuid) -> Vec<entity::library_user_access::Model> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+    entity::library_user_access::Entity::find()
+        .filter(entity::library_user_access::Column::UserId.eq(user_id))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn new_oidc_user_gets_no_libraries_by_default() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let tmp = tempfile::tempdir().unwrap();
+    common::seed::seed_library(&app.state().db, &tmp.path().join("a")).await;
+    let _admin = sign_in_new_user(&app, &op, "first-admin").await;
+    let user = sign_in_new_user(&app, &op, "family-member").await;
+    assert!(
+        grants_for(&app, user).await.is_empty(),
+        "grants stay opt-in"
+    );
+}
+
+#[tokio::test]
+async fn grant_all_libraries_opens_every_library_to_new_oidc_users() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_grant_all_libraries(op.issuer()).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let db = &app.state().db;
+    let a = common::seed::seed_library(db, &tmp.path().join("a")).await;
+    let b = common::seed::seed_library(db, &tmp.path().join("b")).await;
+
+    // The bootstrap admin is unrestricted already, so gets no rows.
+    let admin = sign_in_new_user(&app, &op, "first-admin").await;
+    assert!(grants_for(&app, admin).await.is_empty());
+
+    let user = sign_in_new_user(&app, &op, "family-member").await;
+    let grants = grants_for(&app, user).await;
+    let mut got: Vec<_> = grants.iter().map(|g| g.library_id).collect();
+    got.sort();
+    let mut want = vec![a, b];
+    want.sort();
+    assert_eq!(got, want, "every library granted");
+    assert!(
+        grants.iter().all(|g| g.age_rating_max.is_none()),
+        "uncapped"
+    );
+
+    // A second sign-in by the same user must not try to re-insert grants.
+    let again = sign_in_new_user(&app, &op, "family-member").await;
+    assert_eq!(again, user);
+    assert_eq!(grants_for(&app, user).await.len(), 2);
+}

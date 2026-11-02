@@ -584,6 +584,8 @@ pub struct SpawnOpts {
     pub oidc_link_local_by_verified_email: bool,
     /// Mirrors `COMIC_OIDC_AUTO_REDIRECT` — `/sign-in` goes straight to the IdP.
     pub oidc_auto_redirect: bool,
+    /// Mirrors `COMIC_OIDC_GRANT_ALL_LIBRARIES` — new OIDC users get every library.
+    pub oidc_grant_all_libraries: bool,
     /// Override the library root path. Default of `/tmp/library` is a
     /// bogus path that the scanner / fs-list handlers reject as missing
     /// — pass `Some(real_dir)` when the test needs the handler to read
@@ -744,6 +746,16 @@ impl TestApp {
         Self::spawn_inner(SpawnOpts {
             oidc_issuer: Some(issuer.into()),
             oidc_auto_redirect: true,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// Spawn with OIDC configured and `auth.oidc.grant_all_libraries` on.
+    pub async fn spawn_with_oidc_grant_all_libraries(issuer: impl Into<String>) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            oidc_issuer: Some(issuer.into()),
+            oidc_grant_all_libraries: true,
             ..SpawnOpts::default()
         })
         .await
@@ -986,6 +998,7 @@ impl TestApp {
             oidc_trust_unverified_email: opts.oidc_trust_unverified_email,
             oidc_link_local_by_verified_email: opts.oidc_link_local_by_verified_email,
             oidc_auto_redirect: opts.oidc_auto_redirect,
+            oidc_grant_all_libraries: opts.oidc_grant_all_libraries,
             local_registration_open: true,
             jwt_access_ttl: "15m".into(),
             jwt_refresh_ttl: "30d".into(),

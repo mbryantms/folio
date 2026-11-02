@@ -146,6 +146,12 @@ pub struct Config {
     /// local form stays reachable (break-glass when the IdP is down).
     #[serde(default)]
     pub oidc_auto_redirect: bool,
+    /// When true, an account created by an OIDC sign-in (never the bootstrap
+    /// admin, who sees everything anyway) is granted every library that exists
+    /// at that moment, uncapped. Off by default: new users then see nothing
+    /// until an admin grants access. Libraries added later still need granting.
+    #[serde(default)]
+    pub oidc_grant_all_libraries: bool,
 
     // Local
     #[serde(default)]
@@ -560,6 +566,7 @@ impl std::fmt::Debug for Config {
                 &self.oidc_link_local_by_verified_email,
             )
             .field("oidc_auto_redirect", &self.oidc_auto_redirect)
+            .field("oidc_grant_all_libraries", &self.oidc_grant_all_libraries)
             .field("local_registration_open", &self.local_registration_open)
             .field("jwt_access_ttl", &self.jwt_access_ttl)
             .field("jwt_refresh_ttl", &self.jwt_refresh_ttl)
@@ -1244,6 +1251,19 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             }
             None => bad_type(&row.key, "bool", &row.value),
         },
+        "auth.oidc.grant_all_libraries" => match row.value.as_bool() {
+            Some(b) => {
+                if cfg.oidc_grant_all_libraries != b {
+                    tracing::debug!(
+                        env = cfg.oidc_grant_all_libraries,
+                        db = b,
+                        "auth.oidc.grant_all_libraries overridden by DB"
+                    );
+                }
+                cfg.oidc_grant_all_libraries = b;
+            }
+            None => bad_type(&row.key, "bool", &row.value),
+        },
         "auth.oidc.auto_redirect" => match row.value.as_bool() {
             Some(b) => {
                 if cfg.oidc_auto_redirect != b {
@@ -1738,6 +1758,7 @@ mod tests {
             oidc_trust_unverified_email: false,
             oidc_link_local_by_verified_email: false,
             oidc_auto_redirect: false,
+            oidc_grant_all_libraries: false,
             local_registration_open: true,
             jwt_access_ttl: "24h".into(),
             jwt_refresh_ttl: "30d".into(),

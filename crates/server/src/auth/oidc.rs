@@ -870,6 +870,18 @@ pub async fn callback(
                     return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
                 }
             };
+            // `auth.oidc.grant_all_libraries`: open every current library to the
+            // new account, in the same transaction so a failure leaves no
+            // half-provisioned user. Admins are unrestricted already.
+            if role == UserRole::User && app.cfg().oidc_grant_all_libraries {
+                match grant_all_libraries(&txn, user_id, now).await {
+                    Ok(n) => tracing::info!(granted = n, "oidc new user granted all libraries"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "oidc new user library grant failed");
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                    }
+                }
+            }
             if let Err(e) = txn.commit().await {
                 tracing::error!(error = %e, "oidc user insert transaction commit failed");
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
@@ -994,6 +1006,34 @@ pub fn is_safe_redirect_target(s: &str) -> bool {
         return false;
     }
     true
+}
+
+/// Grant `user_id` uncapped access to every library (see
+/// `auth.oidc.grant_all_libraries`). Returns how many grants were written.
+async fn grant_all_libraries<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<usize, sea_orm::DbErr> {
+    use entity::{library, library_user_access};
+    let ids: Vec<Uuid> = library::Entity::find()
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|l| l.id)
+        .collect();
+    for library_id in &ids {
+        library_user_access::ActiveModel {
+            library_id: Set(*library_id),
+            user_id: Set(user_id),
+            age_rating_max: Set(None),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(db)
+        .await?;
+    }
+    Ok(ids.len())
 }
 
 #[cfg(test)]
