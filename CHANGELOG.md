@@ -13,6 +13,16 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.72.1](https://github.com/mbryantms/folio/compare/v0.72.0...v0.72.1) (2026-11-02)
+
+
+### Fixed
+
+* **auth:** sign-out ends the IdP session and leaves the tab once ([#1454](https://github.com/mbryantms/folio/issues/1454)) ([5918d69](https://github.com/mbryantms/folio/commit/5918d69eaf864e7fffd00f12f0085a4bdd05226d))
+* **deps:** pin minimatch 11 and glob 14 past the two moderate advisories ([#1452](https://github.com/mbryantms/folio/issues/1452)) ([8e3e0f9](https://github.com/mbryantms/folio/commit/8e3e0f90179cb2ae915052e2555880e98a8db2c0))
+* **dev:** track the Dex dev config; correct the ?local=1 break-glass docs ([#1455](https://github.com/mbryantms/folio/issues/1455)) ([5459342](https://github.com/mbryantms/folio/commit/5459342e8990b4b8c49f6433a850b049bfc16d55))
+* **web:** no /auth/me probe on the sign-in pages ([#1456](https://github.com/mbryantms/folio/issues/1456)) ([179abaf](https://github.com/mbryantms/folio/commit/179abaf8cf6f93c3628f2cef4ba926f2fb5c848a))
+
 ## [0.72.0](https://github.com/mbryantms/folio/compare/v0.71.0...v0.72.0) (2026-11-01)
 
 
