@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.73.0](https://github.com/mbryantms/folio/compare/v0.72.2...v0.73.0) (2026-11-02)
+
+
+### Added
+
+* **auth:** optional grant-all-libraries for new OIDC accounts ([#1460](https://github.com/mbryantms/folio/issues/1460)) ([80da342](https://github.com/mbryantms/folio/commit/80da3426f9b82097e7cbe07939340ef4d1a131dc))
+
 ## [0.72.2](https://github.com/mbryantms/folio/compare/v0.72.1...v0.72.2) (2026-11-02)
 
 
