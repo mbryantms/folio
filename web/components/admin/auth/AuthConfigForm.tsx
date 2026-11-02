@@ -364,7 +364,8 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                   When ON, <code>/sign-in</code> sends people straight to your
                   IdP, so anyone already signed in there lands in Folio without
                   a click. Add <code>?local=1</code> to the sign-in URL to reach
-                  the password form if the IdP is down.
+                  the password form if the IdP is down (only in the
+                  &ldquo;Both&rdquo; mode).
                 </p>
               </div>
               <Switch

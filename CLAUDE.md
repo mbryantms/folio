@@ -764,8 +764,11 @@ Default admin (first registered user becomes admin):
 
 ## Gitignore quirks
 
-- `.dev-data/*` only matches at repo root. Nested `**/.dev-data/` is also
-  ignored — important because those nested dirs hold local dev secrets.
+- `.dev-data/*` only matches at repo root. Nested `*/**/.dev-data/` is also
+  ignored — important because those nested dirs hold local dev secrets. The
+  nested rule must not be `**/.dev-data/`: that also matches the root dir and
+  turns the `!.dev-data/dex-config.yaml` re-include into a no-op (the Dex
+  config, dev user `admin@example.com` / `admin`, went untracked that way).
 - `fixtures/library/` is excluded (CBZ files, non-distributable).
 
 ## Where to look

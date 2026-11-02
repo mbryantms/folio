@@ -50,7 +50,15 @@ COMIC_OIDC_CLIENT_SECRET=<from step 2>
 COMIC_OIDC_TRUST_UNVERIFIED_EMAIL=false
 ```
 
-Optional: `COMIC_OIDC_AUTO_REDIRECT=true` skips Folio's sign-in page entirely. Anyone already signed in to Authentik lands straight in the library, which suits a dashboard or start-page tile. The sign-in page still shows its form when it has an error to display, and `/sign-in?local=1` always shows the password form (use it if Authentik is down). The same toggle lives in **Admin → Auth** as *Skip the sign-in page*.
+Optional: `COMIC_OIDC_AUTO_REDIRECT=true` skips Folio's sign-in page entirely. Anyone already signed in to Authentik lands straight in the library, which suits a dashboard or start-page tile. The same toggle lives in **Admin → Auth** as *Skip the sign-in page*. The sign-in page still shows itself instead of redirecting when:
+
+- it has an error to display, such as a failed callback;
+- the URL is `/sign-in?local=1`;
+- you just signed out.
+
+`?local=1` is only a way in while Authentik is down if local accounts exist: with `COMIC_AUTH_MODE=oidc` there is no password form, so it shows just the SSO button. Keep `COMIC_AUTH_MODE=both` and a local admin account if you want that fallback.
+
+**Signing out** goes through Authentik's end-session page, so the Authentik session ends too, and Folio asks Authentik to send the browser back to `https://comics.example.com/sign-in` afterwards.
 
 ## First-login admin bootstrap (§12.8)
 
