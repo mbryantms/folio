@@ -90,7 +90,14 @@ export function AppSidebar({
         // `sticky` outranks upstream's `fixed` through tailwind-merge; the
         // gap div before the container has no height, so the rail sits at
         // the wrapper's top and the row's stretched height is its track.
-        "sticky top-(--topbar-h) h-[calc(100svh-var(--topbar-h))]",
+        // Height comes from the measured visible viewport
+        // (`--visual-height`, VisualViewportSync), not `100svh`: in the
+        // installed iPad app the OS reserves the status bar (26.1+) and
+        // the viewport is shorter than the screen, while `svh` can still
+        // span the screen, which pushed the account footer off the bottom
+        // (2026-11-01). `100svh` is only the pre-hydration fallback. The
+        // bottom pad keeps the footer clear of the home indicator.
+        "sticky top-(--topbar-h) h-[calc(var(--visual-height,100svh)-var(--topbar-h))] pb-(--safe-bottom)",
         className,
       )}
       {...props}

@@ -123,6 +123,10 @@ describe("HorizontalScrollRail ring room", () => {
     // The scroller hands the vertical room back, so layouts don't move…
     expect(scroller.className.split(" ")).toContain("-my-1");
     expect(scroller.className).toContain("overflow-x-auto");
+    // The scroller is the containing block for absolute descendants (card
+    // `sr-only` labels); otherwise they escape the clip and the page
+    // scrolls sideways (1328px wide at a 1180px viewport, 2026-11-01).
+    expect(scroller.className.split(" ")).toContain("relative");
     // …and the wrapper is a BFC so the negative margin can't collapse
     // through it (the fades / chevrons stay anchored to the cards).
     expect(scroller.parentElement?.className.split(" ")).toContain("flow-root");
