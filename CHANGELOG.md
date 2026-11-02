@@ -13,6 +13,19 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.72.0](https://github.com/mbryantms/folio/compare/v0.71.0...v0.72.0) (2026-11-01)
+
+
+### Added
+
+* **auth:** optional OIDC auto-redirect from /sign-in ([#1451](https://github.com/mbryantms/folio/issues/1451)) ([8adbd2d](https://github.com/mbryantms/folio/commit/8adbd2d8bd96b7db6566fc5a3855494b1a8f7d47))
+
+
+### Fixed
+
+* **jobs:** orphan sweep reclaims confirmed removals ([#1449](https://github.com/mbryantms/folio/issues/1449)) ([91eba90](https://github.com/mbryantms/folio/commit/91eba901a732e9a193415ba62ac4348c8b36cb55))
+* **web:** dark-theme red clears WCAG AA; drop the axe destructive exclusions ([#1448](https://github.com/mbryantms/folio/issues/1448)) ([0e31433](https://github.com/mbryantms/folio/commit/0e314339e425ecc42715844a648baed6d276f6ac))
+
 ## [0.71.0](https://github.com/mbryantms/folio/compare/v0.70.0...v0.71.0) (2026-11-01)
 
 
