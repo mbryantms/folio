@@ -1,14 +1,17 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import dynamic from "next/dynamic";
 
-import { useScanEvents } from "@/lib/api/scan-events";
 import { useMe } from "@/lib/api/queries";
 
-/** Routes that are anonymous by construction — probing /auth/me from
- *  them just sprays 401s + a doomed refresh attempt into the console
- *  before the user has even typed a password. */
-const AUTH_ROUTES = ["/sign-in", "/forgot-password", "/reset-password"];
+// Code-split: the scan-events client is admin-only, but this listener sits
+// in the root layout, so a static import put it in every page's first-load
+// JS, the reader's included (`scripts/check-bundle-size.mjs`). `ssr: false`
+// keeps it out of hydration; it loads once `me` says admin.
+const Subscriber = dynamic(
+  () => import("./ScanResultSubscriber").then((m) => m.ScanResultSubscriber),
+  { ssr: false },
+);
 
 /**
  * Headless WebSocket subscriber that runs on every page (mounted from the
@@ -23,15 +26,7 @@ const AUTH_ROUTES = ["/sign-in", "/forgot-password", "/reset-password"];
  * status pill) does not produce duplicate notifications.
  */
 export function ScanResultListener() {
-  const pathname = usePathname();
-  const onAuthSurface = AUTH_ROUTES.some((p) => pathname?.startsWith(p));
-  const me = useMe({ enabled: !onAuthSurface });
-  const enabled = !onAuthSurface && me.data?.role === "admin";
-  return enabled ? <Subscriber /> : null;
-}
-
-function Subscriber() {
-  // Side-effects only; we don't render anything from this hook.
-  useScanEvents({ toastErrors: true, toastCompletions: true });
-  return null;
+  // `useMe` skips the sign-in pages itself, so `data` is unset there.
+  const me = useMe();
+  return me.data?.role === "admin" ? <Subscriber /> : null;
 }

@@ -22,6 +22,7 @@ import {
   useInfiniteQuery,
   keepPreviousData,
 } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
 
 import { apiFetch, getCsrfToken } from "./auth-refresh";
 // Query-key registry extracted to ./query-keys (audit H1a) so the
@@ -416,16 +417,25 @@ export async function jsonFetch<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Routes that are anonymous by construction. */
+const AUTH_SURFACE = /^\/(?:sign-in|forgot-password|reset-password)(?:\/|$)/;
+
+export const isAuthSurface = (pathname: string | null) =>
+  AUTH_SURFACE.test(pathname ?? "");
+
 export function useMe({ enabled = true }: { enabled?: boolean } = {}) {
+  // Never probe from the sign-in pages: there `/auth/me` only 401s, and the
+  // 401 runs the refresh dance (`POST /auth/refresh`, a 403 without a
+  // session) on every visit. Checked here rather than at each caller
+  // because the root-layout listeners (GlobalHotkeys, GlobalShortcutsSheet,
+  // ScanResultListener) sit in the reader's first-load bundle budget.
+  // `enabled: false` still lets other callers skip the probe.
+  const pathname = usePathname();
   return useQuery({
     queryKey: queryKeys.me,
     queryFn: () => jsonFetch<MeView>("/auth/me"),
     staleTime: 60_000,
-    // `enabled: false` lets always-mounted callers (root-layout
-    // listeners) skip the probe on surfaces that are anonymous by
-    // construction — an unauthed /auth/me triggers the refresh dance
-    // and used to spray ~8 doomed 401/403s across the sign-in page.
-    enabled,
+    enabled: enabled && !isAuthSurface(pathname),
   });
 }
 

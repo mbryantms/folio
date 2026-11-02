@@ -124,6 +124,7 @@ vi.mock("@/lib/api/auth-refresh", () => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: () => undefined, push: () => undefined }),
+  usePathname: () => "/series/test",
 }));
 
 vi.mock("next/link", () => ({
