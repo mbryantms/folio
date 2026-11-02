@@ -3,6 +3,35 @@ import { useEffect } from "react";
 import { Serwist } from "@serwist/window";
 import { toast } from "sonner";
 
+/** Unregister this origin's `/sw.js` registrations; resolves to how many. */
+async function unregisterOurs(): Promise<number> {
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  const ours = registrations.filter((r) =>
+    [r.active, r.waiting, r.installing].some(
+      (w) => w && new URL(w.scriptURL).pathname === "/sw.js",
+    ),
+  );
+  await Promise.all(ours.map((r) => r.unregister()));
+  return ours.length;
+}
+
+/** The offline page's "Try this page again" adds `sw=bypass`, which the
+ *  worker leaves to the browser. Reaching a page that way means the worker
+ *  showed the offline page while the network worked: its own page loads are
+ *  failing. Drop the param and say whether to reset the registration. */
+function takeRecoveryParam(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("sw") !== "bypass") return false;
+  params.delete("sw");
+  const query = params.toString();
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+  );
+  return true;
+}
+
 /** Updates never reload another open reader. Only the accepting client reloads. */
 export function ServiceWorkerUpdater() {
   useEffect(() => {
@@ -10,16 +39,9 @@ export function ServiceWorkerUpdater() {
     let disposed = false;
     if (process.env.NODE_ENV !== "production") {
       // A previous production build may have controlled this dev origin.
-      void navigator.serviceWorker
-        .getRegistrations()
-        .then(async (registrations) => {
-          const ours = registrations.filter((r) =>
-            [r.active, r.waiting, r.installing].some(
-              (w) => w && new URL(w.scriptURL).pathname === "/sw.js",
-            ),
-          );
-          await Promise.all(ours.map((r) => r.unregister()));
-          if (!disposed && ours.length && navigator.serviceWorker.controller) {
+      void unregisterOurs()
+        .then((removed) => {
+          if (!disposed && removed && navigator.serviceWorker.controller) {
             toast.message(
               "Development worker removed. Reload to use the development server.",
               {
@@ -101,10 +123,18 @@ export function ServiceWorkerUpdater() {
     document.addEventListener("visibilitychange", onForeground);
     window.addEventListener("online", onForeground);
     window.addEventListener("folio:check-update", manualCheck);
-    void sw.register().catch(() => {
-      if (!disposed)
-        toast.error("Offline support could not start. Reload to try again.");
-    });
+    if (takeRecoveryParam()) {
+      // Recovery from a stuck worker: drop its registration and don't
+      // register on this load. Registering again while this page is still
+      // controlled resurrects the registration being removed; the next
+      // page load goes to the network instead and installs a fresh worker.
+      void unregisterOurs().catch(() => undefined);
+    } else {
+      void sw.register().catch(() => {
+        if (!disposed)
+          toast.error("Offline support could not start. Reload to try again.");
+      });
+    }
     return () => {
       disposed = true;
       sw.removeEventListener("waiting", show);

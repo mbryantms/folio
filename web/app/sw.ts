@@ -95,7 +95,40 @@ async function offlineNavigation(url: URL): Promise<Response> {
       return Response.redirect(target.href, 302);
     }
   }
-  return (await serwist.matchPrecache("/offline.html")) ?? Response.error();
+  const page = await serwist.matchPrecache("/offline.html");
+  return page ? withRetryLink(page, url) : Response.error();
+}
+
+/** Point the offline page's "Try this page again" link (`href=""`) at the
+ *  same URL with `sw=bypass`. That navigation skips this worker, so a
+ *  worker whose own fetches are failing while the network is fine can't
+ *  trap the user here, and the page that loads resets the registration
+ *  (`ServiceWorkerUpdater`). Inline script can't do this: the page is
+ *  served under the app's nonce-only CSP. */
+async function withRetryLink(page: Response, url: URL): Promise<Response> {
+  const retry = new URL(url.href);
+  retry.searchParams.set("sw", "bypass");
+  const href = (retry.pathname + retry.search + retry.hash)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+  const body = (await page.text()).replace('href=""', `href="${href}"`);
+  return new Response(body, { status: page.status, headers: page.headers });
+}
+
+/** A page load that failed at the transport level, retried once as a fresh
+ *  request. A navigation request carries browser-owned state (mode,
+ *  connection, redirect handling) that can stay broken inside a worker
+ *  after the server restarts, while a plain request for the same URL goes
+ *  through; seen on iPad Safari, 2026-11-01. `redirect: "manual"` keeps a
+ *  server redirect an opaque redirect the browser follows, as it would for
+ *  the original navigation. */
+function retryNavigation(request: Request): Promise<Response> {
+  return fetch(request.url, {
+    credentials: "include",
+    redirect: "manual",
+    cache: "no-store",
+  });
 }
 
 /** Requests made by the offline shell document (same-origin referrer). */
@@ -169,7 +202,13 @@ self.addEventListener("fetch", (event: FetchEvent) => {
   }
   if (request.mode === "navigate") {
     bypass();
-    event.respondWith(fetch(request).catch(() => offlineNavigation(url)));
+    // The offline page's retry link: leave it to the browser entirely.
+    if (url.searchParams.get("sw") === "bypass") return;
+    event.respondWith(
+      fetch(request)
+        .catch(() => retryNavigation(request))
+        .catch(() => offlineNavigation(url)),
+    );
     return;
   }
   // Downloaded pages/thumbnails, only for the offline shell: served from
