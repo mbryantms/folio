@@ -23,6 +23,7 @@ vi.mock("@/lib/api/mutations", () => ({
   useDeleteAccount: () => ({ mutate: m.mutate, isPending: false }),
 }));
 vi.mock("@/lib/pwa/private-state", () => ({
+  beginLeaving: vi.fn(),
   broadcastPrivateReset: m.broadcast,
   clearPrivateState: m.clearPrivate,
 }));

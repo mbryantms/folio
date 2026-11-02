@@ -25,6 +25,21 @@ export async function clearPrivateState(client: QueryClient): Promise<void> {
   if ("caches" in window) await caches.delete(THUMB_CACHE).catch(() => false);
 }
 
+let leaving = false;
+
+/** This tab is signing out (or deleting the account) and navigates away
+ *  itself. A BroadcastChannel message reaches every *other* channel object
+ *  of the same name, including `AccountCacheBoundary`'s in this same tab,
+ *  so without this flag the tab hears its own reset and reloads, racing
+ *  the navigation to the sign-in page (or the IdP's logout page). */
+export function beginLeaving() {
+  leaving = true;
+}
+
+export function isLeaving() {
+  return leaving;
+}
+
 export function broadcastPrivateReset() {
   if (!("BroadcastChannel" in window)) return;
   const channel = new BroadcastChannel(ACCOUNT_CHANNEL);

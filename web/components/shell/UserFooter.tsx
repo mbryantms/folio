@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { postLogout } from "@/lib/api/logout";
 import { getOutbox, replayWithin } from "@/lib/pwa/outbox";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -59,19 +60,12 @@ export function UserFooter({
     // Deliver queued offline progress/sessions while the session is still
     // valid; whatever cannot go out is dropped with the account below.
     await replayWithin(getOutbox(), 2000);
-    const csrf = readCsrfCookie();
-    const ok = await fetch("/auth/logout", {
-      method: "POST",
-      credentials: "include",
-      headers: csrf ? { "X-CSRF-Token": csrf } : undefined,
-    })
-      .then((r) => r.ok)
-      .catch(() => false);
-    if (ok) {
+    const next = await postLogout(readCsrfCookie());
+    if (next) {
       // Loaded on demand: the footer ships on the reader route, whose first
       // load has a bundle ceiling; sign-out cleanup isn't needed until here.
       const { forgetAccountOnDevice } = await import("@/lib/pwa/forget-device");
-      await forgetAccountOnDevice(queryClient, "/sign-in");
+      await forgetAccountOnDevice(queryClient, next);
       return;
     }
     toast.error("Could not sign out. Check your connection and try again.");
