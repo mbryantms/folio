@@ -79,3 +79,41 @@ it("does not register a worker in development and removes stale registrations", 
   expect(state.register).not.toHaveBeenCalled();
   expect(unregister).toHaveBeenCalledOnce();
 });
+
+function withRegistrations(unregister: () => Promise<boolean>) {
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: {
+      getRegistrations: vi.fn().mockResolvedValue([
+        { active: { scriptURL: "https://folio.test/sw.js" }, unregister },
+        { active: { scriptURL: "https://folio.test/other.js" }, unregister },
+      ]),
+    },
+  });
+}
+it("drops the registration after the offline page's sw=bypass retry", async () => {
+  // Reaching a page with sw=bypass means the worker showed the offline page
+  // while the network worked. Unregister it and skip registering on this
+  // load (re-registering while controlled would resurrect it); the next
+  // load installs a fresh worker.
+  window.history.replaceState(null, "", "/series/x?tab=issues&sw=bypass#top");
+  const unregister = vi.fn().mockResolvedValue(true);
+  withRegistrations(unregister);
+  render(<ServiceWorkerUpdater />);
+  await act(async () => {});
+  expect(unregister).toHaveBeenCalledOnce();
+  expect(state.register).not.toHaveBeenCalled();
+  expect(window.location.pathname + window.location.search).toBe(
+    "/series/x?tab=issues",
+  );
+  expect(window.location.hash).toBe("#top");
+});
+it("keeps the registration on an ordinary load", async () => {
+  window.history.replaceState(null, "", "/series/x");
+  const unregister = vi.fn().mockResolvedValue(true);
+  withRegistrations(unregister);
+  render(<ServiceWorkerUpdater />);
+  await act(async () => {});
+  expect(unregister).not.toHaveBeenCalled();
+  expect(state.register).toHaveBeenCalledOnce();
+});

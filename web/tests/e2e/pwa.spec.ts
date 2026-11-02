@@ -30,9 +30,10 @@ test("installed worker supports a cold offline document launch", async ({
   await expect(
     page.getByRole("heading", { name: "Connection unavailable" }),
   ).toBeVisible();
+  // The retry skips the worker (sw=bypass) so a stuck worker can't trap it.
   await expect(
     page.getByRole("link", { name: "Try this page again" }),
-  ).toHaveAttribute("href", "");
+  ).toHaveAttribute("href", "/bookmarks?sw=bypass");
   await test.info().attach("offline-launch.json", {
     body: JSON.stringify({
       milliseconds: Date.now() - started,

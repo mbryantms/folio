@@ -94,6 +94,42 @@ describe("worker isolation", () => {
     expect(await response.text()).toBe("offline page");
     expect(mock.precache).toHaveBeenCalledWith("/offline.html");
   });
+  it("retries a failed page load once as a plain request before going offline", async () => {
+    // iPad Safari, 2026-11-01: after a server restart the worker's navigation
+    // fetches kept failing while the network (and plain requests) worked.
+    vi.mocked(fetch)
+      .mockRejectedValueOnce(new TypeError("Load failed"))
+      .mockResolvedValueOnce(new Response("page"));
+    const event = request("/bookmarks", { mode: "navigate" });
+    const response = await event.respondWith.mock.calls[0]![0];
+    expect(await response.text()).toBe("page");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetch).mock.calls[1]).toEqual([
+      "https://folio.test/bookmarks",
+      { credentials: "include", redirect: "manual", cache: "no-store" },
+    ]);
+    expect(mock.precache).not.toHaveBeenCalled();
+  });
+  it("points the offline page's retry link past the worker, escaped", async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError("offline"));
+    mock.precache.mockResolvedValue(
+      new Response('<a href="">Try this page again</a>', {
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    const event = request('/series/x?tab=issues&q="a"', { mode: "navigate" });
+    const response: Response = await event.respondWith.mock.calls[0]![0];
+    expect(response.headers.get("content-type")).toBe("text/html");
+    expect(await response.text()).toBe(
+      '<a href="/series/x?tab=issues&amp;q=%22a%22&amp;sw=bypass">Try this page again</a>',
+    );
+  });
+  it("leaves the retry link's sw=bypass navigation to the browser", () => {
+    const event = request("/bookmarks?sw=bypass", { mode: "navigate" });
+    expect(event.stopImmediatePropagation).toHaveBeenCalled();
+    expect(event.respondWith).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("preserves server errors rather than pretending they are offline", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response("error", { status: 503 }));
     const event = request("/", { mode: "navigate" });
