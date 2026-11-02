@@ -13,6 +13,14 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.72.2](https://github.com/mbryantms/folio/compare/v0.72.1...v0.72.2) (2026-11-02)
+
+
+### Fixed
+
+* **pwa:** a stuck service worker can no longer trap the app offline ([#1457](https://github.com/mbryantms/folio/issues/1457)) ([ae1f3cd](https://github.com/mbryantms/folio/commit/ae1f3cd079bae6d9e75c636f6332a616e6038949))
+* **web:** sidebar footer stays on screen in the installed iPad app ([#1459](https://github.com/mbryantms/folio/issues/1459)) ([d4aebc3](https://github.com/mbryantms/folio/commit/d4aebc3232877939e3b3a68d0c525e12b5429229))
+
 ## [0.72.1](https://github.com/mbryantms/folio/compare/v0.72.0...v0.72.1) (2026-11-02)
 
 
