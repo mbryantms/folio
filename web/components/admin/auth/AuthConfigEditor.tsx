@@ -67,5 +67,6 @@ function pickAuthValues(
       false,
     ),
     oidc_auto_redirect: asBool("auth.oidc.auto_redirect", false),
+    oidc_grant_all_libraries: asBool("auth.oidc.grant_all_libraries", false),
   };
 }

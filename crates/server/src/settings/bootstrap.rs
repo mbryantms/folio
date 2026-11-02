@@ -144,6 +144,13 @@ pub async fn seed_auth_from_env(
         now,
     )
     .await?;
+    insert_plain(
+        db,
+        "auth.oidc.grant_all_libraries",
+        serde_json::json!(cfg.oidc_grant_all_libraries),
+        now,
+    )
+    .await?;
 
     // OIDC issuer + client_id come along only when the env actually set
     // them. We don't seed empty rows because the overlay then can't

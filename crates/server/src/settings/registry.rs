@@ -109,6 +109,11 @@ pub const REGISTRY: &[SettingDef] = &[
         kind: SettingKind::Bool,
         is_secret: false,
     },
+    SettingDef {
+        key: "auth.oidc.grant_all_libraries",
+        kind: SettingKind::Bool,
+        is_secret: false,
+    },
     // ───────── Tokens + hardening + log level (M4) ─────────
     SettingDef {
         key: "auth.jwt.access_ttl",

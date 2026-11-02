@@ -60,6 +60,8 @@ Optional: `COMIC_OIDC_AUTO_REDIRECT=true` skips Folio's sign-in page entirely. A
 
 **Signing out** goes through Authentik's end-session page, so the Authentik session ends too, and Folio asks Authentik to send the browser back to `https://comics.example.com/sign-in` afterwards.
 
+Optional: `COMIC_OIDC_GRANT_ALL_LIBRARIES=true` gives every account created by an Authentik sign-in access to all libraries that exist at that moment, with no age cap. Without it, new users sign in to an empty library until you grant access under **Admin → Users**. It only runs when the account is created: libraries you add later, and accounts that existed before you turned it on, still need granting. The same toggle lives in **Admin → Auth** as *Open every library to new IdP accounts*.
+
 ## First-login admin bootstrap (§12.8)
 
 The first user to authenticate becomes admin automatically. Make sure that user is *you*:
