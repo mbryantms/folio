@@ -1,7 +1,17 @@
 "use client";
 
-import { useScanEvents } from "@/lib/api/scan-events";
+import dynamic from "next/dynamic";
+
 import { useMe } from "@/lib/api/queries";
+
+// Code-split: the scan-events client is admin-only, but this listener sits
+// in the root layout, so a static import put it in every page's first-load
+// JS, the reader's included (`scripts/check-bundle-size.mjs`). `ssr: false`
+// keeps it out of hydration; it loads once `me` says admin.
+const Subscriber = dynamic(
+  () => import("./ScanResultSubscriber").then((m) => m.ScanResultSubscriber),
+  { ssr: false },
+);
 
 /**
  * Headless WebSocket subscriber that runs on every page (mounted from the
@@ -19,10 +29,4 @@ export function ScanResultListener() {
   // `useMe` skips the sign-in pages itself, so `data` is unset there.
   const me = useMe();
   return me.data?.role === "admin" ? <Subscriber /> : null;
-}
-
-function Subscriber() {
-  // Side-effects only; we don't render anything from this hook.
-  useScanEvents({ toastErrors: true, toastCompletions: true });
-  return null;
 }
