@@ -1,60 +1,74 @@
 // @vitest-environment jsdom
 /**
- * Root-layout listeners must not probe `/auth/me` on the anonymous auth
- * pages: there it only 401s, and the 401 runs the refresh dance
- * (`POST /auth/refresh` → 403) on every sign-in visit.
+ * `useMe` must not probe `/auth/me` on the anonymous auth pages: there it
+ * only 401s, and the 401 runs the refresh dance (`POST /auth/refresh` →
+ * 403) on every sign-in visit. The root-layout listeners call it
+ * unconditionally, so the guard lives in the hook.
  */
 import * as React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const nav = vi.hoisted(() => ({ pathname: "/sign-in" }));
-const useMe = vi.hoisted(() =>
-  vi.fn((_opts?: { enabled?: boolean }) => ({ data: undefined })),
-);
-vi.mock("next/navigation", () => ({
-  usePathname: () => nav.pathname,
-  useRouter: () => ({ push: vi.fn() }),
-}));
-vi.mock("@/lib/api/queries", () => ({ useMe }));
-vi.mock("@/lib/search/use-search-modal", () => ({
-  useSearchModal: () => ({ setOpen: vi.fn() }),
-}));
-vi.mock("@/lib/api/scan-events", () => ({ useScanEvents: vi.fn() }));
+vi.mock("next/navigation", () => ({ usePathname: () => nav.pathname }));
 
-import { GlobalHotkeys } from "@/components/GlobalHotkeys";
-import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
-import { ScanResultListener } from "@/components/ScanResultListener";
-import { isAuthSurface } from "@/lib/auth-surface";
+import { isAuthSurface, useMe } from "@/lib/api/queries";
 
-function renderListeners() {
+const fetchMock = vi.fn();
+
+function Probe({ enabled }: { enabled?: boolean }) {
+  useMe(enabled === undefined ? undefined : { enabled });
+  return null;
+}
+
+function renderProbe(enabled?: boolean) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <GlobalShortcutsSheet>
-      <GlobalHotkeys />
-      <ScanResultListener />
-    </GlobalShortcutsSheet>,
+    <QueryClientProvider client={client}>
+      <Probe enabled={enabled} />
+    </QueryClientProvider>,
   );
 }
 
-afterEach(() => useMe.mockClear());
+const fetchedPaths = () =>
+  fetchMock.mock.calls.map(
+    ([url]) => new URL(String(url), "http://x").pathname,
+  );
 
-describe("root-layout useMe probes", () => {
-  it.each(["/sign-in", "/forgot-password", "/reset-password"])(
-    "are disabled on %s",
-    (pathname) => {
+beforeEach(() => {
+  fetchMock.mockResolvedValue(Response.json({ id: "u1" }));
+  vi.stubGlobal("fetch", fetchMock);
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  fetchMock.mockReset();
+});
+
+describe("useMe", () => {
+  it.each(["/sign-in", "/forgot-password", "/reset-password/token"])(
+    "does not probe /auth/me on %s",
+    async (pathname) => {
       nav.pathname = pathname;
-      renderListeners();
-      expect(useMe).toHaveBeenCalled();
-      for (const [opts] of useMe.mock.calls)
-        expect(opts).toEqual({ enabled: false });
+      renderProbe();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fetchMock).not.toHaveBeenCalled();
     },
   );
 
-  it("run on signed-in pages", () => {
+  it("probes on signed-in pages", async () => {
     nav.pathname = "/library";
-    renderListeners();
-    for (const [opts] of useMe.mock.calls)
-      expect(opts).toEqual({ enabled: true });
+    renderProbe();
+    await waitFor(() => expect(fetchedPaths()).toContain("/api/auth/me"));
+  });
+
+  it("still honours enabled: false", async () => {
+    nav.pathname = "/library";
+    renderProbe(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

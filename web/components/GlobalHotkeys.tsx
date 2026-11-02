@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
 import { useMe } from "@/lib/api/queries";
-import { useOnAuthSurface } from "@/lib/auth-surface";
 import {
   KEYBIND_SCOPES,
   actionForKey,
@@ -31,7 +30,7 @@ import { useSearchModal } from "@/lib/search/use-search-modal";
  */
 export function GlobalHotkeys() {
   const router = useRouter();
-  const me = useMe({ enabled: !useOnAuthSurface() });
+  const me = useMe();
   const { setOpen } = useSearchModal();
 
   const meKeybinds = readMeKeybinds(me);

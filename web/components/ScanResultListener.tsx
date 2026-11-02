@@ -2,7 +2,6 @@
 
 import { useScanEvents } from "@/lib/api/scan-events";
 import { useMe } from "@/lib/api/queries";
-import { useOnAuthSurface } from "@/lib/auth-surface";
 
 /**
  * Headless WebSocket subscriber that runs on every page (mounted from the
@@ -17,10 +16,9 @@ import { useOnAuthSurface } from "@/lib/auth-surface";
  * status pill) does not produce duplicate notifications.
  */
 export function ScanResultListener() {
-  const onAuthSurface = useOnAuthSurface();
-  const me = useMe({ enabled: !onAuthSurface });
-  const enabled = !onAuthSurface && me.data?.role === "admin";
-  return enabled ? <Subscriber /> : null;
+  // `useMe` skips the sign-in pages itself, so `data` is unset there.
+  const me = useMe();
+  return me.data?.role === "admin" ? <Subscriber /> : null;
 }
 
 function Subscriber() {

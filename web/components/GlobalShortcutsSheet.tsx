@@ -12,7 +12,6 @@ import {
 
 import dynamic from "next/dynamic";
 import { useMe } from "@/lib/api/queries";
-import { useOnAuthSurface } from "@/lib/auth-surface";
 import {
   readMeKeybinds,
   resolveKeybinds,
@@ -75,7 +74,7 @@ export function GlobalShortcutsSheet({
   // the close animation plays and re-opens are instant.
   const [hasOpened, setHasOpened] = useState(false);
   if (isOpen && !hasOpened) setHasOpened(true);
-  const me = useMe({ enabled: !useOnAuthSurface() });
+  const me = useMe();
   const pathname = usePathname() ?? "";
 
   const meKeybinds = readMeKeybinds(me);
