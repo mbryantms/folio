@@ -1,0 +1,25 @@
+# Dex — local OIDC mock for development.
+# Provides a single static user; sufficient for end-to-end OIDC flow testing.
+issuer: http://localhost:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: comic-reader
+    redirectURIs:
+      - "http://localhost:8080/auth/oidc/callback"
+      - "http://localhost:3000/auth/oidc/callback"
+    name: "Comic Reader (dev)"
+    secret: dev-secret-not-for-production
+
+enablePasswordDB: true
+staticPasswords:
+  # password = "admin" (bcrypt; for dev only — NOT for any real deployment)
+  - email: "admin@example.com"
+    hash: "$2b$10$8TyPHYRj7ditSUKqqHK0QujUQ7bTxeJJ7CXeZFE3QwTNRBcIYoIK6"
+    username: "admin"
+    userID: "00000000-0000-0000-0000-000000000001"

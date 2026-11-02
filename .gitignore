@@ -30,7 +30,9 @@ web/bundle-report/
 # — git's gitignore can't re-include files when their parent dir is excluded.
 .dev-data/*
 # Nested dev-data dirs under crates/* and web/ hold local secrets/thumbs caches.
-**/.dev-data/
+# `*/**/` (not `**/`): `**/.dev-data/` also matched the root directory itself,
+# which made the dex-config re-include below a no-op, so it was never tracked.
+*/**/.dev-data/
 data/
 # …but keep the committed dev OIDC mock config (Dex container reads this).
 !.dev-data/dex-config.yaml
