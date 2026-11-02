@@ -94,3 +94,7 @@ reason = "`block-buffer 0.10.4` cursor corruption after a caught panic inside a 
 [[IgnoredVulns]]
 id = "GHSA-gcqx-w48m-w2h4"
 reason = "`deepmerge` <=4.3.1 prototype poisoning in mergeObject() (low) — no patched release exists. Dev-only: the shadcn 4.22.1 CLI > @shadcn/registry > deepmerge, run by developers and the weekly shadcn-refresh.yml over the shadcn registry's own JSON; never in the shipped images. Delete when deepmerge ships a fix or shadcn drops it."
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+reason = "`minimatch` <11.0.1 globParts amplification in firstPhasePreProcess() (moderate). The 10.x copy that has that code is overridden to 11.0.3; the advisory range still names minimatch 3.1.5 (eslint-plugin-import / jsx-a11y / react) and 5.1.9 (@redocly/openapi-core), which predate the v9 preprocessor and can't take v11. Dev/lint tooling only. Delete when `pnpm why minimatch` shows no copy below 11.0.1."
