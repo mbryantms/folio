@@ -252,6 +252,34 @@ describe("SignInClient auto-redirect (auth.oidc.auto_redirect)", () => {
     expect(screen.getByLabelText(/email/i)).toBeTruthy();
   });
 
+  it("?signed_out=1 stays on the page, so a live IdP session can't sign the user back in", () => {
+    vi.spyOn(window, "location", "get").mockReturnValue({
+      ...window.location,
+      search: "?signed_out=1",
+      replace,
+    } as Location);
+    renderSignIn({ config: ssoConfig as never });
+    expect(replace).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("heading", { name: /sign in to folio/i }),
+    ).toBeTruthy();
+  });
+
+  it("starts one OIDC attempt under Strict Mode's double effect run", async () => {
+    render(
+      <React.StrictMode>
+        <SignInClient
+          config={ssoConfig as never}
+          next={null}
+          banner={null}
+          errorMessage={null}
+        />
+      </React.StrictMode>,
+    );
+    await waitFor(() => expect(replace).toHaveBeenCalled());
+    expect(replace).toHaveBeenCalledOnce();
+  });
+
   it("does not loop: a second bounce inside the guard window shows the page", () => {
     window.sessionStorage.setItem(
       "folio:oidc-auto-redirect-at",

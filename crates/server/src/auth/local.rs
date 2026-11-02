@@ -953,15 +953,33 @@ pub(crate) async fn revoke_sessions_for_user<C: sea_orm::ConnectionTrait>(
     }
 }
 
+/// RP-initiated logout target for a `fetch()` caller. A fetch can't follow
+/// the 302 itself: the IdP is another origin and sends no CORS headers, so
+/// the browser rejects the redirected request and the IdP session survives.
+/// The web app asks for JSON and navigates to `redirect_to` instead.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct LogoutResp {
+    pub redirect_to: String,
+}
+
 #[utoipa::path(
     operation_id = "local_logout",    post,
     path = "/auth/logout",
     responses(
+        (status = 200, body = LogoutResp, description = "RP-initiated logout for a caller that sent `Accept: application/json` — navigate to `redirect_to`"),
         (status = 204, description = "session revoked, cookies cleared"),
         (status = 302, description = "RP-initiated logout — caller is redirected to the OIDC issuer's end_session_endpoint"),
     )
 )]
-pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::response::Response {
+pub async fn logout(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    jar: CookieJar,
+) -> axum::response::Response {
+    let wants_json = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|a| a.contains("application/json"));
     // Look up the session up-front so we can read `id_token_hint` before
     // revoking it. revoke_after has the same effect either way — the
     // refresh cookie is being cleared.
@@ -1022,6 +1040,12 @@ pub async fn logout(State(app): State<AppState>, jar: CookieJar) -> axum::respon
         url.query_pairs_mut()
             .append_pair("id_token_hint", &hint)
             .append_pair("post_logout_redirect_uri", &post_logout);
+        if wants_json {
+            let body = LogoutResp {
+                redirect_to: url.into(),
+            };
+            return (StatusCode::OK, cleared, Json(body)).into_response();
+        }
         return (cleared, axum::response::Redirect::to(url.as_str())).into_response();
     }
 

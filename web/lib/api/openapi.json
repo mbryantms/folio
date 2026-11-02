@@ -3536,6 +3536,16 @@
       "post": {
         "operationId": "local_logout",
         "responses": {
+          "200": {
+            "description": "RP-initiated logout for a caller that sent `Accept: application/json` — navigate to `redirect_to`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResp"
+                }
+              }
+            }
+          },
           "204": {
             "description": "session revoked, cookies cleared"
           },
@@ -26530,6 +26540,18 @@
         "properties": {
           "user": {
             "$ref": "#/components/schemas/MeResp"
+          }
+        }
+      },
+      "LogoutResp": {
+        "type": "object",
+        "description": "RP-initiated logout target for a `fetch()` caller. A fetch can't follow\nthe 302 itself: the IdP is another origin and sends no CORS headers, so\nthe browser rejects the redirected request and the IdP session survives.\nThe web app asks for JSON and navigates to `redirect_to` instead.",
+        "required": [
+          "redirect_to"
+        ],
+        "properties": {
+          "redirect_to": {
+            "type": "string"
           }
         }
       },

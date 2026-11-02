@@ -1,7 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import { getOutbox } from "./outbox";
-import { broadcastPrivateReset, clearPrivateState } from "./private-state";
+import {
+  beginLeaving,
+  broadcastPrivateReset,
+  clearPrivateState,
+} from "./private-state";
 
 /**
  * Drop everything this device holds for the account that just signed out
@@ -19,6 +23,7 @@ export async function forgetAccountOnDevice(
   client: QueryClient,
   href: string,
 ): Promise<void> {
+  beginLeaving();
   broadcastPrivateReset();
   await clearPrivateState(client).catch(() => undefined);
   await getOutbox()
