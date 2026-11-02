@@ -128,6 +128,7 @@ export type BookmarksFeedFilters = {
 export type PageOverridesView = Schemas["PageOverridesView"];
 export type PutPageOverridesReq = Schemas["PutPageOverridesReq"];
 export type MeView = Schemas["MeResp"]; // renamed in codegen as MeResp
+export type LogoutResp = Schemas["LogoutResp"];
 export type PreferencesReq = Schemas["PreferencesReq"];
 export type SeriesResumeView = Schemas["SeriesResumeView"];
 export type CblWindowEntry = Schemas["CblWindowEntry"];

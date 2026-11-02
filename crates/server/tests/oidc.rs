@@ -1077,50 +1077,75 @@ async fn disabled_oidc_user_is_refused() {
     );
 }
 
+/// OIDC-login a fresh subject through the mock OP; returns the
+/// `(session, csrf, refresh)` cookie values the callback set.
+async fn oidc_login(
+    app: &TestApp,
+    op: &MockOp,
+    subject: &str,
+    email: &str,
+) -> (String, String, String) {
+    let (state_cookie, state_param) = start_oidc_flow(app, None).await;
+    let nonce = parse_state_cookie_nonce(&state_cookie);
+    let claims = IdTokenClaims::standard(&op.issuer(), "folio-test-client", subject, &nonce, email);
+    op.register_token_response(&sign_id_token(&claims)).await;
+
+    let callback_resp = callback_with(app, &state_cookie, &state_param, "code").await;
+    assert_eq!(callback_resp.status(), StatusCode::SEE_OTHER);
+    (
+        extract_set_cookie(&callback_resp, "__Host-comic_session").expect("session cookie"),
+        extract_set_cookie(&callback_resp, "__Host-comic_csrf").expect("csrf cookie"),
+        extract_set_cookie(&callback_resp, "__Host-comic_refresh").expect("refresh cookie"),
+    )
+}
+
+async fn post_logout(
+    app: &TestApp,
+    (session, csrf, refresh): &(String, String, String),
+    accept: Option<&str>,
+) -> axum::response::Response {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/logout")
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={session}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
+            ),
+        )
+        .header("x-csrf-token", csrf);
+    if let Some(accept) = accept {
+        req = req.header(header::ACCEPT, accept);
+    }
+    app.router
+        .clone()
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+fn assert_end_session_url(op: &MockOp, url: &str) {
+    assert!(
+        url.starts_with(&format!("{}/end_session", op.issuer())),
+        "expected end_session prefix, got {url}"
+    );
+    assert!(
+        url.contains("id_token_hint="),
+        "RP-logout URL must include id_token_hint"
+    );
+    assert!(
+        url.contains("post_logout_redirect_uri="),
+        "RP-logout URL must include post_logout_redirect_uri"
+    );
+}
+
 #[tokio::test]
 async fn logout_redirects_to_end_session_endpoint_for_oidc_session() {
     let op = MockOp::start().await;
     let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
-    let (state_cookie, state_param) = start_oidc_flow(&app, None).await;
-    let nonce = parse_state_cookie_nonce(&state_cookie);
+    let cookies = oidc_login(&app, &op, "rp-logout-subject", "rplogout@example.com").await;
 
-    let claims = IdTokenClaims::standard(
-        &op.issuer(),
-        "folio-test-client",
-        "rp-logout-subject",
-        &nonce,
-        "rplogout@example.com",
-    );
-    let id_token = sign_id_token(&claims);
-    op.register_token_response(&id_token).await;
-
-    let callback_resp = callback_with(&app, &state_cookie, &state_param, "code").await;
-    assert_eq!(callback_resp.status(), StatusCode::SEE_OTHER);
-    let session =
-        extract_set_cookie(&callback_resp, "__Host-comic_session").expect("session cookie");
-    let csrf = extract_set_cookie(&callback_resp, "__Host-comic_csrf").expect("csrf cookie");
-    let refresh =
-        extract_set_cookie(&callback_resp, "__Host-comic_refresh").expect("refresh cookie");
-
-    let logout_resp = app
-        .router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::POST)
-                .uri("/auth/logout")
-                .header(
-                    header::COOKIE,
-                    format!(
-                        "__Host-comic_session={session}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
-                    ),
-                )
-                .header("x-csrf-token", csrf)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let logout_resp = post_logout(&app, &cookies, None).await;
     assert_eq!(
         logout_resp.status(),
         StatusCode::SEE_OTHER,
@@ -1132,18 +1157,41 @@ async fn logout_redirects_to_end_session_endpoint_for_oidc_session() {
         .and_then(|v| v.to_str().ok())
         .expect("Location header")
         .to_string();
+    assert_end_session_url(&op, &location);
+}
+
+/// The web app signs out with `fetch()`, which can't follow a redirect to
+/// the IdP (another origin, no CORS). Asked for JSON, logout hands back the
+/// end-session URL for the page to navigate to, and still clears cookies.
+#[tokio::test]
+async fn logout_returns_end_session_url_as_json_for_fetch_callers() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let cookies = oidc_login(&app, &op, "rp-logout-json", "rplogoutjson@example.com").await;
+
+    let resp = post_logout(&app, &cookies, Some("application/json")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
     assert!(
-        location.starts_with(&format!("{}/end_session", op.issuer())),
-        "expected end_session prefix, got {location}"
+        resp.headers().get(header::LOCATION).is_none(),
+        "a JSON logout must not redirect the fetch"
     );
-    assert!(
-        location.contains("id_token_hint="),
-        "RP-logout URL must include id_token_hint"
-    );
-    assert!(
-        location.contains("post_logout_redirect_uri="),
-        "RP-logout URL must include post_logout_redirect_uri"
-    );
+    let cleared: Vec<String> = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(str::to_owned))
+        .collect();
+    for name in ["__Host-comic_session", "__Host-comic_refresh"] {
+        assert!(
+            cleared
+                .iter()
+                .any(|c| c.starts_with(&format!("{name}=")) && c.contains("Max-Age=0")),
+            "{name} must be cleared, got {cleared:?}"
+        );
+    }
+    let json = body_json(resp.into_body()).await;
+    let url = json["redirect_to"].as_str().expect("redirect_to");
+    assert_end_session_url(&op, url);
 }
 
 // ───────────────────── Discovery-cache eviction ─────────────────────

@@ -7,6 +7,7 @@ import {
   ACCOUNT_CHANNEL,
   broadcastPrivateReset,
   clearPrivateState,
+  isLeaving,
 } from "@/lib/pwa/private-state";
 
 const ANONYMOUS = "anonymous";
@@ -18,7 +19,9 @@ export function AccountCacheBoundary({ userId }: { userId?: string }) {
     let current = userId ?? client.getQueryData<MeView>(queryKeys.me)?.id;
     let resetting = false;
     const reset = async (broadcast: boolean, me?: MeView) => {
-      if (resetting) return;
+      // A sign-out in this tab already clears and navigates; reloading here
+      // would race that navigation.
+      if (resetting || isLeaving()) return;
       resetting = true;
       if (broadcast) broadcastPrivateReset();
       await clearPrivateState(client);

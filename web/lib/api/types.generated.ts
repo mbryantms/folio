@@ -11200,6 +11200,15 @@ export interface components {
         LoginResp: {
             user: components["schemas"]["MeResp"];
         };
+        /**
+         * @description RP-initiated logout target for a `fetch()` caller. A fetch can't follow
+         *     the 302 itself: the IdP is another origin and sends no CORS headers, so
+         *     the browser rejects the redirected request and the IdP session survives.
+         *     The web app asks for JSON and navigates to `redirect_to` instead.
+         */
+        LogoutResp: {
+            redirect_to: string;
+        };
         LogsResp: {
             /** @description Bound the ring buffer enforces; >= 1. */
             capacity: number;
@@ -19641,6 +19650,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description RP-initiated logout for a caller that sent `Accept: application/json` — navigate to `redirect_to` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogoutResp"];
+                };
+            };
             /** @description session revoked, cookies cleared */
             204: {
                 headers: {

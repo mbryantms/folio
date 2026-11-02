@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -112,8 +112,12 @@ export function SignInClient({
     getServerInsecureSnapshot,
   );
   const ssoHref = oidcStartHref(next);
+  // Strict Mode re-runs effects in dev; a second `location.replace` would
+  // start a second OIDC attempt. The ref survives that remount.
+  const redirected = useRef(false);
   useEffect(() => {
-    if (!autoRedirect) return;
+    if (!autoRedirect || redirected.current) return;
+    redirected.current = true;
     try {
       window.sessionStorage.setItem(AUTO_REDIRECT_KEY, String(Date.now()));
     } catch {
@@ -348,8 +352,8 @@ function oidcStartHref(next: string | null): string {
 /** Decide (client-side) whether `/sign-in` should forward straight to the
  *  IdP. Never when: the operator hasn't enabled it, the page carries a
  *  banner or error (the user needs to read it), `?local=1` asks for the
- *  local form (break-glass when the IdP is down), or we already bounced
- *  within the guard window. */
+ *  local form (break-glass when the IdP is down), `?signed_out=1` follows
+ *  a sign-out, or we already bounced within the guard window. */
 export function shouldAutoRedirect(
   enabled: boolean,
   banner: Banner,
@@ -359,6 +363,9 @@ export function shouldAutoRedirect(
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
   if (params.get("local") === "1") return false;
+  // Just signed out: the IdP session may still be live, so bouncing there
+  // would sign the user straight back in.
+  if (params.get("signed_out") === "1") return false;
   try {
     const last = Number(window.sessionStorage.getItem(AUTO_REDIRECT_KEY));
     if (last && Date.now() - last < AUTO_REDIRECT_GUARD_MS) return false;
