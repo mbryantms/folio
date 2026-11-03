@@ -90,6 +90,7 @@ pub mod server_releases;
 pub mod sessions;
 pub mod sidebar_layout;
 pub mod sidecar_reemit;
+pub mod start_here;
 pub mod teams;
 pub mod thumbnails;
 pub mod view_groups;

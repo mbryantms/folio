@@ -22,6 +22,7 @@ vi.mock("@/lib/api/queries", () => ({
   useRecentHistory: () => failed(),
   useRandomPicks: () => failed(),
   useOnThisDay: () => failed(),
+  useStartHere: () => failed(),
 }));
 vi.mock("@/components/library/ProgressIssueCard", () => ({
   ProgressIssueCard: () => null,

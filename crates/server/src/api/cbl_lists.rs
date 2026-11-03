@@ -672,6 +672,8 @@ async fn stats_for(
     Ok(stats)
 }
 
+/// Read access: the caller's own lists plus shared (`owner_user_id IS
+/// NULL`) lists, the same visibility set as [`list`].
 async fn ensure_owner(
     list: &cbl_list::Model,
     user: &CurrentUser,
@@ -682,6 +684,27 @@ async fn ensure_owner(
         return Err(error(StatusCode::FORBIDDEN, "forbidden", "not your list"));
     }
     Ok(())
+}
+
+/// Write access: the owner of a personal list, or an admin for a shared
+/// list. Shared lists are visible to every user, so letting any reader
+/// rename, re-match, refresh or delete one would let one account change
+/// everybody's reading list (Start Here M2).
+async fn ensure_can_manage(
+    list: &cbl_list::Model,
+    user: &CurrentUser,
+) -> Result<(), axum::response::Response> {
+    match list.owner_user_id {
+        Some(owner) if owner != user.id => {
+            Err(error(StatusCode::FORBIDDEN, "forbidden", "not your list"))
+        }
+        None if user.role != entity::user::UserRole::Admin => Err(error(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "shared reading lists are managed by an admin",
+        )),
+        _ => Ok(()),
+    }
 }
 
 async fn fetch_list(
@@ -1503,7 +1526,7 @@ pub async fn update(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if let Err(resp) = ensure_owner(&row, &user).await {
+    if let Err(resp) = ensure_can_manage(&row, &user).await {
         return resp;
     }
     let mut am: cbl_list::ActiveModel = row.into();
@@ -1538,7 +1561,7 @@ pub async fn delete_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if let Err(resp) = ensure_owner(&row, &user).await {
+    if let Err(resp) = ensure_can_manage(&row, &user).await {
         return resp;
     }
     if row.delete(&app.db).await.is_err() {
@@ -1566,7 +1589,7 @@ pub async fn refresh_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if let Err(resp) = ensure_owner(&row, &user).await {
+    if let Err(resp) = ensure_can_manage(&row, &user).await {
         return resp;
     }
     if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
@@ -1593,12 +1616,13 @@ async fn refreshable_lists(
     app: &AppState,
     user: &CurrentUser,
 ) -> Result<Vec<cbl_list::Model>, axum::response::Response> {
+    // Shared lists are refreshed by admins only (see [`ensure_can_manage`]).
+    let mut scope = sea_orm::Condition::any().add(cbl_list::Column::OwnerUserId.eq(user.id));
+    if user.role == entity::user::UserRole::Admin {
+        scope = scope.add(cbl_list::Column::OwnerUserId.is_null());
+    }
     cbl_list::Entity::find()
-        .filter(
-            sea_orm::Condition::any()
-                .add(cbl_list::Column::OwnerUserId.is_null())
-                .add(cbl_list::Column::OwnerUserId.eq(user.id)),
-        )
+        .filter(scope)
         .order_by_desc(cbl_list::Column::CreatedAt)
         .all(&app.db)
         .await
@@ -1688,7 +1712,7 @@ pub async fn check_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if let Err(resp) = ensure_owner(&row, &user).await {
+    if let Err(resp) = ensure_can_manage(&row, &user).await {
         return resp;
     }
     if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
@@ -1838,7 +1862,7 @@ pub async fn manual_match(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if let Err(resp) = ensure_owner(&list, &user).await {
+    if let Err(resp) = ensure_can_manage(&list, &user).await {
         return resp;
     }
     let entry = match cbl_entry::Entity::find_by_id(entry_id).one(&app.db).await {
@@ -1895,7 +1919,7 @@ pub async fn clear_match(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if let Err(resp) = ensure_owner(&list, &user).await {
+    if let Err(resp) = ensure_can_manage(&list, &user).await {
         return resp;
     }
     let entry = match cbl_entry::Entity::find_by_id(entry_id).one(&app.db).await {

@@ -383,6 +383,7 @@ fn to_view(
         system_key: model.system_key.clone(),
         icon: pin.and_then(|p| p.icon.clone()),
         pinned_on_pages,
+        featured_position: None,
     }
 }
 
@@ -426,6 +427,7 @@ pub(crate) async fn ensure_want_to_read_seeded(
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        featured_position: Set(None),
     }
     .insert(db)
     .await;
@@ -580,6 +582,7 @@ pub async fn create(
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        featured_position: Set(None),
     })
     .insert(&app.db)
     .await

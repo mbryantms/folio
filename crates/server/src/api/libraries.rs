@@ -160,6 +160,9 @@ pub struct LibraryView {
     /// `metadata_auto_apply_strong_matches` on a writeback library a
     /// strong match rewrites the archives. Audit 2026-11 N-M9.
     pub auto_search_new_series: bool,
+    /// Default visibility of this library in a user's sidebar when the user
+    /// has no override for it (Start Here + default pins M1).
+    pub show_in_sidebar_by_default: bool,
 }
 
 impl From<library::Model> for LibraryView {
@@ -212,6 +215,7 @@ impl From<library::Model> for LibraryView {
             filename_assume_issue_one: m.filename_assume_issue_one,
             metadata_auto_apply_strong_matches: m.metadata_auto_apply_strong_matches,
             auto_search_new_series: m.auto_search_new_series,
+            show_in_sidebar_by_default: m.show_in_sidebar_by_default,
         }
     }
 }
@@ -339,6 +343,12 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(skip)]
     pub auto_search_new_series: Option<bool>,
+    /// Show this library in the sidebar of users who haven't customized
+    /// that row (new accounts included). Off hides it by default; it stays
+    /// reachable through All Libraries and the sidebar editor.
+    #[serde(default)]
+    #[garde(skip)]
+    pub show_in_sidebar_by_default: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
@@ -641,6 +651,7 @@ pub async fn create(
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(req.trust_fingerprint_on_first_import),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
         metadata_publisher_blacklist: Set(serde_json::json!([])),
         filename_ignore_leading_numbers: Set(false),
         filename_assume_issue_one: Set(false),
@@ -859,6 +870,9 @@ pub async fn update_settings(
         .filter(|b| *b != prev_auto_search);
     if let Some(b) = req.auto_search_new_series {
         am.auto_search_new_series = Set(b);
+    }
+    if let Some(b) = req.show_in_sidebar_by_default {
+        am.show_in_sidebar_by_default = Set(b);
     }
     if let Some(cron_opt) = req.scan_schedule_cron {
         let normalized = cron_opt.and_then(|s| {

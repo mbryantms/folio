@@ -199,6 +199,7 @@ async fn seed_series_with_genre(
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await
@@ -413,8 +414,10 @@ async fn list_seeds_system_views_pinned_on_first_touch() {
             "Recently added series".to_owned(),
             "Recently finished issues".to_owned(),
             "Recently updated series".to_owned(),
+            // Start Here M2: pinned for brand-new accounts only.
+            "Start here".to_owned(),
         ],
-        "exactly the M3 originals + new rails + Recently finished issues should auto-pin: {pinned_names:?}"
+        "exactly the M3 originals + new rails + Recently finished issues + Start here should auto-pin: {pinned_names:?}"
     );
     // Every system row (`user_id IS NULL`) must report is_system=true;
     // the per-user Want to Read collection is the only exception.
@@ -799,6 +802,7 @@ async fn seed_series_with_issues(
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await
@@ -1182,10 +1186,11 @@ async fn create_rejects_invalid_filter() {
 async fn pin_cap_enforced() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cap@example.com").await;
-    // Trigger the lazy seed so the 6 auto-pinned system views land first.
+    // Trigger the lazy seed so the 7 seeded system views land first.
     let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
-    // 12 - 6 (auto-pinned rails + Recently finished issues) = 6 user pins reach the cap.
-    for i in 0..6 {
+    // 12 - 7 (auto-pinned rails + Recently finished issues + Start here)
+    // = 5 user pins reach the cap.
+    for i in 0..5 {
         let body = serde_json::json!({
             "kind": "filter_series",
             "name": format!("View {i}"),
@@ -1239,11 +1244,11 @@ async fn pin_cap_enforced() {
 async fn pin_cap_respects_per_user_override() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "cap-override@example.com").await;
-    // Trigger the lazy seed so the 6 auto-pinned system rails land.
+    // Trigger the lazy seed so the 7 seeded system rails land.
     let _ = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
 
-    // Fill to the default cap of 12 (6 auto + 6 user pins).
-    for i in 0..6 {
+    // Fill to the default cap of 12 (7 seeded + 5 user pins).
+    for i in 0..5 {
         let body = serde_json::json!({
             "kind": "filter_series",
             "name": format!("View {i}"),
@@ -2124,6 +2129,7 @@ async fn seed_series_with_field(
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await

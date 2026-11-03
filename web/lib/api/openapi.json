@@ -2053,6 +2053,32 @@
         }
       }
     },
+    "/api/admin/saved-views/{id}/share": {
+      "post": {
+        "operationId": "start_here_share",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "the reading list is now shared with every user"
+          },
+          "403": {
+            "description": "admin only; the view must be the caller's own reading list"
+          },
+          "404": {
+            "description": "view not found"
+          }
+        }
+      }
+    },
     "/api/admin/scan-batches": {
       "get": {
         "operationId": "admin_scan_batches_list",
@@ -2599,6 +2625,38 @@
           },
           "403": {
             "description": "admin only"
+          }
+        }
+      }
+    },
+    "/api/admin/start-here": {
+      "put": {
+        "operationId": "start_here_set_featured",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetFeaturedReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartHereView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "unknown id, duplicate, not a shared reading list, or too many"
           }
         }
       }
@@ -9682,6 +9740,22 @@
           },
           "400": {
             "description": "Malformed cursor"
+          }
+        }
+      }
+    },
+    "/api/me/start-here": {
+      "get": {
+        "operationId": "start_here_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartHereView"
+                }
+              }
+            }
           }
         }
       }
@@ -25894,7 +25968,8 @@
           "filename_ignore_leading_numbers",
           "filename_assume_issue_one",
           "metadata_auto_apply_strong_matches",
-          "auto_search_new_series"
+          "auto_search_new_series",
+          "show_in_sidebar_by_default"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -26009,6 +26084,10 @@
               "null"
             ],
             "description": "Cron expression governing the scheduled scan, or `null` if disabled."
+          },
+          "show_in_sidebar_by_default": {
+            "type": "boolean",
+            "description": "Default visibility of this library in a user's sidebar when the user\nhas no override for it (Start Here + default pins M1)."
           },
           "slug": {
             "type": "string"
@@ -32383,6 +32462,14 @@
               "null"
             ]
           },
+          "featured_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Start Here M2: position in the admin-curated Start Here set, `None`\nwhen not featured. Only ever set on shared CBL views."
+          },
           "icon": {
             "type": [
               "string",
@@ -34814,6 +34901,21 @@
           }
         }
       },
+      "SetFeaturedReq": {
+        "type": "object",
+        "required": [
+          "view_ids"
+        ],
+        "properties": {
+          "view_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Shared CBL view ids, in the order they should appear. Views not\nlisted are unfeatured. At most [`MAX_FEATURED`]."
+          }
+        }
+      },
       "SetIconReq": {
         "type": "object",
         "description": "Body for `POST /me/saved-views/{id}/icon` — pick (or clear) the icon\nthat represents this rail in the user's home + sidebar. `None` /\nmissing means \"reset to the kind-based default.\"",
@@ -35334,6 +35436,73 @@
           "include",
           "exclude"
         ]
+      },
+      "StartHereItemView": {
+        "type": "object",
+        "required": [
+          "view_id",
+          "cbl_list_id",
+          "name",
+          "total",
+          "available",
+          "read_count",
+          "cover_issue_ids"
+        ],
+        "properties": {
+          "available": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries matched to an issue the caller can open."
+          },
+          "cbl_list_id": {
+            "type": "string"
+          },
+          "cover_issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "First matched issues the caller can open, in list order — cover art\nfor the card (`/issues/{id}/pages/0/thumb`)."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "read_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Matched entries the caller has finished."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries in the list."
+          },
+          "view_id": {
+            "type": "string",
+            "description": "The shared CBL saved view (`/views/{view_id}`)."
+          }
+        }
+      },
+      "StartHereView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StartHereItemView"
+            },
+            "description": "Lists in featured order. Lists with nothing the caller can open are\nleft out for non-admins (an admin sees every featured list so the\ncuration surface stays complete)."
+          }
+        }
       },
       "SuggestionBucket": {
         "type": "string",
@@ -36694,6 +36863,13 @@
               "null"
             ],
             "description": "Cron expression. `null` clears it; an empty string is treated as null.\nTri-state: omitted = leave unchanged; explicit `null` = clear."
+          },
+          "show_in_sidebar_by_default": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Show this library in the sidebar of users who haven't customized\nthat row (new accounts included). Off hides it by default; it stays\nreachable through All Libraries and the sidebar editor."
           },
           "slug": {
             "type": [

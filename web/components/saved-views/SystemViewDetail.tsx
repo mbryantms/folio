@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChevronRight, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Sparkles, X } from "lucide-react";
 
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
@@ -25,19 +25,28 @@ import {
 } from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import {
+  StartHereCard,
+  StartHereCardSkeleton,
+} from "@/components/saved-views/StartHereCard";
+import { Button } from "@/components/ui/button";
+import { useSetStartHere } from "@/lib/api/mutations";
+import {
   useContinueReading,
   useIssuesCrossListInfinite,
   useOnDeck,
   useOnThisDay,
   useRandomPicks,
+  useMe,
   useRecentHistory,
   useSimilarRailInfinite,
+  useStartHere,
 } from "@/lib/api/queries";
 import type {
   ContinueReadingCard,
   IssueSummaryView,
   OnDeckCard as OnDeckCardData,
   SavedViewView,
+  StartHereView,
   SeriesView,
 } from "@/lib/api/types";
 import { seriesUrl } from "@/lib/urls";
@@ -69,12 +78,14 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   const isRecentHistory = view.system_key === "recent_history";
   const isRandomPicks = view.system_key === "random_picks";
   const isOnThisDay = view.system_key === "on_this_day";
+  const isStartHere = view.system_key === "start_here";
 
   const cr = useContinueReading({ enabled: isContinueReading });
   const od = useOnDeck({ enabled: isOnDeck });
   const rh = useRecentHistory({ enabled: isRecentHistory });
   const rp = useRandomPicks({ enabled: isRandomPicks });
   const otd = useOnThisDay({ enabled: isOnThisDay });
+  const sh = useStartHere({ enabled: isStartHere });
   // Same key as the grid below — one cache entry, two subscribers.
   const ni = useIssuesCrossListInfinite(NEW_ISSUES_FILTERS, {
     enabled: isNewIssues,
@@ -105,7 +116,9 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
               ? (rp.data?.items.length ?? null)
               : isOnThisDay
                 ? (otd.data?.items.length ?? null)
-                : null;
+                : isStartHere
+                  ? (sh.data?.items.length ?? null)
+                  : null;
 
   return (
     <div className="space-y-6">
@@ -213,6 +226,8 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           <RandomPicksGrid loading={rp.isLoading} data={rp.data} />
         ) : isOnThisDay ? (
           <OnThisDayGrid loading={otd.isLoading} data={otd.data} />
+        ) : isStartHere ? (
+          <StartHereGrid loading={sh.isLoading} data={sh.data} />
         ) : null}
       </div>
     </div>
@@ -484,6 +499,95 @@ function OnDeckGrid({
           }
           card={card}
         />
+      ))}
+    </>
+  );
+}
+
+/** Start Here page (Start Here M2): every featured reading list. Admins
+ *  get move-earlier / move-later / remove controls under each card; adding
+ *  a list happens from the list's own actions menu. */
+function StartHereGrid({
+  loading,
+  data,
+}: {
+  loading: boolean;
+  data: StartHereView | undefined;
+}) {
+  const me = useMe();
+  const isAdmin = me.data?.role === "admin";
+  const setFeatured = useSetStartHere();
+  if (loading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <StartHereCardSkeleton key={i} />
+        ))}
+      </>
+    );
+  }
+  const items = data?.items ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="text-muted-foreground col-span-full max-w-prose text-sm">
+        {isAdmin
+          ? "No reading lists are featured yet. Open a reading list, share it with everyone, then choose “Add to Start Here” from its actions menu."
+          : "Nothing here yet. Recommended reading lists show up here once an admin picks them."}
+      </p>
+    );
+  }
+  const ids = items.map((i) => i.view_id);
+  function move(index: number, delta: -1 | 1) {
+    const next = [...ids];
+    const [moved] = next.splice(index, 1);
+    next.splice(index + delta, 0, moved!);
+    setFeatured.mutate({ viewIds: next, message: "Start Here order saved" });
+  }
+  return (
+    <>
+      {items.map((item, index) => (
+        <StartHereCard key={item.view_id} item={item}>
+          {isAdmin ? (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Move ${item.name} earlier`}
+                disabled={index === 0 || setFeatured.isPending}
+                onClick={() => move(index, -1)}
+              >
+                <ArrowLeft />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Move ${item.name} later`}
+                disabled={index === items.length - 1 || setFeatured.isPending}
+                onClick={() => move(index, 1)}
+              >
+                <ArrowRight />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="ml-auto"
+                aria-label={`Remove ${item.name} from Start Here`}
+                disabled={setFeatured.isPending}
+                onClick={() =>
+                  setFeatured.mutate({
+                    viewIds: ids.filter((id) => id !== item.view_id),
+                    message: "Removed from Start Here",
+                  })
+                }
+              >
+                <X />
+              </Button>
+            </div>
+          ) : null}
+        </StartHereCard>
       ))}
     </>
   );

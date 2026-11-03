@@ -201,6 +201,7 @@ async fn seed_library(db: &DatabaseConnection, root: &std::path::Path) -> Uuid {
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(db)
     .await
@@ -1371,6 +1372,7 @@ async fn seed_collection(db: &DatabaseConnection, owner: Uuid, name: &str) -> Uu
         cbl_list_id: Set(None),
         auto_pin: Set(false),
         preserve_canonical_order: Set(false),
+        featured_position: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -1435,6 +1437,7 @@ async fn seed_filter_view(
         cbl_list_id: Set(None),
         auto_pin: Set(false),
         preserve_canonical_order: Set(false),
+        featured_position: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -2594,6 +2597,7 @@ async fn seed_cbl_saved_view(
         cbl_list_id: Set(Some(cbl_list_id)),
         auto_pin: Set(false),
         preserve_canonical_order: Set(false),
+        featured_position: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
     }

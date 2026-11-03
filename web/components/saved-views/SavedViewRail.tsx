@@ -27,6 +27,7 @@ import {
   ContinueReadingRailBody,
   OnDeckRailBody,
   OnThisDayRailBody,
+  StartHereRailBody,
   RandomPicksRailBody,
   RecentHistoryRailBody,
   RecentIssuesRailBody,
@@ -157,6 +158,14 @@ function renderRailBody(
     return {
       body: <OnThisDayRailBody itemStyle={itemStyle} />,
       hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "start_here") {
+    return {
+      body: <StartHereRailBody itemStyle={itemStyle} />,
+      // A short curated shelf: the rail already shows every pick, and the
+      // title links to the full page.
+      hasMore: false,
     };
   }
   if (view.kind === "filter_series") {

@@ -34,6 +34,7 @@ export * from "./markers";
 export { invalidateRails } from "./rails";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
+export * from "./start-here";
 
 import type {
   CancelBatchResp,
@@ -2054,10 +2055,13 @@ export function useCreateSavedView() {
   );
 }
 
-export function useUpdateSavedView(id: string) {
+/** `admin: true` targets `/admin/saved-views/{id}` — the route for shared
+ *  (system) views, which the per-user route refuses (Start Here M2). */
+export function useUpdateSavedView(id: string, opts?: { admin?: boolean }) {
   const qc = useQueryClient();
+  const base = opts?.admin ? "/admin/saved-views" : "/me/saved-views";
   return useApiMutation<SavedViewView, UpdateSavedViewReq>(
-    (body) => ({ path: `/me/saved-views/${id}`, method: "PATCH", body }),
+    (body) => ({ path: `${base}/${id}`, method: "PATCH", body }),
     {
       successMessage: "Saved",
       onSuccess: () => {
@@ -2067,10 +2071,13 @@ export function useUpdateSavedView(id: string) {
   );
 }
 
-export function useDeleteSavedView(id: string) {
+/** `admin: true` targets `/admin/saved-views/{id}` (shared views); for a
+ *  shared reading list that also deletes the underlying list. */
+export function useDeleteSavedView(id: string, opts?: { admin?: boolean }) {
   const qc = useQueryClient();
+  const base = opts?.admin ? "/admin/saved-views" : "/me/saved-views";
   return useApiMutation<unknown, void>(
-    () => ({ path: `/me/saved-views/${id}`, method: "DELETE" }),
+    () => ({ path: `${base}/${id}`, method: "DELETE" }),
     {
       successMessage: "View deleted",
       onSuccess: () => {

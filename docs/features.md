@@ -337,6 +337,13 @@ cover dates) and proposes the mappings for you to accept.
   Lists refresh from upstream (manually or on schedule) with a structural
   diff history, manual match overrides survive refreshes, and lists export
   back to `.cbl`.
+- **Shared lists + Start Here** — an admin can share one of their reading
+  lists with every user (shared lists are read-only for everyone but
+  admins) and feature shared lists in **Start Here**: a rail of
+  fanned-cover reading-list cards with each reader's progress, plus a full
+  page where admins reorder or drop picks. A brand-new account gets the
+  rail pinned at the top of its home page; existing users can pin it from
+  Manage pins.
 - **Story arcs** — built automatically from ComicInfo `StoryArc` /
   `StoryArcNumber` tags.
 - **Saved views** — a real filter engine over your library: publisher,
@@ -354,7 +361,9 @@ cover dates) and proposes the mappings for you to accept.
   views, On Deck, lists), each with its own sidebar entry; the sidebar
   itself is fully reorderable with custom headers and spacers; anything
   you hid from a home rail is listed under Settings → Pages, where one
-  click restores it.
+  click restores it. Admins choose which libraries a new account's
+  sidebar lists by default (**Show in sidebar by default** in library
+  settings); the rest stay one click away under All Libraries.
 - **Multi-select everywhere** — bulk mark-read, bulk metadata edit
   (admins), bulk add-to-collection across the major list surfaces.
 - **Markers** — four kinds, all page-anchored: bookmarks, Markdown notes,

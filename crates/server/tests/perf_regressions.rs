@@ -368,6 +368,7 @@ async fn seed_library(
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await
@@ -572,6 +573,7 @@ async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cb
             cbl_list_id: Set(Some(list_id)),
             auto_pin: Set(false),
             preserve_canonical_order: Set(false),
+            featured_position: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -1175,6 +1177,7 @@ async fn seed_scan_library(app: &TestApp, root: &Path) -> Uuid {
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await

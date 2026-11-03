@@ -174,6 +174,9 @@ pub struct SavedViewView {
     /// `pinned_on` filter so the picker reflects ground truth.
     #[serde(default)]
     pub pinned_on_pages: Vec<String>,
+    /// Start Here M2: position in the admin-curated Start Here set, `None`
+    /// when not featured. Only ever set on shared CBL views.
+    pub featured_position: Option<i32>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -473,10 +476,32 @@ async fn ensure_pins_seeded(
     // order, then any remaining auto-pin views (future rails) by their
     // db order. Keeps the SQL portable while letting product decide the
     // top-down sequence on the home page.
+    // Start Here M2: a brand-new account also gets the `start_here` rail,
+    // at the very top. "Brand-new" = no pin row for any auto-pin system
+    // rail yet: this seed re-adds those on every visit, so anyone who has
+    // ever loaded their home page has them. (Not "no pin rows at all" —
+    // other surfaces, e.g. the Want to Read seed, can write an unpinned
+    // row before the first home visit.) It is not `auto_pin`, so existing
+    // users never get it pushed onto their curated page; they can pin it
+    // from Manage pins. The rail hides itself while no lists are featured.
+    let fresh_account = !system.iter().any(|v| existing_view_ids.contains(&v.id));
+    let start_here: Option<saved_view::Model> = if fresh_account {
+        saved_view::Entity::find()
+            .filter(saved_view::Column::UserId.is_null())
+            .filter(saved_view::Column::SystemKey.eq(crate::api::start_here::SYSTEM_KEY_START_HERE))
+            .one(db)
+            .await?
+    } else {
+        None
+    };
     let system = {
         let mut by_id: std::collections::HashMap<Uuid, saved_view::Model> =
             system.into_iter().map(|m| (m.id, m)).collect();
-        let mut ordered: Vec<saved_view::Model> = Vec::with_capacity(by_id.len());
+        let mut ordered: Vec<saved_view::Model> = Vec::with_capacity(by_id.len() + 1);
+        if let Some(m) = start_here {
+            by_id.remove(&m.id);
+            ordered.push(m);
+        }
         for id_str in DEFAULT_HOME_PIN_ORDER {
             if let Ok(id) = Uuid::parse_str(id_str)
                 && let Some(m) = by_id.remove(&id)
@@ -548,6 +573,7 @@ fn to_view(
         system_key: model.system_key.clone(),
         icon: pref.and_then(|p| p.icon.clone()),
         pinned_on_pages,
+        featured_position: model.featured_position,
     }
 }
 
@@ -866,6 +892,7 @@ async fn create_inner(
         created_at: Set(now),
         updated_at: Set(now),
         preserve_canonical_order: Set(false),
+        featured_position: Set(None),
     };
     let saved = match am.insert(&app.db).await {
         Ok(m) => m,

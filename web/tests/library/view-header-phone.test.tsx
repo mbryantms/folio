@@ -19,6 +19,12 @@ import type { SavedViewView } from "@/lib/api/types";
 
 vi.mock("@/lib/api/mutations", () => ({
   useSidebarSavedView: () => ({ mutate: () => {}, isPending: false }),
+  useSetStartHere: () => ({ mutate: () => {}, isPending: false }),
+  useShareReadingList: () => ({ mutate: () => {}, isPending: false }),
+}));
+vi.mock("@/lib/api/queries", () => ({
+  useMe: () => ({ data: { role: "user" } }),
+  useStartHere: () => ({ isLoading: false, data: { items: [] } }),
 }));
 // Needs a QueryClient + Radix portal; the pin dialog has its own tests.
 vi.mock("@/components/saved-views/MultiPinDialog", () => ({

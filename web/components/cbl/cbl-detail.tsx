@@ -778,8 +778,11 @@ function SettingsTab({
 }) {
   const router = useRouter();
   const deleteList = useDeleteCblList(list.id);
-  const deleteView = useDeleteSavedView(savedView.id);
-  const updateView = useUpdateSavedView(savedView.id);
+  // A shared list (`is_system`) is managed through the admin routes; only
+  // admins reach this sheet for one (ViewActionsMenu gates Edit).
+  const shared = savedView.is_system;
+  const deleteView = useDeleteSavedView(savedView.id, { admin: shared });
+  const updateView = useUpdateSavedView(savedView.id, { admin: shared });
   const updateList = useUpdateCblList(list.id);
 
   // Seed from current values. After save, props update via the
@@ -857,7 +860,8 @@ function SettingsTab({
   async function deleteEverything() {
     // Saved view first so the cbl_list isn't orphaned mid-flight.
     await deleteView.mutateAsync();
-    await deleteList.mutateAsync();
+    // The admin route already deleted a shared list along with its view.
+    if (!shared) await deleteList.mutateAsync();
     router.push("/");
   }
 
