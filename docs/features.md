@@ -337,6 +337,9 @@ cover dates) and proposes the mappings for you to accept.
   Lists refresh from upstream (manually or on schedule) with a structural
   diff history, manual match overrides survive refreshes, and lists export
   back to `.cbl`.
+- **Shared lists** — an admin can share one of their reading lists with
+  every user. Shared lists appear under everyone's Reading Lists and can be
+  pinned, but only admins can edit, refresh or delete them.
 - **First-run tour + starter reading lists** — a new account gets a
   short guided tour on Home that spotlights search, the libraries, Home
   rails, collections, bookmarks and settings (skippable with Esc, replayable
@@ -370,7 +373,9 @@ cover dates) and proposes the mappings for you to accept.
   views, On Deck, lists), each with its own sidebar entry; the sidebar
   itself is fully reorderable with custom headers and spacers; anything
   you hid from a home rail is listed under Settings → Pages, where one
-  click restores it.
+  click restores it. Admins choose which libraries a new account's
+  sidebar lists by default (**Show in sidebar by default** in library
+  settings); the rest stay one click away under All Libraries.
 - **Multi-select everywhere** — bulk mark-read, bulk metadata edit
   (admins), bulk add-to-collection across the major list surfaces.
 - **Markers** — four kinds, all page-anchored: bookmarks, Markdown notes,

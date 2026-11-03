@@ -356,7 +356,9 @@ function CblViewDetailInner({
   const list = detail.data;
   const filterTotal = entriesQuery.data?.pages[0]?.total ?? null;
   const missingCount = list.stats.missing;
-  const canRefresh = list.source_kind !== "upload";
+  // Shared lists are refreshed by admins only (server enforces the same).
+  const canRefresh =
+    list.source_kind !== "upload" && (!savedView.is_system || isAdmin);
   const warnNoMatchedSelection = () => {
     toast.warning("No matched issues selected", {
       description: "Missing CBL entries cannot be marked read or unread.",

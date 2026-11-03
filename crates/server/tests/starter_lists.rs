@@ -157,6 +157,7 @@ async fn seed_series_with_issue(app: &TestApp, slug: &str) -> (Uuid, Uuid, Strin
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await
@@ -499,6 +500,33 @@ async fn shelf_coverage_is_per_caller_and_links_imports() {
     )
     .await;
     assert!(find(&body, HAWKEYE).unwrap()["imported_view_id"].is_null());
+
+    // A list an admin shared with everyone counts too, for every reader;
+    // the reader's own import still wins.
+    let all_star = "DC/Creator Runs/[DC] [2006-2008] All-Star Superman by Grant Morrison.cbl";
+    let shared_list = seed_catalog_list(&app, DT, all_star).await;
+    let shared = seed_cbl_saved_view(&app, None, shared_list, "All-Star Superman").await;
+    for who in [&reader, &admin] {
+        let (_, body) = http(&app, Method::GET, "/api/me/starter-lists", Some(who), None).await;
+        assert_eq!(
+            find(&body, all_star).unwrap()["imported_view_id"],
+            shared.to_string()
+        );
+    }
+    let shared_hawkeye = seed_catalog_list(&app, DT, HAWKEYE).await;
+    seed_cbl_saved_view(&app, None, shared_hawkeye, "Shared Hawkeye").await;
+    let (_, body) = http(
+        &app,
+        Method::GET,
+        "/api/me/starter-lists",
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(
+        find(&body, HAWKEYE).unwrap()["imported_view_id"],
+        view.to_string()
+    );
 }
 
 /// Admins hide a shipped pick, add their own, and remove it again;

@@ -2053,6 +2053,32 @@
         }
       }
     },
+    "/api/admin/saved-views/{id}/share": {
+      "post": {
+        "operationId": "shared_lists_share",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "the reading list is now shared with every user"
+          },
+          "403": {
+            "description": "admin only; the view must be the caller's own reading list"
+          },
+          "404": {
+            "description": "view not found"
+          }
+        }
+      }
+    },
     "/api/admin/scan-batches": {
       "get": {
         "operationId": "admin_scan_batches_list",
@@ -26074,7 +26100,8 @@
           "filename_ignore_leading_numbers",
           "filename_assume_issue_one",
           "metadata_auto_apply_strong_matches",
-          "auto_search_new_series"
+          "auto_search_new_series",
+          "show_in_sidebar_by_default"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -26189,6 +26216,10 @@
               "null"
             ],
             "description": "Cron expression governing the scheduled scan, or `null` if disabled."
+          },
+          "show_in_sidebar_by_default": {
+            "type": "boolean",
+            "description": "Default visibility of this library in a user's sidebar when the user\nhas no override for it (Start Here + default pins M1)."
           },
           "slug": {
             "type": "string"
@@ -35622,7 +35653,7 @@
               "string",
               "null"
             ],
-            "description": "Set when the caller already imported this file: their reading-list\nview, so the tour can link to it instead of importing it again."
+            "description": "Set when the caller already has this file as a reading list (their\nown import, else one an admin shared with everyone), so the tour\nlinks to it instead of importing it again."
           },
           "origin": {
             "type": "string",
@@ -37012,6 +37043,13 @@
               "null"
             ],
             "description": "Cron expression. `null` clears it; an empty string is treated as null.\nTri-state: omitted = leave unchanged; explicit `null` = clear."
+          },
+          "show_in_sidebar_by_default": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Show this library in the sidebar of users who haven't customized\nthat row (new accounts included). Off hides it by default; it stays\nreachable through All Libraries and the sidebar editor."
           },
           "slug": {
             "type": [

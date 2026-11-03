@@ -68,8 +68,9 @@ pub struct StarterListView {
     /// Of those, issues in this library the caller can read.
     pub available: i64,
     pub coverage_computed_at: Option<DateTime<FixedOffset>>,
-    /// Set when the caller already imported this file: their reading-list
-    /// view, so the tour can link to it instead of importing it again.
+    /// Set when the caller already has this file as a reading list (their
+    /// own import, else one an admin shared with everyone), so the tour
+    /// links to it instead of importing it again.
     pub imported_view_id: Option<String>,
 }
 
@@ -234,9 +235,9 @@ async fn build(
         backend,
         "SELECT l.catalog_source_id, l.catalog_path, v.id AS view_id \
          FROM saved_views v JOIN cbl_lists l ON l.id = v.cbl_list_id \
-         WHERE v.kind = 'cbl' AND v.user_id = $1 \
+         WHERE v.kind = 'cbl' AND (v.user_id = $1 OR v.user_id IS NULL) \
            AND l.catalog_source_id IS NOT NULL AND l.catalog_path IS NOT NULL \
-         ORDER BY v.created_at",
+         ORDER BY (v.user_id IS NULL), v.created_at",
         [user.id.into()],
     ))
     .all(&app.db)
