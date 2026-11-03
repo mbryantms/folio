@@ -95,13 +95,17 @@ export default async function HomePage({
           Router won't auto-reset scroll when arriving here from those
           views — reset it on mount. */}
       <ScrollToTopOnMount />
-      <PageRails
-        pageId={system.id}
-        pageName={system.name}
-        pageDescription={system.description ?? null}
-        isSystem
-        showInSidebar={system.show_in_sidebar}
-      />
+      {/* `data-tour`: the first-run tour's "Home" step spotlights the
+          first rail. */}
+      <div data-tour="home-rails" data-tour-region="section">
+        <PageRails
+          pageId={system.id}
+          pageName={system.name}
+          pageDescription={system.description ?? null}
+          isSystem
+          showInSidebar={system.show_in_sidebar}
+        />
+      </div>
     </>
   );
 }

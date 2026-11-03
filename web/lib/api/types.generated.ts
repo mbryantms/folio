@@ -1177,6 +1177,70 @@ export interface paths {
         patch: operations["admin_settings_update"];
         trace?: never;
     };
+    "/api/admin/starter-lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["starter_lists_admin_list"];
+        put?: never;
+        post: operations["starter_lists_admin_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/starter-lists/refresh-coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["starter_lists_admin_refresh_coverage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/starter-lists/visibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["starter_lists_admin_set_visibility"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/starter-lists/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["starter_lists_admin_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/stats/content": {
         parameters: {
             query?: never;
@@ -4409,6 +4473,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/starter-lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["starter_lists_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/view-covers": {
         parameters: {
             query?: never;
@@ -6270,6 +6350,16 @@ export interface components {
             range_low?: string | null;
             /** @description `"comicvine" | "metron" | "gcd" | …`. Aliases accepted. */
             source: string;
+        };
+        AddStarterListReq: {
+            catalog_path: string;
+            /** Format: uuid */
+            catalog_source_id: string;
+            /** @description Defaults to the first folder of the path. */
+            publisher?: string | null;
+            reason: string;
+            /** @description Defaults to the file name. */
+            title?: string | null;
         };
         /**
          * @description Audit-remediation M4 dropped `LogWidgetListView { widgets: Vec<_> }` in
@@ -11575,6 +11665,12 @@ export interface components {
              */
             max_rails_per_page: number;
             motion?: components["schemas"]["Motion"] | null;
+            /**
+             * Format: date-time
+             * @description When the first-run tour was finished or skipped; `null` means the
+             *     web shows it on the next visit to Home.
+             */
+            onboarding_completed_at?: string | null;
             /** @description True when `/me/account` accepts local password changes for this user. */
             password_editable: boolean;
             /**
@@ -12415,6 +12511,11 @@ export interface components {
              */
             max_rails_per_page?: number | null;
             motion?: components["schemas"]["Motion"] | null;
+            /**
+             * @description `true` marks the first-run tour finished (or skipped); `false`
+             *     clears it so the tour runs again on the next visit to Home.
+             */
+            onboarding_completed?: boolean | null;
             /**
              * Format: double
              * @description Reader display preferences (audit 2026-11 F6/F7). Absent leaves the
@@ -14851,6 +14952,12 @@ export interface components {
             /** Format: double */
             rating?: number | null;
         };
+        SetStarterListVisibilityReq: {
+            catalog_path: string;
+            /** Format: uuid */
+            catalog_source_id: string;
+            hidden: boolean;
+        };
         SettingsView: {
             /**
              * @description Catalog of every DB-overlayable setting recognized by this server
@@ -15068,6 +15175,46 @@ export interface components {
          * @enum {string}
          */
         SpecialsCompletion: "inherit" | "include" | "exclude";
+        StarterListListView: {
+            items: components["schemas"]["StarterListView"][];
+        };
+        StarterListView: {
+            /**
+             * Format: int64
+             * @description Of those, issues in this library the caller can read.
+             */
+            available: number;
+            catalog_path: string;
+            catalog_source_id: string;
+            /** Format: date-time */
+            coverage_computed_at?: string | null;
+            /** @description `ready`, `pending` (first computation running) or `error`. */
+            coverage_status: string;
+            /** @description Admin listing only; the reader listing never includes hidden picks. */
+            hidden: boolean;
+            /**
+             * @description Set when the caller already imported this file: their reading-list
+             *     view, so the tour can link to it instead of importing it again.
+             */
+            imported_view_id?: string | null;
+            /** @description `shipped` (Folio's curated pick) or `admin` (added on this server). */
+            origin: string;
+            /**
+             * @description The override row behind an admin-added or hidden pick (the id
+             *     `DELETE /admin/starter-lists/{id}` takes).
+             */
+            override_id?: string | null;
+            /** @description Grouping label (`Marvel`, `DC`, `Image`, …). */
+            publisher: string;
+            /** @description Why this is a good place to start. */
+            reason: string;
+            title: string;
+            /**
+             * Format: int32
+             * @description Entries in the list.
+             */
+            total: number;
+        };
         /**
          * @description Confidence bucket shown to reviewers (spec §5.7 "grouped by confidence").
          * @enum {string}
@@ -18752,6 +18899,149 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    starter_lists_admin_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StarterListListView"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    starter_lists_admin_add: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddStarterListReq"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StarterListListView"];
+                };
+            };
+            /** @description unknown catalog source, or the path is not in its index */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description already a starter list */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description empty path or reason */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    starter_lists_admin_refresh_coverage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description coverage recomputation started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    starter_lists_admin_set_visibility: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetStarterListVisibilityReq"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StarterListListView"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    starter_lists_admin_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StarterListListView"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25188,6 +25478,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    starter_lists_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StarterListListView"];
+                };
             };
         };
     };

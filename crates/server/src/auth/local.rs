@@ -207,6 +207,9 @@ pub struct MeResp {
     /// Cover stack style for reading-list and collection cards: one of
     /// `straight`, `hand`, `arc`, `pile`, `pickup`.
     pub cover_stack_style: String,
+    /// When the first-run tour was finished or skipped; `null` means the
+    /// web shows it on the next visit to Home.
+    pub onboarding_completed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     /// Reader display preferences that follow the account (audit 2026-11
     /// F6/F7). Each is `null` until the account has set it; while `null`
     /// the reader keeps the browser's own stored value and adopts it on
@@ -290,6 +293,10 @@ pub struct PreferencesReq {
     /// One of `straight`, `hand`, `arc`, `pile`, `pickup`; anything else 422s.
     #[serde(default)]
     pub cover_stack_style: Option<String>,
+    /// `true` marks the first-run tour finished (or skipped); `false`
+    /// clears it so the tour runs again on the next visit to Home.
+    #[serde(default)]
+    pub onboarding_completed: Option<bool>,
     /// Reader display preferences (audit 2026-11 F6/F7). Absent leaves the
     /// stored value; `null` clears it so the reader falls back to its
     /// browser value / built-in default. Ranges: brightness 0.5..=1.5.
@@ -546,6 +553,7 @@ pub async fn register(
         opds_progress_glyphs: Set(true),
         max_rails_per_page: Set(12),
         cover_stack_style: Set("pickup".into()),
+        onboarding_completed_at: Set(None),
         reader_brightness: Set(None),
         reader_sepia: Set(None),
         reader_grayscale: Set(None),
@@ -1305,6 +1313,9 @@ pub async fn update_preferences(
     if let Some(v) = req.cover_stack_style.clone() {
         am.cover_stack_style = Set(v);
     }
+    if let Some(done) = req.onboarding_completed {
+        am.onboarding_completed_at = Set(done.then(|| chrono::Utc::now().fixed_offset()));
+    }
     if let Some(v) = req.reader_brightness {
         am.reader_brightness = Set(v);
     }
@@ -1911,6 +1922,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         show_marker_count: row.show_marker_count,
         max_rails_per_page: row.max_rails_per_page,
         cover_stack_style: row.cover_stack_style.clone(),
+        onboarding_completed_at: row.onboarding_completed_at,
         reader_brightness: row.reader_brightness,
         reader_sepia: row.reader_sepia,
         reader_grayscale: row.reader_grayscale,
@@ -1959,6 +1971,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             show_marker_count: false,
             max_rails_per_page: 12,
             cover_stack_style: "pickup".into(),
+            onboarding_completed_at: None,
             reader_brightness: None,
             reader_sepia: None,
             reader_grayscale: None,

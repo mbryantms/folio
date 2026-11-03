@@ -32,6 +32,7 @@ pub mod relationships;
 pub mod settings;
 pub mod similarity;
 pub mod slug;
+pub mod starter_lists;
 pub mod state;
 pub mod upstream;
 pub mod util;

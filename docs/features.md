@@ -337,6 +337,15 @@ cover dates) and proposes the mappings for you to accept.
   Lists refresh from upstream (manually or on schedule) with a structural
   diff history, manual match overrides survive refreshes, and lists export
   back to `.cbl`.
+- **First-run tour + starter reading lists** — a new account gets a
+  short guided tour on Home that spotlights search, the libraries, Home
+  rails, collections, bookmarks and settings (skippable with Esc, replayable
+  from the user menu's "Take the tour"). It ends on a shelf of starter
+  reading lists: the community's usual "where do I start?" picks per
+  publisher, each with how much of it this library already holds (counted
+  without importing, and only issues the reader can open) and a one-click
+  Add. Admins hide picks or add their own catalog files under
+  Admin → Starter lists.
 - **Cover stacks** — reading-list and collection cards on the
   Collections page and Settings → Views show their first four covers as
   a fanned stack that spreads out on hover or keyboard focus. Five styles

@@ -86,6 +86,12 @@ export function MainSidebar({
             return (
               <SidebarGroup
                 key={`${section.label ?? "untitled"}-${sectionIdx}`}
+                // First-run tour anchor: the section holding the libraries.
+                data-tour={
+                  section.items.some((i) => i.kind === "library")
+                    ? "nav-libraries"
+                    : undefined
+                }
               >
                 {section.label ? (
                   collapsible ? (
@@ -162,6 +168,12 @@ export function MainSidebar({
                             <Link
                               href={item.href}
                               aria-current={active ? "page" : undefined}
+                              // First-run tour anchors (`nav-collections`, …).
+                              data-tour={
+                                item.kind === "builtin"
+                                  ? `nav-${item.refId}`
+                                  : undefined
+                              }
                             >
                               <Icon />
                               <span>{item.label}</span>

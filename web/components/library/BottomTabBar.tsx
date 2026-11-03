@@ -74,6 +74,7 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
         icon={Library}
         label="Library"
         active={libraryAll}
+        tour="tab-library"
       />
       <button
         type="button"
@@ -81,6 +82,7 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
         aria-haspopup="dialog"
         aria-expanded={searchOpen}
         aria-current={onSearch ? "page" : undefined}
+        data-tour="tab-search"
         className={cn(
           TAB_CLASS,
           searchOpen || onSearch
@@ -96,12 +98,14 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
         icon={Bookmark}
         label="Bookmarks"
         active={onBookmarks}
+        tour="tab-bookmarks"
       />
       <button
         type="button"
         onClick={onMore}
         aria-label="More navigation"
         aria-haspopup="dialog"
+        data-tour="tab-more"
         className={cn(TAB_CLASS, "text-muted-foreground hover:text-foreground")}
       >
         <Menu className="size-5" aria-hidden="true" />
@@ -116,15 +120,19 @@ function TabLink({
   icon: Icon,
   label,
   active,
+  tour,
 }: {
   href: string;
   icon: LucideIcon;
   label: string;
   active: boolean;
+  /** First-run tour anchor (phone fallback for the sidebar steps). */
+  tour?: string;
 }) {
   return (
     <Link
       href={href}
+      data-tour={tour}
       aria-current={active ? "page" : undefined}
       className={cn(
         TAB_CLASS,

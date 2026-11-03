@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import {
   ChevronUp,
+  Compass,
   House,
   Info,
   Keyboard,
@@ -77,6 +78,8 @@ export function UserFooter({
 
   return (
     <div
+      // First-run tour anchor ("Settings live here").
+      data-tour="user-menu"
       className={cn(
         "border-border/60 border-t py-2",
         // The upstream icon rail is 3rem wide: 8px side padding + the 36px
@@ -172,6 +175,12 @@ export function UserFooter({
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuSeparator />
+          <DropdownMenuItem asChild>
+            {/* Replays the first-run tour on Home (`?tour=1`). */}
+            <Link href="/?tour=1">
+              <Compass /> Take the tour
+            </Link>
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => shortcuts.open()}>
             <Keyboard /> Keyboard shortcuts
             <DropdownMenuShortcut>?</DropdownMenuShortcut>

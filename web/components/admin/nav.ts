@@ -123,6 +123,12 @@ export function adminNav(localePrefix: string): NavSection[] {
           label: "Relationships",
           icon: "Network",
         },
+        // Onboarding PR C — the first-run tour's starter reading lists.
+        {
+          href: p("/starter-lists"),
+          label: "Starter lists",
+          icon: "BookOpen",
+        },
       ],
     },
     {
