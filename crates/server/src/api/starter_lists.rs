@@ -568,21 +568,34 @@ pub async fn admin_delete(
 pub async fn admin_refresh_coverage(
     State(app): State<AppState>,
     admin: RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
 ) -> impl IntoResponse {
-    match build(&app, &admin.0, true).await {
-        Ok(v) => {
-            let keys = v
-                .items
-                .iter()
-                .filter_map(|i| {
-                    Uuid::parse_str(&i.catalog_source_id)
-                        .ok()
-                        .map(|id| (id, i.catalog_path.clone()))
-                })
-                .collect();
-            sl::spawn_coverage(&app, keys);
-            StatusCode::ACCEPTED.into_response()
-        }
-        Err(e) => internal(e),
-    }
+    let v = match build(&app, &admin.0, true).await {
+        Ok(v) => v,
+        Err(e) => return internal(e),
+    };
+    let keys: Vec<(Uuid, String)> = v
+        .items
+        .iter()
+        .filter_map(|i| {
+            Uuid::parse_str(&i.catalog_source_id)
+                .ok()
+                .map(|id| (id, i.catalog_path.clone()))
+        })
+        .collect();
+    audit::record(
+        &app.db,
+        AuditEntry {
+            actor_id: admin.0.id,
+            action: "admin.starter_list.refresh_coverage",
+            target_type: Some("starter_list"),
+            target_id: None,
+            payload: serde_json::json!({ "lists": keys.len() }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await;
+    sl::spawn_coverage(&app, keys);
+    StatusCode::ACCEPTED.into_response()
 }
