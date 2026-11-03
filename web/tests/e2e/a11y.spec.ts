@@ -105,6 +105,30 @@ const ROUTES: Route[] = [
       await expect(page.getByRole("dialog")).toBeVisible();
     },
   },
+  // The first-run tour (replay link): the welcome card, then the last
+  // step's starter reading-list shelf.
+  {
+    path: "/?tour=1",
+    label: "home, first-run tour open",
+    prepare: async (page) => {
+      await expect(
+        page.getByRole("dialog", { name: "Welcome to Folio" }),
+      ).toBeVisible();
+    },
+  },
+  {
+    path: "/?tour=1",
+    label: "home, first-run tour starter lists",
+    prepare: async (page) => {
+      await expect(
+        page.getByRole("dialog", { name: "Welcome to Folio" }),
+      ).toBeVisible();
+      for (let i = 0; i < 7; i++) await page.keyboard.press("ArrowRight");
+      await expect(
+        page.getByRole("dialog", { name: "Pick a place to start" }),
+      ).toBeVisible();
+    },
+  },
   { path: "/browse", label: "browse hub" },
   { path: "/?library=all", label: "library grid" },
   {

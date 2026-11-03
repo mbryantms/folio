@@ -5,7 +5,7 @@
  * `chromium-admin` project (`playwright.config.ts` `dependencies`):
  *
  *   register the first user through the real sign-in form (it becomes the
- *   admin) → create the library over the generated fixture
+ *   admin) → mark the first-run tour done → create the library over the generated fixture
  *   (`fixtures/make-library.mjs`) → scan → wait until every fixture series
  *   exists → save the signed-in browser state to `ADMIN_STATE`.
  *
@@ -74,6 +74,16 @@ setup(
     expect(me.role, "the setup user must be the first (admin) user").toBe(
       "admin",
     );
+
+    // The first-run tour opens as a modal on Home for a new account and
+    // would sit over every page the specs drive. Finish it here, as the
+    // "Done" button does, so the shared session behaves like an existing
+    // user's.
+    const toured = await page.request.patch("/api/me/preferences", {
+      headers: { "X-CSRF-Token": await csrfToken(context) },
+      data: { onboarding_completed: true },
+    });
+    expect(toured.status(), await toured.text()).toBe(200);
 
     // 2. One library over /library, scanned (the admin "New library" dialog's
     //    endpoint; cookie session + CSRF header).
