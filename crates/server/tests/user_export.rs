@@ -187,7 +187,6 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
         cbl_list_id: Set(None),
         auto_pin: Set(false),
         preserve_canonical_order: Set(false),
-        featured_position: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -218,7 +217,6 @@ async fn seed_user_a(db: &DatabaseConnection, tmp: &std::path::Path, user_id: Uu
         cbl_list_id: Set(None),
         auto_pin: Set(false),
         preserve_canonical_order: Set(false),
-        featured_position: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
     }

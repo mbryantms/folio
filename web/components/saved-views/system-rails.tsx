@@ -17,10 +17,6 @@ import {
 } from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import { RailError } from "@/components/saved-views/RailError";
-import {
-  StartHereCard,
-  StartHereCardSkeleton,
-} from "@/components/saved-views/StartHereCard";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
 import {
   useContinueReading,
@@ -30,7 +26,6 @@ import {
   useRecentHistory,
   useRecentIssues,
   useSimilarRailInfinite,
-  useStartHere,
 } from "@/lib/api/queries";
 
 /**
@@ -273,44 +268,6 @@ export function RandomPicksRailBody({
 }
 
 /**
- * Start Here rail body (Start Here M2): admin-featured shared reading
- * lists as fanned-cover cards with the caller's progress. Hidden while
- * nothing is featured (or nothing featured is in the caller's libraries).
- */
-export function StartHereRailBody({
-  itemStyle,
-}: {
-  itemStyle: React.CSSProperties;
-}) {
-  const q = useStartHere();
-  if (q.isLoading) {
-    return (
-      <>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} style={itemStyle} className="shrink-0">
-            <StartHereCardSkeleton />
-          </div>
-        ))}
-      </>
-    );
-  }
-  if (q.isError && !q.data) {
-    return <RailError onRetry={() => void q.refetch()} />;
-  }
-  const items = q.data?.items ?? [];
-  if (items.length === 0) return null;
-  return (
-    <>
-      {items.map((item) => (
-        <div key={item.view_id} style={itemStyle} className="shrink-0">
-          <StartHereCard item={item} />
-        </div>
-      ))}
-    </>
-  );
-}
-
-/**
  * On-this-day rail body: issues released on the viewer's local calendar
  * day in any year, oldest first. Hidden when the library carries no
  * full release dates for today.
@@ -393,7 +350,6 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   const rh = useRecentHistory({ enabled: systemKey === "recent_history" });
   const rp = useRandomPicks({ enabled: systemKey === "random_picks" });
   const otd = useOnThisDay({ enabled: systemKey === "on_this_day" });
-  const sh = useStartHere({ enabled: systemKey === "start_here" });
   // An errored query with nothing cached is NOT empty — the rail stays
   // mounted so its body can show the retry state (post-audit T2.4).
   if (systemKey === "continue_reading") {
@@ -422,9 +378,6 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
     return (
       !otd.isLoading && !otd.isError && (otd.data?.items.length ?? 0) === 0
     );
-  }
-  if (systemKey === "start_here") {
-    return !sh.isLoading && !sh.isError && (sh.data?.items.length ?? 0) === 0;
   }
   return false;
 }

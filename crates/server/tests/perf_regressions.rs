@@ -573,7 +573,6 @@ async fn seed_cbls(app: &TestApp, series_with_issues: &[(Uuid, Vec<String>)], cb
             cbl_list_id: Set(Some(list_id)),
             auto_pin: Set(false),
             preserve_canonical_order: Set(false),
-            featured_position: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         }

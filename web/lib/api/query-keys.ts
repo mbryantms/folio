@@ -582,9 +582,6 @@ export const queryKeys = {
   /** Random-picks rail (`/me/random-picks`) — unstarted series only, so a
    *  progress write (or a series dismissal) changes it. */
   randomPicks: ["rails", "random-picks"] as const,
-  /** Start Here rail + page (`/me/start-here`): admin-featured shared
-   *  reading lists with per-user progress. */
-  startHere: ["rails", "start-here"] as const,
   /** On-this-day rail (`/me/on-this-day`), keyed by the viewer's local
    *  calendar day so a session that crosses midnight re-fetches. */
   onThisDay: (month: number, day: number) =>

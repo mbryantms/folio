@@ -8,7 +8,6 @@ import {
   Pencil,
   Pin,
   Share2,
-  Sparkles,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,12 +29,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  useSetStartHere,
-  useShareReadingList,
-  useSidebarSavedView,
-} from "@/lib/api/mutations";
-import { useMe, useStartHere } from "@/lib/api/queries";
+import { useShareReadingList, useSidebarSavedView } from "@/lib/api/mutations";
+import { useMe } from "@/lib/api/queries";
 import type { SavedViewView } from "@/lib/api/types";
 
 import { MultiPinDialog } from "./MultiPinDialog";
@@ -64,7 +59,7 @@ export function ViewActionsMenu({
   const pinnedCount = (view.pinned_on_pages ?? []).length;
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
-  // Shared reading lists (Start Here M2) are system views that admins
+  // Shared reading lists are system views that admins
   // still manage; built-in system rails stay uneditable.
   const canEdit =
     onEdit !== undefined &&
@@ -101,11 +96,11 @@ export function ViewActionsMenu({
             </DropdownMenuItem>
           ) : null}
           {extraMenuItems}
-          {isAdmin && view.kind === "cbl" ? (
-            <StartHereMenuItems
-              view={view}
-              onShare={() => setShareOpen(true)}
-            />
+          {isAdmin && view.kind === "cbl" && !view.is_system ? (
+            // Let the menu close; the confirm dialog opens on its own.
+            <DropdownMenuItem onSelect={() => setShareOpen(true)}>
+              <Share2 className="mr-2 size-4" /> Share with everyone…
+            </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem
             onSelect={(e) => {
@@ -153,52 +148,6 @@ export function ViewActionsMenu({
   );
 }
 
-/** Admin-only reading-list items (Start Here M2): share a list you own
- *  with every user, then add it to / remove it from Start Here. */
-function StartHereMenuItems({
-  view,
-  onShare,
-}: {
-  view: SavedViewView;
-  onShare: () => void;
-}) {
-  const shared = view.is_system;
-  const featured = view.featured_position != null;
-  const startHere = useStartHere({ enabled: shared });
-  const setFeatured = useSetStartHere();
-  if (!shared) {
-    return (
-      // Let the menu close; the confirm dialog opens on its own.
-      <DropdownMenuItem onSelect={() => onShare()}>
-        <Share2 className="mr-2 size-4" /> Share with everyone…
-      </DropdownMenuItem>
-    );
-  }
-  const current = (startHere.data?.items ?? []).map((i) => i.view_id);
-  return (
-    <DropdownMenuItem
-      disabled={startHere.isLoading || setFeatured.isPending}
-      onSelect={(e) => {
-        e.preventDefault();
-        setFeatured.mutate(
-          featured
-            ? {
-                viewIds: current.filter((id) => id !== view.id),
-                message: "Removed from Start Here",
-              }
-            : {
-                viewIds: [...current.filter((id) => id !== view.id), view.id],
-                message: "Added to Start Here",
-              },
-        );
-      }}
-    >
-      <Sparkles className="mr-2 size-4" />
-      {featured ? "Remove from Start Here" : "Add to Start Here"}
-    </DropdownMenuItem>
-  );
-}
-
 function ShareReadingListDialog({
   view,
   open,
@@ -218,8 +167,7 @@ function ShareReadingListDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             Every user will see this reading list under Reading Lists and can
-            pin it, but only admins can edit, refresh or delete it. It can then
-            be added to the Start Here rail for new accounts. Sharing
+            pin it, but only admins can edit, refresh or delete it. Sharing
             can&rsquo;t be undone from here.
           </AlertDialogDescription>
         </AlertDialogHeader>

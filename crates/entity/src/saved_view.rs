@@ -133,11 +133,6 @@ pub struct Model {
     /// Only meaningful for kind='collection' rows. M2 of
     /// `opds-sync-cleanup-1.0`.
     pub preserve_canonical_order: bool,
-    /// Start Here M2: position in the admin-curated "Start here" list of
-    /// recommended reading lists. NULL = not featured. A DB CHECK limits it
-    /// to shared (`user_id IS NULL`) CBL views.
-    #[sea_orm(nullable)]
-    pub featured_position: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

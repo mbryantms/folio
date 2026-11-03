@@ -446,10 +446,9 @@ async fn default_home_pin_order_is_curated() {
     let auth = register(&app, "eve@example.com").await;
 
     // First touch seeds auto-pin system views into user_view_pins. The
-    // top-down pin order is curated: Start here (fresh accounts only,
-    // Start Here M2) → Continue Reading → On Deck → New Issues →
-    // Recently added series → Recently updated series → Recently finished
-    // issues (filter-parity-and-builtin-views-1.0).
+    // top-down pin order is curated: Continue Reading → On Deck →
+    // New Issues → Recently added series → Recently updated series →
+    // Recently finished issues (filter-parity-and-builtin-views-1.0).
     let (status, json) = http(&app, Method::GET, "/api/me/saved-views", Some(&auth), None).await;
     assert_eq!(status, StatusCode::OK);
     let items = json["items"].as_array().unwrap();
@@ -468,7 +467,6 @@ async fn default_home_pin_order_is_curated() {
     assert_eq!(
         names,
         vec![
-            "Start here".to_owned(),
             "Continue reading".to_owned(),
             "On deck".to_owned(),
             "New issues".to_owned(),

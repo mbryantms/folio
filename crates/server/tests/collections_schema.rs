@@ -251,7 +251,6 @@ async fn make_collection(
         cbl_list_id: Set(None),
         auto_pin: Set(false),
         preserve_canonical_order: Set(false),
-        featured_position: Set(None),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -432,7 +431,6 @@ async fn per_user_and_global_system_key_uniqueness() {
         cbl_list_id: Set(None),
         auto_pin: Set(false),
         preserve_canonical_order: Set(false),
-        featured_position: Set(None),
         created_at: Set(Utc::now().fixed_offset()),
         updated_at: Set(Utc::now().fixed_offset()),
     }

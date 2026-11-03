@@ -34,7 +34,7 @@ export * from "./markers";
 export { invalidateRails } from "./rails";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
-export * from "./start-here";
+export * from "./shared-lists";
 
 import type {
   CancelBatchResp,

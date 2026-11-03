@@ -145,7 +145,6 @@ mod m20271101_000001_library_auto_search_new_series;
 mod m20271101_000002_marker_color_check;
 mod m20271101_000003_specials_completeness_pref;
 mod m20271102_000001_library_sidebar_default;
-mod m20271102_000002_start_here;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -299,7 +298,6 @@ impl MigratorTrait for Migrator {
             Box::new(m20271101_000002_marker_color_check::Migration),
             Box::new(m20271101_000003_specials_completeness_pref::Migration),
             Box::new(m20271102_000001_library_sidebar_default::Migration),
-            Box::new(m20271102_000002_start_here::Migration),
         ]
     }
 }

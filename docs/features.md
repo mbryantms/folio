@@ -337,13 +337,9 @@ cover dates) and proposes the mappings for you to accept.
   Lists refresh from upstream (manually or on schedule) with a structural
   diff history, manual match overrides survive refreshes, and lists export
   back to `.cbl`.
-- **Shared lists + Start Here** — an admin can share one of their reading
-  lists with every user (shared lists are read-only for everyone but
-  admins) and feature shared lists in **Start Here**: a rail of
-  fanned-cover reading-list cards with each reader's progress, plus a full
-  page where admins reorder or drop picks. A brand-new account gets the
-  rail pinned at the top of its home page; existing users can pin it from
-  Manage pins.
+- **Shared lists** — an admin can share one of their reading lists with
+  every user. Shared lists appear under everyone's Reading Lists and can be
+  pinned, but only admins can edit, refresh or delete them.
 - **Story arcs** — built automatically from ComicInfo `StoryArc` /
   `StoryArcNumber` tags.
 - **Saved views** — a real filter engine over your library: publisher,

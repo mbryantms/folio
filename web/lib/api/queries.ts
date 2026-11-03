@@ -87,7 +87,6 @@ import type {
   RecentIssuesView,
   RecentHistoryView,
   RandomPicksView,
-  StartHereView,
   OnThisDayView,
   SimilarSeriesListView,
   SimilarSeriesRailView,
@@ -2578,17 +2577,6 @@ export function useRandomPicks(opts?: { enabled?: boolean }) {
   return useQuery({
     queryKey: queryKeys.randomPicks,
     queryFn: () => jsonFetch<RandomPicksView>("/me/random-picks"),
-    enabled: opts?.enabled ?? true,
-    staleTime: 5 * 60_000,
-  });
-}
-
-/** Admin-featured shared reading lists for the Start Here rail + page
- *  (`/me/start-here`), in featured order with the caller's progress. */
-export function useStartHere(opts?: { enabled?: boolean }) {
-  return useQuery({
-    queryKey: queryKeys.startHere,
-    queryFn: () => jsonFetch<StartHereView>("/me/start-here"),
     enabled: opts?.enabled ?? true,
     staleTime: 5 * 60_000,
   });

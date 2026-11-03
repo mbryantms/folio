@@ -895,7 +895,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["start_here_share"];
+        post: operations["shared_lists_share"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1191,22 +1191,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["admin_settings_update"];
-        trace?: never;
-    };
-    "/api/admin/start-here": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["start_here_set_featured"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/admin/stats/content": {
@@ -4433,22 +4417,6 @@ export interface paths {
         };
         /** `GET /me/similar-series` — "Because you read …" home rail. */
         get: operations["rails_similar_series"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me/start-here": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["start_here_list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -13773,12 +13741,6 @@ export interface components {
             custom_year_start?: number | null;
             description?: string | null;
             /**
-             * Format: int32
-             * @description Start Here M2: position in the admin-curated Start Here set, `None`
-             *     when not featured. Only ever set on shared CBL views.
-             */
-            featured_position?: number | null;
-            /**
              * @description Per-user icon override key. `None` falls back to a kind-based
              *     default resolved client-side. Free-form text — the client maps
              *     it against its rail-icon registry and silently falls back if the
@@ -14866,13 +14828,6 @@ export interface components {
         SetDuplicateDecisionReq: {
             decision: components["schemas"]["DuplicateDecision"];
         };
-        SetFeaturedReq: {
-            /**
-             * @description Shared CBL view ids, in the order they should appear. Views not
-             *     listed are unfeatured. At most [`MAX_FEATURED`].
-             */
-            view_ids: string[];
-        };
         /**
          * @description Body for `POST /me/saved-views/{id}/icon` — pick (or clear) the icon
          *     that represents this rail in the user's home + sidebar. `None` /
@@ -15111,41 +15066,6 @@ export interface components {
          * @enum {string}
          */
         SpecialsCompletion: "inherit" | "include" | "exclude";
-        StartHereItemView: {
-            /**
-             * Format: int64
-             * @description Entries matched to an issue the caller can open.
-             */
-            available: number;
-            cbl_list_id: string;
-            /**
-             * @description First matched issues the caller can open, in list order — cover art
-             *     for the card (`/issues/{id}/pages/0/thumb`).
-             */
-            cover_issue_ids: string[];
-            description?: string | null;
-            name: string;
-            /**
-             * Format: int64
-             * @description Matched entries the caller has finished.
-             */
-            read_count: number;
-            /**
-             * Format: int64
-             * @description Entries in the list.
-             */
-            total: number;
-            /** @description The shared CBL saved view (`/views/{view_id}`). */
-            view_id: string;
-        };
-        StartHereView: {
-            /**
-             * @description Lists in featured order. Lists with nothing the caller can open are
-             *     left out for non-admins (an admin sees every featured list so the
-             *     curation surface stays complete).
-             */
-            items: components["schemas"]["StartHereItemView"][];
-        };
         /**
          * @description Confidence bucket shown to reviewers (spec §5.7 "grouped by confidence").
          * @enum {string}
@@ -18265,7 +18185,7 @@ export interface operations {
             };
         };
     };
-    start_here_share: {
+    shared_lists_share: {
         parameters: {
             query?: never;
             header?: never;
@@ -18859,43 +18779,6 @@ export interface operations {
             };
             /** @description admin only */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    start_here_set_featured: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SetFeaturedReq"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StartHereView"];
-                };
-            };
-            /** @description admin only */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description unknown id, duplicate, not a shared reading list, or too many */
-            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25332,25 +25215,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    start_here_list: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["StartHereView"];
-                };
             };
         };
     };

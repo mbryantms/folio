@@ -634,7 +634,6 @@ impl<'a> CollectionSeed<'a> {
             cbl_list_id: Set(None),
             auto_pin: Set(false),
             preserve_canonical_order: Set(self.preserve_canonical_order),
-            featured_position: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         }
