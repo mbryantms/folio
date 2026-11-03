@@ -60,6 +60,7 @@ import {
 } from "@/components/cbl/CblRefreshDashboard";
 import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
+import { CoverStack } from "@/components/cover-stack/CoverStack";
 import { NewCollectionDialog } from "@/components/collections/CollectionsIndex";
 import {
   GroupedViewsBoard,
@@ -84,6 +85,7 @@ import {
   useCblLists,
   useCollections,
   useSavedViews,
+  useViewCovers,
 } from "@/lib/api/queries";
 import type { CblListView, SavedViewView } from "@/lib/api/types";
 import { BatchRefreshProvider } from "@/lib/cbl/use-batch-refresh";
@@ -399,6 +401,19 @@ function TabCount({ n }: { n: number }) {
  *  path for what drag-and-drop does), and Delete. Built-in rows (system
  *  rails + Want to Read) lock Delete. Reading-list cards also show the
  *  list's collection + read-progress stats and when it was last updated. */
+/** The card's cover stack. Every card shares the one `/me/view-covers`
+ *  query (react-query dedupes), so a tab of cards is a single request. */
+function ViewCardStack({ viewId, Icon }: { viewId: string; Icon: LucideIcon }) {
+  const covers = useViewCovers();
+  return (
+    <CoverStack
+      urls={covers.data?.get(viewId) ?? []}
+      Icon={Icon}
+      className="w-40 max-w-[70%]"
+    />
+  );
+}
+
 function ViewCard({
   view,
   Icon,
@@ -436,6 +451,9 @@ function ViewCard({
       ? (cblLists?.get(view.cbl_list_id) ?? null)
       : null;
   const currentGroup = board?.containerOf(view.id) ?? null;
+  // Reading lists + collections draw their covers as a fanned stack;
+  // filter views keep the icon (their contents are a query, not a list).
+  const stacked = isCollection || view.kind === "cbl";
 
   async function handleConfirmDelete() {
     if (!isCollection) {
@@ -482,12 +500,20 @@ function ViewCard({
   }
 
   return (
-    <div className="group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col gap-2 rounded-lg border p-4 transition-colors">
+    <div
+      className={`group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col rounded-lg border p-4 transition-colors ${
+        stacked ? "cover-stack-host gap-3" : "gap-2"
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
-        <Icon
-          className="text-muted-foreground size-5 shrink-0"
-          aria-hidden="true"
-        />
+        {stacked ? (
+          <ViewCardStack viewId={view.id} Icon={Icon} />
+        ) : (
+          <Icon
+            className="text-muted-foreground size-5 shrink-0"
+            aria-hidden="true"
+          />
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button

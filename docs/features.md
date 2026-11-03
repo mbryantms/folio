@@ -340,6 +340,13 @@ cover dates) and proposes the mappings for you to accept.
 - **Shared lists** — an admin can share one of their reading lists with
   every user. Shared lists appear under everyone's Reading Lists and can be
   pinned, but only admins can edit, refresh or delete them.
+- **Cover stacks** — reading-list and collection cards on the
+  Collections page and Settings → Views show their first four covers as
+  a fanned stack that spreads out on hover or keyboard focus. Five styles
+  (Straight, Hand of cards, Arc, Desk pile, Pick up — the default) are a
+  per-user setting under Settings → Theme, each with a live preview; every
+  style uses the same footprint, so switching never moves the layout.
+  Covers respect library access and age caps.
 - **Story arcs** — built automatically from ComicInfo `StoryArc` /
   `StoryArcNumber` tags.
 - **Saved views** — a real filter engine over your library: publisher,

@@ -470,6 +470,8 @@ export const queryKeys = {
     ["saved-views", "list", filters] as const,
   /** Multi-page rails: the user's full page list (system + custom). */
   mePages: ["me", "pages"] as const,
+  /** `GET /me/view-covers` — cover-stack art for list/collection cards. */
+  viewCovers: ["me", "view-covers"] as const,
   /** Views-index groups (Settings → Views buckets), one cache per tab
    *  scope (`filter` / `cbl` / `collection`). Drag-and-drop writes go
    *  through `useReplaceViewGroupLayout`, which patches this cache

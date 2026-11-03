@@ -182,6 +182,7 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         .merge(api::collections::routes())
         .merge(api::pages::routes())
         .merge(api::view_groups::routes())
+        .merge(api::view_covers::routes())
         .merge(api::shared_lists::routes())
         .merge(api::issue_ocr::routes())
         .merge(api::admin_ocr::routes())

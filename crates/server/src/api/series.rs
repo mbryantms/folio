@@ -2474,44 +2474,7 @@ pub(crate) async fn hydrate_series(
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let counts = fetch_issue_counts(&app.db, &series_ids).await;
 
-    let mut covers: HashMap<Uuid, String> = HashMap::new();
-    // Prefer issue #1 as the series cover even when a preceding
-    // entry (e.g. #1/2, #0, "Free Comic Book Day" specials with
-    // sort_number < 1) exists. Those preludes stay in the issue
-    // listing — only the cover anchor changes. The main run goes
-    // first (`special_type IS NULL`): an annual / one-shot / TPB
-    // parsed to `sort_number = 1` ("Annuals/… Annual 001.cbz") must
-    // never beat the regular run's #1 — or, for a run that starts at
-    // #424 with a #0 prelude, the regular #424. CASE-WHEN then puts
-    // the numbered run (`sort_number >= 1`) ahead of preludes, so the
-    // lowest regular issue wins — #1 when there is one, else the run's
-    // real first issue (#424) — and only a series with nothing at or
-    // above #1 falls back to its #0 / #½ / unnumbered files. NULLS-LAST
-    // on `sort_number` avoids an unnumbered ALWAYS-LAST file dragging
-    // in front of real numbered issues. M5/series-cover-issue-1
-    // (2026-05-23 ask); specials + preludes excluded 2026-10-05.
-    let cover_rows = issue::Entity::find()
-        .filter(issue::Column::SeriesId.is_in(series_ids.clone()))
-        .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
-        .select_only()
-        .column(issue::Column::SeriesId)
-        .column(issue::Column::Id)
-        .order_by_asc(issue::Column::SeriesId)
-        .order_by_asc(Expr::cust("special_type IS NOT NULL"))
-        .order_by_asc(Expr::cust("CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END"))
-        .order_by_asc(Expr::cust("sort_number IS NULL"))
-        .order_by_asc(issue::Column::SortNumber)
-        .order_by_asc(issue::Column::FilePath)
-        .into_model::<SeriesCoverRow>()
-        .all(&app.db)
-        .await
-        .unwrap_or_default();
-    for row in cover_rows {
-        covers.entry(row.series_id).or_insert(row.id);
-    }
-    // An explicit series cover pick (post-audit T4.2) beats the heuristic.
-    covers.extend(crate::api::cover_pick::user_cover_picks(&app.db, &series_ids).await);
+    let covers = series_cover_issue_ids(&app.db, &series_ids).await;
 
     // Batch-fetch external IDs once for the whole page so the
     // per-row enrichment doesn't N+1.
@@ -2813,6 +2776,58 @@ async fn fetch_issue_counts(
         .into_iter()
         .map(|row| (row.series_id, row))
         .collect()
+}
+
+/// Cover issue id per series: the user's explicit cover pick if any, else
+/// the main run's lowest regular issue (see the ordering notes below).
+/// Shared by series cards and collection cover stacks so both show the
+/// same cover.
+pub(crate) async fn series_cover_issue_ids(
+    db: &sea_orm::DatabaseConnection,
+    series_ids: &[Uuid],
+) -> HashMap<Uuid, String> {
+    let mut covers: HashMap<Uuid, String> = HashMap::new();
+    if series_ids.is_empty() {
+        return covers;
+    }
+    // Prefer issue #1 as the series cover even when a preceding
+    // entry (e.g. #1/2, #0, "Free Comic Book Day" specials with
+    // sort_number < 1) exists. Those preludes stay in the issue
+    // listing — only the cover anchor changes. The main run goes
+    // first (`special_type IS NULL`): an annual / one-shot / TPB
+    // parsed to `sort_number = 1` ("Annuals/… Annual 001.cbz") must
+    // never beat the regular run's #1 — or, for a run that starts at
+    // #424 with a #0 prelude, the regular #424. CASE-WHEN then puts
+    // the numbered run (`sort_number >= 1`) ahead of preludes, so the
+    // lowest regular issue wins — #1 when there is one, else the run's
+    // real first issue (#424) — and only a series with nothing at or
+    // above #1 falls back to its #0 / #½ / unnumbered files. NULLS-LAST
+    // on `sort_number` avoids an unnumbered ALWAYS-LAST file dragging
+    // in front of real numbered issues. M5/series-cover-issue-1
+    // (2026-05-23 ask); specials + preludes excluded 2026-10-05.
+    let cover_rows = issue::Entity::find()
+        .filter(issue::Column::SeriesId.is_in(series_ids.to_vec()))
+        .filter(issue::Column::State.eq(issue::IssueState::Active))
+        .filter(issue::Column::RemovedAt.is_null())
+        .select_only()
+        .column(issue::Column::SeriesId)
+        .column(issue::Column::Id)
+        .order_by_asc(issue::Column::SeriesId)
+        .order_by_asc(Expr::cust("special_type IS NOT NULL"))
+        .order_by_asc(Expr::cust("CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END"))
+        .order_by_asc(Expr::cust("sort_number IS NULL"))
+        .order_by_asc(issue::Column::SortNumber)
+        .order_by_asc(issue::Column::FilePath)
+        .into_model::<SeriesCoverRow>()
+        .all(db)
+        .await
+        .unwrap_or_default();
+    for row in cover_rows {
+        covers.entry(row.series_id).or_insert(row.id);
+    }
+    // An explicit series cover pick (post-audit T4.2) beats the heuristic.
+    covers.extend(crate::api::cover_pick::user_cover_picks(db, series_ids).await);
+    covers
 }
 
 #[derive(Debug, FromQueryResult)]

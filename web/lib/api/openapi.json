@@ -9712,6 +9712,22 @@
         }
       }
     },
+    "/api/me/view-covers": {
+      "get": {
+        "operationId": "view_covers_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewCoversView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/view-groups": {
       "get": {
         "operationId": "view_groups_list",
@@ -27209,6 +27225,7 @@
           "exclude_from_aggregates",
           "show_marker_count",
           "max_rails_per_page",
+          "cover_stack_style",
           "count_specials_in_completeness"
         ],
         "properties": {
@@ -27241,6 +27258,10 @@
           "count_specials_in_completeness": {
             "type": "boolean",
             "description": "Count annuals / one-shots / specials / TPBs toward a series'\ncollection completeness (remediation B9). Default false: only the\nmain run is compared with the publisher total. A per-series\noverride (`PUT /me/series/{series_id}/completion-prefs`) wins."
+          },
+          "cover_stack_style": {
+            "type": "string",
+            "description": "Cover stack style for reading-list and collection cards: one of\n`straight`, `hand`, `arc`, `pile`, `pickup`."
           },
           "csrf_token": {
             "type": "string"
@@ -29025,6 +29046,13 @@
               "null"
             ],
             "description": "Count annuals and specials toward series completion (B9)."
+          },
+          "cover_stack_style": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One of `straight`, `hand`, `arc`, `pile`, `pickup`; anything else 422s."
           },
           "default_cover_solo": {
             "type": [
@@ -37519,6 +37547,39 @@
           "active",
           "disabled"
         ]
+      },
+      "ViewCoverItem": {
+        "type": "object",
+        "required": [
+          "view_id",
+          "cover_urls"
+        ],
+        "properties": {
+          "cover_urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Front cover first. Empty when nothing in the view is readable by\nthe caller (the card then shows a placeholder stack)."
+          },
+          "view_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ViewCoversView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ViewCoverItem"
+            }
+          }
+        }
       },
       "ViewGroupListView": {
         "type": "object",

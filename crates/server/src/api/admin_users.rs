@@ -335,6 +335,7 @@ pub async fn create(
         opds_wtr_reorder: Set(true),
         opds_progress_glyphs: Set(true),
         max_rails_per_page: Set(12),
+        cover_stack_style: Set("pickup".into()),
         reader_brightness: Set(None),
         reader_sepia: Set(None),
         reader_grayscale: Set(None),

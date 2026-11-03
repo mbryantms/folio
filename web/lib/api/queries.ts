@@ -83,6 +83,7 @@ import type {
   PageCountResponse,
   OnDeckView,
   PageListView,
+  ViewCoversView,
   PreviewReq,
   RecentIssuesView,
   RecentHistoryView,
@@ -415,6 +416,20 @@ export async function jsonFetch<T>(path: string): Promise<T> {
     throw new HttpError(res.status, detail);
   }
   return (await res.json()) as T;
+}
+
+/** Cover-stack art for every reading list + collection the caller can
+ *  see, keyed by view id (up to four covers each, front first). One call
+ *  per page, not one per card. */
+export function useViewCovers() {
+  return useQuery({
+    queryKey: queryKeys.viewCovers,
+    queryFn: async () => {
+      const page = await jsonFetch<ViewCoversView>("/me/view-covers");
+      return new Map(page.items.map((i) => [i.view_id, i.cover_urls]));
+    },
+    placeholderData: keepPreviousData,
+  });
 }
 
 /** Routes that are anonymous by construction. */
