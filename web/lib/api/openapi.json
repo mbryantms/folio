@@ -2629,6 +2629,120 @@
         }
       }
     },
+    "/api/admin/starter-lists": {
+      "get": {
+        "operationId": "starter_lists_admin_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StarterListListView"
+                }
+              }
+            }
+          },
+          "403": {}
+        }
+      },
+      "post": {
+        "operationId": "starter_lists_admin_add",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddStarterListReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StarterListListView"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown catalog source, or the path is not in its index"
+          },
+          "409": {
+            "description": "already a starter list"
+          },
+          "422": {
+            "description": "empty path or reason"
+          }
+        }
+      }
+    },
+    "/api/admin/starter-lists/refresh-coverage": {
+      "post": {
+        "operationId": "starter_lists_admin_refresh_coverage",
+        "responses": {
+          "202": {
+            "description": "coverage recomputation started"
+          }
+        }
+      }
+    },
+    "/api/admin/starter-lists/visibility": {
+      "put": {
+        "operationId": "starter_lists_admin_set_visibility",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetStarterListVisibilityReq"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StarterListListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
+    "/api/admin/starter-lists/{id}": {
+      "delete": {
+        "operationId": "starter_lists_admin_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StarterListListView"
+                }
+              }
+            }
+          },
+          "404": {}
+        }
+      }
+    },
     "/api/admin/stats/content": {
       "get": {
         "operationId": "admin_stats_content",
@@ -9712,6 +9826,22 @@
         }
       }
     },
+    "/api/me/starter-lists": {
+      "get": {
+        "operationId": "starter_lists_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StarterListListView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/me/view-covers": {
       "get": {
         "operationId": "view_covers_list",
@@ -14632,6 +14762,40 @@
           "source": {
             "type": "string",
             "description": "`\"comicvine\" | \"metron\" | \"gcd\" | …`. Aliases accepted."
+          }
+        }
+      },
+      "AddStarterListReq": {
+        "type": "object",
+        "required": [
+          "catalog_source_id",
+          "catalog_path",
+          "reason"
+        ],
+        "properties": {
+          "catalog_path": {
+            "type": "string"
+          },
+          "catalog_source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Defaults to the first folder of the path."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Defaults to the file name."
           }
         }
       },
@@ -27372,6 +27536,14 @@
               }
             ]
           },
+          "onboarding_completed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the first-run tour was finished or skipped; `null` means the\nweb shows it on the next visit to Home."
+          },
           "password_editable": {
             "type": "boolean",
             "description": "True when `/me/account` accepts local password changes for this user."
@@ -29153,6 +29325,13 @@
                 "type": "null"
               }
             ]
+          },
+          "onboarding_completed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` marks the first-run tour finished (or skipped); `false`\nclears it so the tour runs again on the next visit to Home."
           },
           "reader_brightness": {
             "type": [
@@ -34911,6 +35090,26 @@
           }
         }
       },
+      "SetStarterListVisibilityReq": {
+        "type": "object",
+        "required": [
+          "catalog_source_id",
+          "catalog_path",
+          "hidden"
+        ],
+        "properties": {
+          "catalog_path": {
+            "type": "string"
+          },
+          "catalog_source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        }
+      },
       "SettingsView": {
         "type": "object",
         "required": [
@@ -35393,6 +35592,97 @@
           "include",
           "exclude"
         ]
+      },
+      "StarterListListView": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StarterListView"
+            }
+          }
+        }
+      },
+      "StarterListView": {
+        "type": "object",
+        "required": [
+          "catalog_source_id",
+          "catalog_path",
+          "title",
+          "publisher",
+          "reason",
+          "origin",
+          "hidden",
+          "coverage_status",
+          "total",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Of those, issues in this library the caller can read."
+          },
+          "catalog_path": {
+            "type": "string"
+          },
+          "catalog_source_id": {
+            "type": "string"
+          },
+          "coverage_computed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "coverage_status": {
+            "type": "string",
+            "description": "`ready`, `pending` (first computation running) or `error`."
+          },
+          "hidden": {
+            "type": "boolean",
+            "description": "Admin listing only; the reader listing never includes hidden picks."
+          },
+          "imported_view_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when the caller already has this file as a reading list (their\nown import, else one an admin shared with everyone), so the tour\nlinks to it instead of importing it again."
+          },
+          "origin": {
+            "type": "string",
+            "description": "`shipped` (Folio's curated pick) or `admin` (added on this server)."
+          },
+          "override_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The override row behind an admin-added or hidden pick (the id\n`DELETE /admin/starter-lists/{id}` takes)."
+          },
+          "publisher": {
+            "type": "string",
+            "description": "Grouping label (`Marvel`, `DC`, `Image`, …)."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this is a good place to start."
+          },
+          "title": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Entries in the list."
+          }
+        }
       },
       "SuggestionBucket": {
         "type": "string",

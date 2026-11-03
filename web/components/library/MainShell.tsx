@@ -7,6 +7,7 @@ import { AddToHomeScreenBanner } from "@/components/AddToHomeScreenBanner";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { TopbarSearchInline } from "@/components/TopbarSearchInline";
 import { ScanEventBeacon } from "@/components/admin/ScanEventBeacon";
+import { OnboardingTour } from "@/components/onboarding/OnboardingTour";
 import {
   AppSidebar,
   AppSidebarProvider,
@@ -81,7 +82,7 @@ export function MainShell({
             context-switches to a centered modal on desktop. Below md the
             whole header is gone and the bottom tab bar's Search tab
             reaches the search page instead. */}
-        <div className="ml-1 flex-1 sm:max-w-md">
+        <div className="ml-1 flex-1 sm:max-w-md" data-tour="search">
           <TopbarSearchInline />
         </div>
         {user.role === "admin" ? (
@@ -110,6 +111,10 @@ export function MainShell({
           split the Home/Library tabs; "More" opens the nav sheet. */}
       <Suspense fallback={null}>
         <ShellBottomBar />
+      </Suspense>
+      {/* First-run tour on Home (and `/?tour=1` replays). */}
+      <Suspense fallback={null}>
+        <OnboardingTour />
       </Suspense>
     </AppSidebarProvider>
   );

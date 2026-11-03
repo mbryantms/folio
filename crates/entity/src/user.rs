@@ -249,6 +249,9 @@ pub struct Model {
     /// How reading-list / collection cover stacks fan out: `straight`,
     /// `hand`, `arc`, `pile` or `pickup` (default). DB CHECK pins the set.
     pub cover_stack_style: String,
+    /// When the account finished or skipped the first-run tour; `None`
+    /// shows it on the next visit to Home.
+    pub onboarding_completed_at: Option<DateTimeWithTimeZone>,
 
     /// Reader display preferences that follow the account (audit 2026-11
     /// F6/F7). Account-wide like `markersHidden` in the web store: they are

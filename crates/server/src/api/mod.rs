@@ -91,6 +91,7 @@ pub mod sessions;
 pub mod shared_lists;
 pub mod sidebar_layout;
 pub mod sidecar_reemit;
+pub mod starter_lists;
 pub mod teams;
 pub mod thumbnails;
 pub mod view_covers;
