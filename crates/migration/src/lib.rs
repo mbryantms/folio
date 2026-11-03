@@ -144,6 +144,7 @@ mod m20271031_000001_user_reader_display_prefs;
 mod m20271101_000001_library_auto_search_new_series;
 mod m20271101_000002_marker_color_check;
 mod m20271101_000003_specials_completeness_pref;
+mod m20271103_000001_user_cover_stack_style;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -296,6 +297,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271101_000001_library_auto_search_new_series::Migration),
             Box::new(m20271101_000002_marker_color_check::Migration),
             Box::new(m20271101_000003_specials_completeness_pref::Migration),
+            Box::new(m20271103_000001_user_cover_stack_style::Migration),
         ]
     }
 }

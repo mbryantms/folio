@@ -4409,6 +4409,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/view-covers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["view_covers_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/view-groups": {
         parameters: {
             query?: never;
@@ -11512,6 +11528,11 @@ export interface components {
              *     override (`PUT /me/series/{series_id}/completion-prefs`) wins.
              */
             count_specials_in_completeness: boolean;
+            /**
+             * @description Cover stack style for reading-list and collection cards: one of
+             *     `straight`, `hand`, `arc`, `pile`, `pickup`.
+             */
+            cover_stack_style: string;
             csrf_token: string;
             /**
              * @description Default for the reader's "cover stands alone in double-page view"
@@ -12363,6 +12384,8 @@ export interface components {
             corner_radius?: components["schemas"]["CornerRadius"] | null;
             /** @description Count annuals and specials toward series completion (B9). */
             count_specials_in_completeness?: boolean | null;
+            /** @description One of `straight`, `hand`, `arc`, `pile`, `pickup`; anything else 422s. */
+            cover_stack_style?: string | null;
             /** @description Default cover-solo toggle; absent leaves the prior value untouched. */
             default_cover_solo?: boolean | null;
             default_fit_mode?: components["schemas"]["FitMode"] | null;
@@ -16032,6 +16055,17 @@ export interface components {
          * @enum {string}
          */
         UserState: "pending_verification" | "active" | "disabled";
+        ViewCoverItem: {
+            /**
+             * @description Front cover first. Empty when nothing in the view is readable by
+             *     the caller (the card then shows a placeholder stack).
+             */
+            cover_urls: string[];
+            view_id: string;
+        };
+        ViewCoversView: {
+            items: components["schemas"]["ViewCoverItem"][];
+        };
         ViewGroupListView: {
             groups: components["schemas"]["ViewGroupView"][];
             scope: string;
@@ -25154,6 +25188,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    view_covers_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewCoversView"];
+                };
             };
         };
     };

@@ -246,6 +246,9 @@ pub struct Model {
     /// surface lazy-mounts off-screen rails so a higher value does
     /// not load every rail at hydration.
     pub max_rails_per_page: i32,
+    /// How reading-list / collection cover stacks fan out: `straight`,
+    /// `hand`, `arc`, `pile` or `pickup` (default). DB CHECK pins the set.
+    pub cover_stack_style: String,
 
     /// Reader display preferences that follow the account (audit 2026-11
     /// F6/F7). Account-wide like `markersHidden` in the web store: they are

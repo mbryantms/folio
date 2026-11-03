@@ -92,6 +92,7 @@ pub mod sidebar_layout;
 pub mod sidecar_reemit;
 pub mod teams;
 pub mod thumbnails;
+pub mod view_covers;
 pub mod view_groups;
 pub mod work_targets;
 pub mod ws_scan_events;

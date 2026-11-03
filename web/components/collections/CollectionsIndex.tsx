@@ -6,6 +6,7 @@ import { BookmarkPlus, Folder, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/PageHeader";
+import { CoverStack } from "@/components/cover-stack/CoverStack";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -20,10 +21,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { collectServerErrors } from "@/lib/api/form-errors";
-import { useCollections } from "@/lib/api/queries";
+import { useCollections, useViewCovers } from "@/lib/api/queries";
 import { useCreateCollection } from "@/lib/api/mutations";
 import { TOAST } from "@/lib/api/toast-strings";
 import type { SavedViewView } from "@/lib/api/types";
+import { STACK_ASPECT } from "@/lib/cover-stack/variants";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -35,6 +37,7 @@ const WANT_TO_READ_KEY = "want_to_read";
  *  three-type management view live on `/settings/views`. */
 export function CollectionsIndex() {
   const collectionsQ = useCollections();
+  const coversQ = useViewCovers();
   const [createOpen, setCreateOpen] = React.useState(false);
 
   const collections = collectionsQ.data ?? [];
@@ -65,7 +68,10 @@ export function CollectionsIndex() {
         >
           {collections.map((collection) => (
             <li key={collection.id}>
-              <CollectionCard collection={collection} />
+              <CollectionCard
+                collection={collection}
+                covers={coversQ.data?.get(collection.id) ?? []}
+              />
             </li>
           ))}
         </ul>
@@ -75,21 +81,24 @@ export function CollectionsIndex() {
   );
 }
 
-function CollectionCard({ collection }: { collection: SavedViewView }) {
+function CollectionCard({
+  collection,
+  covers,
+}: {
+  collection: SavedViewView;
+  covers: readonly string[];
+}) {
   const isWantToRead = collection.system_key === WANT_TO_READ_KEY;
   const Icon = isWantToRead ? BookmarkPlus : Folder;
   return (
     <Link
       href={`/views/${isWantToRead ? "want-to-read" : collection.id}`}
-      className="group hover:bg-accent/40 focus-visible:ring-ring border-border/60 flex h-full flex-col gap-2 rounded-lg border p-4 transition-colors focus-visible:ring-2 focus-visible:outline-none"
+      className="group cover-stack-host hover:bg-accent/40 focus-visible:ring-ring border-border/60 flex h-full flex-col gap-3 rounded-lg border p-4 transition-colors focus-visible:ring-2 focus-visible:outline-none"
     >
       <div className="flex items-start justify-between gap-3">
-        <Icon
-          className="text-muted-foreground size-5 shrink-0"
-          aria-hidden="true"
-        />
+        <CoverStack urls={covers} Icon={Icon} className="w-40 max-w-[70%]" />
         {isWantToRead ? (
-          <span className="text-muted-foreground bg-muted/40 inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wider uppercase">
+          <span className="text-muted-foreground bg-muted/40 inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wider whitespace-nowrap uppercase">
             Built-in
           </span>
         ) : null}
@@ -109,12 +118,15 @@ function CollectionCard({ collection }: { collection: SavedViewView }) {
 }
 
 /** Single placeholder card — mirrors `CollectionCard`'s box so the loading
- *  state has the same footprint as the real grid (icon row + name +
+ *  state has the same footprint as the real grid (cover stack + name +
  *  description). Exported so the route `loading.tsx` reuses the exact shape. */
 export function CollectionCardSkeleton() {
   return (
-    <div className="border-border/60 flex h-full flex-col gap-2 rounded-lg border p-4">
-      <Skeleton className="size-5 rounded" />
+    <div className="border-border/60 flex h-full flex-col gap-3 rounded-lg border p-4">
+      <Skeleton
+        className="w-40 max-w-[70%] rounded-md"
+        style={{ aspectRatio: `1 / ${STACK_ASPECT}` }}
+      />
       <div className="space-y-1.5">
         <Skeleton className="h-4 w-2/3" />
         <Skeleton className="h-3 w-full" />

@@ -324,3 +324,21 @@ async fn null_clears_individual_fields() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["default_fit_mode"].is_null());
 }
+
+/// Cover-stack style: defaults to `pickup`, round-trips a valid value,
+/// rejects an unknown one with 422 and leaves the stored value alone.
+#[tokio::test]
+async fn cover_stack_style_round_trip_and_validation() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "stack@example.com").await;
+    assert_eq!(get_me(&app, &auth).await["cover_stack_style"], "pickup");
+
+    let (status, body) = patch_pref(&app, &auth, r#"{"cover_stack_style":"arc"}"#).await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["cover_stack_style"], "arc");
+    assert_eq!(get_me(&app, &auth).await["cover_stack_style"], "arc");
+
+    let (status, _) = patch_pref(&app, &auth, r#"{"cover_stack_style":"spiral"}"#).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(get_me(&app, &auth).await["cover_stack_style"], "arc");
+}

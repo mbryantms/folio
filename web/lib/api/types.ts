@@ -378,6 +378,7 @@ export type AddEntryReq = Schemas["AddEntryReq"];
 export type ReorderEntriesReq = Schemas["ReorderEntriesReq"];
 export type PageView = Schemas["PageView"];
 export type PageListView = Schemas["CursorPage_PageView"];
+export type ViewCoversView = Schemas["ViewCoversView"];
 export type CreatePageReq = Schemas["CreatePageReq"];
 export type UpdatePageReq = Schemas["UpdatePageReq"];
 export type ReorderPagesReq = Schemas["ReorderPagesReq"];

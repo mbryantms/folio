@@ -204,6 +204,9 @@ pub struct MeResp {
     /// previous hard-coded `MAX_PIN_COUNT = 12` constant. Range
     /// 1..=50 enforced by DB CHECK + PATCH validation. Default 12.
     pub max_rails_per_page: i32,
+    /// Cover stack style for reading-list and collection cards: one of
+    /// `straight`, `hand`, `arc`, `pile`, `pickup`.
+    pub cover_stack_style: String,
     /// Reader display preferences that follow the account (audit 2026-11
     /// F6/F7). Each is `null` until the account has set it; while `null`
     /// the reader keeps the browser's own stored value and adopts it on
@@ -284,6 +287,9 @@ pub struct PreferencesReq {
     /// side and at the DB CHECK constraint. Default 12 preserves
     /// the prior behaviour for users who never touch this.
     pub max_rails_per_page: Option<i32>,
+    /// One of `straight`, `hand`, `arc`, `pile`, `pickup`; anything else 422s.
+    #[serde(default)]
+    pub cover_stack_style: Option<String>,
     /// Reader display preferences (audit 2026-11 F6/F7). Absent leaves the
     /// stored value; `null` clears it so the reader falls back to its
     /// browser value / built-in default. Ranges: brightness 0.5..=1.5.
@@ -319,6 +325,10 @@ where
 {
     Option::<T>::deserialize(deserializer).map(Some)
 }
+
+/// Allowed `users.cover_stack_style` values (DB CHECK holds the same set;
+/// the web's `lib/cover-stack/variants.ts` defines the motion for each).
+pub const COVER_STACK_STYLES: &[&str] = &["straight", "hand", "arc", "pile", "pickup"];
 
 /// Range check for the reader display preferences (F6/F7). The bounds are
 /// the reader's slider ranges and the DB CHECK constraints; checking here
@@ -535,6 +545,7 @@ pub async fn register(
         opds_wtr_reorder: Set(true),
         opds_progress_glyphs: Set(true),
         max_rails_per_page: Set(12),
+        cover_stack_style: Set("pickup".into()),
         reader_brightness: Set(None),
         reader_sepia: Set(None),
         reader_grayscale: Set(None),
@@ -1210,6 +1221,15 @@ pub async fn update_preferences(
     if let Some(msg) = reader_display_range_error(&req) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, "validation", msg);
     }
+    if let Some(style) = req.cover_stack_style.as_deref()
+        && !COVER_STACK_STYLES.contains(&style)
+    {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation",
+            "cover_stack_style must be one of straight, hand, arc, pile, pickup",
+        );
+    }
 
     let row = match UserEntity::find_by_id(user.id).one(&app.db).await {
         Ok(Some(r)) => r,
@@ -1281,6 +1301,9 @@ pub async fn update_preferences(
     }
     if let Some(v) = req.max_rails_per_page {
         am.max_rails_per_page = Set(v);
+    }
+    if let Some(v) = req.cover_stack_style.clone() {
+        am.cover_stack_style = Set(v);
     }
     if let Some(v) = req.reader_brightness {
         am.reader_brightness = Set(v);
@@ -1887,6 +1910,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         exclude_from_aggregates: row.exclude_from_aggregates,
         show_marker_count: row.show_marker_count,
         max_rails_per_page: row.max_rails_per_page,
+        cover_stack_style: row.cover_stack_style.clone(),
         reader_brightness: row.reader_brightness,
         reader_sepia: row.reader_sepia,
         reader_grayscale: row.reader_grayscale,
@@ -1934,6 +1958,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             exclude_from_aggregates: false,
             show_marker_count: false,
             max_rails_per_page: 12,
+            cover_stack_style: "pickup".into(),
             reader_brightness: None,
             reader_sepia: None,
             reader_grayscale: None,
