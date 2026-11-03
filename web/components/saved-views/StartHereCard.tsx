@@ -39,16 +39,21 @@ export function StartHereCard({
       ? `${item.total} ${item.total === 1 ? "issue" : "issues"}`
       : `${item.available} of ${item.total} issues in the library`;
   return (
-    <div className={cn("group flex min-w-0 flex-col gap-2", className)}>
+    <div className={cn("group/card flex min-w-0 flex-col gap-2", className)}>
       <Link
         href={`/views/${item.view_id}`}
         className="focus-visible:ring-ring flex min-w-0 flex-col gap-2 rounded-md focus-visible:ring-2 focus-visible:outline-none"
       >
         {/* Stacked covers: back covers peek out to the right, each a step
-         *  smaller. Scaling from the left edge's midpoint keeps them inside
-         *  the front cover's height, and the right padding reserves room
-         *  for the peek, so the stack never spills onto the text below. */}
-        <div className="relative pr-[14%]">
+         *  smaller, and fan further out while the card is hovered or has
+         *  keyboard focus. Geometry (front cover = 86% of the card width):
+         *  a back cover at depth d is 86% × (1 − 0.04d) wide and shifted
+         *  d × --fan of its own width, so its right edge sits at ~89% / 91%
+         *  of the card at rest (--fan 7%) and ~93% / 100% fanned out
+         *  (--fan 12%). Scaling from the left edge's midpoint keeps it
+         *  inside the front cover's height. Nothing ever leaves the card's
+         *  box, so neighbouring cards and the text below never overlap. */}
+        <div className="relative pr-[14%] [--fan:7%] group-hover/card:[--fan:12%] group-has-[:focus-visible]/card:[--fan:12%]">
           {behind
             .slice(0, 2)
             .reverse()
@@ -59,15 +64,15 @@ export function StartHereCard({
                 <div
                   key={id}
                   aria-hidden
-                  className="absolute inset-y-0 left-0 w-[86%] origin-left"
+                  className="absolute inset-y-0 left-0 w-[86%] origin-left transition-transform duration-200 ease-out motion-reduce:transition-none"
                   style={{
-                    transform: `translateX(${depth * 9}%) scale(${1 - depth * 0.05})`,
+                    transform: `translateX(calc(${depth} * var(--fan))) scale(${1 - depth * 0.04})`,
                   }}
                 >
                   <Cover
                     src={coverThumbUrl(id)}
                     alt=""
-                    className="h-full w-full opacity-70 shadow-sm"
+                    className="h-full w-full opacity-70 shadow-sm transition-opacity duration-200 group-hover/card:opacity-90 group-has-[:focus-visible]/card:opacity-90 motion-reduce:transition-none"
                   />
                 </div>
               );
@@ -77,7 +82,7 @@ export function StartHereCard({
               src={front ? coverThumbUrl(front) : null}
               alt={item.name}
               fallback={item.name}
-              className="w-full shadow-md transition group-hover:brightness-110"
+              className="w-full shadow-md transition group-hover/card:brightness-110"
             />
             {started ? (
               <div
