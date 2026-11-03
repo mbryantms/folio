@@ -337,6 +337,9 @@ cover dates) and proposes the mappings for you to accept.
   Lists refresh from upstream (manually or on schedule) with a structural
   diff history, manual match overrides survive refreshes, and lists export
   back to `.cbl`.
+- **Shared lists** — an admin can share one of their reading lists with
+  every user. Shared lists appear under everyone's Reading Lists and can be
+  pinned, but only admins can edit, refresh or delete them.
 - **Cover stacks** — reading-list and collection cards on the
   Collections page and Settings → Views show their first four covers as
   a fanned stack that spreads out on hover or keyboard focus. Five styles
@@ -361,7 +364,9 @@ cover dates) and proposes the mappings for you to accept.
   views, On Deck, lists), each with its own sidebar entry; the sidebar
   itself is fully reorderable with custom headers and spacers; anything
   you hid from a home rail is listed under Settings → Pages, where one
-  click restores it.
+  click restores it. Admins choose which libraries a new account's
+  sidebar lists by default (**Show in sidebar by default** in library
+  settings); the rest stay one click away under All Libraries.
 - **Multi-select everywhere** — bulk mark-read, bulk metadata edit
   (admins), bulk add-to-collection across the major list surfaces.
 - **Markers** — four kinds, all page-anchored: bookmarks, Markdown notes,

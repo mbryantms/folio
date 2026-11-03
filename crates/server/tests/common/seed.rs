@@ -146,6 +146,7 @@ impl<'a> LibrarySeed<'a> {
             auto_convert_cb7_on_scan: Set(self.auto_convert_cb7_on_scan),
             trust_fingerprint_on_first_import: Set(self.trust_fingerprint_on_first_import),
             auto_search_new_series: Set(self.auto_search_new_series),
+            show_in_sidebar_by_default: Set(true),
         }
         .insert(db)
         .await

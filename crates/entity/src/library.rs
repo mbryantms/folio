@@ -143,6 +143,12 @@ pub struct Model {
     /// Audit 2026-11 N-M9.
     #[serde(default)]
     pub auto_search_new_series: bool,
+    /// Default visibility of this library's row in a user's sidebar when the
+    /// user has no explicit `user_sidebar_entries` override for it. Off keeps
+    /// the library out of new accounts' sidebars (still reachable through
+    /// All Libraries). Default true. Start Here + default pins M1.
+    #[serde(default = "default_true")]
+    pub show_in_sidebar_by_default: bool,
 }
 
 fn default_archive_backup_retain_count() -> i32 {
@@ -191,3 +197,7 @@ impl Related<super::library_health_issue::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+fn default_true() -> bool {
+    true
+}

@@ -74,6 +74,7 @@ const schema = z
     filename_assume_issue_one: z.boolean().default(false),
     metadata_auto_apply_strong_matches: z.boolean().default(false),
     auto_search_new_series: z.boolean().default(false),
+    show_in_sidebar_by_default: z.boolean().default(true),
   })
   .refine((v) => !v.metadata_writeback_enabled || v.allow_archive_writeback, {
     message:
@@ -120,6 +121,7 @@ function formValuesFromLibrary(lib: LibraryView): z.input<typeof schema> {
     filename_assume_issue_one: lib.filename_assume_issue_one,
     metadata_auto_apply_strong_matches: lib.metadata_auto_apply_strong_matches,
     auto_search_new_series: lib.auto_search_new_series,
+    show_in_sidebar_by_default: lib.show_in_sidebar_by_default,
   };
 }
 
@@ -151,6 +153,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       filename_assume_issue_one: false,
       metadata_auto_apply_strong_matches: false,
       auto_search_new_series: false,
+      show_in_sidebar_by_default: true,
     },
   });
 
@@ -194,6 +197,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
         metadata_auto_apply_strong_matches:
           values.metadata_auto_apply_strong_matches,
         auto_search_new_series: values.auto_search_new_series,
+        show_in_sidebar_by_default: values.show_in_sidebar_by_default,
         scan_schedule_cron:
           values.scan_schedule_cron.trim() === ""
             ? null
@@ -252,6 +256,29 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                     />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="show_in_sidebar_by_default"
+              render={({ field }) => (
+                <FormItem className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <FormLabel>Show in sidebar by default</FormLabel>
+                    <FormDescription>
+                      Lists this library in the sidebar for new accounts and for
+                      anyone who hasn&rsquo;t customized it. When off, the
+                      library is still reachable through All Libraries and can
+                      be added back from Settings &rarr; Sidebar.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
                 </FormItem>
               )}
             />

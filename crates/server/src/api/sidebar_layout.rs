@@ -361,7 +361,7 @@ pub(crate) async fn compute_layout(
 
     // 3. "All Libraries" synthetic entry, then the libraries the user
     //    can see (alphabetical, matching the current hardcoded main-nav
-    //    ordering). Both share `kind = 'library'` so the client groups
+    //    ordering; default visibility from `show_in_sidebar_by_default`). Both share `kind = 'library'` so the client groups
     //    them in one section even though one is virtual.
     defaults.push(default_header("default:libraries", "Libraries"));
     defaults.push(SidebarEntryView {
@@ -388,7 +388,9 @@ pub(crate) async fn compute_layout(
             label: lib.name,
             icon: "Library".to_string(),
             href: format!("/?library={}", lib.id),
-            visible: true,
+            // Admin-set default (Start Here + default pins M1): a library
+            // flagged off stays out of the sidebar until the user shows it.
+            visible: lib.show_in_sidebar_by_default,
             position: 0,
         });
     }

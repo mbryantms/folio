@@ -170,6 +170,7 @@ async fn seed_library(app: &TestApp, name: &str) -> Uuid {
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await
@@ -843,4 +844,78 @@ async fn label_override_renames_default_entries() {
         .find(|e| e["kind"] == "header" && e["ref_id"] == "default:libraries")
         .unwrap();
     assert_eq!(entry["label"], "My shelves");
+}
+
+/// Start Here + default pins M1: a library flagged
+/// `show_in_sidebar_by_default = false` defaults to hidden for a user with
+/// no override, an explicit override still wins, and the admin PATCH
+/// round-trips the flag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn library_sidebar_default_flag_controls_default_visibility() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let marvel = seed_library(&app, "Marvel").await;
+    let oni = seed_library(&app, "Oni").await;
+
+    let (status, json) = http(
+        &app,
+        Method::PATCH,
+        &format!("/api/libraries/{oni}"),
+        Some(&admin),
+        Some(serde_json::json!({ "show_in_sidebar_by_default": false })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "library patch failed: {json:#?}");
+    assert_eq!(json["show_in_sidebar_by_default"], false);
+
+    let lib_visible = |entries: &Vec<serde_json::Value>, id: Uuid| {
+        entries
+            .iter()
+            .find(|e| e["kind"] == "library" && e["ref_id"] == id.to_string())
+            .map(|e| e["visible"].as_bool().unwrap())
+    };
+
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let entries = json["entries"].as_array().unwrap().clone();
+    assert_eq!(lib_visible(&entries, marvel), Some(true));
+    assert_eq!(
+        lib_visible(&entries, oni),
+        Some(false),
+        "flag off → hidden by default"
+    );
+    let all = entries
+        .iter()
+        .find(|e| e["kind"] == "library" && e["ref_id"] == "all")
+        .expect("All Libraries present");
+    assert_eq!(all["visible"], true, "All Libraries is unaffected");
+
+    // An explicit override beats the library default.
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        "/api/me/sidebar-layout",
+        Some(&admin),
+        Some(serde_json::json!({ "entries": [
+            { "kind": "library", "ref_id": oni.to_string(), "visible": true, "position": 5 },
+        ] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, json) = http(
+        &app,
+        Method::GET,
+        "/api/me/sidebar-layout",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let entries = json["entries"].as_array().unwrap().clone();
+    assert_eq!(lib_visible(&entries, oni), Some(true), "override wins");
 }
