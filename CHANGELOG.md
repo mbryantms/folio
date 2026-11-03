@@ -13,6 +13,15 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.74.0](https://github.com/mbryantms/folio/compare/v0.73.0...v0.74.0) (2026-11-03)
+
+
+### Added
+
+* first-run guided tour with starter reading lists ([#1464](https://github.com/mbryantms/folio/issues/1464)) ([a08c043](https://github.com/mbryantms/folio/commit/a08c043aba11d56fca062f25d6beb284c3ae5c74))
+* per-library sidebar defaults + admin-shared reading lists ([#1462](https://github.com/mbryantms/folio/issues/1462)) ([e02c141](https://github.com/mbryantms/folio/commit/e02c141329e1f8ebd076528eff14eb057bb6c99c))
+* user-selectable cover stacks on reading-list and collection cards ([#1463](https://github.com/mbryantms/folio/issues/1463)) ([e643f78](https://github.com/mbryantms/folio/commit/e643f780d5ca379ce4b975c1efa12cc7f7a3b31d))
+
 ## [0.73.0](https://github.com/mbryantms/folio/compare/v0.72.2...v0.73.0) (2026-11-02)
 
 
