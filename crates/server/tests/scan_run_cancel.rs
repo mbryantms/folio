@@ -155,6 +155,7 @@ async fn seed_library_and_scan_run(app: &TestApp, state: &str) -> (Uuid, String,
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await
@@ -577,6 +578,7 @@ async fn create_on_disk_library(app: &TestApp, root: &Path) -> Uuid {
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await

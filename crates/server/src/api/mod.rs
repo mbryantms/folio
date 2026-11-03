@@ -88,6 +88,7 @@ pub mod series_similar;
 pub mod server_info;
 pub mod server_releases;
 pub mod sessions;
+pub mod shared_lists;
 pub mod sidebar_layout;
 pub mod sidecar_reemit;
 pub mod teams;

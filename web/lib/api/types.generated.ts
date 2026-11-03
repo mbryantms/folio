@@ -886,6 +886,22 @@ export interface paths {
         patch: operations["saved_views_admin_update"];
         trace?: never;
     };
+    "/api/admin/saved-views/{id}/share": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["shared_lists_share"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/scan-batches": {
         parameters: {
             query?: never;
@@ -10974,6 +10990,11 @@ export interface components {
             root_path_writable: boolean;
             /** @description Cron expression governing the scheduled scan, or `null` if disabled. */
             scan_schedule_cron?: string | null;
+            /**
+             * @description Default visibility of this library in a user's sidebar when the user
+             *     has no override for it (Start Here + default pins M1).
+             */
+            show_in_sidebar_by_default: boolean;
             slug: string;
             /** Format: int32 */
             soft_delete_days: number;
@@ -15646,6 +15667,12 @@ export interface components {
              */
             scan_schedule_cron?: string | null;
             /**
+             * @description Show this library in the sidebar of users who haven't customized
+             *     that row (new accounts included). Off hides it by default; it stays
+             *     reachable through All Libraries and the sidebar editor.
+             */
+            show_in_sidebar_by_default?: boolean | null;
+            /**
              * @description Admin override for the URL slug. The input is slugified
              *     (kebab-case, ASCII-folded) and rejected if it collides with another
              *     library's slug.
@@ -18155,6 +18182,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+        };
+    };
+    shared_lists_share: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the reading list is now shared with every user */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description admin only; the view must be the caller's own reading list */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description view not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

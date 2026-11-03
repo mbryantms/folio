@@ -63,6 +63,7 @@ async fn seed_minimal_issue(app: &TestApp) -> (sea_orm::DatabaseConnection, Stri
         auto_convert_cb7_on_scan: Set(false),
         trust_fingerprint_on_first_import: Set(false),
         auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
     }
     .insert(&db)
     .await
