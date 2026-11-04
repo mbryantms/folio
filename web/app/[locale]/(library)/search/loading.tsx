@@ -1,3 +1,4 @@
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -36,7 +37,7 @@ export default function SearchLoading() {
           <div className="flex gap-4 overflow-hidden">
             {Array.from({ length: 8 }, (_, i) => (
               <div key={i} className="w-40 shrink-0 space-y-2">
-                <Skeleton className="aspect-[2/3] w-full rounded-md" />
+                <CoverSkeleton />
                 <Skeleton className="h-4 w-3/4" />
                 <Skeleton className="h-3 w-1/2" />
               </div>

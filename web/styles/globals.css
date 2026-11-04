@@ -1149,6 +1149,66 @@ body {
   animation: none !important;
 }
 
+/* ── Skeletons (folio-flair "cover-shaped skeletons") ──
+ * One light band sweeps across every placeholder on screen at once
+ * (`background-attachment: fixed` puts all of them on the viewport's
+ * gradient), instead of each box pulsing on its own. Cover placeholders
+ * (`components/CoverSkeleton.tsx`) add a cover silhouette. */
+.skeleton-shimmer {
+  background-color: var(--muted);
+  background-image: linear-gradient(
+    100deg,
+    transparent 40%,
+    color-mix(in oklab, var(--foreground) 7%, transparent) 50%,
+    transparent 60%
+  );
+  background-size: 200vw 100%;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  animation: skeleton-sweep 1.8s ease-in-out infinite;
+}
+@keyframes skeleton-sweep {
+  from {
+    background-position: -140vw 0;
+  }
+  to {
+    background-position: 40vw 0;
+  }
+}
+.cover-skeleton > span {
+  position: absolute;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+.cover-skeleton__masthead {
+  inset: 7% 9% auto 9%;
+  height: 13%;
+  border-radius: 3px;
+}
+.cover-skeleton__number {
+  top: 23%;
+  right: 9%;
+  width: 16%;
+  aspect-ratio: 1;
+  border-radius: 999px;
+}
+.cover-skeleton__spine {
+  inset: 0 auto 0 0;
+  width: 5%;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--foreground) 9%, transparent),
+    transparent
+  ) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .skeleton-shimmer {
+  animation: none;
+}
+
 /* ── Cover colour on cards (folio-flair, lib/ui/cover-tone.ts) ──
  * A card whose cover colours are known carries `--cover-tint` (the
  * cover's most vibrant colour). Hovering washes the card in it and gives

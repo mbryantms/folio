@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ViewTransition } from "react";
 import { useRouter } from "next/navigation";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
@@ -212,11 +213,11 @@ export function ProgressIssueCardSkeleton({
 }) {
   return (
     <div className={cn("flex flex-col gap-2 p-1", className)}>
-      <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+      <CoverSkeleton />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted h-2 w-1/2 animate-pulse rounded" />
-        <div className="bg-muted size-3/4 animate-pulse rounded" />
-        <div className="bg-muted h-2 w-1/3 animate-pulse rounded" />
+        <div className="skeleton-shimmer h-2 w-1/2 rounded" />
+        <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-2 w-1/3 rounded" />
       </div>
     </div>
   );

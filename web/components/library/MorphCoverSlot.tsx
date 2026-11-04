@@ -2,8 +2,8 @@
 
 import { ViewTransition } from "react";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useActiveMorph } from "@/lib/ui/cover-morph";
 
 /**
@@ -14,7 +14,7 @@ import { useActiveMorph } from "@/lib/ui/cover-morph";
  */
 export function MorphCoverSlot() {
   const morph = useActiveMorph();
-  if (!morph?.src) return <Skeleton className="aspect-[2/3] w-full" />;
+  if (!morph?.src) return <CoverSkeleton />;
   return (
     <ViewTransition name={morph.name} share="morph" default="none">
       <Cover src={morph.src} alt="" />

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { useRouter } from "next/navigation";
 import { memo, useState, ViewTransition } from "react";
@@ -338,10 +339,10 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
   const c = sizeClasses[size];
   return (
     <div className={cn("flex shrink-0 flex-col gap-2 p-1", c.wrap)}>
-      <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+      <CoverSkeleton />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted size-3/4 animate-pulse rounded" />
-        <div className="bg-muted h-2 w-1/2 animate-pulse rounded" />
+        <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-2 w-1/2 rounded" />
       </div>
     </div>
   );

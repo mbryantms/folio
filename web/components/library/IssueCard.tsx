@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
 import { CoverTilt } from "@/components/library/CoverTilt";
@@ -322,10 +323,10 @@ export const IssueCard = memo(IssueCardImpl);
 export function IssueCardSkeleton({ className }: { className?: string }) {
   return (
     <div className={cn("flex flex-col gap-2 p-1", className)}>
-      <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+      <CoverSkeleton />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted h-2 w-1/3 animate-pulse rounded" />
-        <div className="bg-muted size-3/4 animate-pulse rounded" />
+        <div className="skeleton-shimmer h-2 w-1/3 rounded" />
+        <div className="skeleton-shimmer h-3 w-3/4 rounded" />
       </div>
     </div>
   );

@@ -44,6 +44,7 @@ import {
 import Link from "next/link";
 import * as React from "react";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import {
@@ -1027,7 +1028,7 @@ function RelatedSkeleton({ coverWidth }: { coverWidth: number }) {
       <div className="flex gap-4 overflow-hidden">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} style={{ width: coverWidth }} className="shrink-0">
-            <Skeleton className="aspect-[2/3] w-full" />
+            <CoverSkeleton />
             <Skeleton className="mt-2 h-4 w-3/4" />
           </div>
         ))}
