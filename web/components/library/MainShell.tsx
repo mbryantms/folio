@@ -66,7 +66,6 @@ export function MainShell({
       <PullToRefresh />
       <AddToHomeScreenBanner />
       <header
-        data-shell-topbar=""
         className={cn(
           CHROME_BAND_CLASS,
           "sticky top-0 z-30 hidden h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1.5rem,var(--safe-right))] pl-[max(1.5rem,var(--safe-left))] [view-transition-name:shell-topbar] md:flex",

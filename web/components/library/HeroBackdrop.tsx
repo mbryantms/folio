@@ -5,10 +5,10 @@ import { createPortal } from "react-dom";
 
 import { rgb, useCoverPalette } from "@/lib/ui/cover-palette";
 import {
-  TINT_REACH_OPTIONS,
+  HERO_STYLE_OPTIONS,
   publishPageTint,
-  setTintReach,
-  useTintReach,
+  setHeroStyle,
+  useHeroStyle,
 } from "@/lib/ui/page-tint";
 import { useVisualEffect } from "@/lib/visual-effects";
 
@@ -66,40 +66,42 @@ export function HeroBackdrop({ src }: { src: string | null | undefined }) {
       <div className="hero-backdrop-fade absolute inset-0" />
       {/* Only once the palette has loaded (client-only state), so the
           server and first client render agree. */}
-      {palette ? createPortal(<TintReachPicker />, document.body) : null}
+      {palette ? createPortal(<HeroStylePicker />, document.body) : null}
     </div>
   );
 }
 
-/** Temporary chooser for comparing how far the tint reaches (exploration;
- *  remove once one is picked). Bottom-right on tinted pages only. */
-function TintReachPicker() {
-  const reach = useTintReach();
+/** Temporary chooser for comparing header styles (exploration; remove
+ *  once chosen). Bottom-right on tinted pages. */
+function HeroStylePicker() {
+  const hero = useHeroStyle();
   return (
     <div
       role="radiogroup"
-      aria-label="Tint reach (test)"
+      aria-label="Header style (test)"
       className="bg-popover/90 text-popover-foreground fixed right-4 bottom-[calc(var(--bottom-tab-h,0px)+var(--safe-bottom,0px)+1rem)] z-50 flex flex-col gap-1 rounded-lg border p-2 text-xs shadow-xl backdrop-blur md:bottom-4"
     >
       <span className="text-muted-foreground px-1 pb-0.5 text-[10px] font-semibold tracking-wide uppercase">
-        Tint reach · test
+        Header · test
       </span>
-      {TINT_REACH_OPTIONS.map((o) => (
-        <button
-          key={o.value || "page"}
-          type="button"
-          role="radio"
-          aria-checked={reach === o.value}
-          onClick={() => setTintReach(o.value)}
-          className={`rounded px-2 py-1 text-left transition-colors ${
-            reach === o.value
-              ? "bg-primary text-primary-foreground"
-              : "hover:bg-accent/40"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
+      <div className="flex gap-1">
+        {HERO_STYLE_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={hero === o.value}
+            onClick={() => setHeroStyle(o.value)}
+            className={`flex-1 rounded px-2 py-1 text-left transition-colors ${
+              hero === o.value
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-accent/40"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

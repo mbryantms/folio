@@ -1457,57 +1457,6 @@ html.theme-reveal::view-transition-group(root) {
   }
 }
 
-/* ── Page tint reach (folio-flair exploration, lib/ui/page-tint.ts) ──
- * A tinted series / issue page publishes --page-tint (vibrant),
- * --page-tint-2 (average) and --page-cover on <html>; data-tint-reach
- * decides which parts of the shell pick them up. */
-@keyframes page-tint-in {
-  from {
-    opacity: 0;
-  }
-}
-/* Top bar: the same blurred cover glow as the hero, under the band. */
-html[data-page-tint][data-tint-reach~="top"] [data-shell-topbar] {
-  isolation: isolate;
-}
-html[data-page-tint][data-tint-reach~="top"] [data-shell-topbar]::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(
-      90% 260% at 30% 0%,
-      color-mix(in oklab, var(--page-tint) 45%, transparent),
-      transparent 70%
-    ),
-    var(--page-cover) center 30% / cover no-repeat;
-  filter: blur(36px) saturate(1.5);
-  opacity: 0.55;
-  clip-path: inset(0);
-  animation: page-tint-in 500ms ease-out;
-}
-/* Sidebar: a wash from the top fading out by mid-height. */
-html[data-page-tint][data-tint-reach~="side"] [data-slot="sidebar-inner"] {
-  background-image: linear-gradient(
-    to bottom,
-    color-mix(in oklab, var(--page-tint) 22%, transparent),
-    color-mix(in oklab, var(--page-tint-2) 10%, transparent) 35%,
-    transparent 65%
-  );
-  animation: page-tint-in 500ms ease-out;
-}
-/* Accent: the cover's colour becomes the app accent, lightness-clamped so
- * the usual dark foreground stays readable on it. */
-html[data-page-tint][data-tint-reach~="accent"] {
-  --primary: oklch(from var(--page-tint) 0.74 clamp(0.09, c, 0.19) h);
-  --primary-foreground: oklch(from var(--page-tint) 0.21 0.03 h);
-  --ring: var(--primary);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-}
-
 /* ── Header chips over the tint (series / issue pages) ──
  * Every pill in the header (badges, writer chips, rating pill, provider
  * IDs, issue number) looks like the chips in the tabs below — the filled
@@ -1556,4 +1505,12 @@ html[data-page-tint][data-tint-reach~="accent"] {
     var(--secondary) 70%,
     var(--foreground) 12%
   );
+}
+
+/* ===== folio-flair: header style exploration (pills vs text) =====
+   Both variants are in the series / issue header markup; the switch in
+   the test panel (lib/ui/page-tint.ts) shows one. */
+html[data-hero-style="text"] .hero-variant-pills,
+html:not([data-hero-style="text"]) .hero-variant-text {
+  display: none;
 }

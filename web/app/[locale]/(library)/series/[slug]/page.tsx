@@ -35,6 +35,7 @@ import {
   StableTabsPanelStack,
   StackedTabsPanel,
 } from "@/components/library/StableTabsPanelStack";
+import { HeroFactsLine } from "@/components/library/HeroFactsLine";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -325,7 +326,7 @@ export default async function SeriesPage({
               {series.name}
             </h1>
             <SeriesFactRow series={series} readingTime={readingTime} />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="hero-variant-pills mt-3 flex flex-wrap items-center gap-2">
               {status && <Badge variant="outline">{status}</Badge>}
               <CollectionBadge series={series} />
               {series.age_rating && (
@@ -339,6 +340,26 @@ export default async function SeriesPage({
                 variant="inline"
               />
               <ProviderBadgesRow scope="series" seriesSlug={series.slug} />
+            </div>
+            {/* Header style "text" (exploration, see lib/ui/page-tint.ts):
+                facts as words, chips only for warnings. */}
+            <div className="hero-variant-text mt-3 space-y-2">
+              <HeroFactsLine facts={[status, series.age_rating]} />
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <UserRating
+                  scope="series"
+                  seriesSlug={series.slug}
+                  initial={series.user_rating ?? null}
+                  label="Series rating"
+                  variant="bare"
+                />
+                <ProviderBadgesRow
+                  scope="series"
+                  seriesSlug={series.slug}
+                  variant="text"
+                />
+                <CollectionBadge series={series} />
+              </div>
             </div>
           </div>
           <div className="min-w-0 max-sm:order-3 max-sm:col-span-full">
