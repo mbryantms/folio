@@ -50,6 +50,7 @@ import { ReaderSettings, preloadReaderSettings } from "./lazy";
 import { useMarkerDrawer } from "@/lib/reader/marker-drawer";
 import { useIsPhone } from "@/lib/ui/use-is-phone";
 import { ReadingProgress } from "./ReadingProgress";
+import { PageScrubber } from "./PageScrubber";
 
 const AUTO_HIDE_MS = 4000;
 
@@ -67,6 +68,7 @@ export function ReaderChrome({
   progressCurrent,
   progressTotal,
   incognito = false,
+  pageUrlVersion = null,
 }: {
   seriesId: string | null;
   /** Issue id is needed for marker mutations / queries fired from the
@@ -90,6 +92,9 @@ export function ReaderChrome({
   /** When true, render an "Incognito" chip in the chrome so the user can
    *  see the read isn't being tracked. */
   incognito?: boolean;
+  /** Archive-content `?v=` stamp for the scrubber's thumbnail URLs, so
+   *  they hit the same cache entries as the page strip (see Reader). */
+  pageUrlVersion?: string | null;
 }) {
   useReaderWakeLock();
   const router = useRouter();
@@ -215,6 +220,14 @@ export function ReaderChrome({
           {narrow ? null : <FullscreenButton />}
         </span>
         <ReadingProgress current={progressCurrent} total={progressTotal} />
+        <PageScrubber
+          issueId={issueId}
+          totalPages={totalPages}
+          currentPage={currentPage}
+          visiblePages={visiblePages}
+          direction={direction}
+          urlVersion={pageUrlVersion}
+        />
       </header>
     </TooltipProvider>
   );
