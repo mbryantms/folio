@@ -350,7 +350,7 @@ function MatchQualityCard() {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium">Match quality</CardTitle>
         </CardHeader>
-        <CardContent className="text-muted-foreground flex items-center gap-2 text-sm">
+        <CardContent className="text-muted-foreground flex flex-row items-center gap-2 text-sm">
           <Loader2 className="size-3.5 animate-spin" /> Loading…
         </CardContent>
       </Card>

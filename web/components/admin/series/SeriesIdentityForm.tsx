@@ -68,7 +68,7 @@ export function SeriesIdentityForm({ id }: { id: string }) {
         </CardContent>
       </Card>
       <Card>
-        <CardContent className="flex items-center justify-between gap-4 p-5">
+        <CardContent className="flex flex-row items-center justify-between gap-4 p-5">
           <div className="space-y-1">
             <p className="text-foreground font-medium">Scan series</p>
             <p className="text-muted-foreground text-xs">

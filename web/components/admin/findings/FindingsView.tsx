@@ -304,7 +304,7 @@ function HealthIssueRow({ row }: { row: CrossLibHealthIssueView }) {
 
   return (
     <Card>
-      <CardContent className="flex items-start gap-3 py-3">
+      <CardContent className="flex flex-row items-start gap-3 py-3">
         <SeverityIcon severity={row.severity} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 text-sm">
