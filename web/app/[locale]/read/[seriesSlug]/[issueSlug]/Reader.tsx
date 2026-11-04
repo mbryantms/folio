@@ -38,7 +38,10 @@ import {
 import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 
-import { seriesFinishProgress } from "@/lib/reader/finish-progress";
+import {
+  type FinishScope,
+  seriesFinishProgress,
+} from "@/lib/reader/finish-progress";
 import { ProgressUnavailableBanner } from "./ProgressUnavailableBanner";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
@@ -1215,25 +1218,40 @@ export function Reader({
   const listViewQ = useSavedView(
     online && cblListId && cblSavedViewId ? cblSavedViewId : "",
   );
+  // Reading through a collection, next-up carries the collection's own
+  // finished count (taken before this read's finishing write lands).
+  const collectionCounts =
+    nextUp.data?.source === "collection" &&
+    nextUp.data.collection_finished != null &&
+    nextUp.data.collection_total
+      ? {
+          name: nextUp.data.collection_name ?? "",
+          finished: nextUp.data.collection_finished,
+          total: nextUp.data.collection_total,
+        }
+      : null;
   const seriesProgressQ = useSeries(
-    online && !cblListId && seriesId ? seriesId : "",
+    online && !cblListId && !collectionCounts && seriesId ? seriesId : "",
   );
   const [seriesSnap, setSeriesSnap] = useState<{
     issueId: string;
-    scope: "series" | "list";
+    scope: FinishScope;
     name: string;
     finished: number;
     total: number;
   } | null>(null);
   // Opened from a list (`?cbl=`): wait for next-up to say whether the
   // list applies before falling back to the series.
-  const listPending = !!cblSavedViewId && !nextUp.data;
+  const listPending = (!!cblSavedViewId || !!collectionId) && !nextUp.data;
   if (seriesSnap?.issueId !== issueId && !listPending) {
     const list = cblListId ? listProgressQ.data : undefined;
-    const summary = cblListId
-      ? undefined
-      : seriesProgressQ.data?.progress_summary;
-    if (list && !listProgressQ.isFetching) {
+    const summary =
+      cblListId || collectionCounts
+        ? undefined
+        : seriesProgressQ.data?.progress_summary;
+    if (online && collectionCounts) {
+      setSeriesSnap({ issueId, scope: "collection", ...collectionCounts });
+    } else if (list && !listProgressQ.isFetching) {
       setSeriesSnap({
         issueId,
         scope: "list",

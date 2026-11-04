@@ -512,6 +512,7 @@ async fn collection_order_drives_next_up_and_steps_over_finished() {
         "1-based position of the target"
     );
     assert_eq!(body["collection_total"], 4, "b1 + a1..a3");
+    assert_eq!(body["collection_finished"], 0, "nothing finished yet");
     assert!(body.get("collection_param_was_stale").is_none());
 
     // Finished entries are stepped over (same rule as a CBL): with a2
@@ -521,6 +522,10 @@ async fn collection_order_drives_next_up_and_steps_over_finished() {
     assert_eq!(body["source"], "collection");
     assert_eq!(body["target"]["id"], f.a[2]);
     assert_eq!(body["collection_position"], 4);
+    assert_eq!(
+        body["collection_finished"], 1,
+        "finished issues in the reading order, for the end card's ring"
+    );
 
     // Last entry: nothing left in the collection and nothing after a3 in
     // its series → none (no stale flag: the issue IS in the collection).
@@ -637,6 +642,10 @@ async fn prev_up_follows_collection_order_without_finished_filter() {
     assert_eq!(body["source"], "collection");
     assert_eq!(body["target"]["id"], f.b1);
     assert_eq!(body["collection_position"], 1);
+    assert!(
+        body.get("collection_finished").is_none(),
+        "prev-up has no progress"
+    );
 
     let body = prev_up(&app, &f.user, &f.a[2], f.cid).await;
     assert_eq!(body["target"]["id"], f.a[1]);

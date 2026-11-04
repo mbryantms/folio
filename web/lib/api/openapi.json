@@ -28364,6 +28364,14 @@
             "format": "int32",
             "description": "Set when `source == \"cbl\"`. Total matched entries in the CBL."
           },
+          "collection_finished": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Set by the next-up resolver when `source == \"collection\"`: how many\nissues of the collection's reading order the caller has finished,\nfor the end card's progress ring. `None` from prev-up."
+          },
           "collection_id": {
             "type": [
               "string",

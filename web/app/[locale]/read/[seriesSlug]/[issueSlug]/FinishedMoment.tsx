@@ -82,7 +82,9 @@ export function FinishedMoment({
           {done
             ? progress?.scope === "list"
               ? "List complete"
-              : "Series complete"
+              : progress?.scope === "collection"
+                ? "Collection complete"
+                : "Series complete"
             : "Finished"}
         </p>
         <h2
@@ -152,7 +154,11 @@ export function FinishedMoment({
                 title={progress.seriesName}
               >
                 <span className="sr-only">
-                  {progress.scope === "list" ? "Reading list: " : "Series: "}
+                  {progress.scope === "list"
+                    ? "Reading list: "
+                    : progress.scope === "collection"
+                      ? "Collection: "
+                      : "Series: "}
                 </span>
                 {progress.scope === "list"
                   ? displayListName(progress.seriesName)

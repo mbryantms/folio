@@ -273,6 +273,31 @@ describe("<EndOfIssueCard>", () => {
     expect(html).toMatch(/3 of 10 issues read/);
   });
 
+  it("measures the collection when reading through one", () => {
+    const html = render({
+      data: {
+        source: "collection",
+        target: issue(),
+        collection_name: "Summer pile",
+        collection_position: 4,
+        collection_total: 9,
+        collection_finished: 2,
+      } as NextUpView,
+      finished: {
+        issueLabel: "Invincible #1",
+        progress: {
+          scope: "collection",
+          seriesName: "Summer pile",
+          total: 9,
+          before: 2,
+          after: 3,
+        },
+      },
+    });
+    expect(html).toMatch(/Collection: <\/span>Summer pile/);
+    expect(html).toMatch(/3 of 9 issues read/);
+  });
+
   it("omits the ring while the series progress is unknown", () => {
     const html = render({
       data: { source: "series", target: issue() },

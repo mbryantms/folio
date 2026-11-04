@@ -12062,6 +12062,13 @@ export interface components {
              */
             cbl_total?: number | null;
             /**
+             * Format: int32
+             * @description Set by the next-up resolver when `source == "collection"`: how many
+             *     issues of the collection's reading order the caller has finished,
+             *     for the end card's progress ring. `None` from prev-up.
+             */
+            collection_finished?: number | null;
+            /**
              * @description Set when `source == "collection"`. The collection's saved-view id
              *     (the same id the caller sent), for deep links to the collection.
              */

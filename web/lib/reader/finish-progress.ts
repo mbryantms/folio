@@ -1,8 +1,11 @@
 /** Read progress around finishing an issue — of the series, or of the
- *  reading list (CBL) the issue was opened from. Counts are issues. */
+ *  reading list (CBL) or collection the issue was opened from. Counts
+ *  are issues. */
+export type FinishScope = "series" | "list" | "collection";
+
 export type SeriesFinishProgress = {
-  /** What the ring measures: the series, or the reading list. */
-  scope: "series" | "list";
+  /** What the ring measures: the series, a reading list or a collection. */
+  scope: FinishScope;
   /** The series' or the list's name. */
   seriesName: string;
   total: number;
@@ -22,7 +25,7 @@ export function seriesFinishProgress(
   seriesName: string,
   snapshot: { finished: number; total: number } | null | undefined,
   counts: boolean,
-  scope: "series" | "list" = "series",
+  scope: FinishScope = "series",
 ): SeriesFinishProgress | null {
   if (!snapshot || snapshot.total <= 0) return null;
   const total = snapshot.total;
