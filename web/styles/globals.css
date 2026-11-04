@@ -1512,15 +1512,20 @@ html[data-page-tint][data-tint-reach~="accent"] {
  * Badges, writer chips, the rating pill, provider IDs and the issue
  * number all sat on different backgrounds (some opaque, some see-through),
  * so the tinted backdrop showed through only some of them. Inside
- * `.hero-chips` every pill gets the same near-opaque page-coloured surface
+ * `.hero-chips` every pill gets the same frosted page-coloured surface
  * with a light blur and a hairline border, so its text keeps the page's
  * normal contrast whatever colour the cover throws behind it. Semantic
  * text colours (warning, error, the primary issue number) are kept. */
 .hero-chips :is([data-slot="badge"], [data-hero-chip]) {
-  background-color: color-mix(in oklab, var(--background) 82%, transparent);
-  border-color: color-mix(in oklab, var(--foreground) 16%, transparent);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  /* Frosted glass: half the page colour over a blur of whatever is
+   * behind, so the pill takes the backdrop's hue but its text stays on a
+   * calm, darkened (light theme: lightened) ground. */
+  background-color: color-mix(in oklab, var(--background) 50%, transparent);
+  border-color: color-mix(in oklab, var(--foreground) 11%, transparent);
+  box-shadow: inset 0 1px 0
+    color-mix(in oklab, var(--foreground) 7%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
 }
 .hero-chips [data-hero-chip] {
   border-radius: 999px;
