@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { ViewTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
@@ -120,10 +122,16 @@ export function ProgressIssueCard({
   // child — React synthetic events bubble through the React tree even
   // across portals, so a click inside the dialog would otherwise
   // propagate to the Link and route away.
+  // The reader has no cover to land on, so only detail-page taps morph.
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   return (
     <div className={cn("flex flex-col", className)} data-card="">
       <Link
         href={resumesOnTap ? resumeHref : detailsHref}
+        onClick={resumesOnTap ? undefined : morph.onClick}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
         )}
@@ -135,12 +143,18 @@ export function ProgressIssueCard({
           <span className="sr-only">Continue reading </span>
         ) : null}
         <CoverTilt className="relative" {...longPress.wrapperProps}>
-          <Cover
-            src={issue.cover_url}
-            alt={headerTitle}
-            fallback={numberLabel}
-            className="w-full transition group-hover:brightness-110"
-          />
+          <ViewTransition
+            name={resumesOnTap ? undefined : morph.name}
+            share="morph"
+            default="none"
+          >
+            <Cover
+              src={issue.cover_url}
+              alt={headerTitle}
+              fallback={numberLabel}
+              className="w-full transition group-hover:brightness-110"
+            />
+          </ViewTransition>
           {/* Progress overlay: thin bar at the bottom of the cover. The
            *  bar always shows (not hover-gated) since it's a key signal
            *  for this rail's purpose. */}

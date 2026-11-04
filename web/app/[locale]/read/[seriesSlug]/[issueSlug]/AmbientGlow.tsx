@@ -91,10 +91,21 @@ export function AmbientGlow({
         : new ResizeObserver(refresh);
     for (const img of readerPageImages()) ro?.observe(img);
     window.addEventListener("resize", refresh);
+    // The page's on-screen box includes transforms, so a measurement taken
+    // while a turn animation (slide / curl) is still moving the new page
+    // lands the glow off to one side. Re-anchor when any animation or
+    // transition in the reader finishes, and on two short timers after a
+    // page change as a backstop (an animation can be cancelled silently).
+    document.addEventListener("animationend", refresh, true);
+    document.addEventListener("transitionend", refresh, true);
+    const timers = [180, 650].map((ms) => setTimeout(refresh, ms));
     return () => {
       cancelAnimationFrame(raf);
       ro?.disconnect();
       window.removeEventListener("resize", refresh);
+      document.removeEventListener("animationend", refresh, true);
+      document.removeEventListener("transitionend", refresh, true);
+      timers.forEach(clearTimeout);
     };
   }, [key]);
 

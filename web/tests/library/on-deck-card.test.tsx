@@ -9,6 +9,12 @@ import { describe, expect, it, vi } from "vitest";
 import type * as React from "react";
 import Link from "next/link";
 
+// The cover morph hook needs a live React tree; these tests call the
+// card directly and only inspect link targets.
+vi.mock("@/lib/ui/cover-morph", () => ({
+  issueCoverName: () => "issue-cover",
+  useCoverMorph: () => ({ name: undefined, onClick: undefined }),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {} }),
 }));

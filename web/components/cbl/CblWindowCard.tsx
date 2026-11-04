@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { ViewTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -113,11 +115,16 @@ export function CblWindowCard({
   });
 
   // Dialog must render outside <Link> — see SeriesCard for why.
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   return (
     <>
       <Link
         data-card=""
         href={issueUrl(issue, { cbl: cblSavedViewId })}
+        onClick={morph.onClick}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
           className,
@@ -133,15 +140,17 @@ export function CblWindowCard({
           )}
           {...longPress.wrapperProps}
         >
-          <Cover
-            src={issue.cover_url}
-            alt={heading}
-            fallback={numberLabel}
-            className={cn(
-              "w-full transition group-hover:brightness-110",
-              entry.finished && "opacity-50",
-            )}
-          />
+          <ViewTransition name={morph.name} share="morph" default="none">
+            <Cover
+              src={issue.cover_url}
+              alt={heading}
+              fallback={numberLabel}
+              className={cn(
+                "w-full transition group-hover:brightness-110",
+                entry.finished && "opacity-50",
+              )}
+            />
+          </ViewTransition>
           <Badge
             variant="secondary"
             className="bg-background/80 absolute bottom-2 left-2 backdrop-blur"

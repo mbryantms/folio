@@ -1122,13 +1122,3 @@ body {
 [data-motion="reduced"]::view-transition-new(.morph) {
   animation: none !important;
 }
-
-/* ── Count-up stats (standard, components/CountUp) ──
- * Digits glow in the accent colour while counting, then settle. */
-.count-up {
-  transition: color 900ms ease-out;
-}
-.count-up.count-up-active {
-  color: var(--primary);
-  transition-duration: 150ms;
-}

@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { ViewTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
@@ -123,23 +125,30 @@ export function OnDeckCard({
   // Cover/title click → issue detail page (matches every other cover-
   // bearing card). The yellow play overlay is the ONLY surface that
   // routes straight to the reader.
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   return (
     <>
       <Link
         data-card=""
         href={issueUrl(issue, { cbl: cblParam })}
+        onClick={morph.onClick}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
           className,
         )}
       >
         <CoverTilt className="relative" {...longPress.wrapperProps}>
-          <Cover
-            src={issue.cover_url}
-            alt={heading}
-            fallback={numberLabel}
-            className="w-full transition group-hover:brightness-110"
-          />
+          <ViewTransition name={morph.name} share="morph" default="none">
+            <Cover
+              src={issue.cover_url}
+              alt={heading}
+              fallback={numberLabel}
+              className="w-full transition group-hover:brightness-110"
+            />
+          </ViewTransition>
           <CoverMenuButton
             label={`Actions for ${heading}`}
             actions={menuActions}

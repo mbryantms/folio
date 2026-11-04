@@ -51,14 +51,12 @@ export function CountUp({
     const fmt = FORMATS[format];
     let raf = 0;
     el.textContent = fmt(0);
-    el.classList.add("count-up-active");
     const run = () => {
       const start = performance.now();
       const step = (now: number) => {
         const t = Math.min(1, (now - start) / DURATION_MS);
         el.textContent = fmt(Math.round(value * easeOut(t)));
         if (t < 1) raf = requestAnimationFrame(step);
-        else el.classList.remove("count-up-active");
       };
       raf = requestAnimationFrame(step);
     };
@@ -72,7 +70,6 @@ export function CountUp({
     return () => {
       io.disconnect();
       cancelAnimationFrame(raf);
-      el.classList.remove("count-up-active");
       el.textContent = fmt(value);
     };
   }, [value, reduced, format]);
@@ -80,7 +77,7 @@ export function CountUp({
   return (
     <span
       ref={ref}
-      className={`count-up ${className ?? ""}`}
+      className={className}
       style={{ fontVariantNumeric: "tabular-nums" }}
     >
       {FORMATS[format](value)}
