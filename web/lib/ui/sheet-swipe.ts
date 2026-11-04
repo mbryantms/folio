@@ -30,7 +30,7 @@ const DISMISS_MAX_PX = 140;
 const FLING_PX_PER_MS = 0.6;
 const SPRING = "translate 480ms cubic-bezier(0.34, 1.56, 0.64, 1)";
 const NO_DRAG =
-  'input, textarea, select, [contenteditable="true"], [role="slider"], [data-no-sheet-swipe]';
+  'input, textarea, select, canvas, [contenteditable="true"], [role="slider"], [aria-roledescription="sortable"], [data-no-sheet-swipe]';
 
 function reduced(): boolean {
   return (
