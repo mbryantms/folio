@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { sparklinePoints } from "@/lib/activity";
+import { fillDayBuckets, lastUtcDays, sparklinePoints } from "@/lib/activity";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import {
@@ -523,7 +523,9 @@ function ReadsSparklineCard({
           </p>
         ) : (
           <Sparkline
-            series={data.reads_per_day.map((d) => d.sessions)}
+            series={fillDayBuckets(data.reads_per_day, lastUtcDays(14)).map(
+              (d) => d.sessions,
+            )}
             ariaLabel="Sessions per day, last 14 days"
           />
         )}

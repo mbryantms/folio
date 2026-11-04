@@ -10,7 +10,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { formatDurationMs } from "@/lib/activity";
+import { fillDayBuckets, formatDurationMs } from "@/lib/activity";
 import type { ReadingDayBucket } from "@/lib/api/types";
 
 import {
@@ -32,6 +32,7 @@ export function PerDayBarChart({
   height = 140,
   animate = true,
   bucket = "day",
+  range,
 }: {
   data: ReadonlyArray<ReadingDayBucket>;
   height?: number;
@@ -40,9 +41,15 @@ export function PerDayBarChart({
   /** `week` when each row is a Monday-start week (long ranges); only
    *  the tooltip label changes. */
   bucket?: "day" | "week";
+  /** Day range to show, quiet days included (e.g. the admin's last 14
+   *  days). Without it, gaps between the first and last day are filled. */
+  range?: { from?: string; to?: string };
 }) {
+  // Quiet days as zero bars, so the axis is real time (daily only; weekly
+  // rows are already continuous).
+  const filled = bucket === "day" ? fillDayBuckets(data, range) : data;
   // Recharts wants a plain array of plain objects.
-  const rows = data.map((d) => ({
+  const rows = filled.map((d) => ({
     date: d.date,
     minutes: Math.round(d.active_ms / 60_000),
     active_ms: d.active_ms,

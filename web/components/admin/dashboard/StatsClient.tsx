@@ -6,7 +6,7 @@ import Link from "next/link";
 import { StatCard } from "@/components/admin/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDurationMs } from "@/lib/activity";
+import { formatDurationMs, lastUtcDays } from "@/lib/activity";
 import { useAdminOverview } from "@/lib/api/queries";
 import type { AdminOverviewView } from "@/lib/api/types";
 
@@ -78,7 +78,7 @@ function ReadsChartCard({ data }: { data: AdminOverviewView }) {
             No reading recorded in the last 14 days.
           </p>
         ) : (
-          <PerDayBarChart data={data.reads_per_day} />
+          <PerDayBarChart data={data.reads_per_day} range={lastUtcDays(14)} />
         )}
       </CardContent>
     </Card>
