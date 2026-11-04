@@ -1683,3 +1683,34 @@ html.theme-reveal::view-transition-group(root) {
 [data-tab-motion="back"] [data-slot="tabs-content"][data-state="active"] {
   animation: tab-panel-back 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+/* ===== folio-flair: live scan dashboard (components/admin/library/LiveScanPanel.tsx) =====
+ * Counters bump when they tick up, newly found series covers pop in, log
+ * lines slide in. Reduced motion: the global reset makes them instant. */
+@keyframes count-bump {
+  40% {
+    scale: 1.18;
+  }
+}
+.count-bump {
+  animation: count-bump 350ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes discover-pop {
+  from {
+    opacity: 0;
+    scale: 0.6;
+    translate: 0 10px;
+  }
+}
+.discover-pop {
+  animation: discover-pop 550ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes log-line-in {
+  from {
+    opacity: 0;
+    translate: -6px 0;
+  }
+}
+.log-line-in {
+  animation: log-line-in 300ms ease both;
+}

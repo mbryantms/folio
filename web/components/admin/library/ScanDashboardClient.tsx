@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
+import { LiveScanPanel } from "@/components/admin/library/LiveScanPanel";
 import { WatchersCard } from "@/components/admin/library/WatchersCard";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
@@ -104,9 +105,13 @@ export function ScanDashboardClient() {
 
   if (!batchId) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
+        <LiveScanPanel />
         <WatchersCard />
-        <BatchPicker />
+        <section className="space-y-3" aria-label="Scan-all history">
+          <h2 className="text-lg font-semibold">Scan-all history</h2>
+          <BatchPicker />
+        </section>
       </div>
     );
   }
