@@ -62,10 +62,7 @@ export function CollectionsIndex() {
       ) : collections.length === 0 ? (
         <EmptyState onCreate={() => setCreateOpen(true)} />
       ) : (
-        <ul
-          role="list"
-          className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-        >
+        <ul role="list" className={COLLECTION_GRID}>
           {collections.map((collection) => (
             <li key={collection.id}>
               <CollectionCard
@@ -116,6 +113,13 @@ function CollectionCard({
   );
 }
 
+/** Fixed-width cards (15rem) rather than fluid columns, so a wide screen
+ *  adds more cards per row instead of blowing each one up. Phones keep
+ *  two flexible columns. Larger than the compact Settings → Views cards
+ *  (the covers are the point here) but a predictable size. */
+const COLLECTION_GRID =
+  "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,15rem)] sm:gap-4";
+
 /** Single placeholder card — mirrors `CollectionCard`'s box so the loading
  *  state has the same footprint as the real grid (cover stack + name +
  *  description). Exported so the route `loading.tsx` reuses the exact shape. */
@@ -141,11 +145,7 @@ export function CollectionCardSkeleton() {
  *  as the real `<ul>` so nothing reflows when data arrives. */
 export function CollectionsGridSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <ul
-      role="list"
-      aria-hidden
-      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-    >
+    <ul role="list" aria-hidden className={COLLECTION_GRID}>
       {Array.from({ length: count }, (_, i) => (
         <li key={i}>
           <CollectionCardSkeleton />
