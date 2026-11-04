@@ -1509,35 +1509,51 @@ html[data-page-tint][data-tint-reach~="accent"] {
 }
 
 /* ── Header chips over the tint (series / issue pages) ──
- * Badges, writer chips, the rating pill, provider IDs and the issue
- * number all sat on different backgrounds (some opaque, some see-through),
- * so the tinted backdrop showed through only some of them. Inside
- * `.hero-chips` every pill gets the same frosted page-coloured surface
- * with a light blur and a hairline border, so its text keeps the page's
- * normal contrast whatever colour the cover throws behind it. Semantic
- * text colours (warning, error, the primary issue number) are kept. */
+ * Every pill in the header (badges, writer chips, rating pill, provider
+ * IDs, issue number) looks like the chips in the tabs below — the filled
+ * `--secondary` surface, no border, full pill — so the two areas read as
+ * one set. Over the tinted backdrop the surface is 82% opaque with a blur
+ * behind it: enough for the cover's hue to warm it slightly, too little
+ * for any tint to pull the text's contrast down. Coloured text (status
+ * tones, the issue number) is pulled 30% toward the foreground so it
+ * clears contrast on that surface in every theme. */
 .hero-chips :is([data-slot="badge"], [data-hero-chip]) {
-  /* Frosted glass: half the page colour over a blur of whatever is
-   * behind, so the pill takes the backdrop's hue but its text stays on a
-   * calm, darkened (light theme: lightened) ground. */
-  background-color: color-mix(in oklab, var(--background) 50%, transparent);
-  border-color: color-mix(in oklab, var(--foreground) 11%, transparent);
-  box-shadow: inset 0 1px 0
-    color-mix(in oklab, var(--foreground) 7%, transparent);
-  -webkit-backdrop-filter: blur(12px) saturate(1.4);
-  backdrop-filter: blur(12px) saturate(1.4);
-}
-.hero-chips [data-hero-chip] {
+  background-color: color-mix(in oklab, var(--secondary) 82%, transparent);
+  border-color: transparent;
+  box-shadow: none;
   border-radius: 999px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
-.hero-chips [data-hero-chip].text-muted-foreground {
-  color: color-mix(in oklab, var(--foreground) 82%, transparent);
+.hero-chips
+  :is([data-slot="badge"], [data-hero-chip]):is(
+    .text-muted-foreground,
+    .text-foreground
+  ) {
+  color: var(--secondary-foreground);
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-success {
+  color: color-mix(in oklab, var(--success) 70%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-warning {
+  color: color-mix(in oklab, var(--warning) 70%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-info {
+  color: color-mix(in oklab, var(--info) 70%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-primary {
+  /* The accents are light (amber L≈0.77): pulled well toward the
+   * foreground so it clears 4.5:1 on the chip in every theme. */
+  color: color-mix(in oklab, var(--primary) 42%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-destructive {
+  color: color-mix(in oklab, var(--destructive) 70%, var(--foreground));
 }
 .hero-chips :is(a, button):hover > [data-slot="badge"],
 .hero-chips a[data-hero-chip]:hover {
   background-color: color-mix(
     in oklab,
-    var(--background) 62%,
+    var(--secondary) 70%,
     var(--foreground) 12%
   );
 }
