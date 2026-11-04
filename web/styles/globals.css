@@ -1402,3 +1402,39 @@ html.theme-reveal::view-transition-group(root) {
 [data-motion="reduced"] .tour-hole::after {
   animation: none;
 }
+
+/* ── Live setting previews (folio-flair, settings/ReaderPreview.tsx) ──
+ * The miniature reader replays the chosen page-turn animation each time
+ * it turns, and webtoon view scrolls its strip on a loop. */
+.reader-preview-slide {
+  animation: reader-preview-in-l 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.reader-preview-slide-rtl {
+  animation: reader-preview-in-r 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.reader-preview-fade {
+  animation: reader-preview-fade 380ms ease-out;
+}
+.reader-preview-scroll {
+  animation: reader-preview-scroll 14s linear infinite;
+}
+@keyframes reader-preview-in-l {
+  from {
+    translate: 100% 0;
+  }
+}
+@keyframes reader-preview-in-r {
+  from {
+    translate: -100% 0;
+  }
+}
+@keyframes reader-preview-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes reader-preview-scroll {
+  to {
+    translate: 0 -50%;
+  }
+}
