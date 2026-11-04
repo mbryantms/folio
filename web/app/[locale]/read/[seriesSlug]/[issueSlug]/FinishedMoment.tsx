@@ -74,7 +74,7 @@ export function FinishedMoment({
       <div className="min-w-0">
         <p
           className={cn(
-            "text-[11px] font-bold tracking-[0.1em] uppercase",
+            "text-xs font-bold tracking-[0.08em] uppercase",
             done ? "text-success" : "text-primary",
           )}
         >
