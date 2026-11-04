@@ -1340,3 +1340,65 @@ html.theme-reveal::view-transition-new(root) {
 html.theme-reveal::view-transition-group(root) {
   animation: none;
 }
+
+/* ── Animated tour spotlight (folio-flair, onboarding/TourOverlay.tsx) ──
+ * The hole and the card glide together between steps; the hole's accent
+ * ring pulses outward so the eye finds it; centered steps close the hole
+ * to a point. Reduced motion: no glide, no pulse. */
+.tour-hole {
+  box-shadow: 0 0 0 200vmax rgb(0 0 0 / 0.62);
+  transition-property: top, left, width, height;
+  transition-duration: 500ms;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: tour-scrim-in 300ms ease-out;
+}
+.tour-hole::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: calc(var(--radius-lg, 0.5rem) + 3px);
+  border: 2px solid var(--primary);
+  animation: tour-pulse 1.9s ease-out infinite;
+}
+.tour-hole[data-closed]::after {
+  display: none;
+}
+.tour-card {
+  transition-property: top, left;
+  transition-duration: 500ms;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes tour-scrim-in {
+  from {
+    box-shadow: 0 0 0 200vmax rgb(0 0 0 / 0);
+  }
+}
+@keyframes tour-pulse {
+  0% {
+    opacity: 0.9;
+    scale: 1;
+  }
+  70%,
+  100% {
+    opacity: 0;
+    scale: 1.06;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-hole,
+  .tour-card {
+    transition: none;
+  }
+  .tour-hole,
+  .tour-hole::after {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .tour-hole,
+[data-motion="reduced"] .tour-card {
+  transition: none;
+}
+[data-motion="reduced"] .tour-hole,
+[data-motion="reduced"] .tour-hole::after {
+  animation: none;
+}

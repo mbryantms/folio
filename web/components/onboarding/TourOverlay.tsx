@@ -138,6 +138,18 @@ function cardPosition(rect: Rect, cardH: number) {
   };
 }
 
+/** Card position for a step with no anchor: centered on screen. */
+function centeredCard(cardH: number) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const w = Math.min(CARD_W, vw - EDGE * 2);
+  return {
+    left: (vw - w) / 2,
+    top: Math.max(EDGE, (vh - cardH) / 2),
+    width: w,
+  };
+}
+
 /**
  * The guided tour: a modal layer (focus trapped, Esc skips) that dims the
  * page except for the current step's anchor, with the step's card beside
@@ -177,9 +189,25 @@ export function TourOverlay({
 
   const wide = step.kind === "starter-lists";
   const pos =
-    rect && !wide && typeof window !== "undefined"
-      ? cardPosition(rect, cardH)
+    !wide && typeof window !== "undefined"
+      ? rect
+        ? cardPosition(rect, cardH)
+        : centeredCard(cardH)
       : null;
+  // Centered steps close the spotlight to a point mid-screen rather than
+  // swapping in a plain scrim, so moving between steps is one continuous
+  // glide (folio-flair "animated tour spotlight").
+  const hole: Rect =
+    rect && !wide
+      ? rect
+      : typeof window !== "undefined"
+        ? {
+            top: window.innerHeight / 2,
+            left: window.innerWidth / 2,
+            width: 0,
+            height: 0,
+          }
+        : { top: 0, left: 0, width: 0, height: 0 };
 
   return (
     <DialogPrimitive.Root
@@ -205,29 +233,27 @@ export function TourOverlay({
             nextRef.current?.focus({ preventScroll: true });
           }}
         >
-          {/* Dimmer with a hole: a box-shadow around the spotlight box, or
-              a plain scrim for centered steps. */}
-          {rect && !wide ? (
-            <div
-              aria-hidden="true"
-              className="pointer-events-none fixed rounded-lg transition-all duration-300 ease-out motion-reduce:transition-none"
-              style={{
-                top: rect.top,
-                left: rect.left,
-                width: rect.width,
-                height: rect.height,
-                boxShadow:
-                  "0 0 0 2px var(--primary), 0 0 0 9999px rgb(0 0 0 / 0.62)",
-              }}
-            />
-          ) : (
-            <div aria-hidden="true" className="fixed inset-0 bg-black/62" />
-          )}
+          {/* Dimmer with a hole: a box-shadow around the spotlight box,
+              gliding between anchors with a pulsing ring (globals.css,
+              `.tour-hole`); a zero-size hole mid-screen for centered
+              steps. */}
+          <div
+            aria-hidden="true"
+            className="tour-hole pointer-events-none fixed rounded-lg"
+            data-closed={hole.width === 0 ? "" : undefined}
+            style={{
+              top: hole.top,
+              left: hole.left,
+              width: hole.width,
+              height: hole.height,
+            }}
+          />
 
           <div
             ref={cardRef}
             className={cn(
               "bg-popover text-popover-foreground border-border fixed flex flex-col rounded-xl border shadow-2xl",
+              pos && "tour-card",
               wide
                 ? "top-1/2 left-1/2 max-h-[min(44rem,calc(100dvh-2rem))] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2"
                 : !pos &&
@@ -239,7 +265,10 @@ export function TourOverlay({
                 : undefined
             }
           >
-            <div className="space-y-2 p-5 pb-3">
+            <div
+              key={step.id}
+              className="animate-in fade-in slide-in-from-bottom-1 space-y-2 p-5 pb-3 duration-300 motion-reduce:animate-none"
+            >
               <p className="text-muted-foreground text-xs tabular-nums">
                 Step {index + 1} of {TOUR_STEPS.length}
               </p>
@@ -264,8 +293,10 @@ export function TourOverlay({
                   <span
                     key={s.id}
                     className={cn(
-                      "size-1.5 rounded-full",
-                      i === index ? "bg-primary" : "bg-muted-foreground/30",
+                      "h-1.5 rounded-full transition-[width,background-color] duration-300 motion-reduce:transition-none",
+                      i === index
+                        ? "bg-primary w-4"
+                        : "bg-muted-foreground/30 w-1.5",
                     )}
                   />
                 ))}
