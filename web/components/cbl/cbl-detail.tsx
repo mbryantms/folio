@@ -48,6 +48,7 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { EmptyState } from "@/components/folio/empty-state";
 import {
   LoadingRegion,
   RowsSkeleton,
@@ -429,11 +430,15 @@ function ReadingOrderTab({
               label="Loading entries…"
             />
           ) : items.length === 0 ? (
-            <div className="text-muted-foreground p-4 text-sm">
-              {filter === "all"
-                ? "No entries in this list yet."
-                : `No ${filter} entries.`}
-            </div>
+            <EmptyState
+              size="sm"
+              className="m-3 w-auto"
+              title={
+                filter === "all"
+                  ? "No entries in this list yet"
+                  : `No ${filter} entries`
+              }
+            />
           ) : (
             <div
               style={{

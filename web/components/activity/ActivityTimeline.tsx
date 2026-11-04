@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useMemo } from "react";
 
+import { History } from "lucide-react";
+
+import { EmptyState } from "@/components/folio/empty-state";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -48,10 +51,14 @@ export function ActivityTimeline({
 
   if (records.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm">
-        {emptyHint ??
-          "No reading sessions yet — open an issue and read for at least 30 seconds."}
-      </p>
+      <EmptyState
+        size="sm"
+        icon={History}
+        description={
+          emptyHint ??
+          "No reading sessions yet — open an issue and read for at least 30 seconds."
+        }
+      />
     );
   }
 

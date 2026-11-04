@@ -14,6 +14,7 @@ import {
   FolderPlus,
   ListChecks,
   Pencil,
+  SearchX,
   Sparkles,
 } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -53,6 +54,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/folio/empty-state";
 import {
   useBulkMarkProgress,
   useBulkMarkSeriesMatchingProgress,
@@ -711,13 +713,22 @@ export function IssuesPanel({
       {query.isLoading ? (
         <IssueGridSkeleton style={gridStyle} />
       ) : items.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          {debouncedQ ? `No issues matched "${debouncedQ}".` : "No issues yet."}
-        </p>
+        debouncedQ ? (
+          <EmptyState
+            size="sm"
+            icon={SearchX}
+            title={`No issues matched “${debouncedQ}”`}
+            description="Try a different number or title."
+          />
+        ) : (
+          <EmptyState size="sm" title="No issues yet" />
+        )
       ) : mainRunItems.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          No main-run issues yet — see Specials &amp; Extras below.
-        </p>
+        <EmptyState
+          size="sm"
+          title="No main-run issues yet"
+          description="This series only has specials and extras so far; they're listed below."
+        />
       ) : (
         // Window-virtualize the main run (audit G1, parity with the
         // library grid). Fetch stays on the sentinel below, so this grid

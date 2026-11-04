@@ -3,6 +3,8 @@
 import * as React from "react";
 import { Bookmark, Highlighter, Star, StickyNote } from "lucide-react";
 
+import { EmptyState } from "@/components/folio/empty-state";
+import { RowsSkeleton } from "@/components/skeletons/LoadingShapes";
 import {
   Sheet,
   SheetContent,
@@ -97,17 +99,27 @@ export function MarkerDrawer({
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto py-3">
           {query.isLoading ? (
-            <p className="text-muted-foreground px-4 text-sm">
-              Loading markers…
-            </p>
+            <div className="px-2">
+              <RowsSkeleton
+                rows={4}
+                trailing={false}
+                className="border-0"
+                label="Loading markers…"
+              />
+            </div>
           ) : query.isError ? (
             <p className="text-destructive px-4 text-sm">
               Couldn&apos;t load markers.
             </p>
           ) : items.length === 0 ? (
-            <p className="text-muted-foreground px-4 text-sm">
-              No markers on this issue yet.
-            </p>
+            <div className="px-4">
+              <EmptyState
+                size="sm"
+                icon={Bookmark}
+                title="No markers on this issue yet"
+                description="Bookmark, highlight or note a page and it shows up here."
+              />
+            </div>
           ) : (
             <ul aria-label="Markers in this issue" className="space-y-1 px-2">
               {items.map((m, i) => {

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { EmptyState } from "@/components/folio/empty-state";
 import { formatDurationMs } from "@/lib/activity";
 import type { IssueSummaryView, RereadIssueEntry } from "@/lib/api/types";
 import { ISSUE_GRID_CELL_RADIUS, ISSUE_GRID_COLS } from "@/lib/issue-grid";
@@ -25,11 +26,7 @@ export function IssueGridHeatmap({
   for (const r of rereads) readsById.set(r.issue_id, r);
 
   if (issues.length === 0) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        No issues in this series yet.
-      </p>
-    );
+    return <EmptyState size="sm" title="No issues in this series yet" />;
   }
 
   return (

@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { Plus } from "lucide-react";
+import { ListFilter, Plus } from "lucide-react";
 
+import { EmptyState } from "@/components/folio/empty-state";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -301,9 +302,15 @@ export function FilterBuilder({
           </Button>
         </div>
         {state.conditions.length === 0 ? (
-          <div className="text-muted-foreground rounded-md border border-dashed p-4 text-sm">
-            No conditions yet. Add one to start filtering.
-          </div>
+          // Compact (no cover illustration): it sits inside the
+          // filter dialog above the live preview grid.
+          <EmptyState
+            size="sm"
+            illustration={false}
+            icon={ListFilter}
+            className="border-dashed p-4"
+            description="No conditions yet. Add one to start filtering."
+          />
         ) : (
           state.conditions.map((c, i) => (
             <ConditionRow

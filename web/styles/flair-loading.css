@@ -72,3 +72,71 @@
 [data-motion="reduced"] .filter-chip {
   animation: none;
 }
+
+/* ── Empty / 404 / error illustration (components/folio/cover-silhouettes) ──
+ * Three static cover silhouettes, fanned from the bottom: the loading
+ * skeleton's look (`.cover-skeleton` marks) without the shimmer. */
+.cover-silhouettes {
+  --silhouette-w: 2.25rem;
+  position: relative;
+  width: calc(var(--silhouette-w) * 2.6);
+  height: calc(var(--silhouette-w) * 1.75);
+  flex-shrink: 0;
+}
+.cover-silhouettes[data-size="lg"] {
+  --silhouette-w: 3.25rem;
+}
+.cover-silhouette {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: var(--silhouette-w);
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: var(--muted);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent),
+    0 8px 16px -10px color-mix(in oklab, var(--foreground) 40%, transparent);
+  transform-origin: 50% 100%;
+  translate: -50% 0;
+}
+.cover-silhouette:nth-child(1) {
+  rotate: -14deg;
+  translate: -105% 0;
+  opacity: 0.75;
+}
+.cover-silhouette:nth-child(2) {
+  rotate: 14deg;
+  translate: 5% 0;
+  opacity: 0.75;
+}
+.cover-silhouette:nth-child(3) {
+  z-index: 1;
+  background-color: color-mix(in oklab, var(--muted) 85%, var(--foreground));
+}
+.cover-silhouettes__badge {
+  position: absolute;
+  z-index: 2;
+  right: 4%;
+  bottom: -0.35rem;
+  display: grid;
+  place-items: center;
+}
+.cover-silhouettes__badge--icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+/* A full status icon (e.g. StatusErrorIcon) shrinks to badge size. */
+.cover-silhouettes__badge:not(.cover-silhouettes__badge--icon) > * {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.cover-silhouettes__badge:not(.cover-silhouettes__badge--icon) svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}

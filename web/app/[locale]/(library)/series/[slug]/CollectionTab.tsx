@@ -25,6 +25,7 @@ import { AlertCircle, CheckCircle2, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 
+import { EmptyState } from "@/components/folio/empty-state";
 import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSeriesCollection } from "@/lib/api/queries";
@@ -328,9 +329,11 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
           )}
         </section>
       ) : (
-        <p className="text-muted-foreground text-sm">
-          No numbered issues to chart yet.
-        </p>
+        <EmptyState
+          size="sm"
+          title="No numbered issues to chart yet"
+          description="The completeness grid fills in once this series has numbered main-run issues."
+        />
       )}
 
       {/* ── Specials / extras ── */}
