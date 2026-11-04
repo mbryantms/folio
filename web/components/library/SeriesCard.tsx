@@ -6,6 +6,8 @@ import { memo, useState } from "react";
 
 import { Cover } from "@/components/Cover";
 import { CoverTilt } from "@/components/library/CoverTilt";
+import { SpineStack } from "@/components/library/SpineStack";
+import { PageScrub, issueIdFromCoverUrl } from "@/components/library/PageScrub";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -200,7 +202,8 @@ function SeriesCardImpl({
   );
   const innerCard = (
     <>
-      <CoverTilt className="relative" {...coverWrapperProps}>
+      <CoverTilt className="relative isolate" {...coverWrapperProps}>
+        <SpineStack count={issueCount} />
         {selectMode && (
           <SelectionCheckbox
             isSelected={selectMode.isSelected}
@@ -215,6 +218,16 @@ function SeriesCardImpl({
           fallback={series.publisher ?? series.name}
           className="w-full transition group-hover:brightness-110"
         />
+        {!inSelectMode && (
+          <PageScrub
+            issueId={issueIdFromCoverUrl(series.cover_url)}
+            pageCount={
+              series.total_page_count && series.issue_count
+                ? series.total_page_count / series.issue_count
+                : null
+            }
+          />
+        )}
         {/* Top-right indicator stack: publication status + the
          *  metadata-needs chip. Both live here (not top-left) so the
          *  kebab affordance owns the canonical top-left across all card

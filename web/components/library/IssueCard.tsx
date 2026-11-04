@@ -7,6 +7,7 @@ import { Check } from "lucide-react";
 
 import { Cover } from "@/components/Cover";
 import { CoverTilt } from "@/components/library/CoverTilt";
+import { PageScrub } from "@/components/library/PageScrub";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -221,6 +222,9 @@ function IssueCardImpl({
           fallback={numberLabel}
           className="w-full transition group-hover:brightness-110"
         />
+        {!inSelectMode && issue.state === "active" && (
+          <PageScrub issueId={issue.id} pageCount={issue.page_count} />
+        )}
         {/* Top-right priority cascade (the cover-card standard, see
          *  docs/dev/card-corner-conventions.md):
          *    1. match-status badge — CBL detail page only, doesn't apply here

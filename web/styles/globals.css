@@ -1082,3 +1082,12 @@ body {
     var(--background) 100%
   );
 }
+
+/* ── Series thickness (optional effect, components/library/SpineStack) ──
+ * Alternating page-edge tones, mixed from the theme so they read as paper
+ * edges on dark, light and amber backgrounds alike. */
+.spine-stack {
+  --spine-a: color-mix(in oklab, var(--foreground) 55%, var(--background));
+  --spine-b: color-mix(in oklab, var(--foreground) 25%, var(--background));
+  background: var(--spine-b);
+}
