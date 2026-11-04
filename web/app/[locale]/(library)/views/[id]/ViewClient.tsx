@@ -17,12 +17,14 @@ export function ViewClient({ view }: { view: SavedViewView }) {
   return (
     <>
       <RecordVisit visit={savedViewVisit(view)} />
-      <ViewBody view={view} />
+      {viewBody(view)}
     </>
   );
 }
 
-function ViewBody({ view }: { view: SavedViewView }) {
+/** The detail component for the view's kind (a plain call, so the
+ *  dispatch stays visible in ViewClient's own element tree). */
+function viewBody(view: SavedViewView) {
   if (view.kind === "system") return <SystemViewDetail view={view} />;
   if (view.kind === "cbl") return <CblViewDetail savedView={view} />;
   if (view.kind === "collection")
