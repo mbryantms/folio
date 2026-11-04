@@ -79,6 +79,25 @@ export function revealTheme(
     return;
   }
 
+  circleReveal(apply, origin);
+}
+
+/**
+ * The same circular reveal for any other appearance change (accent,
+ * density, corner radius — folio-flair): `apply` changes the page and the
+ * new look spreads from the control (or the last press). Reduced motion
+ * and browsers without view transitions just apply it.
+ */
+export function revealChange(apply: () => void, origin?: Element | null) {
+  if (typeof document.startViewTransition !== "function" || reduced()) {
+    apply();
+    return;
+  }
+  circleReveal(apply, origin);
+}
+
+function circleReveal(apply: () => void, origin?: Element | null) {
+  const root = document.documentElement;
   const r = origin?.getBoundingClientRect();
   const x = r ? r.left + r.width / 2 : (lastPress?.x ?? window.innerWidth - 48);
   const y = r ? r.top + r.height / 2 : (lastPress?.y ?? 32);
