@@ -1659,6 +1659,10 @@ export function useSeriesListInfinite(
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: options.enabled ?? true,
+    // A filter/sort change keeps the previous results on screen (dimmed
+    // by the grid) until the new first page lands, instead of dropping
+    // back to the skeleton (flair pre-merge polish).
+    placeholderData: keepPreviousData,
     // Keep loaded pages cached longer than the 5-min default so a
     // browse → open → back round-trip restores the full windowed grid
     // (and its scroll position) from cache instead of refetching page 1
@@ -1685,6 +1689,9 @@ export function useIssuesCrossListInfinite(
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: options.enabled ?? true,
+    // See `useSeriesListInfinite`: previous results stay up while the
+    // next filter's first page loads.
+    placeholderData: keepPreviousData,
     // See `useSeriesListInfinite` — keep pages cached for back-nav grid
     // + scroll restoration (audit B15 / G1).
     gcTime: 30 * 60_000,

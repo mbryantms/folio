@@ -1,2 +1,74 @@
 /* Flair pre-merge polish, group "loading" (2026-11-04). Owned by that group; keyframes and
  * component classes only. Reduced motion is handled globally in globals.css. */
+
+/* ── Library grid: stale results while a filter/sort change loads ──
+ * `LibraryGridView` keeps the previous page up (keepPreviousData) and
+ * marks it `data-stale`; it dims after a short delay so a fast response
+ * never flickers, and the new results fade in via the Web Animations API.
+ * `scroll-margin-top` keeps the first row clear of the sticky toolbar when
+ * the grid scrolls back to its top on landing. */
+.library-grid-results {
+  scroll-margin-top: calc(var(--topbar-h) + 4.5rem);
+  transition: opacity 160ms ease;
+}
+.library-grid-results[data-stale] {
+  opacity: 0.55;
+  transition: opacity 220ms ease 120ms;
+}
+
+/* ── Active filter chips: scale/fade in on add, out on removal ──
+ * `.filter-chip-leave` is held mounted for 240ms by ActiveChips'
+ * `useChipPresence`; it also collapses its width (and cancels the row's
+ * 0.375rem gap) so neighbours slide together instead of jumping. */
+.filter-chip {
+  animation: filter-chip-in 200ms cubic-bezier(0.2, 0, 0, 1.2) both;
+}
+.filter-chip-leave {
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: filter-chip-out 240ms ease-in forwards;
+}
+@keyframes filter-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+@keyframes filter-chip-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    max-width: 24rem;
+  }
+  55% {
+    opacity: 0;
+    transform: scale(0.8);
+    max-width: 24rem;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8);
+    max-width: 0;
+    padding-inline: 0;
+    border-width: 0;
+    margin-inline-end: -0.375rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-grid-results,
+  .library-grid-results[data-stale] {
+    transition: none;
+  }
+  .filter-chip {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .library-grid-results,
+[data-motion="reduced"] .library-grid-results[data-stale] {
+  transition: none;
+}
+[data-motion="reduced"] .filter-chip {
+  animation: none;
+}

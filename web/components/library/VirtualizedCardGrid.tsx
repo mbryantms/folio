@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import {
   GRID_GAP_PX,
   computeColumnWidth,
@@ -128,7 +129,7 @@ export function VirtualizedCardGrid({
         >
           {Array.from({ length: 12 }).map((_, i) => (
             <li key={i}>
-              <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+              <CoverSkeleton />
             </li>
           ))}
         </ul>

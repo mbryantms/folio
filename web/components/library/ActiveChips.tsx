@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { X } from "lucide-react";
 
 import {
@@ -19,6 +20,7 @@ import {
 } from "@/components/library/FilterSheet";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useReducedMotion } from "@/lib/visual-effects";
 
 /**
  * Renders the strip of removable chips shown above the library grid
@@ -101,6 +103,73 @@ export function ActiveChips({
    *  in series mode so the last chip clears the A–Z rail. */
   className?: string;
 }) {
+  // Same order as the FilterSheet sections: reading, publication,
+  // content, curation.
+  const chips: ChipItem[] = [];
+  const add = (key: string, label: string, onRemove: () => void) =>
+    chips.push({ key, label, onRemove });
+  for (const v of readStatus)
+    add(
+      `read-${v}`,
+      `Read: ${labelFor(LIBRARY_GRID_READ_STATUS_OPTIONS, v)}`,
+      () => onRemoveReadStatus(v),
+    );
+  if (ratingRange)
+    add(
+      "rating",
+      `Rating: ${ratingRange[0].toFixed(1)}–${ratingRange[1].toFixed(1)} ★`,
+      onClearRating,
+    );
+  if (status !== "any")
+    add(
+      "status",
+      `Status: ${labelFor(LIBRARY_GRID_STATUS_OPTIONS, status)}`,
+      onClearStatus,
+    );
+  if (yearFrom || yearTo)
+    add("year", `Year: ${yearFrom || "…"}–${yearTo || "…"}`, onClearYear);
+  for (const v of publishers)
+    add(`pub-${v}`, `Publisher: ${v}`, () => onRemovePublisher(v));
+  for (const v of ageRatings)
+    add(`age-${v}`, `Age: ${v}`, () => onRemoveAgeRating(v));
+  for (const v of languages)
+    add(`lang-${v}`, `Language: ${v}`, () => onRemoveLanguage(v));
+  for (const c of CREDIT_ROLES)
+    for (const v of credits[c.key])
+      add(`${c.key}-${v}`, `${c.label.replace(/s$/, "")}: ${v}`, () =>
+        onRemoveCredit(c.key, v),
+      );
+  for (const v of anyCredits)
+    add(`credits-${v}`, `Credits: ${v}`, () => onRemoveAnyCredit(v));
+  for (const v of genres)
+    add(`gen-${v}`, `Genre: ${v}`, () => onRemoveGenre(v));
+  for (const v of tags) add(`tag-${v}`, `Tag: ${v}`, () => onRemoveTag(v));
+  for (const v of characters)
+    add(`char-${v}`, `Character: ${v}`, () => onRemoveCharacter(v));
+  for (const v of teams) add(`team-${v}`, `Team: ${v}`, () => onRemoveTeam(v));
+  for (const v of locations)
+    add(`loc-${v}`, `Location: ${v}`, () => onRemoveLocation(v));
+  if (metadataCompleteness)
+    add(
+      "meta",
+      `Metadata: ${labelFor(
+        LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS,
+        metadataCompleteness,
+      )}`,
+      onClearMetadataCompleteness,
+    );
+  if (providerMatch)
+    add(
+      "provider",
+      `Provider: ${PROVIDER_MATCH_LABELS[providerMatch]}${
+        providerSource ? ` · ${PROVIDER_SOURCE_LABELS[providerSource]}` : ""
+      }`,
+      onClearProviderMatch,
+    );
+
+  const shown = useChipPresence(chips);
+  if (shown.length === 0) return null;
+
   return (
     // Phone: one horizontally scrolling row (edge to edge inside the
     // shell's px-4) instead of a wrapping block that pushed the grid
@@ -111,129 +180,75 @@ export function ActiveChips({
         className,
       )}
     >
-      {/* Same order as the FilterSheet sections: reading, publication,
-          content, curation. */}
-      {readStatus.map((v) => (
-        <Chip
-          key={`read-${v}`}
-          label={`Read: ${labelFor(LIBRARY_GRID_READ_STATUS_OPTIONS, v)}`}
-          onRemove={() => onRemoveReadStatus(v)}
-        />
-      ))}
-      {ratingRange ? (
-        <Chip
-          label={`Rating: ${ratingRange[0].toFixed(1)}–${ratingRange[1].toFixed(1)} ★`}
-          onRemove={onClearRating}
-        />
-      ) : null}
-      {status !== "any" ? (
-        <Chip
-          label={`Status: ${labelFor(LIBRARY_GRID_STATUS_OPTIONS, status)}`}
-          onRemove={onClearStatus}
-        />
-      ) : null}
-      {yearFrom || yearTo ? (
-        <Chip
-          label={`Year: ${yearFrom || "…"}–${yearTo || "…"}`}
-          onRemove={onClearYear}
-        />
-      ) : null}
-      {publishers.map((v) => (
-        <Chip
-          key={`pub-${v}`}
-          label={`Publisher: ${v}`}
-          onRemove={() => onRemovePublisher(v)}
-        />
-      ))}
-      {ageRatings.map((v) => (
-        <Chip
-          key={`age-${v}`}
-          label={`Age: ${v}`}
-          onRemove={() => onRemoveAgeRating(v)}
-        />
-      ))}
-      {languages.map((v) => (
-        <Chip
-          key={`lang-${v}`}
-          label={`Language: ${v}`}
-          onRemove={() => onRemoveLanguage(v)}
-        />
-      ))}
-      {CREDIT_ROLES.flatMap((c) =>
-        credits[c.key].map((v) => (
-          <Chip
-            key={`${c.key}-${v}`}
-            label={`${c.label.replace(/s$/, "")}: ${v}`}
-            onRemove={() => onRemoveCredit(c.key, v)}
-          />
-        )),
+      {shown.map((c) =>
+        c.leaving ? (
+          <LeavingChip key={c.key} label={c.label} />
+        ) : (
+          <Chip key={c.key} label={c.label} onRemove={c.onRemove} />
+        ),
       )}
-      {anyCredits.map((v) => (
-        <Chip
-          key={`credits-${v}`}
-          label={`Credits: ${v}`}
-          onRemove={() => onRemoveAnyCredit(v)}
-        />
-      ))}
-      {genres.map((v) => (
-        <Chip
-          key={`gen-${v}`}
-          label={`Genre: ${v}`}
-          onRemove={() => onRemoveGenre(v)}
-        />
-      ))}
-      {tags.map((v) => (
-        <Chip
-          key={`tag-${v}`}
-          label={`Tag: ${v}`}
-          onRemove={() => onRemoveTag(v)}
-        />
-      ))}
-      {characters.map((v) => (
-        <Chip
-          key={`char-${v}`}
-          label={`Character: ${v}`}
-          onRemove={() => onRemoveCharacter(v)}
-        />
-      ))}
-      {teams.map((v) => (
-        <Chip
-          key={`team-${v}`}
-          label={`Team: ${v}`}
-          onRemove={() => onRemoveTeam(v)}
-        />
-      ))}
-      {locations.map((v) => (
-        <Chip
-          key={`loc-${v}`}
-          label={`Location: ${v}`}
-          onRemove={() => onRemoveLocation(v)}
-        />
-      ))}
-      {metadataCompleteness ? (
-        <Chip
-          label={`Metadata: ${labelFor(
-            LIBRARY_GRID_METADATA_COMPLETENESS_OPTIONS,
-            metadataCompleteness,
-          )}`}
-          onRemove={onClearMetadataCompleteness}
-        />
-      ) : null}
-      {providerMatch ? (
-        <Chip
-          label={`Provider: ${PROVIDER_MATCH_LABELS[providerMatch]}${
-            providerSource ? ` · ${PROVIDER_SOURCE_LABELS[providerSource]}` : ""
-          }`}
-          onRemove={onClearProviderMatch}
-        />
-      ) : null}
     </div>
   );
 }
 
+interface ChipItem {
+  key: string;
+  label: string;
+  onRemove: () => void;
+}
+
+/** How long a removed chip stays mounted for its exit (matches
+ *  `.filter-chip-leave` in styles/flair-loading.css). */
+const CHIP_EXIT_MS = 240;
+
+/**
+ * Keeps removed chips mounted briefly, flagged `leaving`, at their old
+ * position so they can fade/scale out (flair pre-merge polish). Under
+ * reduced motion they just go. Works for every removal path (the chip's
+ * own ×, the filter sheet, "clear all"), since it diffs the chip list.
+ */
+function useChipPresence(
+  chips: ChipItem[],
+): (ChipItem & { leaving?: boolean })[] {
+  const reduceMotion = useReducedMotion();
+  const signature = chips.map((c) => `${c.key}\u0000${c.label}`).join("\n");
+  const [prev, setPrev] = React.useState({ signature, chips });
+  const [leaving, setLeaving] = React.useState<
+    { item: ChipItem; index: number }[]
+  >([]);
+
+  // Diff during render (the "adjust state on prop change" idiom): chips
+  // that vanished since the last distinct list start leaving.
+  if (prev.signature !== signature) {
+    const now = new Set(chips.map((c) => c.key));
+    const gone = reduceMotion
+      ? []
+      : prev.chips
+          .map((item, index) => ({ item, index }))
+          .filter(({ item }) => !now.has(item.key));
+    setPrev({ signature, chips });
+    setLeaving((l) => [...l.filter(({ item }) => !now.has(item.key)), ...gone]);
+  }
+
+  React.useEffect(() => {
+    if (leaving.length === 0) return;
+    const t = window.setTimeout(() => setLeaving([]), CHIP_EXIT_MS);
+    return () => window.clearTimeout(t);
+  }, [leaving]);
+
+  const out: (ChipItem & { leaving?: boolean })[] = [...chips];
+  for (const { item, index } of [...leaving].sort(
+    (a, b) => a.index - b.index,
+  )) {
+    if (out.some((c) => c.key === item.key)) continue;
+    out.splice(Math.min(index, out.length), 0, { ...item, leaving: true });
+  }
+  return out;
+}
+
 function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
-    <Badge variant="secondary" className="gap-1 pr-1">
+    <Badge variant="secondary" className="filter-chip gap-1 pr-1">
       {label}
       <button
         type="button"
@@ -243,6 +258,20 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
       >
         <X className="size-3" />
       </button>
+    </Badge>
+  );
+}
+
+/** A removed chip on its way out: inert, hidden from assistive tech. */
+function LeavingChip({ label }: { label: string }) {
+  return (
+    <Badge
+      variant="secondary"
+      aria-hidden
+      className="filter-chip filter-chip-leave gap-1 pr-1"
+    >
+      {label}
+      <X className="size-3" />
     </Badge>
   );
 }
