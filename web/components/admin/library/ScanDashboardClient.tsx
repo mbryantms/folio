@@ -8,6 +8,7 @@ import { Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { BatchListSkeleton } from "@/components/skeletons/AdminShapes";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BumpNumber } from "@/components/admin/BumpNumber";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
@@ -391,27 +392,6 @@ function BatchStateBadge({ state }: { state: ScanBatchView["state"] }) {
     <Badge variant="outline" className={cn("capitalize", tone)}>
       {label}
     </Badge>
-  );
-}
-
-/** Batch rows' shape (state pill · library count · date) while the list
- *  loads. */
-function BatchListSkeleton() {
-  return (
-    <ul className="space-y-2" role="status" aria-label="Loading scan batches">
-      {Array.from({ length: 4 }, (_, i) => (
-        <li
-          key={i}
-          className="border-border bg-card flex items-center justify-between rounded-md border px-4 py-3"
-        >
-          <span className="flex items-center gap-3">
-            <Skeleton className="h-5 w-16 rounded-full" />
-            <Skeleton className="h-4 w-24" />
-          </span>
-          <Skeleton className="h-3 w-28" />
-        </li>
-      ))}
-    </ul>
   );
 }
 

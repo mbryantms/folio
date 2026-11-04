@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { StarterRowsSkeleton } from "@/components/skeletons/AdminShapes";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useCatalogEntries, useCatalogSources } from "@/lib/api/queries";
@@ -49,7 +49,7 @@ export function StarterListsAdmin() {
           </Button>
         </div>
         {q.isLoading ? (
-          <Skeleton className="h-64 w-full" />
+          <StarterRowsSkeleton />
         ) : q.isError ? (
           <p className="text-destructive text-sm">
             Failed to load starter lists.

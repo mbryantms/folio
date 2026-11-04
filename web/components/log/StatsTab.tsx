@@ -14,6 +14,8 @@ import { DowHourHeatmap } from "@/components/activity/DowHourHeatmap";
 import { HeroCards } from "@/components/activity/HeroCards";
 import { RereadList } from "@/components/activity/RereadList";
 import { TopRankingsList } from "@/components/activity/TopRankings";
+import { StatsBodySkeleton } from "@/components/log/LogSkeletons";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useReadingStats } from "@/lib/api/queries";
 import type {
@@ -100,7 +102,9 @@ export function StatsTab({ initialRange }: { initialRange?: string }) {
       <RangeBar range={range} onChange={setRange} data={data} />
 
       {stats.isLoading ? (
-        <StatsBodySkeleton />
+        <LoadingRegion label="Loading reading stats…">
+          <StatsBodySkeleton />
+        </LoadingRegion>
       ) : !data ? (
         <p className="text-destructive text-sm">
           Couldn&apos;t load your reading stats. Try again in a moment.
@@ -287,19 +291,6 @@ function EmptyRange({ all }: { all: boolean }) {
           ? "Open an issue and your sessions, pace and rankings start filling in here."
           : "Pick a longer range above to see your stats."}
       </p>
-    </div>
-  );
-}
-
-function StatsBodySkeleton() {
-  return (
-    <div className="space-y-6" aria-hidden>
-      <Skeleton className="h-28 w-full rounded-xl" />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <Skeleton className="h-64 rounded-xl lg:col-span-3" />
-        <Skeleton className="h-64 rounded-xl lg:col-span-2" />
-      </div>
-      <Skeleton className="h-72 w-full rounded-xl" />
     </div>
   );
 }

@@ -140,7 +140,11 @@ export function PageRails({
       ) : null}
 
       {pinnedQ.isLoading ? (
-        <RailsSkeleton rails={3} label="Loading views…" />
+        <RailsSkeleton
+          rails={3}
+          card={isSystem ? "issue" : "series"}
+          label="Loading views…"
+        />
       ) : pinnedQ.isError && !pinnedQ.data ? (
         // A failed fetch is not "nothing pinned" (post-audit T2.4).
         <RailError

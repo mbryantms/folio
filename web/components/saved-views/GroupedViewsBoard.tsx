@@ -61,6 +61,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { CollectionCardSkeleton } from "@/components/collections/CollectionCardSkeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,7 +87,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/folio/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  BoardToolbarControlsSkeleton,
+  ViewCardsSkeleton,
+} from "@/components/skeletons/SettingsShapes";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -650,6 +654,12 @@ export function GroupedViewsBoard({
                     <FolderPlus className="mr-1.5 size-4" /> New group
                   </Button>
                 </>
+              ) : loading || groupsQ.isLoading ? (
+                // Hold the controls' room while the board loads, so the
+                // primary action doesn't jump left once cards arrive.
+                <div aria-hidden className="contents">
+                  <BoardToolbarControlsSkeleton />
+                </div>
               ) : null}
               {action}
             </div>
@@ -1305,22 +1315,21 @@ function BoardSkeleton() {
   const large = grid === CARD_GRID_CLASS.large;
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Loading">
-      <Skeleton className="h-10 w-full rounded-xl" />
-      <ul
-        className={
-          large
-            ? grid
-            : "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-        }
-      >
-        {Array.from({ length: 4 }).map((_, i) => (
-          <li key={i}>
-            <Skeleton
-              className={cn("w-full rounded-lg", large ? "h-96" : "h-28")}
-            />
-          </li>
-        ))}
-      </ul>
+      {large ? (
+        // Large (/collections): ungrouped collection cards, the same
+        // card the route fallback draws.
+        <ul className={grid}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <li key={i}>
+              <CollectionCardSkeleton />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        // Compact (Settings → Views): ungrouped cards straight under the
+        // toolbar, in the compact grid.
+        <ViewCardsSkeleton />
+      )}
     </div>
   );
 }

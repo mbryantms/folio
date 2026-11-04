@@ -18,7 +18,8 @@ export default function YearInReviewLoading() {
       />
       <LoadingRegion
         label="Loading your year in review…"
-        className="relative mx-auto flex h-full w-full max-w-xl flex-col px-3 pt-[max(0.75rem,var(--safe-top))] pb-[max(0.75rem,var(--safe-bottom))] sm:px-4 sm:py-6"
+        rootClassName="relative flex min-h-0 flex-1 flex-col"
+        className="relative mx-auto flex min-h-0 w-full max-w-xl flex-1 flex-col px-3 pt-[max(0.75rem,var(--safe-top))] pb-[max(0.75rem,var(--safe-bottom))] sm:px-4 sm:py-6"
       >
         <div className="space-y-2">
           <div className="flex gap-1">

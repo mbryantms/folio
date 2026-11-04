@@ -116,6 +116,7 @@ function CblDetailInner({
     return (
       <LoadingRegion
         label="Loading list…"
+        rootClassName="flex min-h-0 flex-1 flex-col"
         className="flex min-h-0 flex-1 flex-col gap-4"
       >
         <div className="flex flex-wrap gap-2">

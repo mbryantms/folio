@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ServerSettingsSkeleton } from "@/components/skeletons/AdminShapes";
 import { Switch } from "@/components/ui/switch";
 import { useUpdateSettings } from "@/lib/api/mutations";
 import { useAdminSettings } from "@/lib/api/queries";
@@ -17,7 +17,7 @@ import { statusToneText } from "@/lib/ui/status-tone";
  *  /admin/auth alongside the other identity knobs. */
 export function ServerSettingsCards() {
   const settings = useAdminSettings();
-  if (settings.isLoading) return <Skeleton className="h-48 w-full" />;
+  if (settings.isLoading) return <ServerSettingsSkeleton />;
   if (settings.error || !settings.data) {
     return (
       <p className="text-destructive text-sm">

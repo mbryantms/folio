@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 
+import { QueueLanesSkeleton } from "@/components/skeletons/AdminShapes";
 import { Button } from "@/components/ui/button";
 import {
   buildLanes,
@@ -64,7 +65,7 @@ export function QueueLanes({ onShowFailed }: { onShowFailed: () => void }) {
   useFlip(board, `${q.dataUpdatedAt}:${filter}`, reduced || !hydrated);
   const now = useNow(lanes.running.length > 0);
 
-  if (!hydrated || q.isLoading) return <LanesSkeleton />;
+  if (!hydrated || q.isLoading) return <QueueLanesSkeleton />;
   if (!q.data) {
     return <p className="text-destructive text-sm">Failed to load jobs.</p>;
   }
@@ -381,21 +382,6 @@ function Thumb({ target }: { target: JobTarget | null }) {
       className="bg-muted text-muted-foreground grid h-[54px] w-9 shrink-0 place-items-center rounded"
     >
       <Icon className="size-4" />
-    </div>
-  );
-}
-
-function LanesSkeleton() {
-  return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3" aria-busy>
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="bg-muted/30 space-y-2 rounded-xl border p-3">
-          <div className="bg-muted h-4 w-20 rounded" />
-          {[0, 1, 2].map((k) => (
-            <div key={k} className="bg-muted/60 h-[76px] rounded-lg" />
-          ))}
-        </div>
-      ))}
     </div>
   );
 }

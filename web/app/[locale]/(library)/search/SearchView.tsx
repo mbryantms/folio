@@ -1,5 +1,7 @@
 "use client";
 
+import { Skeleton } from "@/components/ui/skeleton";
+import { SearchRailsSkeleton } from "./SearchRailsSkeleton";
 import {
   ArrowDownUp,
   ArrowLeft,
@@ -490,7 +492,16 @@ function SummaryLine({
     );
   }
   if (isLoading && total === 0) {
-    return <p className="text-muted-foreground text-xs">Searching…</p>;
+    return (
+      <div role="status" className="space-y-4">
+        {/* The "N results for …" line the results open with. */}
+        <div aria-hidden className="flex h-4 items-center">
+          <Skeleton className="h-3 w-32" />
+        </div>
+        <SearchRailsSkeleton />
+        <span className="sr-only">Searching…</span>
+      </div>
+    );
   }
   const count = activeDef
     ? categoryTotals[activeDef.key] ||

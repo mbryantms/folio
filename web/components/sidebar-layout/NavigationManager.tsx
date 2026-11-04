@@ -34,12 +34,9 @@ import {
 
 import { mainNavIcons } from "@/components/library/main-nav-icons";
 import { railIconByKey } from "@/components/library/rail-icons";
-import {
-  LoadingRegion,
-  RowsSkeleton,
-} from "@/components/skeletons/LoadingShapes";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { SidebarLayoutSkeleton } from "@/components/skeletons/SettingsShapes";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { CollapsiblePickerSection } from "@/components/folio/CollapsiblePickerSection";
 import { Input } from "@/components/ui/input";
@@ -305,13 +302,8 @@ function SidebarSection() {
 
   if (layoutQ.isLoading) {
     return (
-      <LoadingRegion label="Loading layout…" className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Skeleton className="h-8 w-20 rounded-md" />
-          <Skeleton className="h-8 w-24 rounded-md" />
-          <Skeleton className="h-8 w-24 rounded-md" />
-        </div>
-        <RowsSkeleton rows={8} label="" />
+      <LoadingRegion label="Loading layout…">
+        <SidebarLayoutSkeleton />
       </LoadingRegion>
     );
   }

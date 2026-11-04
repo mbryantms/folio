@@ -5,10 +5,10 @@ import { Folder, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/PageHeader";
+import { CollectionCardSkeleton } from "@/components/collections/CollectionCardSkeleton";
 import { GroupedViewsBoard } from "@/components/saved-views/GroupedViewsBoard";
 import { ViewCard } from "@/components/saved-views/ViewsIndex";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +25,6 @@ import { useCollections } from "@/lib/api/queries";
 import { useCreateCollection } from "@/lib/api/mutations";
 import { TOAST } from "@/lib/api/toast-strings";
 import type { SavedViewView } from "@/lib/api/types";
-import { STACK_ASPECT } from "@/lib/cover-stack/variants";
 
 /** Standalone collections index — the day-to-day browse surface for the
  *  user's collections, reached from the main-UI sidebar "Collections"
@@ -90,29 +89,10 @@ function renderCollectionCard(view: SavedViewView) {
  *  adds more cards per row instead of blowing each one up. Phones keep
  *  two flexible columns. Larger than the compact Settings → Views cards
  *  (the covers are the point here) but a predictable size. */
+export { CollectionCardSkeleton };
+
 const COLLECTION_GRID =
   "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,15rem)] sm:gap-4";
-
-/** Single placeholder card — mirrors `CollectionCard`'s box so the loading
- *  state has the same footprint as the real grid (cover stack + name +
- *  description). Exported so the route `loading.tsx` reuses the exact shape. */
-export function CollectionCardSkeleton() {
-  return (
-    <div className="border-border/60 flex h-full flex-col gap-3 rounded-lg border p-4">
-      <div className="-mx-4 -mt-4 flex justify-center px-3 pt-7 pb-2">
-        <Skeleton
-          className="w-full max-w-[22rem] rounded-md"
-          style={{ aspectRatio: `1 / ${STACK_ASPECT}` }}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Skeleton className="h-4 w-2/3" />
-        <Skeleton className="h-3 w-full" />
-        <Skeleton className="h-3 w-1/2" />
-      </div>
-    </div>
-  );
-}
 
 /** The collection card grid in its loading state — same responsive columns
  *  as the real `<ul>` so nothing reflows when data arrives. */

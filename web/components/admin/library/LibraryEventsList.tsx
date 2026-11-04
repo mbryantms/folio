@@ -4,7 +4,7 @@ import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LibraryEventRowsSkeleton } from "@/components/skeletons/AdminShapes";
 import { useLibraryEventsInfinite } from "@/lib/api/queries";
 import type { LibraryEventView } from "@/lib/api/types";
 import { statusToneDot } from "@/lib/ui/status-tone";
@@ -82,7 +82,7 @@ export function LibraryEventsList(props: {
       </div>
 
       {q.isLoading ? (
-        <Skeleton className="h-48 w-full" />
+        <LibraryEventRowsSkeleton showLibrary={props.showLibrary} />
       ) : q.error ? (
         <p className="text-destructive text-sm">Failed to load events.</p>
       ) : events.length === 0 ? (

@@ -3,7 +3,7 @@
 import * as React from "react";
 
 import { PageHeader } from "@/components/admin/PageHeader";
-import { Skeleton } from "@/components/ui/skeleton";
+import { UserDetailSkeleton } from "@/components/skeletons/AdminShapes";
 import {
   Tabs,
   TabsContent,
@@ -21,12 +21,7 @@ export function UserDetail({ id }: { id: string }) {
   const [tab, setTab] = React.useState<string>("profile");
 
   if (isLoading) {
-    return (
-      <>
-        <PageHeader title="Loading…" />
-        <Skeleton className="h-64 w-full" />
-      </>
-    );
+    return <UserDetailSkeleton />;
   }
   if (error) {
     return (

@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
+import { BackgroundWorkSkeleton } from "@/components/skeletons/AdminShapes";
 import { BumpNumber } from "@/components/admin/BumpNumber";
 import { useCancelMetadataBatch, useCancelScanRun } from "@/lib/api/mutations";
 import { useBackgroundWork } from "@/lib/api/queries";
@@ -746,59 +746,5 @@ function BatchRow({ batch }: { batch: MetadataBatchWorkView }) {
         </AlertDialogContent>
       </AlertDialog>
     </li>
-  );
-}
-
-/** The page's shape while the first snapshot loads: the status line, the
- *  four tiles, library rows (name · scan · covers) and the other-work
- *  card. */
-function BackgroundWorkSkeleton() {
-  return (
-    <div
-      className="space-y-6"
-      role="status"
-      aria-label="Loading background work"
-    >
-      <div className="space-y-3">
-        <Skeleton className="h-5 w-56" />
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="border-border rounded-xl border p-6">
-              <Skeleton className="h-3 w-20" />
-              <Skeleton className="mt-3 h-7 w-14" />
-              <Skeleton className="mt-2 h-3 w-28" />
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="border-border space-y-4 rounded-xl border p-6">
-        <Skeleton className="h-4 w-24" />
-        <Skeleton className="h-3 w-72 max-w-full" />
-        {Array.from({ length: 3 }, (_, i) => (
-          <div
-            key={i}
-            className="grid grid-cols-1 gap-x-6 gap-y-3 py-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1.4fr)]"
-          >
-            <div className="space-y-1.5">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-16" />
-            </div>
-            <div className="space-y-1.5">
-              <Skeleton className="h-3 w-24" />
-              <Skeleton className="h-1.5 w-full rounded-full" />
-            </div>
-            <div className="space-y-1.5">
-              <Skeleton className="h-3 w-28" />
-              <Skeleton className="h-1.5 w-full rounded-full" />
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="border-border space-y-3 rounded-xl border p-6">
-        <Skeleton className="h-4 w-24" />
-        <Skeleton className="h-3 w-80 max-w-full" />
-        <Skeleton className="h-8 w-full" />
-      </div>
-    </div>
   );
 }

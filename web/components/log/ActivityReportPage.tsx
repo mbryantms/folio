@@ -12,6 +12,10 @@ import {
   Timer,
 } from "lucide-react";
 
+import {
+  FinishedFeedSkeleton,
+  FinishedStatsSkeleton,
+} from "@/components/log/LogSkeletons";
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
 import { Cover } from "@/components/Cover";
 import { CoverMorph } from "@/components/library/CoverMorph";
@@ -24,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/folio/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { useReadingLogInfinite, useReadingStats } from "@/lib/api/queries";
 import { formatTotalHours } from "@/lib/activity";
 import { formatRelativeDate } from "@/lib/format";
@@ -144,7 +148,9 @@ export function ActivityReportPage() {
       />
       <StatsRow stats={stats.data} loading={stats.isLoading} />
       {query.isLoading ? (
-        <FeedSkeleton />
+        <LoadingRegion label="Loading finished issues…">
+          <FinishedFeedSkeleton />
+        </LoadingRegion>
       ) : events.length === 0 ? (
         <EmptyState range={range} />
       ) : (
@@ -226,11 +232,9 @@ function StatsRow({
 }) {
   if (loading) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-24" />
-        ))}
-      </div>
+      <LoadingRegion label="">
+        <FinishedStatsSkeleton />
+      </LoadingRegion>
     );
   }
   if (!stats) return null;
@@ -469,23 +473,6 @@ function buildGroups(events: ReadingLogEventView[], groupBy: GroupBy): Group[] {
     }
   }
   return groups;
-}
-
-function FeedSkeleton() {
-  return (
-    <div className="flex flex-col gap-10">
-      {Array.from({ length: 2 }).map((_, i) => (
-        <section key={i}>
-          <Skeleton className="mb-4 h-8 w-48" />
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
-            {Array.from({ length: 6 }).map((_, j) => (
-              <Skeleton key={j} className="aspect-2/3.5 w-full" />
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
 }
 
 function EmptyState({ range }: { range: ReadingStatsRange }) {

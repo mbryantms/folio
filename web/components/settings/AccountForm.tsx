@@ -16,7 +16,6 @@ import {
   FormMessage,
 } from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { getCsrfToken } from "@/lib/api/auth-refresh";
 import { useMe } from "@/lib/api/queries";
@@ -27,6 +26,8 @@ import { DeleteAccountCard } from "./DeleteAccountCard";
 import { HoldingsExportCard } from "./HoldingsExportCard";
 import { SessionsCard } from "./SessionsCard";
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { AccountBodySkeleton } from "@/components/skeletons/SettingsShapes";
 
 /** Read the `__Host-comic_csrf` cookie value so the form ships a hidden
  *  `csrf_token` field for the progressive-enhancement no-JS path. The
@@ -78,7 +79,13 @@ type PasswordValues = z.infer<typeof passwordSchema>;
 
 export function AccountForm() {
   const me = useMe();
-  if (me.isLoading) return <Skeleton className="h-72 w-full" />;
+  if (me.isLoading) {
+    return (
+      <LoadingRegion label="Loading account…">
+        <AccountBodySkeleton />
+      </LoadingRegion>
+    );
+  }
   if (me.error || !me.data) {
     return <p className="text-destructive text-sm">Failed to load account.</p>;
   }

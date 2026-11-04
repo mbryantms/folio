@@ -17,6 +17,8 @@ import { ReaderPreview } from "./ReaderPreview";
 import { SegmentedControl } from "./SegmentedControl";
 import { SeriesCompletionPref } from "./SeriesCompletionPref";
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { ReadingBodySkeleton } from "@/components/skeletons/SettingsShapes";
 
 type DirectionPref = "auto" | "ltr" | "rtl";
 type FitPref = "auto" | "width" | "height" | "original" | "contain";
@@ -81,7 +83,13 @@ export function ReadingPrefs() {
     update.mutate(body);
   }
 
-  if (me.isLoading) return <Skeleton className="h-72 w-full" />;
+  if (me.isLoading) {
+    return (
+      <LoadingRegion label="Loading reading settings…">
+        <ReadingBodySkeleton />
+      </LoadingRegion>
+    );
+  }
   if (me.error || !me.data) {
     return (
       <p className="text-destructive text-sm">Failed to load preferences.</p>

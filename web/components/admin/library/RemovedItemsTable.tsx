@@ -25,7 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
+import { RemovedItemsSkeleton } from "@/components/skeletons/AdminShapes";
 import { useRemovedItemsInfinite } from "@/lib/api/queries";
 import {
   useConfirmIssueRemoval,
@@ -134,7 +134,7 @@ export function RemovedItemsTable({ libraryId }: { libraryId: string }) {
   const anyPending = pendingIssues > 0 || pendingSeries > 0;
   const busy = confirmBulk.isPending;
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (isLoading) return <RemovedItemsSkeleton />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
 
   if (visibleIssues.length === 0 && visibleSeries.length === 0) {

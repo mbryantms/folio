@@ -6,6 +6,7 @@ import Link from "next/link";
 import { StatCard } from "@/components/admin/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatsOverviewSkeleton } from "@/components/skeletons/AdminShapes";
 import { formatDurationMs, lastUtcDays } from "@/lib/activity";
 import { useAdminOverview } from "@/lib/api/queries";
 import type { AdminOverviewView } from "@/lib/api/types";
@@ -22,7 +23,7 @@ export function StatsClient() {
   const overview = useAdminOverview({ intervalMs: 60_000 });
 
   if (overview.isLoading || !overview.data) {
-    return <Skeleton className="h-72 w-full" />;
+    return <StatsOverviewSkeleton />;
   }
   if (overview.error) {
     return <p className="text-destructive text-sm">Failed to load stats.</p>;

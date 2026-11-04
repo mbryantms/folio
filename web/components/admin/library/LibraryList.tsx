@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Library as LibraryIcon } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LibraryListSkeleton } from "@/components/skeletons/AdminShapes";
 import { EmptyState } from "@/components/folio/empty-state";
 import { NewLibraryDialog } from "@/components/admin/library/NewLibraryDialog";
 import { libraryStatsSummary } from "@/components/admin/library/LibraryStatsCard";
@@ -20,13 +20,7 @@ export function LibraryList() {
   );
 
   if (isLoading) {
-    return (
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-28 w-full" />
-        ))}
-      </div>
-    );
+    return <LibraryListSkeleton />;
   }
   if (error) {
     return (

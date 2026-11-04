@@ -12,6 +12,8 @@ vi.mock("@/lib/visual-effects");
 import {
   CoverGridSkeleton,
   EntityDetailSkeleton,
+  LoadingRegion,
+  PublisherDetailSkeleton,
   RailsSkeleton,
   RowsSkeleton,
   TableRowsSkeleton,
@@ -72,10 +74,30 @@ describe("loading shapes", () => {
     expect(html).toContain("grid-cols-1");
   });
 
-  it("entity detail has a header, tabs and a cover grid", () => {
+  it("entity detail has a header, the profile card and the insights", () => {
     const html = renderToStaticMarkup(createElement(EntityDetailSkeleton));
     expect(html).toContain("border-b pb-4");
-    expect(count(html, "cover-skeleton__masthead")).toBe(12);
+    // Profile card: the 176x256 image beside the fact grid.
+    expect(html).toContain("h-64 w-44");
+    expect(html).toContain("lg:grid-cols-3");
+    // Four stat tiles, then the earliest-appearances rail of 120px cards.
+    expect(html).toContain("grid-cols-2 gap-3 lg:grid-cols-4");
+    expect(count(html, "w-[120px]")).toBe(10);
+  });
+
+  it("region layout classes space the boxes themselves", () => {
+    const html = renderToStaticMarkup(
+      <LoadingRegion label="Loading…" className="space-y-6">
+        <i />
+        <b />
+      </LoadingRegion>,
+    );
+    // The class sits on the element whose direct children are the boxes,
+    // not on a wrapper around a `display: contents` div.
+    expect(html).toContain(
+      '<div aria-hidden="true" class="space-y-6"><i></i><b></b></div>',
+    );
+    expect(html).not.toContain("contents");
   });
 });
 
@@ -91,13 +113,21 @@ describe("route skeletons", () => {
     expect(html).not.toContain("cover-skeleton");
   });
 
-  it("publishers' detail skeleton has no tab strip", () => {
-    const withTabs = renderToStaticMarkup(createElement(EntityDetailSkeleton));
-    const without = renderToStaticMarkup(
-      createElement(EntityDetailSkeleton, { tabs: false }),
+  it("publishers' detail skeleton is a header over a series grid", () => {
+    const html = renderToStaticMarkup(createElement(PublisherDetailSkeleton));
+    expect(html).not.toContain("h-64 w-44");
+    expect(html).toContain("minmax(160px, 1fr)");
+    expect(count(html, "cover-skeleton__masthead")).toBe(12);
+  });
+
+  it("entity index rail spreads # + A-Z like the real jump rail", async () => {
+    const { EntityIndexSkeleton } =
+      await import("@/components/skeletons/EntityIndexSkeleton");
+    const html = renderToStaticMarkup(
+      createElement(EntityIndexSkeleton, { label: "Loading arcs…" }),
     );
-    expect(withTabs).toContain("bg-muted/50");
-    expect(without).not.toContain("bg-muted/50");
+    expect(html).toContain("md:justify-between");
+    expect(count(html, "grid size-6 place-items-center")).toBe(27);
   });
 
   it("year in review draws the story frame, not overview tiles", async () => {

@@ -22,6 +22,11 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import {
+  MetadataDashboardSkeleton,
+  RecentAppliesRowsSkeleton,
+} from "@/components/skeletons/AdminShapes";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,11 +47,7 @@ import type {
 export function DashboardTab() {
   const q = useAdminMetadataDashboard();
   if (q.isLoading) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading…
-      </div>
-    );
+    return <MetadataDashboardSkeleton />;
   }
   if (!q.data) {
     return null;
@@ -133,9 +134,9 @@ function RecentAppliesCard() {
       </CardHeader>
       <CardContent>
         {q.isLoading ? (
-          <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="size-3.5 animate-spin" /> Loading…
-          </div>
+          <LoadingRegion label="Loading recent applies…">
+            <RecentAppliesRowsSkeleton />
+          </LoadingRegion>
         ) : rows.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             Nothing applied yet. Searches that write changes — manual or the

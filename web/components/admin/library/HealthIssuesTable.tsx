@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
 import { FilterPill } from "@/components/folio/filter-pill";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LibraryHealthSkeleton } from "@/components/skeletons/AdminShapes";
 import { useHealthIssuesInfinite } from "@/lib/api/queries";
 import {
   useDismissHealthIssue,
@@ -181,7 +181,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
     [dismiss],
   );
 
-  if (isLoading && !data) return <Skeleton className="h-64 w-full" />;
+  if (isLoading && !data) return <LibraryHealthSkeleton />;
   if (error) {
     return <p className="text-destructive text-sm">{error.message}</p>;
   }

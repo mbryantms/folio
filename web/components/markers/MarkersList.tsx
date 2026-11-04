@@ -1,5 +1,6 @@
 "use client";
 
+import { MarkerGroupsSkeleton } from "@/components/markers/MarkerGroupsSkeleton";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -29,7 +30,6 @@ import {
   PhoneControlsBar,
   PhoneMenuAction,
 } from "@/components/library/PhoneControlsBar";
-import { IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
@@ -694,23 +694,12 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
       ) : null}
 
       {query.isLoading ? (
-        // Same card grid the /bookmarks route fallback draws, so the
+        // Same marker rows the /bookmarks route fallback draws, so the
         // in-place load (filter / scope change) holds the page's shape.
         <div role="status">
-          <ul
-            role="list"
-            aria-hidden
-            className="grid gap-4"
-            style={{
-              gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-            }}
-          >
-            {Array.from({ length: embedded ? 6 : 12 }, (_, i) => (
-              <li key={i}>
-                <IssueCardSkeleton />
-              </li>
-            ))}
-          </ul>
+          <div aria-hidden>
+            <MarkerGroupsSkeleton groups={embedded ? [2] : [3, 2]} />
+          </div>
           <span className="sr-only">Loading markers…</span>
         </div>
       ) : query.isError ? (

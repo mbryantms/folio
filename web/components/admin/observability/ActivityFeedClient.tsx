@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FilterPill } from "@/components/folio/filter-pill";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ActivityRowsSkeleton } from "@/components/skeletons/AdminShapes";
 import { formatDurationMs } from "@/lib/activity";
 import { useAdminActivity } from "@/lib/api/queries";
 import type { ActivityEntryView, ActivityKind } from "@/lib/api/types";
@@ -94,7 +94,7 @@ export function ActivityFeedClient() {
       </div>
 
       {feed.isLoading ? (
-        <Skeleton className="h-64 w-full" />
+        <ActivityRowsSkeleton />
       ) : feed.error ? (
         <p className="text-destructive text-sm">
           Failed to load activity feed.

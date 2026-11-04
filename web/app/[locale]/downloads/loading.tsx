@@ -17,16 +17,27 @@ export default function DownloadsLoading() {
         Loading downloads…
       </span>
       <div aria-hidden className="space-y-6">
+        {/* Header: the description is long enough that the "Open
+            library" button wraps below it, as on the real page. */}
         <div className="border-border flex flex-wrap items-end justify-between gap-4 border-b pb-4">
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-40" />
-            <Skeleton className="h-4 w-80 max-w-full" />
+          <div className="w-full min-w-0">
+            <div className="flex h-8 items-center">
+              <Skeleton className="h-6 w-32" />
+            </div>
+            <div className="mt-1 flex h-5 items-center">
+              <Skeleton className="h-3.5 w-[40rem] max-w-full" />
+            </div>
           </div>
-          <Skeleton className="h-9 w-32 rounded-md" />
+          <Skeleton className="h-9 w-24 rounded-md" />
         </div>
         <div className="space-y-2">
-          <Skeleton className="h-4 w-48" />
-          <Skeleton className="h-2 w-full rounded-full" />
+          <div className="flex h-5 items-center">
+            <Skeleton className="h-3.5 w-36" />
+          </div>
+          <Skeleton className="h-1.5 w-full rounded-full" />
+          <div className="flex h-4 items-center">
+            <Skeleton className="h-2.5 w-[34rem] max-w-full" />
+          </div>
         </div>
         <div className="border-border bg-card rounded-lg border">
           <div className="border-border space-y-2 border-b p-3">

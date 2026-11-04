@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { useTheme } from "next-themes";
 
-import { Skeleton } from "@/components/ui/skeleton";
 import { useMe } from "@/lib/api/queries";
 import { useUpdatePreferences } from "@/lib/api/mutations";
 import {
@@ -37,6 +36,8 @@ import { cn } from "@/lib/utils";
 
 import { SegmentedControl } from "./SegmentedControl";
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { ThemeBodySkeleton } from "@/components/skeletons/SettingsShapes";
 
 const themeOptions: ReadonlyArray<{ value: Theme; label: string }> = [
   { value: "system", label: "System" },
@@ -180,7 +181,13 @@ export function ThemePicker() {
     }
   }, [me.data, setTheme]);
 
-  if (me.isLoading) return <Skeleton className="h-72 w-full" />;
+  if (me.isLoading) {
+    return (
+      <LoadingRegion label="Loading theme settings…">
+        <ThemeBodySkeleton />
+      </LoadingRegion>
+    );
+  }
   if (me.error || !me.data) {
     return (
       <p className="text-destructive text-sm">Failed to load preferences.</p>

@@ -22,7 +22,16 @@ import { StatCard } from "@/components/admin/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  CompactRowsSkeleton,
+  EmptyNoteSkeleton,
+  HealthCountsSkeleton,
+  ServiceStatusSkeleton,
+  SparklineSkeleton,
+  StatBoxesSkeleton,
+  StatCardRowSkeleton,
+} from "@/components/skeletons/AdminShapes";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { BumpNumber } from "@/components/admin/BumpNumber";
 import { fillDayBuckets, lastUtcDays, sparklinePoints } from "@/lib/activity";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
@@ -89,11 +98,9 @@ function TotalsRow({
 }) {
   if (loading || !data) {
     return (
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-28 w-full" />
-        ))}
-      </div>
+      <LoadingRegion label="Loading totals…">
+        <StatCardRowSkeleton />
+      </LoadingRegion>
     );
   }
   return (
@@ -140,7 +147,9 @@ function HealthCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading health counts…">
+            <HealthCountsSkeleton />
+          </LoadingRegion>
         ) : (
           <ul className="space-y-1 text-sm">
             <SeverityRow
@@ -257,21 +266,9 @@ function ScansCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {!hydrated || loading || !data ? (
-          <div
-            className="grid grid-cols-3 gap-3"
-            role="status"
-            aria-label="Loading scans"
-          >
-            {["Running", "Queued", "All jobs"].map((label) => (
-              <div
-                key={label}
-                className="border-border bg-background rounded-md border p-3"
-              >
-                <Skeleton className="h-3 w-12" />
-                <Skeleton className="mt-2 h-6 w-8" />
-              </div>
-            ))}
-          </div>
+          <LoadingRegion label="Loading scans">
+            <StatBoxesSkeleton count={3} />
+          </LoadingRegion>
         ) : (
           <div className="grid grid-cols-3 gap-3 text-sm">
             <Stat
@@ -337,7 +334,9 @@ function RecentScanFailuresCard() {
       </CardHeader>
       <CardContent className="space-y-2 pt-2">
         {isLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading scan failures…">
+            <EmptyNoteSkeleton />
+          </LoadingRegion>
         ) : items.length === 0 ? (
           <p className="text-muted-foreground py-4 text-center text-xs">
             All scans green for the last 7 days.
@@ -403,7 +402,9 @@ function LatestScanPerLibraryCard() {
       </CardHeader>
       <CardContent className="space-y-2 pt-2">
         {isLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading latest scans…">
+            <CompactRowsSkeleton />
+          </LoadingRegion>
         ) : items.length === 0 ? (
           <p className="text-muted-foreground py-4 text-center text-xs">
             No scans recorded yet.
@@ -471,7 +472,9 @@ function ReadersCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading readers…">
+            <StatBoxesSkeleton count={2} />
+          </LoadingRegion>
         ) : (
           <div className="grid grid-cols-2 gap-3 text-sm">
             <Stat
@@ -539,7 +542,9 @@ function ReadsSparklineCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading reads…">
+            <SparklineSkeleton />
+          </LoadingRegion>
         ) : data.reads_per_day.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             No reading recorded in the last 14 days.
@@ -612,7 +617,9 @@ function ServerHealthCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-24 w-full" />
+          <LoadingRegion label="Loading service status…">
+            <ServiceStatusSkeleton />
+          </LoadingRegion>
         ) : (
           <ul className="space-y-1.5 text-sm">
             <Pill

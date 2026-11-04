@@ -21,6 +21,7 @@ import {
 import { issueUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
+import { OverviewSkeleton } from "../LogSkeletons";
 import { Milestones } from "./Milestones";
 import { ReadingHeatmap } from "./ReadingHeatmap";
 
@@ -493,23 +494,4 @@ function topCovers(finished: Finished[], year: number): string[] {
 
 function dedupe(xs: string[]): string[] {
   return [...new Set(xs)];
-}
-
-function OverviewSkeleton() {
-  return (
-    <div className="space-y-10" aria-busy="true">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-28 rounded-xl" />
-        ))}
-      </div>
-      <Skeleton className="h-28 rounded-2xl" />
-      <Skeleton className="h-52 rounded-xl" />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <Skeleton key={i} className="h-20 rounded-xl" />
-        ))}
-      </div>
-    </div>
-  );
 }

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/collapsible";
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ScanRunsSkeleton } from "@/components/skeletons/AdminShapes";
 import {
   Tabs,
   TabsContent,
@@ -135,7 +135,7 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
     [],
   );
 
-  if (isLoading && !data) return <Skeleton className="h-64 w-full" />;
+  if (isLoading && !data) return <ScanRunsSkeleton />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
 
   return (

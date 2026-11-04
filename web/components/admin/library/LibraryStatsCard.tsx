@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { HardDrive, Loader2 } from "lucide-react";
+import { HardDrive } from "lucide-react";
 
+import { LibraryStatsBodySkeleton } from "@/components/skeletons/AdminShapes";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLibraryStats } from "@/lib/api/queries";
 import type { LibraryStatsView } from "@/lib/api/types";
@@ -55,10 +57,9 @@ export function LibraryStatsCard({ librarySlug }: { librarySlug: string }) {
       </CardHeader>
       <CardContent>
         {q.isLoading ? (
-          <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />{" "}
-            Loading…
-          </div>
+          <LoadingRegion label="Loading library figures…">
+            <LibraryStatsBodySkeleton />
+          </LoadingRegion>
         ) : !q.data ? (
           <p className="text-destructive text-sm">
             Failed to load library figures.

@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { EmailSkeleton } from "@/components/skeletons/AdminShapes";
 import { useAdminSettings, useEmailStatus } from "@/lib/api/queries";
 
 import { EmailConfigForm } from "./EmailConfigForm";
@@ -16,12 +16,7 @@ export function EmailAdminClient() {
   const status = useEmailStatus();
 
   if (settings.isLoading || status.isLoading) {
-    return (
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Skeleton className="h-96 lg:col-span-2" />
-        <Skeleton className="h-64" />
-      </div>
-    );
+    return <EmailSkeleton />;
   }
   if (settings.error || !settings.data) {
     return (

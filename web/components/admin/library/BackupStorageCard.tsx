@@ -1,7 +1,9 @@
 "use client";
 
-import { Archive, Loader2 } from "lucide-react";
+import { Archive } from "lucide-react";
 
+import { BackupStatsBodySkeleton } from "@/components/skeletons/AdminShapes";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useBackupStorage } from "@/lib/api/queries";
 
@@ -25,9 +27,9 @@ export function BackupStorageCard({ libraryId }: { libraryId: string }) {
       </CardHeader>
       <CardContent>
         {q.isLoading ? (
-          <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="size-4 animate-spin" /> Loading…
-          </div>
+          <LoadingRegion label="Loading backup storage…">
+            <BackupStatsBodySkeleton />
+          </LoadingRegion>
         ) : !q.data ? (
           <p className="text-destructive text-sm">
             Failed to read backup storage.

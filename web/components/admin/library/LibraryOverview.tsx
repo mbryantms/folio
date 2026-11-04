@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LibraryOverviewSkeleton } from "@/components/skeletons/AdminShapes";
 import {
   useHealthIssues,
   useLibrary,
@@ -37,7 +37,7 @@ export function LibraryOverview({ id }: { id: string }) {
   const trigger = useTriggerScan(id);
 
   if (lib.isLoading) {
-    return <Skeleton className="h-40 w-full" />;
+    return <LibraryOverviewSkeleton />;
   }
   if (lib.error || !lib.data) {
     return <p className="text-destructive text-sm">Library not found.</p>;

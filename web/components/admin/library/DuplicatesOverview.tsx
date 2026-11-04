@@ -4,7 +4,7 @@ import * as React from "react";
 
 import { DuplicatesPanel } from "@/components/admin/library/DuplicatesPanel";
 import { NativeSelect } from "@/components/folio/native-select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { DuplicatesOverviewSkeleton } from "@/components/skeletons/AdminShapes";
 import { useLibraryList } from "@/lib/api/queries";
 
 /**
@@ -16,7 +16,7 @@ export function DuplicatesOverview() {
   const libraries = useLibraryList();
   const [picked, setPicked] = React.useState<string | null>(null);
 
-  if (libraries.isLoading) return <Skeleton className="h-64 w-full" />;
+  if (libraries.isLoading) return <DuplicatesOverviewSkeleton />;
   if (libraries.error) {
     return (
       <p className="text-destructive text-sm">{libraries.error.message}</p>

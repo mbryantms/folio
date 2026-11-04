@@ -35,13 +35,12 @@ import {
 import { NewPageButton } from "@/components/library/NewPageButton";
 import { EditDescriptionDialog } from "@/components/saved-views/EditDescriptionDialog";
 import { ManagePinsDialog } from "@/components/saved-views/ManagePinsDialog";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import {
-  LoadingRegion,
-  RowsSkeleton,
-  TabStripSkeleton,
-} from "@/components/skeletons/LoadingShapes";
+  PagesManagerSkeleton,
+  RailRowsSkeleton,
+} from "@/components/skeletons/SettingsShapes";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -123,14 +122,8 @@ export function PagesManager() {
 
   if (pagesQ.isLoading) {
     return (
-      <LoadingRegion label="Loading pages…" className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Skeleton className="h-4 w-80 max-w-full" />
-          <Skeleton className="h-9 w-28 rounded-md" />
-        </div>
-        <Skeleton className="h-10 w-64 max-w-full rounded-md" />
-        <TabStripSkeleton tabs={3} />
-        <RowsSkeleton rows={4} label="" />
+      <LoadingRegion label="Loading pages…">
+        <PagesManagerSkeleton />
       </LoadingRegion>
     );
   }
@@ -432,9 +425,9 @@ function PageRailsList({
         </Button>
       </div>
       {railsQ.isLoading ? (
-        <div className="text-muted-foreground p-6 text-center text-sm">
-          Loading…
-        </div>
+        <LoadingRegion label="Loading rails…">
+          <RailRowsSkeleton />
+        </LoadingRegion>
       ) : ordered.length === 0 ? (
         <div className="text-muted-foreground border-border/60 m-3 mt-0 flex flex-col items-center gap-2 rounded-md border border-dashed p-6 text-center text-sm">
           <ListPlus className="text-muted-foreground/60 size-5" />

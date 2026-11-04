@@ -1,13 +1,15 @@
 import { LoadingWatchdog } from "@/components/LoadingWatchdog";
-import { EntityDetailSkeleton } from "@/components/skeletons/LoadingShapes";
+import { PublisherDetailSkeleton } from "@/components/skeletons/LoadingShapes";
 
-/** `/publishers/<slug>` fallback, shaped like `EntityDetail`: header, blurb and series grid (publishers have no tabs). Without it
- *  the page inherited the index skeleton or the `(library)` cover grid. */
+/** `/publishers/<slug>` fallback, shaped like `EntityDetail` for a
+ *  publisher: header ("N series") straight over the series cover grid (no
+ *  profile card, no tabs). Without it the page inherited the index
+ *  skeleton or the `(library)` cover grid. */
 export default function PublisherDetailLoading() {
   return (
     <>
       <LoadingWatchdog />
-      <EntityDetailSkeleton tabs={false} label="Loading publisher…" />
+      <PublisherDetailSkeleton label="Loading publisher…" />
     </>
   );
 }

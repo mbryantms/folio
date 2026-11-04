@@ -289,11 +289,16 @@ export function CreatorGridSkeleton() {
     >
       {Array.from({ length: 12 }).map((_, i) => (
         <li key={i}>
+          {/* Same rows as `CreatorCard`: name + credit count on a snug
+              22px line, then a row of h-5 role badges. */}
           <div className="border-border bg-card flex h-full flex-col gap-2 rounded-lg border p-3">
-            <Skeleton className="h-4 w-3/4" />
+            <div className="flex h-[1.375rem] items-center justify-between gap-2">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-3 w-5 shrink-0" />
+            </div>
             <div className="flex gap-1">
-              <Skeleton className="h-4 w-12" />
-              <Skeleton className="h-4 w-10" />
+              <Skeleton className="h-5 w-12" />
+              <Skeleton className={i % 3 ? "h-5 w-16" : "h-5 w-10"} />
             </div>
           </div>
         </li>

@@ -1,7 +1,7 @@
 import { LoadingWatchdog } from "@/components/LoadingWatchdog";
 import { EntityDetailSkeleton } from "@/components/skeletons/LoadingShapes";
 
-/** `/arcs/<slug>` fallback, shaped like `EntityDetail`: header, profile blurb, Issues/Series tabs and the issue grid. Without it
+/** `/arcs/<slug>` fallback, shaped like `EntityDetail`: header, profile card and the "In your library" insights. Without it
  *  the page inherited the index skeleton or the `(library)` cover grid. */
 export default function ArcDetailLoading() {
   return (
