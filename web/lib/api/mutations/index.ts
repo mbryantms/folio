@@ -9,12 +9,23 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
 import { getCsrfToken, useApiMutation } from "./_core";
+import {
+  applyOptimisticProgress,
+  capturePriorProgress,
+  issueProgressKey,
+  restoreProgress,
+  rollbackProgress,
+  type PriorProgress,
+  type ProgressWrite,
+} from "./progress";
 import { invalidateRails } from "./rails";
 
 // Re-exports kept stable across the M5 directory split so callers
@@ -32,6 +43,11 @@ export * from "./hash-backfill";
 export * from "./sidecar-reemit";
 export * from "./markers";
 export { invalidateRails } from "./rails";
+export {
+  issueProgressKey,
+  restoreProgress,
+  useIssueReadState,
+} from "./progress";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
 export * from "./shared-lists";
@@ -565,15 +581,38 @@ export function useBulkMarkProgress() {
       body: input,
     }),
     {
-      successMessage: (data, input) =>
-        summarizeBulkProgress(data, input.finished),
       // Stable id so rapid mark-read → mark-unread toggles update the
       // same toast in place instead of stacking. Sonner reuses the
       // element when the id repeats.
       toastId: "bulk-progress",
-      onSuccess: () => {
+      // Optimistic like the single mark (`./progress.ts`); the summary
+      // toast carries Undo, restoring each issue's previous progress.
+      onMutate: (input) =>
+        beginMark(
+          qc,
+          input.issue_ids.map((id) => ({
+            issue_id: id,
+            page: 0,
+            finished: input.finished,
+          })),
+        ),
+      onError: (_err, _input, ctx) =>
+        rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
+      onSuccess: (data, input, ctx) => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        const message = summarizeBulkProgress(data, input.finished);
+        const prior = (ctx as MarkProgressCtx | undefined)?.prior;
+        if (!prior || data?.updated === 0) {
+          toast.success(message, { id: "bulk-progress" });
+          return;
+        }
+        showUndoToast({
+          id: "bulk-progress",
+          message,
+          failedMessage: "Couldn't restore the reading progress",
+          onUndo: () => restoreProgress(qc, prior),
+        });
       },
     },
   );
@@ -1420,19 +1459,66 @@ export function useSetIssueMetadataAccepted(
 
 // ---------- Reading progress ----------
 
+type MarkProgressCtx = {
+  snap: Awaited<ReturnType<typeof applyOptimisticProgress>>;
+  prior: PriorProgress | null;
+};
+
+/** Run inside a mark's `onMutate`: capture each issue's prior record
+ *  (for Undo) and write the new state into the caches. The prior read
+ *  starts first — its cache reads are synchronous, so they see the
+ *  pre-mark state — and the optimistic write lands before any network
+ *  round-trip the capture may need. */
+async function beginMark(
+  qc: ReturnType<typeof useQueryClient>,
+  writes: ProgressWrite[],
+): Promise<MarkProgressCtx> {
+  const priorP = capturePriorProgress(
+    qc,
+    writes.map((w) => w.issue_id),
+  ).catch(() => null);
+  const snap = await applyOptimisticProgress(qc, writes);
+  return { snap, prior: await priorP };
+}
+
 /**
  * `POST /progress` — write or update the calling user's progress record for
- * a single issue. Used by the issue page settings menu's "Mark as
- * read/unread" actions.
+ * a single issue. Every caller is a "Mark as read / unread" (issue page
+ * menu + `r`/`u` keys, cover menus, Continue Reading, CBL cards).
+ *
+ * Optimistic (`./progress.ts`): the finished badge, `ProgressFill` and the
+ * issue page's read state flip on the click and roll back on error. A
+ * mark (explicit `finished`) raises an Undo toast restoring the issue's
+ * previous progress; one toast id per issue, so r → u → r updates the
+ * same toast.
  */
 export function useUpsertIssueProgress() {
   const qc = useQueryClient();
   return useApiMutation<ProgressView, UpsertProgressReq>(
     (body) => ({ path: "/progress", method: "POST", body }),
     {
-      onSuccess: () => {
+      onMutate: (input) =>
+        beginMark(qc, [
+          {
+            issue_id: input.issue_id,
+            page: input.page,
+            finished: input.finished ?? false,
+          },
+        ]),
+      onError: (_err, _input, ctx) =>
+        rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
+      onSuccess: (data, input, ctx) => {
+        if (data) qc.setQueryData(issueProgressKey(input.issue_id), data);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        const prior = (ctx as MarkProgressCtx | undefined)?.prior;
+        if (typeof input.finished !== "boolean" || !prior) return;
+        showUndoToast({
+          id: `progress-${input.issue_id}`,
+          message: input.finished ? "Marked as read" : "Marked as unread",
+          failedMessage: "Couldn't restore the reading progress",
+          onUndo: () => restoreProgress(qc, prior),
+        });
       },
     },
   );

@@ -33,8 +33,9 @@ interface IssueShortcutsOptions {
  *   b  Toggle bookmark     i  Read in incognito
  *   e  Edit issue (admin)
  *
- * Behavior parity with `IssueSettingsMenu`: mark-read / mark-unread stay
- * silent (state-update is the signal), bookmark toggles with an Undo
+ * Behavior parity with `IssueSettingsMenu`: mark-read / mark-unread go
+ * through the optimistic `useUpsertIssueProgress` (the read CTA flips at
+ * once; the hook raises the Undo toast), bookmark toggles with an Undo
  * toast (matches the menu's bookmark behavior), incognito navigates to
  * the reader (the page change is the signal), edit defers to the parent
  * `onEdit` so it can pop its sheet (closing the menu would dismiss the

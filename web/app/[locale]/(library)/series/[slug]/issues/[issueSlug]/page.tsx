@@ -85,12 +85,12 @@ import { statusTone } from "@/lib/ui/status-tone";
 import {
   type ProgressLike,
   type ReadState,
-  readButtonLabel,
   readStateFor,
 } from "@/lib/reading-state";
 
 import { InlineNotesEditor } from "./InlineNotesEditor";
 import { IssueActions } from "./IssueActions";
+import { IssueReadLabel } from "./IssueReadLabel";
 import { IssueMetadataTab } from "./IssueMetadataTab";
 
 export default async function IssuePage({
@@ -186,7 +186,6 @@ export default async function IssuePage({
       0;
 
   const readState: ReadState = readStateFor(issue, issueProgress);
-  const readLabel = readButtonLabel(readState);
 
   const heading =
     issue.title ??
@@ -322,7 +321,7 @@ export default async function IssuePage({
                   morphName={issueCoverName(issue.series_slug, issue.slug)}
                   morphSrc={`/issues/${issue.id}/pages/0/thumb`}
                 >
-                  {readLabel}
+                  <IssueReadLabel issue={issue} readState={readState} />
                 </MorphLink>
               </Button>
             ) : (
