@@ -11,7 +11,8 @@ import { describe, expect, it } from "vitest";
 import { EmptyState } from "@/components/folio/empty-state";
 import { StatusCard, StatusErrorIcon } from "@/components/StatusScreen";
 
-const covers = (html: string) => html.split("cover-skeleton cover-silhouette").length - 1;
+const covers = (html: string) =>
+  html.split("cover-skeleton cover-silhouette").length - 1;
 
 describe("EmptyState illustration", () => {
   it("draws three static cover silhouettes by default", () => {
