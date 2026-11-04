@@ -15,9 +15,14 @@
  */
 
 import Link from "next/link";
-import { BookMarked, Layers, Library, Loader2 } from "lucide-react";
+import { BookMarked, Layers, Library } from "lucide-react";
 
+import {
+  LoadingRegion,
+  RowsSkeleton,
+} from "@/components/skeletons/LoadingShapes";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { entityUrl } from "@/lib/entities";
 import { useIssueAppearances, useSeriesAppearances } from "@/lib/api/queries";
 import type { AppearanceView, AppearancesView } from "@/lib/api/types";
@@ -48,10 +53,14 @@ export function AppearancesTab(props: Props) {
 
   if (q.isLoading) {
     return (
-      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" />
-        Loading appearances…
-      </div>
+      <LoadingRegion label="Loading appearances…" className="space-y-6">
+        {[3, 2].map((rows, i) => (
+          <section key={i} className="space-y-2">
+            <Skeleton className={i ? "h-4 w-24" : "h-4 w-28"} />
+            <RowsSkeleton rows={rows} trailing label="" />
+          </section>
+        ))}
+      </LoadingRegion>
     );
   }
   if (q.isError || !q.data) {

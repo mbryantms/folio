@@ -39,6 +39,7 @@ import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import { IssueCard } from "@/components/library/IssueCard";
+import { CoverGridSkeleton } from "@/components/skeletons/LoadingShapes";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { SeriesCard } from "@/components/library/SeriesCard";
@@ -582,7 +583,11 @@ export function CollectionViewDetail({
       />
 
       {entriesQ.isLoading ? (
-        <div className="text-muted-foreground py-12 text-sm">Loading…</div>
+        <CoverGridSkeleton
+          className="gap-3"
+          style={gridStyle}
+          label="Loading collection…"
+        />
       ) : entriesQ.isError ? (
         <div className="text-destructive rounded-md border p-4 text-sm">
           Failed to load collection entries.

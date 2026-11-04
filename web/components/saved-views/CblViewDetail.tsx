@@ -37,6 +37,11 @@ import {
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { useCardSize } from "@/components/library/use-card-size";
+import {
+  CoverGridSkeleton,
+  LoadingRegion,
+  PageHeaderSkeleton,
+} from "@/components/skeletons/LoadingShapes";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -342,7 +347,10 @@ function CblViewDetailInner({
 
   if (detail.isLoading) {
     return (
-      <div className="text-muted-foreground py-12 text-sm">Loading view…</div>
+      <LoadingRegion label="Loading view…" className="space-y-6">
+        <PageHeaderSkeleton />
+        <CoverGridSkeleton label="Loading entries…" />
+      </LoadingRegion>
     );
   }
   if (detail.isError || !detail.data) {
@@ -749,9 +757,11 @@ function CblViewDetailInner({
       />
 
       {entriesQuery.isLoading ? (
-        <div className="text-muted-foreground py-12 text-sm">
-          Loading entries…
-        </div>
+        <CoverGridSkeleton
+          className="gap-3"
+          style={gridStyle}
+          label="Loading entries…"
+        />
       ) : list.stats.total === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
           This list has no entries yet.

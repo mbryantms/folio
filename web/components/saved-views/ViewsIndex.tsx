@@ -23,6 +23,11 @@ import {
 } from "lucide-react";
 
 import { PageHeader } from "@/components/admin/PageHeader";
+import {
+  LoadingRegion,
+  TabStripSkeleton,
+  TilesSkeleton,
+} from "@/components/skeletons/LoadingShapes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -140,7 +145,15 @@ export function ViewsIndex() {
       />
       <Suspense
         fallback={
-          <div className="text-muted-foreground py-6 text-sm">Loading…</div>
+          <LoadingRegion label="Loading views…" className="space-y-4">
+            <TabStripSkeleton tabs={3} />
+            <TilesSkeleton
+              count={4}
+              className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+              tileClassName="h-28"
+              label=""
+            />
+          </LoadingRegion>
         }
       >
         <ViewsTabs />

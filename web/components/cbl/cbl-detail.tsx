@@ -48,6 +48,13 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  LoadingRegion,
+  RowsSkeleton,
+  TabStripSkeleton,
+  TableRowsSkeleton,
+} from "@/components/skeletons/LoadingShapes";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import {
@@ -92,6 +99,9 @@ export function CblDetail({ savedView }: { savedView: SavedViewView }) {
   return <CblDetailInner savedView={savedView} listId={listId} />;
 }
 
+/** Reading-order table columns, shared with its loading skeleton. */
+const READING_ORDER_COLS = "grid-cols-[60px_1fr_60px_60px_120px_60px]";
+
 function CblDetailInner({
   savedView,
   listId,
@@ -103,9 +113,24 @@ function CblDetailInner({
 
   if (list.isLoading) {
     return (
-      <div className="text-muted-foreground flex items-center gap-2 py-12 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading list…
-      </div>
+      <LoadingRegion
+        label="Loading list…"
+        className="flex min-h-0 flex-1 flex-col gap-4"
+      >
+        <div className="flex flex-wrap gap-2">
+          <Skeleton className="h-5 w-40 rounded-full" />
+          <Skeleton className="h-5 w-28 rounded-full" />
+        </div>
+        <TabStripSkeleton tabs={4} />
+        <div className="border-border overflow-hidden rounded-md border">
+          <TableRowsSkeleton
+            rows={8}
+            columns={6}
+            gridClassName={READING_ORDER_COLS}
+            label="Loading entries…"
+          />
+        </div>
+      </LoadingRegion>
     );
   }
   if (list.isError || !list.data) {
@@ -397,9 +422,12 @@ function ReadingOrderTab({
         </div>
         <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
           {query.isLoading ? (
-            <div className="text-muted-foreground flex items-center gap-2 p-4 text-sm">
-              <Loader2 className="size-4 animate-spin" /> Loading entries…
-            </div>
+            <TableRowsSkeleton
+              rows={10}
+              columns={6}
+              gridClassName={READING_ORDER_COLS}
+              label="Loading entries…"
+            />
           ) : items.length === 0 ? (
             <div className="text-muted-foreground p-4 text-sm">
               {filter === "all"
@@ -586,9 +614,7 @@ function ResolutionTab({
         ))}
       </div>
       {query.isLoading ? (
-        <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-          <Loader2 className="size-4 animate-spin" /> Loading entries…
-        </div>
+        <RowsSkeleton rows={5} label="Loading entries…" />
       ) : items.length === 0 ? (
         <div className="text-muted-foreground rounded-md border border-dashed p-6 text-sm">
           {filter === "ambiguous"
@@ -699,11 +725,7 @@ function HistoryTab({ listId, list }: { listId: string; list: CblDetailView }) {
   const refresh = useRefreshCblList(listId);
 
   if (log.isLoading) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading history…
-      </div>
-    );
+    return <RowsSkeleton rows={4} label="Loading history…" />;
   }
   const items = log.data?.items ?? [];
   return (
