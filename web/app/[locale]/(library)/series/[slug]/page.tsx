@@ -13,6 +13,7 @@ import Link from "next/link";
 import { ViewTransition } from "react";
 
 import { CountUp } from "@/components/CountUp";
+import { FillProgress } from "@/components/FillProgress";
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
 import { seriesCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
@@ -37,7 +38,6 @@ import {
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { SeriesActivityTab } from "@/components/activity/SeriesActivityTab";
 import { MarkersList } from "@/components/markers/MarkersList";
 import { apiGet, ApiError } from "@/lib/api/fetch";
@@ -50,7 +50,6 @@ import type {
   SeriesView,
 } from "@/lib/api/types";
 import {
-  formatCompactPages,
   formatPageCount,
   formatPublicationStatus,
   formatReadingTime,
@@ -757,7 +756,7 @@ function SeriesFactRow({
   series: SeriesView;
   readingTime: string | null;
 }) {
-  const facts: { icon: React.ReactNode; label: string }[] = [];
+  const facts: { icon: React.ReactNode; label: React.ReactNode }[] = [];
   if (series.publisher) {
     facts.push({
       icon: <Building2 className="size-4" />,
@@ -767,7 +766,12 @@ function SeriesFactRow({
   if (series.total_page_count) {
     facts.push({
       icon: <FileStack className="size-4" />,
-      label: `${formatCompactPages(series.total_page_count)} pages`,
+      label: (
+        <>
+          <CountUp value={series.total_page_count} format="compactPages" />{" "}
+          pages
+        </>
+      ),
     });
   }
   if (readingTime) {
@@ -937,7 +941,7 @@ function ReadProgressStat({ read, total }: { read: number; total: number }) {
           "—"
         )}
       </span>
-      <Progress value={pct} aria-label={`Read ${read} of ${total} issues`} />
+      <FillProgress value={pct} label={`Read ${read} of ${total} issues`} />
       <span
         className={
           complete
@@ -999,7 +1003,7 @@ function ReadingLoadStat({
         ) : null}
       </div>
       <span className="text-lg leading-tight font-semibold tabular-nums">
-        {time ?? "—"}
+        {time ? <CountUp value={pagesShown} format="readingTime" /> : "—"}
       </span>
       <span className="text-muted-foreground text-xs">
         <CountUp value={pagesShown} format="compactPages" /> pages

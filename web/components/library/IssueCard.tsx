@@ -294,13 +294,14 @@ function IssueCardImpl({
   return (
     <>
       {cardOuterProps ? (
-        <button className={cardClassName} {...cardOuterProps}>
+        <button className={cardClassName} data-card="" {...cardOuterProps}>
           {innerCard}
         </button>
       ) : (
         <Link
           href={issueUrl(issue)}
           className={cardClassName}
+          data-card=""
           onClick={morph.onClick}
         >
           {innerCard}

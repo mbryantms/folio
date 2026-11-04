@@ -2,16 +2,18 @@
 
 import { useLayoutEffect, useRef } from "react";
 
-import { formatCompactPages } from "@/lib/format";
+import { formatCompactPages, formatReadingTimeCompact } from "@/lib/format";
 import { useReducedMotion } from "@/lib/visual-effects";
 
-const DURATION_MS = 700;
+const DURATION_MS = 1200;
 
 /** Named formats (a server component can't pass a function prop). */
 const FORMATS = {
   number: (n: number) => n.toLocaleString(),
   percent: (n: number) => `${n}%`,
   compactPages: (n: number) => formatCompactPages(n),
+  /** `n` is a page count; shows the reading-time estimate for it. */
+  readingTime: (n: number) => formatReadingTimeCompact(n) ?? "~<1m",
 } as const;
 export type CountUpFormat = keyof typeof FORMATS;
 
@@ -49,12 +51,14 @@ export function CountUp({
     const fmt = FORMATS[format];
     let raf = 0;
     el.textContent = fmt(0);
+    el.classList.add("count-up-active");
     const run = () => {
       const start = performance.now();
       const step = (now: number) => {
         const t = Math.min(1, (now - start) / DURATION_MS);
         el.textContent = fmt(Math.round(value * easeOut(t)));
         if (t < 1) raf = requestAnimationFrame(step);
+        else el.classList.remove("count-up-active");
       };
       raf = requestAnimationFrame(step);
     };
@@ -68,6 +72,7 @@ export function CountUp({
     return () => {
       io.disconnect();
       cancelAnimationFrame(raf);
+      el.classList.remove("count-up-active");
       el.textContent = fmt(value);
     };
   }, [value, reduced, format]);
@@ -75,7 +80,7 @@ export function CountUp({
   return (
     <span
       ref={ref}
-      className={className}
+      className={`count-up ${className ?? ""}`}
       style={{ fontVariantNumeric: "tabular-nums" }}
     >
       {FORMATS[format](value)}

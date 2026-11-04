@@ -2,6 +2,8 @@
 
 import * as React from "react";
 
+import { captureCardLayout, playCardFlip } from "@/lib/ui/card-flip";
+
 /** Same-page broadcast for card-size changes (WP-7.7). Every
  *  `useCardSize` instance sharing a storage key listens, so the series
  *  page's Related tab covers follow the Issues panel's slider live. Other
@@ -87,8 +89,17 @@ export function useCardSize(opts: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
 
+  // Smooth card-size changes: cards glide to their new layout
+  // (lib/ui/card-flip.ts). Skip the first run (initial / stored size).
+  const flipReady = React.useRef(false);
+  React.useLayoutEffect(() => {
+    if (flipReady.current) playCardFlip();
+    flipReady.current = true;
+  }, [cardSize]);
+
   const persistAndSet = React.useCallback(
     (next: number) => {
+      captureCardLayout();
       setCardSize(next);
       if (typeof window === "undefined") return;
       try {

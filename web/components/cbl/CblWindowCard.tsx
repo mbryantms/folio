@@ -116,6 +116,7 @@ export function CblWindowCard({
   return (
     <>
       <Link
+        data-card=""
         href={issueUrl(issue, { cbl: cblSavedViewId })}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",

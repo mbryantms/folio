@@ -286,7 +286,7 @@ function SeriesCardImpl({
   return (
     <>
       {cardOuterProps ? (
-        <button className={cardClassName} {...cardOuterProps}>
+        <button className={cardClassName} data-card="" {...cardOuterProps}>
           {innerCard}
         </button>
       ) : (
@@ -295,7 +295,12 @@ function SeriesCardImpl({
         // untouched; the peek only layers on for pointer hover.
         <HoverCard openDelay={400} closeDelay={120}>
           <HoverCardTrigger asChild>
-            <Link href={link} className={cardClassName} onClick={morph.onClick}>
+            <Link
+              href={link}
+              className={cardClassName}
+              data-card=""
+              onClick={morph.onClick}
+            >
               {innerCard}
             </Link>
           </HoverCardTrigger>

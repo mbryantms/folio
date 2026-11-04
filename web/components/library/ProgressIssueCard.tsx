@@ -121,7 +121,7 @@ export function ProgressIssueCard({
   // across portals, so a click inside the dialog would otherwise
   // propagate to the Link and route away.
   return (
-    <div className={cn("flex flex-col", className)}>
+    <div className={cn("flex flex-col", className)} data-card="">
       <Link
         href={resumesOnTap ? resumeHref : detailsHref}
         className={cn(

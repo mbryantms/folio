@@ -258,6 +258,7 @@ export function CblIssueCard({
             }}
             aria-pressed={selectMode?.isSelected ?? false}
             className={wrapClass}
+            data-card=""
           >
             {cover(issue.state === "active")}
             {meta}
@@ -266,6 +267,7 @@ export function CblIssueCard({
           <Link
             href={issueUrl(issue, { cbl: cblSavedViewId })}
             className={wrapClass}
+            data-card=""
           >
             {cover(issue.state === "active")}
             {meta}
@@ -277,7 +279,7 @@ export function CblIssueCard({
     );
   }
   return (
-    <div className={cn(wrapClass, "cursor-default opacity-90")}>
+    <div className={cn(wrapClass, "cursor-default opacity-90")} data-card="">
       {cover(false)}
       {meta}
     </div>
