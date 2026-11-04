@@ -22,16 +22,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,7 +50,7 @@ import {
 } from "@/components/cbl/CblRefreshDashboard";
 import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
-import { CoverStack } from "@/components/cover-stack/CoverStack";
+import { CoverStackStage } from "@/components/cover-stack/CoverStackStage";
 import { NewCollectionDialog } from "@/components/collections/CollectionsIndex";
 import {
   GroupedViewsBoard,
@@ -68,11 +58,8 @@ import {
 } from "@/components/saved-views/GroupedViewsBoard";
 import { MultiPinDialog } from "@/components/saved-views/MultiPinDialog";
 import { QuickApplyPrefill } from "@/components/saved-views/QuickApplyPrefill";
-import {
-  useDeleteCollection,
-  useDeleteSavedView,
-  useSidebarSavedView,
-} from "@/lib/api/mutations";
+import { useDeleteCollection, useSidebarSavedView } from "@/lib/api/mutations";
+import { apiMutate, useApiMutation } from "@/lib/api/mutations/_core";
 import { toast } from "sonner";
 
 import {
@@ -87,10 +74,18 @@ import {
   useSavedViews,
   useViewCovers,
 } from "@/lib/api/queries";
-import type { CblListView, SavedViewView } from "@/lib/api/types";
+import type {
+  CblListView,
+  Condition,
+  CreateSavedViewReq,
+  MatchMode,
+  SavedViewView,
+  SortOrder,
+} from "@/lib/api/types";
 import { BatchRefreshProvider } from "@/lib/cbl/use-batch-refresh";
 import { formatRelativeDate } from "@/lib/format";
 import { UNGROUPED_ID, type BoardGroup } from "@/lib/saved-views/view-board";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -403,14 +398,20 @@ function TabCount({ n }: { n: number }) {
  *  list's collection + read-progress stats and when it was last updated. */
 /** The card's cover stack. Every card shares the one `/me/view-covers`
  *  query (react-query dedupes), so a tab of cards is a single request. */
-function ViewCardStack({ viewId, Icon }: { viewId: string; Icon: LucideIcon }) {
+function ViewCardStack({
+  viewId,
+  Icon,
+  children,
+}: {
+  viewId: string;
+  Icon: LucideIcon;
+  children?: React.ReactNode;
+}) {
   const covers = useViewCovers();
   return (
-    <CoverStack
-      urls={covers.data?.get(viewId) ?? []}
-      Icon={Icon}
-      className="w-40 max-w-[70%]"
-    />
+    <CoverStackStage urls={covers.data?.get(viewId) ?? []} Icon={Icon}>
+      {children}
+    </CoverStackStage>
   );
 }
 
@@ -424,20 +425,25 @@ function ViewCard({
   isCollection: boolean;
 }) {
   const qc = useQueryClient();
-  // Both delete hooks are plain mutation builders (no work until `mutate`),
-  // so calling both keeps the card a single component while routing the
-  // delete through the right endpoint by kind.
-  const delSaved = useDeleteSavedView(view.id);
-  // Collections delete silently + show an Undo toast (audit B6). Saved
-  // filter views keep their plain confirm — they're cheap to rebuild and
-  // out of B6's scope.
+  // Undo instead of confirm (folio-flair-1.0): Delete fires at once and
+  // the toast carries an Undo that rebuilds the view from a snapshot.
+  // Both delete mutations are silent — the Undo toast is the only one.
+  const delSaved = useApiMutation<unknown, void>(
+    () => ({ path: `/me/saved-views/${view.id}`, method: "DELETE" }),
+    {
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: ["saved-views"] });
+        // A deleted view's sidebar row would otherwise linger until reload.
+        qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+      },
+    },
+  );
   const delCollection = useDeleteCollection(view.id, { silent: true });
   const showDeleteUndo = useCollectionDeleteUndo();
   const sidebar = useSidebarSavedView();
   const board = useViewBoardActions();
   const cblLists = React.useContext(CblListsContext);
   const [pinOpen, setPinOpen] = React.useState(false);
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
   const isWantToRead = isCollection && view.system_key === WANT_TO_READ_KEY;
@@ -455,10 +461,26 @@ function ViewCard({
   // filter views keep the icon (their contents are a query, not a list).
   const stacked = isCollection || view.kind === "cbl";
 
-  async function handleConfirmDelete() {
+  async function handleDelete() {
+    if (deleting) return;
     if (!isCollection) {
-      // Filter / CBL views: plain delete (the hook toasts on its own).
-      delSaved.mutate(undefined, { onSuccess: () => setConfirmOpen(false) });
+      // Filter / CBL views: the view row is all that goes (a CBL view's
+      // underlying list stays), so Undo re-creates it from its definition.
+      const snapshot = view;
+      delSaved.mutate(undefined, {
+        onSuccess: () =>
+          showUndoToast({
+            message: `Deleted "${snapshot.name}"`,
+            restoredMessage: `Restored "${snapshot.name}"`,
+            failedMessage: "Couldn't restore the view",
+            onUndo: async () => {
+              const created = await recreateSavedView(snapshot);
+              if (!created) throw new Error("recreate returned null");
+              qc.invalidateQueries({ queryKey: ["saved-views"] });
+              qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+            },
+          }),
+      });
       return;
     }
     // Collections: snapshot the full member list *before* the delete drops
@@ -477,7 +499,6 @@ function ViewCard({
     }
     delCollection.mutate(undefined, {
       onSuccess: () => {
-        setConfirmOpen(false);
         if (snapshot) showDeleteUndo(snapshot);
         else toast.success(`Collection "${view.name}" deleted`);
       },
@@ -499,100 +520,107 @@ function ViewCard({
     );
   }
 
+  const menu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={`Actions for ${view.name}`}
+          className="text-muted-foreground hover:text-foreground -mt-1 -mr-1 h-7 w-7"
+        >
+          <MoreVertical className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem onSelect={() => setPinOpen(true)}>
+          <Pin className="size-4" /> Pin to pages…
+        </DropdownMenuItem>
+        <DropdownMenuCheckboxItem
+          checked={view.show_in_sidebar}
+          onCheckedChange={(next) => toggleSidebar(next === true)}
+        >
+          Show in sidebar
+        </DropdownMenuCheckboxItem>
+        {board ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuResponsiveSub
+              icon={<FolderInput className="size-4" />}
+              label="Move to group"
+            >
+              {board.groups.map((g) => (
+                <DropdownMenuItem
+                  key={g.id}
+                  disabled={currentGroup === g.id}
+                  onSelect={() => board.moveToGroup(view.id, g.id)}
+                >
+                  <span className="inline-flex w-4 justify-center">
+                    {currentGroup === g.id ? (
+                      <Check className="size-4" aria-hidden="true" />
+                    ) : null}
+                  </span>
+                  <span className="truncate">{g.name}</span>
+                </DropdownMenuItem>
+              ))}
+              {board.groups.length > 0 ? (
+                <DropdownMenuItem
+                  disabled={currentGroup === UNGROUPED_ID}
+                  onSelect={() => board.moveToGroup(view.id, null)}
+                >
+                  <span className="inline-flex w-4 justify-center">
+                    {currentGroup === UNGROUPED_ID ? (
+                      <Check className="size-4" aria-hidden="true" />
+                    ) : null}
+                  </span>
+                  Ungrouped
+                </DropdownMenuItem>
+              ) : null}
+              {board.groups.length > 0 ? <DropdownMenuSeparator /> : null}
+              <DropdownMenuItem
+                onSelect={() => board.newGroupWithView(view.id)}
+              >
+                <FolderPlus className="size-4" /> New group…
+              </DropdownMenuItem>
+            </DropdownMenuResponsiveSub>
+          </>
+        ) : null}
+        {isBuiltIn ? null : (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => void handleDelete()}
+              disabled={deleting}
+              className="text-destructive focus:text-destructive"
+            >
+              <Trash2 className="size-4" /> Delete
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   return (
     <div
       className={`group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col rounded-lg border p-4 transition-colors ${
         stacked ? "cover-stack-host gap-3" : "gap-2"
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        {stacked ? (
-          <ViewCardStack viewId={view.id} Icon={Icon} />
-        ) : (
+      {stacked ? (
+        <ViewCardStack viewId={view.id} Icon={Icon}>
+          {menu}
+        </ViewCardStack>
+      ) : (
+        <div className="flex items-start justify-between gap-2">
           <Icon
             className="text-muted-foreground size-5 shrink-0"
             aria-hidden="true"
           />
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={`Actions for ${view.name}`}
-              className="text-muted-foreground hover:text-foreground -mt-1 -mr-1 h-7 w-7"
-            >
-              <MoreVertical className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem onSelect={() => setPinOpen(true)}>
-              <Pin className="size-4" /> Pin to pages…
-            </DropdownMenuItem>
-            <DropdownMenuCheckboxItem
-              checked={view.show_in_sidebar}
-              onCheckedChange={(next) => toggleSidebar(next === true)}
-            >
-              Show in sidebar
-            </DropdownMenuCheckboxItem>
-            {board ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuResponsiveSub
-                  icon={<FolderInput className="size-4" />}
-                  label="Move to group"
-                >
-                  {board.groups.map((g) => (
-                    <DropdownMenuItem
-                      key={g.id}
-                      disabled={currentGroup === g.id}
-                      onSelect={() => board.moveToGroup(view.id, g.id)}
-                    >
-                      <span className="inline-flex w-4 justify-center">
-                        {currentGroup === g.id ? (
-                          <Check className="size-4" aria-hidden="true" />
-                        ) : null}
-                      </span>
-                      <span className="truncate">{g.name}</span>
-                    </DropdownMenuItem>
-                  ))}
-                  {board.groups.length > 0 ? (
-                    <DropdownMenuItem
-                      disabled={currentGroup === UNGROUPED_ID}
-                      onSelect={() => board.moveToGroup(view.id, null)}
-                    >
-                      <span className="inline-flex w-4 justify-center">
-                        {currentGroup === UNGROUPED_ID ? (
-                          <Check className="size-4" aria-hidden="true" />
-                        ) : null}
-                      </span>
-                      Ungrouped
-                    </DropdownMenuItem>
-                  ) : null}
-                  {board.groups.length > 0 ? <DropdownMenuSeparator /> : null}
-                  <DropdownMenuItem
-                    onSelect={() => board.newGroupWithView(view.id)}
-                  >
-                    <FolderPlus className="size-4" /> New group…
-                  </DropdownMenuItem>
-                </DropdownMenuResponsiveSub>
-              </>
-            ) : null}
-            {isBuiltIn ? null : (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onSelect={() => setConfirmOpen(true)}
-                  className="text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="size-4" /> Delete
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+          {menu}
+        </div>
+      )}
 
       <Link
         href={href}
@@ -633,36 +661,6 @@ function ViewCard({
       ) : null}
 
       <MultiPinDialog view={view} open={pinOpen} onOpenChange={setPinOpen} />
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete {isCollection ? "this collection" : "this view"}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {isCollection
-                ? "Removes the collection and its hand-picked list — the series and issues themselves are untouched. You can undo this right after."
-                : view.kind === "cbl"
-                  ? "Removes the saved view but keeps the underlying CBL list — you can re-import later."
-                  : "Removes the filter view permanently."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              // Keep the dialog mounted through the async snapshot+delete
-              // so the pending state shows; we close it on success.
-              onClick={(e) => {
-                e.preventDefault();
-                void handleConfirmDelete();
-              }}
-              disabled={deleting}
-            >
-              {deleting ? "Deleting…" : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
@@ -692,4 +690,41 @@ function CblCardStats({ list }: { list: CblListView }) {
       {list.stats.total > 0 ? <ListProgressBar stats={list.stats} /> : null}
     </div>
   );
+}
+
+/** Re-create a deleted filter / CBL saved view from its last-known row
+ *  (the Undo half of the views-index Delete). Like collection undo
+ *  (`lib/collections/recreate.ts`) it restores the *definition*, not the
+ *  row: the new view gets a fresh id, so pins, sidebar placement, group
+ *  membership and the icon override are not carried over. A CBL view
+ *  points back at the same `cbl_list_id`, which a plain view delete
+ *  leaves in place. Exported for tests. */
+export async function recreateSavedView(
+  view: SavedViewView,
+): Promise<SavedViewView | null> {
+  const body: CreateSavedViewReq = {
+    kind: view.kind,
+    name: view.name,
+    description: view.description ?? null,
+    custom_tags: view.custom_tags,
+    custom_year_start: view.custom_year_start ?? null,
+    custom_year_end: view.custom_year_end ?? null,
+  };
+  if (view.kind === "cbl") {
+    body.cbl_list_id = view.cbl_list_id ?? null;
+  } else {
+    body.filter = {
+      match_mode: (view.match_mode ?? "all") as MatchMode,
+      conditions: (view.conditions ?? []) as Condition[],
+    };
+    body.sort_field = (view.sort_field ??
+      null) as CreateSavedViewReq["sort_field"];
+    body.sort_order = (view.sort_order ?? null) as SortOrder | null;
+    body.result_limit = view.result_limit ?? null;
+  }
+  return apiMutate<SavedViewView>({
+    path: "/me/saved-views",
+    method: "POST",
+    body,
+  });
 }

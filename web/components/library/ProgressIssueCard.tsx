@@ -133,6 +133,7 @@ export function ProgressIssueCard({
       <Link
         href={resumesOnTap ? resumeHref : detailsHref}
         onClick={resumesOnTap ? undefined : morph.onClick}
+        data-tint-target=""
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
         )}

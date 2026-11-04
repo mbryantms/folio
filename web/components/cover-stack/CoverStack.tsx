@@ -64,6 +64,7 @@ export function CoverStack({
   Icon,
   className,
   spill = true,
+  spillScale = SPILL_SCALE,
 }: {
   urls: readonly string[];
   /** Override the user's preference (Settings previews). */
@@ -72,6 +73,8 @@ export function CoverStack({
   className?: string;
   /** Grow past the card while fanned. Off for fixed-size previews. */
   spill?: boolean;
+  /** How much the stack grows while spilling (large stacks need less). */
+  spillScale?: number;
 }) {
   const userStyle = useCoverStackStyle();
   const layout = layoutFor(style ?? userStyle);
@@ -86,9 +89,9 @@ export function CoverStack({
     const host = el?.closest<HTMLElement>(".cover-stack-host");
     if (!spill || !el || !host) return;
     const measure = () => {
-      // Layout box, not the (possibly already scaled) painted one: the
-      // host is the stack's offset parent (position: relative in CSS).
-      const left = host.getBoundingClientRect().left + el.offsetLeft;
+      // Layout box, not the (possibly already scaled) painted one.
+      const parent = (el.offsetParent as HTMLElement | null) ?? host;
+      const left = parent.getBoundingClientRect().left + el.offsetLeft;
       const area = el.closest("main")?.getBoundingClientRect();
       el.dataset.spill = spillOrigin(
         { left, right: left + el.offsetWidth },
@@ -96,6 +99,7 @@ export function CoverStack({
           left: Math.max(0, area?.left ?? 0),
           right: Math.min(window.innerWidth, area?.right ?? window.innerWidth),
         },
+        spillScale,
       );
     };
     host.addEventListener("pointerenter", measure);
@@ -104,7 +108,7 @@ export function CoverStack({
       host.removeEventListener("pointerenter", measure);
       host.removeEventListener("focusin", measure);
     };
-  }, [spill]);
+  }, [spill, spillScale]);
 
   return (
     <div
@@ -115,7 +119,7 @@ export function CoverStack({
       style={
         {
           aspectRatio: `1 / ${STACK_ASPECT}`,
-          "--cs-spill": SPILL_SCALE,
+          "--cs-spill": spillScale,
         } as React.CSSProperties
       }
     >

@@ -1214,7 +1214,11 @@ body {
  * cover's most vibrant colour). Hovering washes the card in it and gives
  * the cover a matching glow, so each card answers in its own colour. */
 @media (hover: hover) and (pointer: fine) {
-  [data-card][style*="--cover-tint"]:hover {
+  /* A card whose clickable surface is an inner element (Continue
+   * reading's ProgressIssueCard marks it `data-tint-target`) washes that
+   * element instead of the whole wrapper, replacing its accent hover. */
+  [data-card][style*="--cover-tint"]:not(:has([data-tint-target])):hover,
+  [data-card][style*="--cover-tint"] [data-tint-target]:hover {
     background-color: color-mix(in oklab, var(--cover-tint) 16%, transparent);
   }
   [data-card][style*="--cover-tint"]:hover .cover-box {

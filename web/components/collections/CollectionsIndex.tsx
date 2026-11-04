@@ -6,7 +6,7 @@ import { BookmarkPlus, Folder, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/PageHeader";
-import { CoverStack } from "@/components/cover-stack/CoverStack";
+import { CoverStackStage } from "@/components/cover-stack/CoverStackStage";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -93,16 +93,15 @@ function CollectionCard({
   return (
     <Link
       href={`/views/${isWantToRead ? "want-to-read" : collection.id}`}
-      className="group cover-stack-host hover:bg-accent/40 focus-visible:ring-ring border-border/60 flex h-full flex-col gap-3 rounded-lg border p-4 transition-colors focus-visible:ring-2 focus-visible:outline-none"
+      className="group cover-stack-host hover:bg-accent/40 focus-visible:ring-ring border-border/60 flex h-full flex-col gap-3 overflow-visible rounded-lg border p-4 transition-colors focus-visible:ring-2 focus-visible:outline-none"
     >
-      <div className="flex items-start justify-between gap-3">
-        <CoverStack urls={covers} Icon={Icon} className="w-40 max-w-[70%]" />
+      <CoverStackStage urls={covers} Icon={Icon}>
         {isWantToRead ? (
-          <span className="text-muted-foreground bg-muted/40 inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wider whitespace-nowrap uppercase">
+          <span className="text-muted-foreground bg-background/70 inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wider whitespace-nowrap uppercase backdrop-blur">
             Built-in
           </span>
         ) : null}
-      </div>
+      </CoverStackStage>
       <div className="min-w-0 space-y-0.5">
         <div className="truncate font-medium" title={collection.name}>
           {collection.name}
@@ -123,10 +122,12 @@ function CollectionCard({
 export function CollectionCardSkeleton() {
   return (
     <div className="border-border/60 flex h-full flex-col gap-3 rounded-lg border p-4">
-      <Skeleton
-        className="w-40 max-w-[70%] rounded-md"
-        style={{ aspectRatio: `1 / ${STACK_ASPECT}` }}
-      />
+      <div className="-mx-4 -mt-4 flex justify-center px-3 pt-7 pb-2">
+        <Skeleton
+          className="w-full max-w-[22rem] rounded-md"
+          style={{ aspectRatio: `1 / ${STACK_ASPECT}` }}
+        />
+      </div>
       <div className="space-y-1.5">
         <Skeleton className="h-4 w-2/3" />
         <Skeleton className="h-3 w-full" />
