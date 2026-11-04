@@ -326,40 +326,23 @@ export default async function SeriesPage({
               {series.name}
             </h1>
             <SeriesFactRow series={series} readingTime={readingTime} />
-            <div className="hero-variant-pills mt-3 flex flex-wrap items-center gap-2">
-              {status && <Badge variant="outline">{status}</Badge>}
-              <CollectionBadge series={series} />
-              {series.age_rating && (
-                <Badge variant="secondary">{series.age_rating}</Badge>
-              )}
+            {/* Facts as words, one line with the rating and source links;
+                badges only for collection status. */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <HeroFactsLine facts={[status, series.age_rating]} />
               <UserRating
                 scope="series"
                 seriesSlug={series.slug}
                 initial={series.user_rating ?? null}
                 label="Series rating"
-                variant="inline"
+                variant="bare"
               />
-              <ProviderBadgesRow scope="series" seriesSlug={series.slug} />
-            </div>
-            {/* Header style "text" (exploration, see lib/ui/page-tint.ts):
-                facts as words, chips only for warnings. */}
-            <div className="hero-variant-text mt-3 space-y-2">
-              <HeroFactsLine facts={[status, series.age_rating]} />
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <UserRating
-                  scope="series"
-                  seriesSlug={series.slug}
-                  initial={series.user_rating ?? null}
-                  label="Series rating"
-                  variant="bare"
-                />
-                <ProviderBadgesRow
-                  scope="series"
-                  seriesSlug={series.slug}
-                  variant="text"
-                />
-                <CollectionBadge series={series} />
-              </div>
+              <ProviderBadgesRow
+                scope="series"
+                seriesSlug={series.slug}
+                variant="text"
+              />
+              <CollectionBadge series={series} />
             </div>
           </div>
           <div className="min-w-0 max-sm:order-3 max-sm:col-span-full">
@@ -373,6 +356,7 @@ export default async function SeriesPage({
             <FactBlock label="Writers" className="max-sm:hidden">
               {series.writers && series.writers.length > 0 ? (
                 <ChipList
+                  display="text"
                   items={series.writers}
                   filterField="writer"
                   creatorSlugs={series.creator_slugs}
@@ -386,12 +370,20 @@ export default async function SeriesPage({
             </FactBlock>
             {hasGenres && (
               <FactBlock label="Genres">
-                <ChipList items={series.genres} filterField="genres" />
+                <ChipList
+                  display="text"
+                  items={series.genres}
+                  filterField="genres"
+                />
               </FactBlock>
             )}
             {hasTags && (
               <FactBlock label="Tags">
-                <ChipList items={series.tags} filterField="tags" />
+                <ChipList
+                  display="text"
+                  items={series.tags}
+                  filterField="tags"
+                />
               </FactBlock>
             )}
           </div>

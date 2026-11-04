@@ -1505,11 +1505,3 @@ html.theme-reveal::view-transition-group(root) {
     var(--foreground) 12%
   );
 }
-
-/* ===== folio-flair: header style exploration (pills vs text) =====
-   Both variants are in the series / issue header markup; the switch in
-   the test panel (lib/ui/page-tint.ts) shows one. */
-html[data-hero-style="text"] .hero-variant-pills,
-html:not([data-hero-style="text"]) .hero-variant-text {
-  display: none;
-}

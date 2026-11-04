@@ -1,7 +1,5 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
-
 /**
  * Page tint (folio-flair-1.0).
  *
@@ -36,54 +34,4 @@ export function publishPageTint(t: {
     root.style.removeProperty("--page-tint-2");
     root.style.removeProperty("--page-cover");
   };
-}
-
-/**
- * Header style (exploration): `pills` (badges for every fact) or `text`
- * (facts as a text line, bare rating stars, source links as text; chips
- * only for people, badges only for warnings). Both variants are in the
- * page markup; `data-hero-style` on <html> shows one (globals.css).
- */
-export const HERO_STYLE_OPTIONS = [
-  { value: "pills", label: "Pills" },
-  { value: "text", label: "Text" },
-] as const;
-export type HeroStyle = (typeof HERO_STYLE_OPTIONS)[number]["value"];
-
-const HERO_KEY = "folio:hero-style";
-const heroListeners = new Set<() => void>();
-
-function readHero(): HeroStyle {
-  try {
-    return localStorage.getItem(HERO_KEY) === "text" ? "text" : "pills";
-  } catch {
-    return "pills";
-  }
-}
-
-function applyHero(v: HeroStyle) {
-  document.documentElement.setAttribute("data-hero-style", v);
-}
-
-if (typeof window !== "undefined") applyHero(readHero());
-
-export function setHeroStyle(v: HeroStyle) {
-  try {
-    localStorage.setItem(HERO_KEY, v);
-  } catch {
-    // Per-tab only, then.
-  }
-  applyHero(v);
-  heroListeners.forEach((l) => l());
-}
-
-export function useHeroStyle(): HeroStyle {
-  return useSyncExternalStore(
-    (l) => {
-      heroListeners.add(l);
-      return () => heroListeners.delete(l);
-    },
-    readHero,
-    () => "pills",
-  );
 }

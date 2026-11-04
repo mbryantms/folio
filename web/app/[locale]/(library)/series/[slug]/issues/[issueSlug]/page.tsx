@@ -348,16 +348,7 @@ export default async function IssuePage({
                 </Link>
               )}
               {issue.number && (
-                <span
-                  data-hero-chip=""
-                  aria-label={`Issue number ${issue.number}`}
-                  className="hero-variant-pills border-primary/50 bg-primary/10 text-primary inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-sm font-semibold tabular-nums"
-                >
-                  #{issue.number}
-                </span>
-              )}
-              {issue.number && (
-                <span className="hero-variant-text text-foreground font-mono font-semibold tabular-nums">
+                <span className="text-foreground font-mono font-semibold tabular-nums">
                   #{issue.number}
                 </span>
               )}
@@ -382,18 +373,32 @@ export default async function IssuePage({
               lastReadAt={activityStats?.last_read_at ?? null}
               timesRead={activityStats?.totals.sessions ?? 0}
             />
-            <div className="hero-variant-pills mt-3 flex flex-wrap items-center gap-2">
-              {seriesStatus && <Badge variant="outline">{seriesStatus}</Badge>}
-              {issue.age_rating && (
-                <Badge variant="secondary">{issue.age_rating}</Badge>
-              )}
-              {issue.format && (
-                <Badge variant="secondary">{issue.format}</Badge>
-              )}
-              {issue.manga && issue.manga !== "No" && (
-                <Badge variant="secondary">Manga</Badge>
-              )}
-              {issue.black_and_white && <Badge variant="secondary">B/W</Badge>}
+            {/* Facts as words, one line with the rating and source links;
+                badges only for warnings. */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <HeroFactsLine
+                facts={[
+                  seriesStatus,
+                  issue.age_rating,
+                  issue.format,
+                  issue.manga && issue.manga !== "No" ? "Manga" : null,
+                  issue.black_and_white ? "B/W" : null,
+                ]}
+              />
+              <UserRating
+                scope="issue"
+                seriesSlug={issue.series_slug}
+                issueSlug={issue.slug}
+                initial={issue.user_rating ?? null}
+                label="Your rating"
+                variant="bare"
+              />
+              <ProviderBadgesRow
+                scope="issue"
+                seriesSlug={issue.series_slug}
+                issueSlug={issue.slug}
+                variant="text"
+              />
               {issue.state !== "active" && (
                 <Badge
                   variant="destructive"
@@ -423,80 +428,6 @@ export default async function IssuePage({
                       : "Partial metadata"}
                   </Badge>
                 )}
-              <UserRating
-                scope="issue"
-                seriesSlug={issue.series_slug}
-                issueSlug={issue.slug}
-                initial={issue.user_rating ?? null}
-                label="Your rating"
-                variant="inline"
-              />
-              <ProviderBadgesRow
-                scope="issue"
-                seriesSlug={issue.series_slug}
-                issueSlug={issue.slug}
-              />
-            </div>
-            {/* Header style "text" (exploration, see lib/ui/page-tint.ts):
-                facts as words, chips only for warnings. */}
-            <div className="hero-variant-text mt-3 space-y-2">
-              <HeroFactsLine
-                facts={[
-                  seriesStatus,
-                  issue.age_rating,
-                  issue.format,
-                  issue.manga && issue.manga !== "No" ? "Manga" : null,
-                  issue.black_and_white ? "B/W" : null,
-                ]}
-              />
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <UserRating
-                  scope="issue"
-                  seriesSlug={issue.series_slug}
-                  issueSlug={issue.slug}
-                  initial={issue.user_rating ?? null}
-                  label="Your rating"
-                  variant="bare"
-                />
-                <ProviderBadgesRow
-                  scope="issue"
-                  seriesSlug={issue.series_slug}
-                  issueSlug={issue.slug}
-                  variant="text"
-                />
-                {issue.state !== "active" && (
-                  <Badge
-                    variant="destructive"
-                    title={issueStateHint(issue.state)}
-                  >
-                    {issueStateLabel(issue.state)}
-                  </Badge>
-                )}
-                <IssueHealthBadge
-                  seriesSlug={seriesSlug}
-                  issueSlug={issueSlug}
-                />
-                {issue.metadata_completeness &&
-                  issue.metadata_completeness.tier !== "complete" && (
-                    <Badge
-                      variant="outline"
-                      className={
-                        issue.metadata_completeness.tier === "needs_metadata"
-                          ? statusTone("warning")
-                          : undefined
-                      }
-                      title={
-                        issue.metadata_completeness.missing_core.length > 0
-                          ? `Missing: ${issue.metadata_completeness.missing_core.join(", ")}`
-                          : undefined
-                      }
-                    >
-                      {issue.metadata_completeness.tier === "needs_metadata"
-                        ? "Needs metadata"
-                        : "Partial metadata"}
-                    </Badge>
-                  )}
-              </div>
             </div>
             {/* "Sidecar metadata refreshed N ago" badge moved into the
                 Edit sheet header — it's operator-facing context that
