@@ -95,6 +95,7 @@ export function UserRating(props: IssueProps | SeriesProps) {
     // so the row stays compact.
     return (
       <div
+        data-hero-chip=""
         className={cn(
           "border-border text-foreground inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5",
           props.className,

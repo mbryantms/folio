@@ -307,7 +307,9 @@ export default async function SeriesPage({
             chips. Per the user's request, series-level data (publisher,
             year, reading time, etc.) is surfaced front and center rather
             than buried under a tab. */}
-        <div className="min-w-0 max-sm:contents sm:space-y-5">
+        {/* `hero-chips`: every pill in the header shares one surface that
+            stays legible over the tinted backdrop (globals.css). */}
+        <div className="hero-chips min-w-0 max-sm:contents sm:space-y-5">
           <div className="min-w-0 max-sm:order-2">
             {/* Prominent volume caption above the H1 — mirrors the
                 issue page's `Vol. N` badge so the multi-volume signal

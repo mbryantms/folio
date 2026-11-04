@@ -1,6 +1,15 @@
 "use client";
 
+import { useEffect } from "react";
+import { createPortal } from "react-dom";
+
 import { rgb, useCoverPalette } from "@/lib/ui/cover-palette";
+import {
+  TINT_REACH_OPTIONS,
+  publishPageTint,
+  setTintReach,
+  useTintReach,
+} from "@/lib/ui/page-tint";
 import { useVisualEffect } from "@/lib/visual-effects";
 
 /**
@@ -19,6 +28,18 @@ import { useVisualEffect } from "@/lib/visual-effects";
 export function HeroBackdrop({ src }: { src: string | null | undefined }) {
   const on = useVisualEffect("hero_backdrop");
   const palette = useCoverPalette(on ? src : null);
+
+  // Hand the cover colours to the shell (top bar / sidebar / accent,
+  // depending on the tint reach — lib/ui/page-tint.ts).
+  useEffect(() => {
+    if (!on || !src || !palette) return;
+    return publishPageTint({
+      vibrant: rgb(palette.vibrant),
+      average: rgb(palette.average),
+      src,
+    });
+  }, [on, src, palette]);
+
   if (!on || !src) return null;
 
   const tint = palette ? rgb(palette.vibrant, 0.55) : "transparent";
@@ -43,6 +64,42 @@ export function HeroBackdrop({ src }: { src: string | null | undefined }) {
         }}
       />
       <div className="hero-backdrop-fade absolute inset-0" />
+      {/* Only once the palette has loaded (client-only state), so the
+          server and first client render agree. */}
+      {palette ? createPortal(<TintReachPicker />, document.body) : null}
+    </div>
+  );
+}
+
+/** Temporary chooser for comparing how far the tint reaches (exploration;
+ *  remove once one is picked). Bottom-right on tinted pages only. */
+function TintReachPicker() {
+  const reach = useTintReach();
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Tint reach (test)"
+      className="bg-popover/90 text-popover-foreground fixed right-4 bottom-[calc(var(--bottom-tab-h,0px)+var(--safe-bottom,0px)+1rem)] z-50 flex flex-col gap-1 rounded-lg border p-2 text-xs shadow-xl backdrop-blur md:bottom-4"
+    >
+      <span className="text-muted-foreground px-1 pb-0.5 text-[10px] font-semibold tracking-wide uppercase">
+        Tint reach · test
+      </span>
+      {TINT_REACH_OPTIONS.map((o) => (
+        <button
+          key={o.value || "page"}
+          type="button"
+          role="radio"
+          aria-checked={reach === o.value}
+          onClick={() => setTintReach(o.value)}
+          className={`rounded px-2 py-1 text-left transition-colors ${
+            reach === o.value
+              ? "bg-primary text-primary-foreground"
+              : "hover:bg-accent/40"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

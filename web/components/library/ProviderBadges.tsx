@@ -51,6 +51,7 @@ export function ProviderBadges({
               href={r.external_url}
               target="_blank"
               rel="noreferrer"
+              data-hero-chip=""
               className="border-border text-muted-foreground hover:bg-muted hover:text-foreground inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium uppercase transition-colors"
               title={`${r.source_label} · ${r.external_id}`}
             >
@@ -58,6 +59,7 @@ export function ProviderBadges({
             </a>
           ) : (
             <span
+              data-hero-chip=""
               className="border-border text-muted-foreground inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium uppercase"
               title={`${r.source_label} · ${r.external_id}`}
             >

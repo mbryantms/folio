@@ -333,7 +333,9 @@ export default async function IssuePage({
           </div>
         </div>
 
-        <div className="min-w-0 space-y-5">
+        {/* `hero-chips`: every pill in the header shares one surface that
+            stays legible over the tinted backdrop (globals.css). */}
+        <div className="hero-chips min-w-0 space-y-5">
           <div>
             <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               {series && (
@@ -346,6 +348,7 @@ export default async function IssuePage({
               )}
               {issue.number && (
                 <span
+                  data-hero-chip=""
                   aria-label={`Issue number ${issue.number}`}
                   className="border-primary/50 bg-primary/10 text-primary inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-sm font-semibold tabular-nums"
                 >

@@ -1456,3 +1456,83 @@ html.theme-reveal::view-transition-group(root) {
     translate: 0 -50%;
   }
 }
+
+/* ── Page tint reach (folio-flair exploration, lib/ui/page-tint.ts) ──
+ * A tinted series / issue page publishes --page-tint (vibrant),
+ * --page-tint-2 (average) and --page-cover on <html>; data-tint-reach
+ * decides which parts of the shell pick them up. */
+@keyframes page-tint-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Top bar: the same blurred cover glow as the hero, under the band. */
+html[data-page-tint][data-tint-reach~="top"] [data-shell-topbar] {
+  isolation: isolate;
+}
+html[data-page-tint][data-tint-reach~="top"] [data-shell-topbar]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      90% 260% at 30% 0%,
+      color-mix(in oklab, var(--page-tint) 45%, transparent),
+      transparent 70%
+    ),
+    var(--page-cover) center 30% / cover no-repeat;
+  filter: blur(36px) saturate(1.5);
+  opacity: 0.55;
+  clip-path: inset(0);
+  animation: page-tint-in 500ms ease-out;
+}
+/* Sidebar: a wash from the top fading out by mid-height. */
+html[data-page-tint][data-tint-reach~="side"] [data-slot="sidebar-inner"] {
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--page-tint) 22%, transparent),
+    color-mix(in oklab, var(--page-tint-2) 10%, transparent) 35%,
+    transparent 65%
+  );
+  animation: page-tint-in 500ms ease-out;
+}
+/* Accent: the cover's colour becomes the app accent, lightness-clamped so
+ * the usual dark foreground stays readable on it. */
+html[data-page-tint][data-tint-reach~="accent"] {
+  --primary: oklch(from var(--page-tint) 0.74 clamp(0.09, c, 0.19) h);
+  --primary-foreground: oklch(from var(--page-tint) 0.21 0.03 h);
+  --ring: var(--primary);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+}
+
+/* ── Header chips over the tint (series / issue pages) ──
+ * Badges, writer chips, the rating pill, provider IDs and the issue
+ * number all sat on different backgrounds (some opaque, some see-through),
+ * so the tinted backdrop showed through only some of them. Inside
+ * `.hero-chips` every pill gets the same near-opaque page-coloured surface
+ * with a light blur and a hairline border, so its text keeps the page's
+ * normal contrast whatever colour the cover throws behind it. Semantic
+ * text colours (warning, error, the primary issue number) are kept. */
+.hero-chips :is([data-slot="badge"], [data-hero-chip]) {
+  background-color: color-mix(in oklab, var(--background) 82%, transparent);
+  border-color: color-mix(in oklab, var(--foreground) 16%, transparent);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.hero-chips [data-hero-chip] {
+  border-radius: 999px;
+}
+.hero-chips [data-hero-chip].text-muted-foreground {
+  color: color-mix(in oklab, var(--foreground) 82%, transparent);
+}
+.hero-chips :is(a, button):hover > [data-slot="badge"],
+.hero-chips a[data-hero-chip]:hover {
+  background-color: color-mix(
+    in oklab,
+    var(--background) 62%,
+    var(--foreground) 12%
+  );
+}
