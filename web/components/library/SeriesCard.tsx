@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { useRouter } from "next/navigation";
-import { memo, useState } from "react";
+import { memo, useState, ViewTransition } from "react";
 
 import { Cover } from "@/components/Cover";
 import { CoverTilt } from "@/components/library/CoverTilt";
@@ -104,6 +105,7 @@ function SeriesCardImpl({
     label: series.name,
   });
   const share = useShareLink();
+  const morph = useCoverMorph(seriesCoverName(series.slug), series.cover_url);
   const menuActions: CoverMenuAction[] = [
     {
       label: "Mark all read",
@@ -212,12 +214,14 @@ function SeriesCardImpl({
             label={series.name}
           />
         )}
-        <Cover
-          src={series.cover_url}
-          alt={series.name}
-          fallback={series.publisher ?? series.name}
-          className="w-full transition group-hover:brightness-110"
-        />
+        <ViewTransition name={morph.name} share="morph" default="none">
+          <Cover
+            src={series.cover_url}
+            alt={series.name}
+            fallback={series.publisher ?? series.name}
+            className="w-full transition group-hover:brightness-110"
+          />
+        </ViewTransition>
         {!inSelectMode && (
           <PageScrub
             issueId={issueIdFromCoverUrl(series.cover_url)}
@@ -291,7 +295,7 @@ function SeriesCardImpl({
         // untouched; the peek only layers on for pointer hover.
         <HoverCard openDelay={400} closeDelay={120}>
           <HoverCardTrigger asChild>
-            <Link href={link} className={cardClassName}>
+            <Link href={link} className={cardClassName} onClick={morph.onClick}>
               {innerCard}
             </Link>
           </HoverCardTrigger>

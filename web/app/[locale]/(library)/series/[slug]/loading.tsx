@@ -1,5 +1,6 @@
 import { LoadingWatchdog } from "@/components/LoadingWatchdog";
 import { IssueCardSkeleton } from "@/components/library/IssueCard";
+import { MorphCoverSlot } from "@/components/library/MorphCoverSlot";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
@@ -21,7 +22,7 @@ export default function SeriesDetailLoading() {
       <header className="grid grid-cols-[2fr_3fr] gap-4 sm:grid-cols-1 sm:gap-8 lg:grid-cols-[18rem_1fr]">
         <div className="flex flex-col gap-3 max-sm:contents sm:gap-4">
           <div className="mx-auto w-full max-w-full max-sm:order-1 sm:w-56 lg:mx-0 lg:w-72">
-            <Skeleton className="aspect-[2/3] w-full" />
+            <MorphCoverSlot />
           </div>
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 max-sm:order-3 max-sm:col-span-full max-sm:max-w-none sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
             <Skeleton className="h-12 flex-1 rounded-md sm:h-10" />

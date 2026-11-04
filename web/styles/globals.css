@@ -1091,3 +1091,34 @@ body {
   --spine-b: color-mix(in oklab, var(--foreground) 25%, var(--background));
   background: var(--spine-b);
 }
+
+/* ── Cover morph (standard, lib/ui/cover-morph.ts) ──
+ * The clicked card cover flies into the destination page's cover slot.
+ * A brief blur mid-flight hides scaling artefacts. Reduced motion (OS or
+ * the account's Motion setting) turns the flight off. */
+::view-transition-group(.morph) {
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-image-pair(.morph) {
+  animation-name: cover-morph-blur;
+}
+@keyframes cover-morph-blur {
+  35% {
+    filter: blur(2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(.morph),
+  ::view-transition-image-pair(.morph),
+  ::view-transition-old(.morph),
+  ::view-transition-new(.morph) {
+    animation: none !important;
+  }
+}
+[data-motion="reduced"]::view-transition-group(.morph),
+[data-motion="reduced"]::view-transition-image-pair(.morph),
+[data-motion="reduced"]::view-transition-old(.morph),
+[data-motion="reduced"]::view-transition-new(.morph) {
+  animation: none !important;
+}

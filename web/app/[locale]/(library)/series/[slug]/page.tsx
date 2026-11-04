@@ -10,8 +10,11 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import Link from "next/link";
+import { ViewTransition } from "react";
 
+import { CountUp } from "@/components/CountUp";
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { seriesCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
 
 import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
@@ -258,11 +261,17 @@ export default async function SeriesPage({
             icon-only kebab. sm+ keeps the prior stacked sidebar layout. */}
         <div className="flex flex-col gap-3 max-sm:contents sm:gap-4">
           <div className="mx-auto w-full max-w-full max-sm:order-1 sm:w-56 lg:mx-0 lg:w-72">
-            <Cover
-              src={series.cover_url}
-              alt={`Cover of ${series.name}`}
-              fallback={series.publisher ?? "—"}
-            />
+            <ViewTransition
+              name={seriesCoverName(series.slug)}
+              share="morph"
+              default="none"
+            >
+              <Cover
+                src={series.cover_url}
+                alt={`Cover of ${series.name}`}
+                fallback={series.publisher ?? "—"}
+              />
+            </ViewTransition>
           </div>
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon
@@ -916,11 +925,17 @@ function ReadProgressStat({ read, total }: { read: number; total: number }) {
           Read progress
         </span>
         <span className="text-muted-foreground text-xs">
-          {total > 0 ? `${pct}%` : "—"}
+          {total > 0 ? <CountUp value={pct} format="percent" /> : "—"}
         </span>
       </div>
       <span className="text-lg leading-tight font-semibold">
-        {total > 0 ? `${read} / ${total}` : "—"}
+        {total > 0 ? (
+          <>
+            <CountUp value={read} /> / {total}
+          </>
+        ) : (
+          "—"
+        )}
       </span>
       <Progress value={pct} aria-label={`Read ${read} of ${total} issues`} />
       <span
@@ -987,7 +1002,7 @@ function ReadingLoadStat({
         {time ?? "—"}
       </span>
       <span className="text-muted-foreground text-xs">
-        {formatCompactPages(pagesShown)} pages
+        <CountUp value={pagesShown} format="compactPages" /> pages
       </span>
     </div>
   );

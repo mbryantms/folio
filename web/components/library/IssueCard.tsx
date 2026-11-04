@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, ViewTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
@@ -8,6 +8,7 @@ import { Check } from "lucide-react";
 import { Cover } from "@/components/Cover";
 import { CoverTilt } from "@/components/library/CoverTilt";
 import { PageScrub } from "@/components/library/PageScrub";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -106,6 +107,10 @@ function IssueCardImpl({
     label: `${heading}${issue.number ? ` ${numberLabel}` : ""}`,
   });
   const share = useShareLink();
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   // Same actions backing the desktop kebab — sharing the array means
   // touch (long-press sheet) and desktop (dropdown) can't drift.
   const menuActions: CoverMenuAction[] =
@@ -216,12 +221,14 @@ function IssueCardImpl({
             label={heading}
           />
         )}
-        <Cover
-          src={issue.cover_url}
-          alt={heading}
-          fallback={numberLabel}
-          className="w-full transition group-hover:brightness-110"
-        />
+        <ViewTransition name={morph.name} share="morph" default="none">
+          <Cover
+            src={issue.cover_url}
+            alt={heading}
+            fallback={numberLabel}
+            className="w-full transition group-hover:brightness-110"
+          />
+        </ViewTransition>
         {!inSelectMode && issue.state === "active" && (
           <PageScrub issueId={issue.id} pageCount={issue.page_count} />
         )}
@@ -293,7 +300,11 @@ function IssueCardImpl({
           {innerCard}
         </button>
       ) : (
-        <Link href={issueUrl(issue)} className={cardClassName}>
+        <Link
+          href={issueUrl(issue)}
+          className={cardClassName}
+          onClick={morph.onClick}
+        >
           {innerCard}
         </Link>
       )}

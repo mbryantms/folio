@@ -14,8 +14,10 @@ import {
   Languages,
 } from "lucide-react";
 import Link from "next/link";
+import { ViewTransition } from "react";
 
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { issueCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
 
 import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
@@ -283,19 +285,25 @@ export default async function IssuePage({
             below). */}
         <div className="flex flex-col gap-3 sm:gap-4">
           <div className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72">
-            <Cover
-              src={
-                issue.state === "active"
-                  ? `/issues/${issue.id}/pages/0/thumb`
-                  : null
-              }
-              alt={heading}
-              fallback={
-                issue.state === "active"
-                  ? "Cover"
-                  : issueStateLabel(issue.state)
-              }
-            />
+            <ViewTransition
+              name={issueCoverName(issue.series_slug, issue.slug)}
+              share="morph"
+              default="none"
+            >
+              <Cover
+                src={
+                  issue.state === "active"
+                    ? `/issues/${issue.id}/pages/0/thumb`
+                    : null
+                }
+                alt={heading}
+                fallback={
+                  issue.state === "active"
+                    ? "Cover"
+                    : issueStateLabel(issue.state)
+                }
+              />
+            </ViewTransition>
           </div>
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon
