@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { toastSuccess, toastError } = vi.hoisted(() => ({
+const { toastPlain, toastSuccess, toastError } = vi.hoisted(() => ({
+  toastPlain: vi.fn((..._args: unknown[]) => "plain-id"),
   toastSuccess: vi.fn((..._args: unknown[]) => "toast-id"),
   toastError: vi.fn(),
 }));
 vi.mock("sonner", () => ({
-  toast: { success: toastSuccess, error: toastError },
+  toast: Object.assign(toastPlain, {
+    success: toastSuccess,
+    error: toastError,
+  }),
 }));
 
 import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
@@ -22,6 +26,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("showUndoToast", () => {
   beforeEach(() => {
+    toastPlain.mockClear();
     toastSuccess.mockClear();
     toastError.mockClear();
   });
@@ -59,6 +64,35 @@ describe("showUndoToast", () => {
     lastOpts().action.onClick();
     await flush();
     expect(toastError).toHaveBeenCalledWith("Couldn't");
+  });
+});
+
+describe("showUndoToast options", () => {
+  beforeEach(() => {
+    toastPlain.mockClear();
+    toastSuccess.mockClear();
+    toastError.mockClear();
+  });
+
+  it("skips the follow-up toast when restoredMessage is null", async () => {
+    const onUndo = vi.fn();
+    showUndoToast({ message: "m", onUndo, restoredMessage: null });
+    lastOpts().action.onClick();
+    await flush();
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("raises a plain toast for the neutral tone", () => {
+    const id = showUndoToast({
+      message: "m",
+      onUndo: () => {},
+      tone: "neutral",
+    });
+    expect(id).toBe("plain-id");
+    expect(toastSuccess).not.toHaveBeenCalled();
+    const opts = toastPlain.mock.calls[0]?.[1] as Opts;
+    expect(opts.action.label).toBe("Undo");
   });
 });
 

@@ -9,7 +9,7 @@ import {
   useRestoreMarkers,
 } from "@/lib/api/mutations/markers";
 import { useIssueMarkers } from "@/lib/api/queries";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import type { MarkerKind, MarkerView } from "@/lib/api/types";
 
 /**
@@ -56,12 +56,9 @@ export function usePageMarkerToggle(
         const snapshot = existing;
         del.mutate(snapshot.id, {
           onSuccess: () =>
-            toast.success(labels.removed, {
-              duration: UNDO_TOAST_DURATION_MS,
-              action: {
-                label: "Undo",
-                onClick: () => restore.mutate([snapshot]),
-              },
+            showUndoToast({
+              message: labels.removed,
+              onUndo: () => restore.mutateAsync([snapshot]),
             }),
         });
         return;

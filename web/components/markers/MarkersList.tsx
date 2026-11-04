@@ -57,7 +57,7 @@ import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useContainerWidth } from "@/lib/use-container-width";
 import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import type {
   MarkerKind,
   MarkerRegion,
@@ -271,13 +271,10 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
       onSuccess: (resp) => {
         selection.exit();
         const n = resp?.deleted ?? ids.length;
-        toast.success(`Deleted ${n} marker${n === 1 ? "" : "s"}`, {
-          duration: UNDO_TOAST_DURATION_MS,
-          action: {
-            label: "Undo",
-            // One request for the whole selection (WP-8.4).
-            onClick: () => restoreMarkers.mutate(snapshots),
-          },
+        showUndoToast({
+          message: `Deleted ${n} marker${n === 1 ? "" : "s"}`,
+          // One request for the whole selection (WP-8.4).
+          onUndo: () => restoreMarkers.mutateAsync(snapshots),
         });
       },
     });
@@ -1591,12 +1588,9 @@ function useMarkerActions(
         const snapshot = marker;
         del.mutate(undefined, {
           onSuccess: () =>
-            toast.success("Removed", {
-              duration: UNDO_TOAST_DURATION_MS,
-              action: {
-                label: "Undo",
-                onClick: () => restore.mutate([snapshot]),
-              },
+            showUndoToast({
+              message: "Removed",
+              onUndo: () => restore.mutateAsync([snapshot]),
             }),
         });
       },

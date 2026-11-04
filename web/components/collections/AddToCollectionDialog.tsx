@@ -25,7 +25,8 @@ import {
   useCreateCollection,
   useRemoveCollectionEntry,
 } from "@/lib/api/mutations";
-import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { TOAST } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import {
   getRecentCollectionIds,
   partitionByRecents,
@@ -259,7 +260,7 @@ function PickRow({
   // Mirrors the IssueSettingsMenu / SeriesSettingsMenu / cover-menu
   // add-to-WTR pattern: every "Added to <name>" toast carries an Undo
   // action so the operation is one-click reversible.
-  const remove = useRemoveCollectionEntry(collection.id);
+  const remove = useRemoveCollectionEntry(collection.id, { silent: true });
   return (
     <button
       type="button"
@@ -279,12 +280,10 @@ function PickRow({
                 onAdded();
                 return;
               }
-              toast.success(`Added to ${collection.name}`, {
-                duration: UNDO_TOAST_DURATION_MS,
-                action: {
-                  label: "Undo",
-                  onClick: () => remove.mutate({ entryId: entry.id }, {}),
-                },
+              showUndoToast({
+                message: `Added to ${collection.name}`,
+                restoredMessage: `Removed from ${collection.name}`,
+                onUndo: () => remove.mutateAsync({ entryId: entry.id }),
               });
               onAdded();
             },
@@ -370,24 +369,19 @@ function CreateForm({
       // collection lying around isn't what they asked for. Uses apiMutate
       // directly because `useDeleteCollection(id)` binds at hook-call
       // time and we don't know the id until create resolves.
-      toast.success(`Added to ${trimmed}`, {
-        duration: UNDO_TOAST_DURATION_MS,
-        action: {
-          label: "Undo",
-          onClick: async () => {
-            try {
-              await apiMutate({
-                path: `/me/collections/${created.id}`,
-                method: "DELETE",
-              });
-              qc.invalidateQueries({ queryKey: queryKeys.collections });
-              qc.invalidateQueries({ queryKey: ["saved-views"] });
-            } catch {
-              // apiMutate doesn't toast on error; swallow here too — the
-              // undo affordance is best-effort. If it fails the user can
-              // delete the stray collection from the catalog.
-            }
-          },
+      // If the delete fails the shared toast says so; the user can
+      // delete the stray collection from the catalog.
+      showUndoToast({
+        message: `Added to ${trimmed}`,
+        restoredMessage: `Removed "${trimmed}"`,
+        failedMessage: `Couldn't remove "${trimmed}"`,
+        onUndo: async () => {
+          await apiMutate({
+            path: `/me/collections/${created.id}`,
+            method: "DELETE",
+          });
+          qc.invalidateQueries({ queryKey: queryKeys.collections });
+          qc.invalidateQueries({ queryKey: ["saved-views"] });
         },
       });
       onCreated();

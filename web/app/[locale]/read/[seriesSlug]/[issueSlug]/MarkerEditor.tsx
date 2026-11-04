@@ -18,7 +18,7 @@ import {
 } from "@/components/folio/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useIssueMarkers, useMarkerTags } from "@/lib/api/queries";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import {
   useCreateMarker,
   useDeleteMarker,
@@ -180,12 +180,12 @@ export function MarkerEditor({
     };
     const editId = editingMarkerId;
     close();
-    toast("Discarded unsaved changes", {
-      duration: UNDO_TOAST_DURATION_MS,
-      action: {
-        label: "Undo",
-        onClick: () => beginMarkerEdit(draft, editId),
-      },
+    // The re-opened editor is the confirmation — no "Restored" toast.
+    showUndoToast({
+      message: "Discarded unsaved changes",
+      tone: "neutral",
+      restoredMessage: null,
+      onUndo: () => beginMarkerEdit(draft, editId),
     });
   }
 
@@ -305,13 +305,12 @@ export function MarkerEditor({
     };
     del.mutate(undefined, {
       onSuccess: () => {
-        toast.success("Removed", {
-          duration: UNDO_TOAST_DURATION_MS,
-          action: {
-            label: "Undo",
-            onClick: () =>
-              persisted ? restore.mutate([persisted]) : create.mutate(draft),
-          },
+        showUndoToast({
+          message: "Removed",
+          onUndo: () =>
+            persisted
+              ? restore.mutateAsync([persisted])
+              : create.mutateAsync(draft),
         });
         close();
       },

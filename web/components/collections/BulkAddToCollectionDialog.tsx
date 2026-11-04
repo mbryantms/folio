@@ -25,7 +25,8 @@ import {
   useCreateCollection,
   type BulkAddMembersResp,
 } from "@/lib/api/mutations";
-import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { TOAST } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import {
   getRecentCollectionIds,
   partitionByRecents,
@@ -327,26 +328,20 @@ function BulkCreateForm({
       recordCollectionUse(created.id);
 
       const addedCount = summary?.added ?? targets.length;
-      toast.success(`${addedCount} added to ${trimmed}`, {
-        duration: UNDO_TOAST_DURATION_MS,
-        // Undo discards the whole collection — the user's intent was
-        // "add to a new place"; leaving an empty collection isn't
-        // what they asked for. Mirrors single-item CreateForm.
-        action: {
-          label: "Undo",
-          onClick: async () => {
-            try {
-              await apiMutate({
-                path: `/me/collections/${created.id}`,
-                method: "DELETE",
-              });
-              qc.invalidateQueries({ queryKey: queryKeys.collections });
-              qc.invalidateQueries({ queryKey: ["saved-views"] });
-            } catch {
-              // best-effort; user can delete the stray collection
-              // from the catalog if this fails.
-            }
-          },
+      // Undo discards the whole collection — the user's intent was
+      // "add to a new place"; leaving an empty collection isn't what
+      // they asked for. Mirrors single-item CreateForm.
+      showUndoToast({
+        message: `${addedCount} added to ${trimmed}`,
+        restoredMessage: `Removed "${trimmed}"`,
+        failedMessage: `Couldn't remove "${trimmed}"`,
+        onUndo: async () => {
+          await apiMutate({
+            path: `/me/collections/${created.id}`,
+            method: "DELETE",
+          });
+          qc.invalidateQueries({ queryKey: queryKeys.collections });
+          qc.invalidateQueries({ queryKey: ["saved-views"] });
         },
       });
       onCreated();

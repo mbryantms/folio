@@ -29,8 +29,10 @@ export type UndoToastOptions = {
   /** Reverses the action. May be async; a throw / rejection surfaces
    *  `failedMessage` as an error toast. */
   onUndo: () => unknown;
-  /** Toast shown once the undo has landed. Defaults to `"Restored"`. */
-  restoredMessage?: string;
+  /** Toast shown once the undo has landed. Defaults to `"Restored"`.
+   *  `null` skips it — for undos whose result is already on screen
+   *  (e.g. re-opening an editor with the discarded draft). */
+  restoredMessage?: string | null;
   /** Error toast when `onUndo` fails. */
   failedMessage?: string;
   /** Reuse an existing sonner toast id — lets the Undo toast replace a
@@ -39,6 +41,10 @@ export type UndoToastOptions = {
   id?: string | number;
   /** Override the Undo window. Every site should leave this alone. */
   duration?: number;
+  /** `"success"` (default) shows sonner's success icon; `"neutral"` a
+   *  plain toast — for actions that aren't an accomplishment, like
+   *  discarding a draft. */
+  tone?: "success" | "neutral";
 };
 
 /** Pop the shared "done — Undo" toast. Returns the sonner toast id. */
@@ -50,12 +56,14 @@ export function showUndoToast({
   failedMessage = "Couldn't undo that",
   id,
   duration = UNDO_TOAST_DURATION_MS,
+  tone = "success",
 }: UndoToastOptions): string | number {
   // Sonner dismisses the toast when the action is clicked, but a fast
   // double-click (or a re-render racing the dismiss) must not replay the
   // restore twice — that would, e.g., recreate a collection twice.
   let used = false;
-  return toast.success(message, {
+  const show = tone === "neutral" ? toast : toast.success;
+  return show(message, {
     ...(id !== undefined ? { id } : {}),
     ...(description ? { description } : {}),
     duration,
@@ -67,7 +75,7 @@ export function showUndoToast({
         void (async () => {
           try {
             await onUndo();
-            toast.success(restoredMessage);
+            if (restoredMessage !== null) toast.success(restoredMessage);
           } catch {
             toast.error(failedMessage);
           }

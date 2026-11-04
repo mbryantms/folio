@@ -26,6 +26,7 @@
 
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import * as React from "react";
+import { toast } from "sonner";
 
 import {
   AlertDialog,
@@ -58,6 +59,7 @@ import {
 } from "@/lib/api/mutations";
 import { useExternalIdsIssue, useExternalIdsSeries } from "@/lib/api/queries";
 import type { ExternalIdRow } from "@/lib/api/types";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 
 const SOURCES: Array<{ value: string; label: string }> = [
   { value: "comicvine", label: "ComicVine" },
@@ -120,8 +122,15 @@ export function useExternalIdsEditor(
   const addSeries = useAddExternalIdSeries(
     target.entityType === "series" ? target.seriesSlug : "",
   );
+  // Silent removes/restores: unlink raises its own toast (Undo for a
+  // user-added id, a plain confirmation after the dialog otherwise).
   const deleteSeries = useDeleteExternalIdSeries(
     target.entityType === "series" ? target.seriesSlug : "",
+    { silent: true },
+  );
+  const restoreSeries = useAddExternalIdSeries(
+    target.entityType === "series" ? target.seriesSlug : "",
+    { silent: true },
   );
   const addIssue = useAddExternalIdIssue(
     target.entityType === "issue" ? target.seriesSlug : "",
@@ -130,11 +139,18 @@ export function useExternalIdsEditor(
   const deleteIssue = useDeleteExternalIdIssue(
     target.entityType === "issue" ? target.seriesSlug : "",
     target.entityType === "issue" ? target.issueSlug : "",
+    { silent: true },
+  );
+  const restoreIssue = useAddExternalIdIssue(
+    target.entityType === "issue" ? target.seriesSlug : "",
+    target.entityType === "issue" ? target.issueSlug : "",
+    { silent: true },
   );
 
   const query = target.entityType === "series" ? seriesList : issueList;
   const add = target.entityType === "series" ? addSeries : addIssue;
   const remove = target.entityType === "series" ? deleteSeries : deleteIssue;
+  const restore = target.entityType === "series" ? restoreSeries : restoreIssue;
 
   const rows = React.useMemo(() => query.data?.rows ?? [], [query.data]);
   const [adding, setAdding] = React.useState(false);
@@ -168,7 +184,40 @@ export function useExternalIdsEditor(
     if (!confirmRemove) return;
     remove.mutate(
       { source: confirmRemove.source },
-      { onSuccess: () => setConfirmRemove(null) },
+      {
+        onSuccess: () => {
+          setConfirmRemove(null);
+          toast.success("Identifier removed");
+        },
+      },
+    );
+  };
+  // Undo instead of confirm for an id an admin added by hand: the
+  // server deletes the row outright, and re-adding the same source + id
+  // (+ URL) restores it as the same user-set link. An id that came from
+  // ComicInfo or a provider would come back user-pinned instead (sacred
+  // against later Apply jobs) — not a faithful restore — so those keep
+  // the confirm dialog.
+  const requestRemove = (row: ExternalIdRow) => {
+    if (row.set_by !== "user") {
+      setConfirmRemove(row);
+      return;
+    }
+    remove.mutate(
+      { source: row.source },
+      {
+        onSuccess: () =>
+          showUndoToast({
+            message: `Unlinked ${row.source_label}`,
+            failedMessage: `Couldn't restore the ${row.source_label} link`,
+            onUndo: () =>
+              restore.mutateAsync({
+                source: row.source,
+                external_id: row.external_id,
+                ...(row.external_url ? { external_url: row.external_url } : {}),
+              }),
+          }),
+      },
     );
   };
 
@@ -286,7 +335,7 @@ export function useExternalIdsEditor(
     isLoading: query.isLoading,
     adding,
     startAdding: () => setAdding(true),
-    requestRemove: (row: ExternalIdRow) => setConfirmRemove(row),
+    requestRemove,
     addForm,
     confirmDialog,
   };

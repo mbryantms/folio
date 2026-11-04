@@ -22,7 +22,7 @@ import {
   useRestoreMarkers,
 } from "@/lib/api/mutations/markers";
 import { primaryPointerIsCoarse } from "@/lib/reader/coarse-pointer";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import {
   useReaderStore,
   type MarkerMode,
@@ -965,12 +965,9 @@ function PagePin({
               const snapshot = marker;
               del.mutate(undefined, {
                 onSuccess: () =>
-                  toast.success("Removed", {
-                    duration: UNDO_TOAST_DURATION_MS,
-                    action: {
-                      label: "Undo",
-                      onClick: () => restore.mutate([snapshot]),
-                    },
+                  showUndoToast({
+                    message: "Removed",
+                    onUndo: () => restore.mutateAsync([snapshot]),
                   }),
               });
             }}

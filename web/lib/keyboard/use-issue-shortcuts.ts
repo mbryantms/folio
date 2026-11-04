@@ -12,7 +12,7 @@ import {
 } from "@/lib/api/mutations";
 import { useIssueMarkers, useMe } from "@/lib/api/queries";
 import type { IssueDetailView } from "@/lib/api/types";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { readerUrl } from "@/lib/urls";
 
@@ -97,12 +97,9 @@ export function useIssueShortcuts(
             const snapshot = existingBookmark;
             deleteMarker.mutate(undefined, {
               onSuccess: () =>
-                toast.success("Bookmark removed", {
-                  duration: UNDO_TOAST_DURATION_MS,
-                  action: {
-                    label: "Undo",
-                    onClick: () => restoreMarkers.mutate([snapshot]),
-                  },
+                showUndoToast({
+                  message: "Bookmark removed",
+                  onUndo: () => restoreMarkers.mutateAsync([snapshot]),
                 }),
             });
           } else {

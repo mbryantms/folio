@@ -1057,7 +1057,11 @@ export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
  * clears it. Written from the reader's end-of-issue Wrap up pane and
  * the issue page; the response echoes the stored body.
  */
-export function useSetIssueNote(seriesSlug: string, issueSlug: string) {
+export function useSetIssueNote(
+  seriesSlug: string,
+  issueSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<IssueNoteView, SetIssueNoteReq>(
     (body) => ({
@@ -1066,8 +1070,13 @@ export function useSetIssueNote(seriesSlug: string, issueSlug: string) {
       body,
     }),
     {
-      successMessage: (view) =>
-        view?.body ? "Closing note saved" : "Closing note cleared",
+      // `silent`: the caller raises its own (Undo) toast.
+      ...(opts?.silent
+        ? {}
+        : {
+            successMessage: (view: IssueNoteView | null) =>
+              view?.body ? "Closing note saved" : "Closing note cleared",
+          }),
       // The /bookmarks feed, its counts and series list carry closing
       // notes (`["markers", "feed…"]` keys).
       onSuccess: () => {
@@ -2395,8 +2404,13 @@ export function useAddCollectionEntry(collectionId: string) {
   );
 }
 
-/** Remove a single entry from a collection. */
-export function useRemoveCollectionEntry(collectionId: string) {
+/** Remove a single entry from a collection. `silent` drops the
+ *  "Removed" toast — for Undo-of-add, where the shared undo toast's
+ *  follow-up is the only feedback. */
+export function useRemoveCollectionEntry(
+  collectionId: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<unknown, { entryId: string }>(
     ({ entryId }) => ({
@@ -2404,7 +2418,7 @@ export function useRemoveCollectionEntry(collectionId: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "Removed",
+      ...(opts?.silent ? {} : { successMessage: "Removed" }),
       onSuccess: () => {
         invalidateCollectionEntries(qc, collectionId);
       },
@@ -2602,19 +2616,29 @@ export function useTogglePageSidebar(id: string) {
 }
 
 /** `DELETE /me/pages/{id}`. 409s on the system page. FK cascade tears
- *  down pin rows and any explicit `kind='page'` sidebar overrides. */
-export function useDeletePage(id: string) {
+ *  down pin rows and any explicit `kind='page'` sidebar overrides.
+ *
+ *  `silent` drops the success toast (the caller raises an Undo toast —
+ *  see `lib/pages/use-delete-page-undo.ts`); `leaveRoute: false` skips
+ *  the bounce home for callers that aren't on the page being deleted
+ *  (Settings → Pages). */
+export function useDeletePage(
+  id: string,
+  opts?: { silent?: boolean; leaveRoute?: boolean },
+) {
   const qc = useQueryClient();
   const router = useRouter();
+  const leaveRoute = opts?.leaveRoute ?? true;
   return useApiMutation<void, void>(
     () => ({ path: `/me/pages/${id}`, method: "DELETE" }),
     {
-      successMessage: TOAST.PAGE_DELETED,
+      ...(opts?.silent ? {} : { successMessage: TOAST.PAGE_DELETED }),
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.mePages });
         qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        qc.invalidateQueries({ queryKey: ["saved-views"] });
         // The current route may *be* the deleted page; bounce home.
-        router.push("/");
+        if (leaveRoute) router.push("/");
         router.refresh();
       },
     },
@@ -3271,7 +3295,12 @@ export function useResumeMetadataSync(seriesSlug: string) {
   );
 }
 
-export function useAddExternalIdSeries(seriesSlug: string) {
+/** `silent` (here and on the three siblings below) drops the success
+ *  toast — for the external-ids editor's immediate unlink + Undo. */
+export function useAddExternalIdSeries(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<ExternalIdRow, AddExternalIdReq>(
     (input) => ({
@@ -3280,7 +3309,7 @@ export function useAddExternalIdSeries(seriesSlug: string) {
       body: input,
     }),
     {
-      successMessage: "Identifier added",
+      ...(opts?.silent ? {} : { successMessage: "Identifier added" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "external-ids"],
@@ -3293,7 +3322,10 @@ export function useAddExternalIdSeries(seriesSlug: string) {
   );
 }
 
-export function useDeleteExternalIdSeries(seriesSlug: string) {
+export function useDeleteExternalIdSeries(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<null, { source: string }>(
     (input) => ({
@@ -3301,7 +3333,7 @@ export function useDeleteExternalIdSeries(seriesSlug: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "Identifier removed",
+      ...(opts?.silent ? {} : { successMessage: "Identifier removed" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "external-ids"],
@@ -3389,7 +3421,10 @@ function invalidateRelationshipViews(
   }
 }
 
-export function useCreateSeriesRelationship(seriesSlug: string) {
+export function useCreateSeriesRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<
     SeriesRelationshipView | SeriesArcRelationshipView,
@@ -3401,14 +3436,19 @@ export function useCreateSeriesRelationship(seriesSlug: string) {
       body: input,
     }),
     {
-      successMessage: "Relationship added",
+      // `silent`: an Undo re-create — the undo toast's follow-up says it.
+      ...(opts?.silent ? {} : { successMessage: "Relationship added" }),
       onSuccess: (row) => invalidateRelationshipViews(qc, seriesSlug, row),
     },
   );
 }
 
-/** WP-7.1: remove a relationship (and its inverse) by row id (admin). */
-export function useDeleteSeriesRelationship(seriesSlug: string) {
+/** WP-7.1: remove a relationship (and its inverse) by row id (admin).
+ *  `silent` drops the success toast for callers raising an Undo toast. */
+export function useDeleteSeriesRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<
     null,
@@ -3419,7 +3459,7 @@ export function useDeleteSeriesRelationship(seriesSlug: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "Relationship removed",
+      ...(opts?.silent ? {} : { successMessage: "Relationship removed" }),
       onSuccess: (_data, input) => {
         invalidateRelationshipViews(qc, seriesSlug, null, input.otherSlug);
         if (input.arcSlug) {
@@ -3457,7 +3497,10 @@ export function useUpdateSeriesRelationship(seriesSlug: string) {
  *  library (admin). When the provider series is already matched locally
  *  the server creates an ordinary relationship pair instead
  *  (`relationship` set), so the other series' list is invalidated too. */
-export function useCreateExternalRelationship(seriesSlug: string) {
+export function useCreateExternalRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<
     CreateExternalRelationshipResp,
@@ -3469,10 +3512,14 @@ export function useCreateExternalRelationship(seriesSlug: string) {
       body: input,
     }),
     {
-      successMessage: (data) =>
-        data?.relationship
-          ? `Already in your library — linked to ${data.relationship.series.name}`
-          : "External link added",
+      ...(opts?.silent
+        ? {}
+        : {
+            successMessage: (data: CreateExternalRelationshipResp | null) =>
+              data?.relationship
+                ? `Already in your library — linked to ${data.relationship.series.name}`
+                : "External link added",
+          }),
       onSuccess: (data) =>
         invalidateRelationshipViews(qc, seriesSlug, data?.relationship ?? null),
     },
@@ -3480,8 +3527,12 @@ export function useCreateExternalRelationship(seriesSlug: string) {
 }
 
 /** WP-7.8: remove an external link (admin). A provider link is dismissed
- *  server-side so a later metadata apply doesn't bring it back. */
-export function useDeleteExternalRelationship(seriesSlug: string) {
+ *  server-side so a later metadata apply doesn't bring it back. `silent`
+ *  drops the success toast for callers raising an Undo toast. */
+export function useDeleteExternalRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<null, { id: string }>(
     (input) => ({
@@ -3489,7 +3540,7 @@ export function useDeleteExternalRelationship(seriesSlug: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "External link removed",
+      ...(opts?.silent ? {} : { successMessage: "External link removed" }),
       onSuccess: () =>
         qc.invalidateQueries({
           queryKey: queryKeys.seriesRelationships(seriesSlug),
@@ -3560,7 +3611,11 @@ export function acceptSummary(data: AcceptOutcome | null): string {
   return removed ? `${head}. ${removed}` : head;
 }
 
-export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {
+export function useAddExternalIdIssue(
+  seriesSlug: string,
+  issueSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<ExternalIdRow, AddExternalIdReq>(
     (input) => ({
@@ -3569,7 +3624,7 @@ export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {
       body: input,
     }),
     {
-      successMessage: "Identifier added",
+      ...(opts?.silent ? {} : { successMessage: "Identifier added" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug, "external-ids"],
@@ -3582,6 +3637,7 @@ export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {
 export function useDeleteExternalIdIssue(
   seriesSlug: string,
   issueSlug: string,
+  opts?: { silent?: boolean },
 ) {
   const qc = useQueryClient();
   return useApiMutation<null, { source: string }>(
@@ -3590,7 +3646,7 @@ export function useDeleteExternalIdIssue(
       method: "DELETE",
     }),
     {
-      successMessage: "Identifier removed",
+      ...(opts?.silent ? {} : { successMessage: "Identifier removed" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug, "external-ids"],

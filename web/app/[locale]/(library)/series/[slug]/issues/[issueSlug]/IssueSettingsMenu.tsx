@@ -55,7 +55,8 @@ import {
   useSetSeriesCover,
 } from "@/lib/api/mutations";
 import { useCollections, useIssueMarkers, useMe } from "@/lib/api/queries";
-import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { TOAST } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
 import type { IssueDetailView } from "@/lib/api/types";
@@ -170,12 +171,9 @@ export function IssueSettingsMenu({
       const snapshot = existingBookmark;
       deleteMarker.mutate(undefined, {
         onSuccess: () =>
-          toast.success("Bookmark removed", {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => restoreMarkers.mutate([snapshot]),
-            },
+          showUndoToast({
+            message: "Bookmark removed",
+            onUndo: () => restoreMarkers.mutateAsync([snapshot]),
           }),
       });
     } else {
@@ -195,7 +193,7 @@ export function IssueSettingsMenu({
   );
   const wtrId = wantToRead?.id ?? "";
   const addToWtr = useAddCollectionEntry(wtrId);
-  const removeFromWtr = useRemoveCollectionEntry(wtrId);
+  const removeFromWtr = useRemoveCollectionEntry(wtrId, { silent: true });
   const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
   // Deep-link: a "Needs metadata" chip (e.g. the CollectionTab detail link)
   // navigates here with ?match=1 to pop the match dialog straight open —
@@ -241,12 +239,10 @@ export function IssueSettingsMenu({
             toast.success(`Added "${issueLabel}" to Want to Read`);
             return;
           }
-          toast.success(`Added "${issueLabel}" to Want to Read`, {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => removeFromWtr.mutate({ entryId: entry.id }, {}),
-            },
+          showUndoToast({
+            message: `Added "${issueLabel}" to Want to Read`,
+            restoredMessage: "Removed from Want to Read",
+            onUndo: () => removeFromWtr.mutateAsync({ entryId: entry.id }),
           });
         },
       },

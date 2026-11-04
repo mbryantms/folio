@@ -22,7 +22,7 @@ import {
 } from "@/components/folio/dropdown-menu";
 import { RatingStars } from "@/components/folio/rating-stars";
 import { useSetIssueNote } from "@/lib/api/mutations";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import type { ClosingNoteEntryView } from "@/lib/api/types";
 import { issueUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
@@ -123,7 +123,10 @@ export function ClosingNoteRow({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setBody(note.body);
   }, [note.body]);
-  const mut = useSetIssueNote(note.series_slug ?? "", note.issue_slug ?? "");
+  // Silent: the Undo toast below is this row's only feedback.
+  const mut = useSetIssueNote(note.series_slug ?? "", note.issue_slug ?? "", {
+    silent: true,
+  });
   const canMutate = !!note.series_slug && !!note.issue_slug;
   const label = closingNoteIssueLabel(note);
   const issueHref =
@@ -137,12 +140,9 @@ export function ClosingNoteRow({
       { body: null },
       {
         onSuccess: () =>
-          toast.success("Closing note removed", {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => mut.mutate({ body: prev }),
-            },
+          showUndoToast({
+            message: "Closing note removed",
+            onUndo: () => mut.mutateAsync({ body: prev }),
           }),
       },
     );
