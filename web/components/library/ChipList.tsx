@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { PersonPreview } from "@/components/library/PersonPreview";
+
 import { Badge } from "@/components/ui/badge";
 import type { EntitySlugs } from "@/lib/api/types";
 import { entityHrefFor } from "@/lib/entities";
@@ -114,9 +116,11 @@ export function ChipList({
             );
             if (entityHref) {
               return (
-                <Link key={item} href={entityHref} title={`Open ${item}`}>
-                  {chip}
-                </Link>
+                <PersonPreview key={item} href={entityHref}>
+                  <Link href={entityHref} title={`Open ${item}`}>
+                    {chip}
+                  </Link>
+                </PersonPreview>
               );
             }
             if (!filterField) return chip;
@@ -131,14 +135,16 @@ export function ChipList({
             if (isCreditRole(filterField)) {
               const slug = creatorSlugs?.[item];
               if (slug) {
+                const creatorHref = `/creators/${encodeURIComponent(slug)}`;
                 return (
-                  <Link
-                    key={item}
-                    href={`/creators/${encodeURIComponent(slug)}`}
-                    title={`Open ${item}'s creator page`}
-                  >
-                    {chip}
-                  </Link>
+                  <PersonPreview key={item} href={creatorHref}>
+                    <Link
+                      href={creatorHref}
+                      title={`Open ${item}'s creator page`}
+                    >
+                      {chip}
+                    </Link>
+                  </PersonPreview>
                 );
               }
               return (
