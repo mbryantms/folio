@@ -207,7 +207,13 @@ describe("<EndOfIssueCard>", () => {
       data,
       finished: {
         issueLabel: "Invincible #1",
-        progress: { seriesName: "Invincible", total: 4, before: 1, after: 2 },
+        progress: {
+          scope: "series",
+          seriesName: "Invincible",
+          total: 4,
+          before: 1,
+          after: 2,
+        },
       },
     });
     expect(html).toMatch(/Finished/);
@@ -226,13 +232,44 @@ describe("<EndOfIssueCard>", () => {
       data: { source: "none" },
       finished: {
         issueLabel: "Invincible #4",
-        progress: { seriesName: "Invincible", total: 4, before: 3, after: 4 },
+        progress: {
+          scope: "series",
+          seriesName: "Invincible",
+          total: 4,
+          before: 3,
+          after: 4,
+        },
       },
     });
     // The static render shows the start of the ring animation; the
     // label flips once it reaches the end (covered by the `done` check).
     expect(html).toMatch(/4 of 4 issues read/);
     expect(html).toMatch(/caught up/i);
+  });
+
+  it("measures the reading list when reading through one", () => {
+    const html = render({
+      data: {
+        source: "cbl",
+        target: issue(),
+        cbl_list_name: "Civil War",
+        cbl_position: 3,
+        cbl_total: 10,
+      } as NextUpView,
+      finished: {
+        issueLabel: "Invincible #1",
+        progress: {
+          scope: "list",
+          seriesName: "Civil War",
+          total: 10,
+          before: 2,
+          after: 3,
+        },
+      },
+    });
+    expect(html).toMatch(/of Civil War/);
+    expect(html).toMatch(/3 of 10 issues read/);
+    expect(html).not.toMatch(/of Invincible</);
   });
 
   it("omits the ring while the series progress is unknown", () => {

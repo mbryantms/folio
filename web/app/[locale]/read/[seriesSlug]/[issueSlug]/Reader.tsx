@@ -61,6 +61,7 @@ import {
   type ZoomState,
 } from "@/lib/reader/zoom";
 import {
+  useCblList,
   useIssueMarkers,
   useNextUp,
   usePrevUp,
@@ -1199,31 +1200,50 @@ export function Reader({
   }, [router]);
   const suppressWrites = incognito || peekActive;
 
-  // Finishing moment: the series' finished count, captured once per issue
-  // as the end nears (before this read's finishing write lands) — the
-  // ring animates from it to now. Online only; the offline reader has
-  // no series endpoint.
+  // Finishing moment: the finished count, captured once per issue as the
+  // end nears (before this read's finishing write lands) — the ring
+  // animates from it to now. Reading through a reading list (CBL) it's
+  // the list's progress (read of the entries in your library), else the
+  // series'. Online only; the offline reader has neither endpoint.
+  const online = endCardArmed && nextUpOverride === undefined;
+  const cblListId =
+    nextUp.data?.source === "cbl" ? (nextUp.data.cbl_list_id ?? null) : null;
+  const listProgressQ = useCblList(online && cblListId ? cblListId : "");
   const seriesProgressQ = useSeries(
-    endCardArmed && seriesId && nextUpOverride === undefined ? seriesId : "",
+    online && !cblListId && seriesId ? seriesId : "",
   );
   const [seriesSnap, setSeriesSnap] = useState<{
     issueId: string;
+    scope: "series" | "list";
     name: string;
     finished: number;
     total: number;
   } | null>(null);
-  const summary = seriesProgressQ.data?.progress_summary;
-  if (
-    summary &&
-    !seriesProgressQ.isFetching &&
-    seriesSnap?.issueId !== issueId
-  ) {
-    setSeriesSnap({
-      issueId,
-      name: seriesProgressQ.data?.name ?? "",
-      finished: summary.finished,
-      total: summary.total,
-    });
+  // Opened from a list (`?cbl=`): wait for next-up to say whether the
+  // list applies before falling back to the series.
+  const listPending = !!cblSavedViewId && !nextUp.data;
+  if (seriesSnap?.issueId !== issueId && !listPending) {
+    const list = cblListId ? listProgressQ.data : undefined;
+    const summary = cblListId
+      ? undefined
+      : seriesProgressQ.data?.progress_summary;
+    if (list && !listProgressQ.isFetching) {
+      setSeriesSnap({
+        issueId,
+        scope: "list",
+        name: nextUp.data?.cbl_list_name ?? list.parsed_name,
+        finished: list.stats.read_count,
+        total: list.stats.matched,
+      });
+    } else if (summary && !seriesProgressQ.isFetching) {
+      setSeriesSnap({
+        issueId,
+        scope: "series",
+        name: seriesProgressQ.data?.name ?? "",
+        finished: summary.finished,
+        total: summary.total,
+      });
+    }
   }
   const snap = seriesSnap?.issueId === issueId ? seriesSnap : null;
   const finishedMoment = useMemo(
@@ -1233,6 +1253,7 @@ export function Reader({
         snap?.name ?? "",
         snap,
         !initiallyFinished && !suppressWrites,
+        snap?.scope,
       ),
     }),
     [issueLabel, snap, initiallyFinished, suppressWrites],

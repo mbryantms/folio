@@ -78,7 +78,11 @@ export function FinishedMoment({
             done ? "text-success" : "text-primary",
           )}
         >
-          {done ? "Series complete" : "Finished"}
+          {done
+            ? progress?.scope === "list"
+              ? "List complete"
+              : "Series complete"
+            : "Finished"}
         </p>
         <h2
           className="mt-0.5 truncate text-base leading-snug font-semibold"

@@ -6,7 +6,29 @@ describe("seriesFinishProgress", () => {
   it("adds this issue when the read counts", () => {
     expect(
       seriesFinishProgress("Saga", { finished: 3, total: 10 }, true),
-    ).toEqual({ seriesName: "Saga", total: 10, before: 3, after: 4 });
+    ).toEqual({
+      scope: "series",
+      seriesName: "Saga",
+      total: 10,
+      before: 3,
+      after: 4,
+    });
+  });
+
+  it("measures a reading list when given the list scope", () => {
+    expect(
+      seriesFinishProgress(
+        "Civil War",
+        { finished: 7, total: 30 },
+        true,
+        "list",
+      ),
+    ).toMatchObject({
+      scope: "list",
+      seriesName: "Civil War",
+      before: 7,
+      after: 8,
+    });
   });
 
   it("moves nothing on a re-read, incognito or peek", () => {
