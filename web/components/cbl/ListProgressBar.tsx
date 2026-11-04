@@ -35,7 +35,7 @@ export function listSegments(s: ListStats): Segment[] {
       key: "ambiguous",
       label: "need a match",
       count: s.ambiguous,
-      className: "bg-amber-500/60",
+      className: "bg-warning/60",
     },
     {
       key: "missing",

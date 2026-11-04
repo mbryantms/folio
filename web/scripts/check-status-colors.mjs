@@ -43,6 +43,9 @@ const ALLOWLIST = new Set([
   join("lib", "ui", "status-tone.ts"),
   // Accent swatches: each dot IS a palette colour by definition.
   join("components", "settings", "ThemePicker.tsx"),
+  // Live reader preview: draws the reader's always-dark page chrome, the
+  // same surface the reader route itself is exempt for.
+  join("components", "settings", "ReaderPreview.tsx"),
   // Marker colours are a fixed per-marker palette, not status tones.
   join("components", "markers", "MarkersList.tsx"),
   // The offline reader is a reader surface (always dark), like app/read.

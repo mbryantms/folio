@@ -10,7 +10,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/folio/hover-card";
-import { jsonFetch } from "@/lib/api/queries";
+import { jsonFetch, queryKeys } from "@/lib/api/queries";
 import type { components } from "@/lib/api/types.generated";
 import { seriesUrl } from "@/lib/urls";
 import { useVisualEffect } from "@/lib/visual-effects";
@@ -101,7 +101,7 @@ function PreviewBody({
   href: string;
 }) {
   const q = useQuery({
-    queryKey: ["person-preview", target.kind, target.slug],
+    queryKey: queryKeys.personPreview(target.kind, target.slug),
     staleTime: 5 * 60_000,
     queryFn: async () => {
       const slug = encodeURIComponent(target.slug);

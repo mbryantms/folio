@@ -68,10 +68,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(__dirname, "..");
 const ROUTE_DIR = "[locale]/read/[seriesSlug]/[issueSlug]";
 const ROUTE_LABEL = "/[locale]/read/[seriesSlug]/[issueSlug]";
-/** Gate ceiling — regressions above this fail CI. Measured + 10%,
- *  re-based on 2026-10-15 (post-audit T4.4: 130.13 KB → 145 KB); the
- *  measurement table lives in docs/dev/pwa-performance.md. */
-const BUDGET_KB = 145;
+/** Gate ceiling — regressions above this fail CI. Re-based on 2026-11-04
+ *  (Folio Flair 1.0: 161.47 KB → 170 KB, tighter than the usual +10%); the
+ *  measurement table and reasoning live in docs/dev/pwa-performance.md. */
+const BUDGET_KB = 170;
 /** WP-4.4 target. Exceeding it (while still under the ceiling) prints a
  *  warning so creep stays visible in every build log. */
 const BUDGET_TARGET_KB = 120;

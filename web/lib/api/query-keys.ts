@@ -48,6 +48,9 @@ export type SeriesMetadataIssueFilters = {
 export const queryKeys = {
   me: ["auth", "me"] as const,
   libraries: ["libraries"] as const,
+  /** Creator / character hover-preview card (folio-flair). */
+  personPreview: (kind: string, slug: string) =>
+    ["person-preview", kind, slug] as const,
   library: (id: string) => ["libraries", id] as const,
   /** Prefix for every per-library health query — invalidating this matches
    *  both the single-page summary and the table's infinite query. */

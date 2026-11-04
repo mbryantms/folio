@@ -52,6 +52,7 @@ neither are lazy `next/dynamic` chunks.
 | 2026-10-15, post-audit T4.4 (account per-series prefs) | 130.13 KB | 14 | 145 KB | 120 KB |
 | 2026-10-31, audit C2 (strip pill a11y, OCR alt, RECENTER hoist) | 141.66 KB | 15 | 145 KB | 120 KB |
 | 2026-10-31, audit C5 (touch pinch zoom, first-open chrome on touch) | 142.66 KB | 15 | 145 KB | 120 KB |
+| 2026-11-04, Folio Flair 1.0 (drag-to-turn, page curl, cover morph into the reader, finishing moment) | 161.47 KB | 17 | 170 KB | 120 KB |
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
@@ -75,6 +76,19 @@ function carrying a suppression of a `react-hooks/*` rule — and its
 memo-cache code cost 4.3 KB gzip in the reader chunk. `Reader` now opts
 out explicitly with `"use no memo"` (same runtime as before, stated rather
 than accidental); the page views and hooks in the file stay compiled.
+The Flair 1.0 row: `main` measured 143.15 KB at merge time. Flair adds
+~18 KB to the reader's first load: momentum drag-to-turn (`use-drag-turn`,
+`drag-turn`, the turn peek) and the reworked swipe layer (~3.9 KB), the page
+curl hook (the curl engine itself is already a lazy `import()`), the cover
+handoff slot in `loading.tsx` (`ReaderCoverMorph` + the effects runtime,
+~5.4 KB, which is what lets the cover land without a spinner), the finishing
+progress context (series / reading list / collection queries) and the
+effects switches. All of these act on the first interaction or the first
+paint, so `lazy.tsx` would trade the budget for a visible delay. The ceiling
+moves to 170 KB, tighter than the usual +10% (177.6 KB) on purpose; the
+target is unchanged, and the next reader work should pay this back by
+code-splitting the drag-turn physics and the finishing-progress queries.
+
 The C5 row: +1.0 KB for the `usePinchZoom` shim, the swipe layer's
 `isPinching` gate, `readerTouchAction` and the store's first-open chrome
 resolution; the pinch handlers themselves (`lib/reader/pinch-zoom.ts`)
