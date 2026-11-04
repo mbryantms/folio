@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -132,7 +133,7 @@ export function ProgressIssueCard({
         {resumesOnTap ? (
           <span className="sr-only">Continue reading </span>
         ) : null}
-        <div className="relative" {...longPress.wrapperProps}>
+        <CoverTilt className="relative" {...longPress.wrapperProps}>
           <Cover
             src={issue.cover_url}
             alt={headerTitle}
@@ -159,7 +160,7 @@ export function ProgressIssueCard({
             readerHref={resumeHref}
             label={`Continue reading ${headerTitle}`}
           />
-        </div>
+        </CoverTilt>
         <div className="min-w-0 px-1">
           <div
             className="text-muted-foreground truncate text-xs"

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
 import { Cover } from "@/components/Cover";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -205,7 +206,7 @@ function IssueCardImpl({
   );
   const innerCard = (
     <>
-      <div className="relative" {...coverWrapperProps}>
+      <CoverTilt className="relative" {...coverWrapperProps}>
         {selectMode && (
           <SelectionCheckbox
             isSelected={selectMode.isSelected}
@@ -270,7 +271,7 @@ function IssueCardImpl({
             />
           </>
         )}
-      </div>
+      </CoverTilt>
       <div className="min-w-0 px-1">
         <div className="text-muted-foreground text-xs font-medium">
           {numberLabel}

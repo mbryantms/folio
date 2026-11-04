@@ -1031,3 +1031,54 @@ body {
     filter: brightness(1.08);
   }
 }
+
+/* ── Cover tilt and sheen (optional effect, components/library/CoverTilt) ──
+ * The cover box leans toward the pointer; a soft highlight follows it.
+ * Variables are written per frame by CoverTilt, so this stays pure CSS.
+ * Only rendered with the effect on; the reduced-motion rule above also
+ * zeroes the transitions. */
+.cover-tilt {
+  transform: perspective(700px) rotateX(var(--tilt-x, 0deg))
+    rotateY(var(--tilt-y, 0deg));
+  transform-style: preserve-3d;
+  transition: transform 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+.cover-tilt[data-tilting] {
+  transition-duration: 90ms;
+}
+.cover-tilt-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  border-radius: var(--radius-md, 0.375rem);
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: soft-light;
+  background: radial-gradient(
+    circle at var(--sheen-x, 50%) var(--sheen-y, 50%),
+    rgb(255 255 255 / 0.55),
+    rgb(255 255 255 / 0.08) 45%,
+    transparent 70%
+  );
+  transition: opacity 300ms ease-out;
+}
+.cover-tilt[data-tilting] .cover-tilt-sheen {
+  opacity: 1;
+}
+
+/* ── Tinted hero backdrop (optional effect, components/library/HeroBackdrop) ──
+ * A blurred cover under a veil of the page background, fading out to the
+ * page colour so header text keeps its normal contrast in every theme. */
+.hero-backdrop-img {
+  filter: blur(40px) saturate(1.5);
+  opacity: 0.75;
+}
+.hero-backdrop-fade {
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--background) 28%, transparent) 0%,
+    color-mix(in oklab, var(--background) 55%, transparent) 55%,
+    var(--background) 100%
+  );
+}

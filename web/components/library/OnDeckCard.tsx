@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Cover } from "@/components/Cover";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -131,7 +132,7 @@ export function OnDeckCard({
           className,
         )}
       >
-        <div className="relative" {...longPress.wrapperProps}>
+        <CoverTilt className="relative" {...longPress.wrapperProps}>
           <Cover
             src={issue.cover_url}
             alt={heading}
@@ -146,7 +147,7 @@ export function OnDeckCard({
             readerHref={readerUrl(issue, { cbl: cblParam })}
             label={`Read ${heading}`}
           />
-        </div>
+        </CoverTilt>
         <div className="min-w-0 px-1">
           <div className="text-muted-foreground truncate text-xs" title={meta}>
             {meta}

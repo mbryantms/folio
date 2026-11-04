@@ -14,6 +14,8 @@ import {
   Languages,
 } from "lucide-react";
 import Link from "next/link";
+
+import { HeroBackdrop } from "@/components/library/HeroBackdrop";
 import { notFound, redirect } from "next/navigation";
 
 import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
@@ -226,7 +228,12 @@ export default async function IssuePage({
     ) : null;
 
   return (
-    <div className="space-y-10">
+    <div className="relative isolate space-y-10">
+      <HeroBackdrop
+        src={
+          issue.state === "active" ? `/issues/${issue.id}/pages/0/thumb` : null
+        }
+      />
       <nav aria-label="Breadcrumb" className="text-muted-foreground text-xs">
         {/* Mobile: a back chevron + parent series name only. The H1
             already announces the issue title, so the breadcrumb's

@@ -10,6 +10,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import Link from "next/link";
+
+import { HeroBackdrop } from "@/components/library/HeroBackdrop";
 import { notFound, redirect } from "next/navigation";
 
 import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
@@ -198,7 +200,8 @@ export default async function SeriesPage({
   return (
     // A flex column (not `space-y`) so phones can reorder children with
     // `order`: the issue list moves above the metadata tabs there.
-    <div className="flex flex-col gap-6 sm:gap-10">
+    <div className="relative isolate flex flex-col gap-6 sm:gap-10">
+      <HeroBackdrop src={series.cover_url} />
       {/* Only admins reach a soft-deleted series (the API 404s everyone
           else, and no list surface shows it). Say so up front and point at
           the Removed tab, which holds Restore / Confirm removal. */}

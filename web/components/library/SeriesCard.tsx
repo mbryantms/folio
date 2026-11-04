@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { memo, useState } from "react";
 
 import { Cover } from "@/components/Cover";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -199,7 +200,7 @@ function SeriesCardImpl({
   );
   const innerCard = (
     <>
-      <div className="relative" {...coverWrapperProps}>
+      <CoverTilt className="relative" {...coverWrapperProps}>
         {selectMode && (
           <SelectionCheckbox
             isSelected={selectMode.isSelected}
@@ -244,7 +245,7 @@ function SeriesCardImpl({
             />
           </>
         )}
-      </div>
+      </CoverTilt>
       <div className="min-w-0 px-1">
         <div
           className={cn("truncate font-medium", c.title)}

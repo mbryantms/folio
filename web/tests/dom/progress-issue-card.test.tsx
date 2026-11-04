@@ -10,6 +10,8 @@ import { render, screen } from "@testing-library/react";
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: () => {} }),
 }));
+// Effects read the account (`useMe`); the card under test doesn't need them.
+vi.mock("@/lib/visual-effects", () => ({ useVisualEffect: () => false }));
 vi.mock("@/lib/api/mutations", () => ({
   useDismissRailItem: () => ({ mutate: () => {}, isPending: false }),
   useUpsertIssueProgress: () => ({ mutate: () => {}, isPending: false }),
