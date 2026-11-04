@@ -13,12 +13,27 @@ import {
 import { movingAverage } from "@/lib/activity";
 import type { PacePoint } from "@/lib/api/types";
 
+import {
+  AXIS_BARE,
+  GRID,
+  TOOLTIP_CONTENT_STYLE,
+  TOOLTIP_ITEM_STYLE,
+  TOOLTIP_LABEL_STYLE,
+} from "./chart-style";
+
 /**
- * Per-session reading pace (seconds per page) plotted over time. We draw
- * both the raw points (low opacity) and a rolling 7-session average so the
- * trend shows even when individual sessions are spiky.
+ * Per-session reading pace (seconds per page) plotted over time. The raw
+ * sessions are a faint muted line with dots; the rolling 7-session average
+ * is the accent line, so the trend reads first even when individual
+ * sessions are spiky.
  */
-export function PaceChart({ points }: { points: ReadonlyArray<PacePoint> }) {
+export function PaceChart({
+  points,
+  height = 200,
+}: {
+  points: ReadonlyArray<PacePoint>;
+  height?: number;
+}) {
   if (points.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
@@ -34,39 +49,41 @@ export function PaceChart({ points }: { points: ReadonlyArray<PacePoint> }) {
   }));
 
   return (
-    <ResponsiveContainer width="100%" height={200}>
-      <LineChart data={rows} margin={{ top: 6, right: 4, left: 0, bottom: 0 }}>
-        <CartesianGrid
-          stroke="var(--color-border)"
-          strokeDasharray="2 2"
-          vertical={false}
-        />
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+        <CartesianGrid {...GRID} />
         <XAxis
           dataKey="ts"
           type="number"
           domain={["dataMin", "dataMax"]}
+          scale="time"
           tickFormatter={tickDate}
-          tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
-          stroke="var(--color-border)"
+          {...AXIS_BARE}
           minTickGap={32}
+          tickMargin={6}
         />
         <YAxis
-          tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
+          {...AXIS_BARE}
           tickFormatter={(v: number) => `${Math.round(v)}s`}
-          stroke="var(--color-border)"
           width={40}
         />
         <Tooltip
-          cursor={{ stroke: "var(--color-muted)", strokeWidth: 1 }}
-          contentStyle={{
-            background: "var(--color-popover)",
-            border: "1px solid var(--color-border)",
-            borderRadius: 6,
-            fontSize: 12,
+          cursor={{
+            stroke: "var(--muted-foreground)",
+            strokeOpacity: 0.4,
+            strokeDasharray: "3 4",
           }}
+          contentStyle={TOOLTIP_CONTENT_STYLE}
+          labelStyle={TOOLTIP_LABEL_STYLE}
+          itemStyle={TOOLTIP_ITEM_STYLE}
           labelFormatter={(label) =>
             typeof label === "number"
-              ? new Date(label).toLocaleString()
+              ? new Date(label).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })
               : String(label ?? "")
           }
           formatter={(value: unknown, name) => [
@@ -77,18 +94,20 @@ export function PaceChart({ points }: { points: ReadonlyArray<PacePoint> }) {
         <Line
           type="monotone"
           dataKey="raw"
-          stroke="var(--color-primary)"
-          strokeOpacity={0.35}
-          strokeWidth={1.2}
-          dot={false}
+          stroke="var(--muted-foreground)"
+          strokeOpacity={0.45}
+          strokeWidth={1}
+          dot={{ r: 2, fill: "var(--muted-foreground)", strokeWidth: 0 }}
+          activeDot={{ r: 3 }}
           isAnimationActive={false}
         />
         <Line
           type="monotone"
           dataKey="avg"
-          stroke="var(--color-primary)"
-          strokeWidth={2}
+          stroke="var(--primary)"
+          strokeWidth={2.25}
           dot={false}
+          activeDot={{ r: 4, fill: "var(--primary)", strokeWidth: 0 }}
           isAnimationActive={false}
         />
       </LineChart>

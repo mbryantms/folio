@@ -106,7 +106,11 @@ export function TopRankingsList({
       </p>
     );
   }
-  const rows = entriesFor(current, data);
+  // Rank by the chosen metric so the leader (and the bar scale) follow
+  // the Time / Sessions toggle; the server orders by time.
+  const rows = [...entriesFor(current, data)].sort(
+    (a, b) => b[metric] - a[metric],
+  );
 
   return (
     <div className="space-y-3">
@@ -130,32 +134,36 @@ export function TopRankingsList({
           ariaLabel="Ranking metric"
         />
       </div>
-      <ol className="divide-border bg-card border-border divide-y rounded-md border">
-        {rows.map((row, i) => (
+      <ol className="space-y-1">
+        {rows.slice(0, 10).map((row, i) => (
           <li
             key={`${current}-${row.key}`}
-            className="flex items-center gap-3 px-3 py-2 text-sm"
+            className="hover:bg-muted/50 -mx-2 flex items-start gap-3 rounded-md px-2 py-1.5"
           >
-            <span className="text-muted-foreground w-5 shrink-0 text-xs tabular-nums">
-              {i + 1}.
+            <span className="text-muted-foreground w-5 shrink-0 pt-0.5 text-right text-xs tabular-nums">
+              {i + 1}
             </span>
-            <span className="min-w-0 flex-1 truncate">
-              {row.href ? (
-                <Link
-                  href={row.href}
-                  className="text-foreground font-medium hover:underline"
-                >
-                  {row.label}
-                </Link>
-              ) : (
-                <span className="text-foreground font-medium">{row.label}</span>
-              )}
-            </span>
-            <Bar metric={metric} row={row} max={rows[0]} />
-            <span className="text-muted-foreground w-24 shrink-0 text-right text-xs tabular-nums">
-              {metric === "active_ms"
-                ? formatDurationMs(row.active_ms)
-                : `${row.sessions} session${row.sessions === 1 ? "" : "s"}`}
+            <span className="min-w-0 flex-1 space-y-1.5">
+              <span className="flex items-baseline justify-between gap-3 text-sm">
+                {row.href ? (
+                  <Link
+                    href={row.href}
+                    className="text-foreground min-w-0 truncate font-medium hover:underline"
+                  >
+                    {row.label}
+                  </Link>
+                ) : (
+                  <span className="text-foreground min-w-0 truncate font-medium">
+                    {row.label}
+                  </span>
+                )}
+                <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap tabular-nums">
+                  {metric === "active_ms"
+                    ? formatDurationMs(row.active_ms)
+                    : `${row.sessions} session${row.sessions === 1 ? "" : "s"}`}
+                </span>
+              </span>
+              <Bar metric={metric} row={row} max={rows[0]} lead={i === 0} />
             </span>
           </li>
         ))}
@@ -164,29 +172,39 @@ export function TopRankingsList({
   );
 }
 
+/** Inline share bar under each row, relative to the leader. The leader is
+ *  the full accent; the rest are a softer accent so the order reads at a
+ *  glance. */
 function Bar({
   metric,
   row,
   max,
+  lead,
 }: {
   metric: Metric;
   row: Row;
   max: Row | undefined;
+  lead: boolean;
 }) {
   const denom =
     metric === "active_ms"
       ? Math.max(max?.active_ms ?? 0, 1)
       : Math.max(max?.sessions ?? 0, 1);
   const num = metric === "active_ms" ? row.active_ms : row.sessions;
-  const pct = Math.max(0, Math.min(100, (num / denom) * 100));
+  const pct = Math.max(2, Math.min(100, (num / denom) * 100));
   return (
     <span
       aria-hidden="true"
-      className="bg-muted hidden h-1.5 w-24 overflow-hidden rounded-full sm:block"
+      className="bg-muted block h-1.5 w-full overflow-hidden rounded-full"
     >
       <span
-        className="bg-primary block h-full rounded-full"
-        style={{ width: `${pct}%` }}
+        className="block h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none"
+        style={{
+          width: `${pct}%`,
+          backgroundColor: lead
+            ? "var(--primary)"
+            : "color-mix(in oklab, var(--primary) 62%, var(--muted))",
+        }}
       />
     </span>
   );

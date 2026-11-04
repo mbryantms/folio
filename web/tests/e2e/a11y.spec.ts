@@ -178,6 +178,7 @@ const ROUTES: Route[] = [
   { path: "/collections", label: "collections" },
   { path: "/log", label: "reading log" },
   { path: "/log/activity", label: "reading log, activity" },
+  { path: "/log/stats", label: "reading log, stats" },
   { path: "/views/continue-reading", label: "saved view, system rail" },
   { path: (ids) => `/views/${ids.viewId}`, label: "saved view, filter" },
   { path: "/creators", label: "creators index" },
@@ -193,7 +194,7 @@ const ROUTES: Route[] = [
   { path: "/settings/theme", label: "settings, theme" },
   {
     path: "/settings/activity",
-    label: "settings, reading stats",
+    label: "settings, reading history & privacy",
   },
   { path: "/settings/downloads", label: "settings, downloads" },
   { path: "/settings/views", label: "settings, views" },

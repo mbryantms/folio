@@ -230,11 +230,11 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
   },
   {
     id: "open-activity",
-    label: "Reading stats",
+    label: "Reading history & privacy",
     group: "Settings",
     icon: Activity,
     href: "/settings/activity",
-    keywords: ["stats", "history", "minutes", "activity"],
+    keywords: ["privacy", "history", "tracking", "delete", "activity"],
   },
   {
     id: "open-downloads",
@@ -294,14 +294,22 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     ],
   },
   {
-    // `/log` is the reading log *and* its stats widgets (hero, heatmap,
-    // top creators); `/settings/activity` is the per-user stats page.
+    // `/log` is the reading log; its Stats tab (`/log/stats`) is the
+    // per-user stats deep-dive. `/settings/activity` keeps only privacy.
     id: "go-log",
     label: "Reading log & stats",
     group: "Library",
     icon: ScrollText,
     href: "/log",
     keywords: ["history", "timeline", "stats", "activity", "log"],
+  },
+  {
+    id: "go-log-stats",
+    label: "Reading stats",
+    group: "Library",
+    icon: Activity,
+    href: "/log/stats",
+    keywords: ["stats", "pace", "rankings", "minutes", "rereads"],
   },
   {
     id: "go-search",
