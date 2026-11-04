@@ -1654,3 +1654,32 @@ html.theme-reveal::view-transition-group(root) {
     animation: none;
   }
 }
+
+/* ===== folio-flair: tab transitions =====
+ * One underline glides between tabs (TabsList's `tabs-indicator`), so the
+ * triggers' own `::after` underline stays hidden while it is shown. The
+ * incoming panel enters from the side its tab sits on; only the panels
+ * that belong to the root that changed animate (`:scope`-like via the
+ * direct `data-tab-motion` root). Reduced motion: the global reset. */
+[data-slot="tabs-list"][data-indicator]
+  > [data-slot="tabs-trigger"][data-slot="tabs-trigger"]::after {
+  opacity: 0;
+}
+@keyframes tab-panel-fwd {
+  from {
+    opacity: 0;
+    translate: 14px 0;
+  }
+}
+@keyframes tab-panel-back {
+  from {
+    opacity: 0;
+    translate: -14px 0;
+  }
+}
+[data-tab-motion="fwd"] [data-slot="tabs-content"][data-state="active"] {
+  animation: tab-panel-fwd 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+[data-tab-motion="back"] [data-slot="tabs-content"][data-state="active"] {
+  animation: tab-panel-back 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
