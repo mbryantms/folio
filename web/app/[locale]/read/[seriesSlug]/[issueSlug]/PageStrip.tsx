@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { useReaderStore } from "@/lib/reader/store";
@@ -55,6 +56,59 @@ const KIND_DISPLAY_ORDER: readonly DotKind[] = [
   "highlight",
 ];
 
+/** Strip geometry. `slot` / `wideSlot` are a thumb's layout width plus
+ *  the row gap (px), for the scroll virtualizer; they must match the
+ *  classes. The active thumb's margins make room for its pop: each scaled
+ *  thumb overhangs its box by w·(scale−1)/2, and a spread pair needs a
+ *  bit more between its halves so they read as a binding line. */
+const REGULAR = {
+  w: 96,
+  wideW: 192,
+  slot: 108, // w-24 + gap-3
+  wideSlot: 204,
+  thumbW: "w-24",
+  thumbWideW: "w-48",
+  thumbH: "h-36",
+  activeScale: "scale-[1.6]",
+  row: "gap-3 pt-28",
+  bar: "h-[calc(12rem+var(--safe-bottom))]",
+  gapL: "ml-5",
+  gapR: "mr-5",
+  pairGapL: "ml-7",
+  pairGapR: "mr-7",
+} as const;
+const COMPACT = {
+  w: 64,
+  wideW: 128,
+  slot: 72, // w-16 + gap-2
+  wideSlot: 136,
+  thumbW: "w-16",
+  thumbWideW: "w-32",
+  thumbH: "h-24",
+  activeScale: "scale-[1.3]",
+  row: "gap-2 pt-10",
+  bar: "h-[calc(8.25rem+var(--safe-bottom))]",
+  gapL: "ml-2.5",
+  gapR: "mr-2.5",
+  pairGapL: "ml-3.5",
+  pairGapR: "mr-3.5",
+} as const;
+
+const COMPACT_QUERY = "(max-width: 639px), (max-height: 499px)";
+
+/** Whether the strip uses its compact size (phones, short landscape). */
+function useCompactStrip(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const mql = window.matchMedia?.(COMPACT_QUERY);
+      mql?.addEventListener("change", onChange);
+      return () => mql?.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia?.(COMPACT_QUERY).matches ?? false,
+    () => false,
+  );
+}
+
 /**
  * Mini-map / page strip overlay (§7.3, spec Phase 3 line 1410).
  *
@@ -83,6 +137,10 @@ export function PageStrip({
 }) {
   const setPage = useReaderStore((s) => s.setPage);
   const visible = useReaderStore((s) => s.pageStripVisible);
+  // Phones and short landscape windows get smaller thumbnails and a
+  // smaller pop, so the strip covers far less of the page there.
+  const compact = useCompactStrip();
+  const size = compact ? COMPACT : REGULAR;
   const viewMode = useReaderStore((s) => s.viewMode);
   const coverSolo = useReaderStore((s) => s.coverSolo);
   // WP-4.3 manual spread controls — same query cache the reader pairs
@@ -209,11 +267,11 @@ export function PageStrip({
     const offsets = new Array<number>(totalPages + 1);
     offsets[0] = 0;
     for (let i = 0; i < totalPages; i += 1) {
-      const w = isWideThumb(i) ? 204 : 108;
+      const w = isWideThumb(i) ? size.wideSlot : size.slot;
       offsets[i + 1] = offsets[i]! + w;
     }
     return offsets;
-  }, [isWideThumb, totalPages]);
+  }, [isWideThumb, totalPages, size]);
 
   // Pages currently visible in the reader. In single/webtoon this is just
   // the current page; in double-page view it's the full spread group, so a
@@ -303,6 +361,18 @@ export function PageStrip({
     updateVisibleRange();
   }, [direction, totalPages, updateVisibleRange, visible]);
 
+  // A rotation or window resize reflows the row (and may switch between
+  // the regular and compact sizes): keep the open page centred.
+  useEffect(() => {
+    if (!visible) return;
+    const onResize = () => {
+      activeRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
+      requestAnimationFrame(updateVisibleRange);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [visible, updateVisibleRange]);
+
   // Map vertical wheel input to horizontal strip scroll. Without this, a
   // mouse-wheel gesture over the strip scrolls the underlying reader
   // (which is fixed-position behind the strip) and the strip itself stays
@@ -383,14 +453,15 @@ export function PageStrip({
          * mode (where `viewport-fit: cover` lets us paint behind it). */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-[calc(12rem+var(--safe-bottom))] border-t border-neutral-800/80 bg-neutral-950/85 backdrop-blur"
+          className={`pointer-events-none absolute inset-x-0 bottom-0 border-t border-neutral-800/80 bg-neutral-950/85 backdrop-blur ${size.bar}`}
         />
         <ol
           ref={stripRef}
           onScroll={updateVisibleRange}
           // `pb-3` floor + `--safe-bottom` so thumbnails sit above the
           // home indicator. Horizontal insets clear landscape notches.
-          className="relative flex items-end gap-3 overflow-x-auto pt-28 pr-[max(0.75rem,var(--safe-right))] pb-[calc(0.75rem+var(--safe-bottom))] pl-[max(0.75rem,var(--safe-left))]"
+          // Edges fade out so it reads as a row that scrolls on.
+          className={`page-strip-fade relative flex items-end overflow-x-auto pr-[max(0.75rem,var(--safe-right))] pb-[calc(0.75rem+var(--safe-bottom))] pl-[max(0.75rem,var(--safe-left))] ${size.row}`}
         >
           {indices.map((i, p) => {
             const isActive = activePages.includes(i);
@@ -421,7 +492,7 @@ export function PageStrip({
                 aria-label={`Jump to page ${i + 1}${isDouble ? " (double-page)" : ""}`}
                 aria-current={isActive ? "page" : undefined}
                 className={`group focus-visible:ring-accent relative block origin-bottom overflow-visible rounded-lg transition-transform duration-200 ease-out focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 focus-visible:outline-none motion-reduce:transition-none ${
-                  isActive ? "scale-[1.6]" : ""
+                  isActive ? size.activeScale : ""
                 }`}
               >
                 {/* Border/ring/shadow live on this inner wrapper so they
@@ -431,10 +502,12 @@ export function PageStrip({
                  * occasional non-2:3 page accepts a small center crop in
                  * exchange for the cleaner frame. */}
                 <span
-                  className={`block overflow-hidden rounded-lg border-2 bg-neutral-900 transition-[border-color] duration-200 ease-out motion-reduce:transition-none ${
+                  // Pages other than the open one sit back a little, so the
+                  // current page is what the eye finds first.
+                  className={`block overflow-hidden rounded-lg border-2 bg-neutral-900 transition-[border-color,opacity] duration-200 ease-out motion-reduce:transition-none ${
                     isActive
                       ? "border-accent"
-                      : "border-neutral-700/80 group-hover:border-neutral-500"
+                      : "border-neutral-700/80 opacity-70 group-hover:border-neutral-500 group-hover:opacity-100 group-focus-visible:opacity-100"
                   }`}
                 >
                   {shouldLoad ? (
@@ -451,12 +524,12 @@ export function PageStrip({
                       // lazy heuristic (which adds the blank-then-fill beat).
                       loading="eager"
                       decoding="async"
-                      width={isDouble ? 192 : 96}
-                      className={`block h-36 ${isDouble ? "w-48" : "w-24"} object-cover`}
+                      width={isDouble ? size.wideW : size.w}
+                      className={`block ${size.thumbH} ${isDouble ? size.thumbWideW : size.thumbW} object-cover`}
                     />
                   ) : (
                     <span
-                      className={`block h-36 ${isDouble ? "w-48" : "w-24"}`}
+                      className={`block ${size.thumbH} ${isDouble ? size.thumbWideW : size.thumbW}`}
                     />
                   )}
                   <MarkerDots kinds={markerKindsByPage.get(i)} />
@@ -480,8 +553,8 @@ export function PageStrip({
             // printed spread.
             const liMarginClass = !isActive
               ? ""
-              : `z-10 ${prevActive ? "ml-7" : "ml-5"} ${
-                  nextActive ? "mr-7" : "mr-5"
+              : `z-10 ${prevActive ? size.pairGapL : size.gapL} ${
+                  nextActive ? size.pairGapR : size.gapR
                 }`;
             return (
               <ThumbSlot

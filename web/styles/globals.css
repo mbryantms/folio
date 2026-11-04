@@ -1562,3 +1562,22 @@ html.theme-reveal::view-transition-group(root) {
     transform: none;
   }
 }
+
+/* Reader page strip: the row fades out at both ends, so it reads as a
+ * strip that scrolls on rather than one cut off by the screen edge. */
+.page-strip-fade {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 1.75rem,
+    #000 calc(100% - 1.75rem),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 1.75rem,
+    #000 calc(100% - 1.75rem),
+    transparent
+  );
+}
