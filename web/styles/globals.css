@@ -1460,7 +1460,7 @@ html.theme-reveal::view-transition-group(root) {
 /* ── Header chips over the tint (series / issue pages) ──
  * Every pill in the header (badges, writer chips, rating pill, provider
  * IDs, issue number) looks like the chips in the tabs below — the filled
- * `--secondary` surface, no border, full pill — so the two areas read as
+ * `--secondary` surface, no border, the badge's rounded corners — so the two areas read as
  * one set. Over the tinted backdrop the surface is 82% opaque with a blur
  * behind it: enough for the cover's hue to warm it slightly, too little
  * for any tint to pull the text's contrast down. Coloured text (status
@@ -1470,7 +1470,6 @@ html.theme-reveal::view-transition-group(root) {
   background-color: color-mix(in oklab, var(--secondary) 82%, transparent);
   border-color: transparent;
   box-shadow: none;
-  border-radius: 999px;
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
