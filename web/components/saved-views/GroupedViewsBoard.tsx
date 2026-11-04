@@ -120,6 +120,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   DRAG_LIFT_CLASS,
+  LIFT_TRANSITION,
   SPRING_EASING,
   useSpringSort,
 } from "@/lib/ui/springy-drag";
@@ -323,14 +324,22 @@ const CardGridClassContext = React.createContext<string>(
   CARD_GRID_CLASS.compact,
 );
 
-/** The held card springs into its slot on drop; the slot (the real card,
- *  hidden while held) shows once it lands. */
+/** The held card springs into its slot on drop and settles flat as it
+ *  lands (its lift class comes off, and `LIFT_TRANSITION` springs the
+ *  scale / tilt / shadow back), like the Want to Read grid's in-place
+ *  drag. The slot (the real card, hidden while held) shows once it's
+ *  down. */
 const DROP_ANIMATION: DropAnimation = {
   duration: 280,
   easing: SPRING_EASING,
-  sideEffects: defaultDropAnimationSideEffects({
-    styles: { active: { opacity: "0" } },
-  }),
+  sideEffects: (args) => {
+    args.dragOverlay.node
+      .querySelector(`.${DRAG_LIFT_CLASS}`)
+      ?.classList.remove(DRAG_LIFT_CLASS);
+    return defaultDropAnimationSideEffects({
+      styles: { active: { opacity: "0" } },
+    })(args);
+  },
 };
 
 export function GroupedViewsBoard({
@@ -738,6 +747,7 @@ export function GroupedViewsBoard({
                       "pointer-events-none rounded-lg",
                       DRAG_LIFT_CLASS,
                     )}
+                    style={{ transition: LIFT_TRANSITION }}
                   >
                     {renderCard(activeView)}
                   </div>
@@ -1200,9 +1210,9 @@ function BoardCard({
       data-board-card=""
       className={cn(
         "group/card relative rounded-lg",
-        // The card's slot while it's held: an outline where it will land.
-        isDragging &&
-          "outline-primary/60 bg-primary/5 outline-2 -outline-offset-2 outline-dashed [&>*]:invisible",
+        // The card's slot while it's held: an empty gap the other cards
+        // spring around (no outline), as on the Want to Read grid.
+        isDragging && "[&>*]:invisible",
       )}
     >
       {/* The whole card is a pointer drag surface (the grip button is the

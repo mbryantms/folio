@@ -27,7 +27,9 @@ export const SPRING_SORT_TRANSITION = {
 
 export const DRAG_LIFT_CLASS = "drag-lift";
 
-const LIFT_TRANSITION = ["scale", "rotate", "box-shadow"]
+/** Transitions for the lift's own properties, so taking `DRAG_LIFT_CLASS`
+ *  off springs an item back down. */
+export const LIFT_TRANSITION = ["scale", "rotate", "box-shadow"]
   .map((p) => `${p} 240ms ${SPRING_EASING}`)
   .join(", ");
 
