@@ -258,8 +258,11 @@ export function PageHeaderSkeleton({
  *  profile blurb, tab strip and the issue grid. */
 export function EntityDetailSkeleton({
   label = "Loading…",
+  tabs = true,
 }: {
   label?: string;
+  /** Publishers show a bare series grid, no Issues/Series tabs. */
+  tabs?: boolean;
 }) {
   return (
     <LoadingRegion label={label} className="space-y-6">
@@ -269,7 +272,7 @@ export function EntityDetailSkeleton({
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-2/3" />
       </div>
-      <TabStripSkeleton tabs={2} />
+      {tabs ? <TabStripSkeleton tabs={2} /> : null}
       <ul
         className="grid gap-4"
         style={{

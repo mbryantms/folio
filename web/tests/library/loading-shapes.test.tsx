@@ -78,3 +78,42 @@ describe("loading shapes", () => {
     expect(count(html, "cover-skeleton__masthead")).toBe(12);
   });
 });
+
+describe("route skeletons", () => {
+  it("entity indexes end on the component's own grid skeleton", async () => {
+    const { EntityIndexSkeleton } =
+      await import("@/components/skeletons/EntityIndexSkeleton");
+    const html = renderToStaticMarkup(
+      createElement(EntityIndexSkeleton, { label: "Loading teams…" }),
+    );
+    expect(html).toContain("Loading teams…");
+    expect(html).toContain("minmax(220px, 1fr)");
+    expect(html).not.toContain("cover-skeleton");
+  });
+
+  it("publishers' detail skeleton has no tab strip", () => {
+    const withTabs = renderToStaticMarkup(createElement(EntityDetailSkeleton));
+    const without = renderToStaticMarkup(
+      createElement(EntityDetailSkeleton, { tabs: false }),
+    );
+    expect(withTabs).toContain("bg-muted/50");
+    expect(without).not.toContain("bg-muted/50");
+  });
+
+  it("year in review draws the story frame, not overview tiles", async () => {
+    const { default: YearLoading } =
+      await import("@/app/[locale]/(library)/log/year/[year]/loading");
+    const html = renderToStaticMarkup(createElement(YearLoading));
+    expect(html).toContain("fixed inset-0 z-50");
+    expect(html).toContain("rounded-3xl");
+    expect(html).toContain("Loading your year in review…");
+  });
+
+  it("downloads renders static rows with no cover-card modules", async () => {
+    const { default: DownloadsLoading } =
+      await import("@/app/[locale]/downloads/loading");
+    const html = renderToStaticMarkup(createElement(DownloadsLoading));
+    expect(html).toContain("Loading downloads…");
+    expect(html.split("<li").length - 1).toBe(5);
+  });
+});
