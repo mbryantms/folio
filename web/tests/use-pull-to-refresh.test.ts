@@ -6,7 +6,10 @@
  * change the perceived "weight" of the gesture.
  */
 import { describe, expect, it } from "vitest";
-import { computePullDistance } from "@/lib/use-pull-to-refresh";
+import {
+  computePullDistance,
+  computePullLayout,
+} from "@/lib/use-pull-to-refresh";
 
 const THRESHOLD = 80;
 const MAX = 140;
@@ -47,5 +50,58 @@ describe("computePullDistance", () => {
     const room = MAX - THRESHOLD;
     const atOvershoot = computePullDistance(THRESHOLD + room, THRESHOLD, MAX);
     expect(atOvershoot).toBeCloseTo(THRESHOLD + room / 2, 5);
+  });
+});
+
+describe("computePullLayout", () => {
+  const H = 76;
+
+  it("is fully at rest at distance 0", () => {
+    const l = computePullLayout(0, THRESHOLD, H);
+    expect(l).toEqual({
+      contentOffset: 0,
+      gap: 0,
+      indicatorY: -H,
+      progress: 0,
+    });
+  });
+
+  it("moves the content by the whole pull distance, opening a matching gap", () => {
+    for (const d of [10, 50, THRESHOLD, 120]) {
+      const l = computePullLayout(d, THRESHOLD, H);
+      expect(l.contentOffset).toBe(d);
+      expect(l.gap).toBe(d);
+    }
+  });
+
+  it("rides the gap's bottom edge while the gap is shorter than the indicator", () => {
+    const l = computePullLayout(40, THRESHOLD, H);
+    // Indicator bottom sits exactly on the gap bottom (the content's top).
+    expect(l.indicatorY + H).toBe(40);
+  });
+
+  it("centres the indicator once the gap is taller, continuously", () => {
+    const l = computePullLayout(120, THRESHOLD, H);
+    expect(l.indicatorY).toBe((120 - H) / 2);
+    expect(l.indicatorY + H).toBeLessThanOrEqual(120);
+    // Both branches meet at distance === H.
+    expect(computePullLayout(H, THRESHOLD, H).indicatorY).toBe(0);
+    expect(computePullLayout(H - 0.001, THRESHOLD, H).indicatorY).toBeCloseTo(
+      0,
+      2,
+    );
+  });
+
+  it("never lets the indicator overlap the content (bottom <= gap)", () => {
+    for (let d = 0; d <= 140; d += 5) {
+      const l = computePullLayout(d, THRESHOLD, H);
+      expect(l.indicatorY + H).toBeLessThanOrEqual(l.gap + 1e-9);
+    }
+  });
+
+  it("progress ramps to 1 at the threshold and stays there", () => {
+    expect(computePullLayout(THRESHOLD / 2, THRESHOLD, H).progress).toBe(0.5);
+    expect(computePullLayout(THRESHOLD, THRESHOLD, H).progress).toBe(1);
+    expect(computePullLayout(THRESHOLD * 2, THRESHOLD, H).progress).toBe(1);
   });
 });
