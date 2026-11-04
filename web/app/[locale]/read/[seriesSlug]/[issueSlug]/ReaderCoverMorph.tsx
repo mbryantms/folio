@@ -87,8 +87,13 @@ const FADE_MS = 220;
  *  page until it has decoded. Renders nothing without a handoff. */
 export function ReaderCoverHandoff() {
   // Read once, at the reader's first render — before the commit that
-  // unmounts the loading slot (whose cleanup releases the handoff).
-  const [flight] = useState(() => peekReaderHandoff());
+  // unmounts the loading slot (whose cleanup releases the handoff). When
+  // the reader's data was already cached the loading slot never mounts,
+  // so take the cover straight from the morph in flight instead.
+  const live = useActiveMorph();
+  const [flight] = useState(
+    () => peekReaderHandoff() ?? (live?.src ? live : null),
+  );
   const reduced = useReducedMotion();
   const [phase, setPhase] = useState<"hold" | "fade" | "done">(
     flight?.src ? "hold" : "done",

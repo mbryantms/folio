@@ -215,6 +215,26 @@ describe("cover morph into the reader", () => {
     expect(duplicateWarnings()).toEqual([]);
   });
 
+  it("a cached reader route (no loading fallback) still takes the cover", () => {
+    // Prefetched/cached reader data: Next skips loading.tsx, so the slot
+    // never mounts and never holds a handoff. The reader must pick the
+    // cover up from the morph in flight.
+    const tap = render(
+      <ProgressIssueCard card={card} primaryAction="reader" />,
+    );
+    fireEvent.click(
+      screen.getByRole("link", { name: /^Continue reading Eight Is Enough/ }),
+    );
+    tap.unmount();
+    expect(peekReaderHandoff()).toBeNull();
+    const reader = render(<ReaderRoute loaded />);
+    expect(
+      reader.container
+        .querySelector("[data-reader-cover-handoff] img")
+        ?.getAttribute("src"),
+    ).toBe("/issues/i1/pages/0/thumb");
+  });
+
   it("a cold reader load shows the spinner and no handoff", () => {
     const slot = render(<ReaderCoverSlot />);
     expect(slot.container.querySelector("img")).toBeNull();
