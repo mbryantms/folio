@@ -204,7 +204,6 @@ async fn a_backlog_survives_an_immediate_restart_mid_drain() {
     stop1.cancel();
     h1.await.unwrap();
     let after_first = stamped().await;
-    eprintln!("after first runtime: {after_first}/40");
 
     // Second runtime, immediately.
     let (stop2, h2) = start().await;
