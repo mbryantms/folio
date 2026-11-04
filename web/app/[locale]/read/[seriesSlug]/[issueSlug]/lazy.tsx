@@ -40,6 +40,14 @@
 
 import dynamic from "next/dynamic";
 
+/** Ambient page glow (effect `ambient_glow`). Decorative and only mounted
+ *  when the effect is on, so its chunk is fetched only by readers who
+ *  turned it on; the glow simply fades in once it arrives. */
+export const AmbientGlow = dynamic(
+  () => import("./AmbientGlow").then((m) => m.AmbientGlow),
+  { ssr: false },
+);
+
 export const preloadReaderChrome = () => import("./ReaderChrome");
 /** Top bar. Starts closed (translated above the viewport) and slides in
  *  after the first frame, so it is not part of the first paint. */

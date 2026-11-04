@@ -93,11 +93,14 @@ import {
   usePageTransition,
   type PageTransitionResult,
 } from "@/lib/reader/use-page-transition";
+import { usePageCurl } from "@/lib/reader/use-page-curl";
+import { useVisualEffect } from "@/lib/visual-effects";
 
 // Everything not needed to paint page one is code-split — see `./lazy`
 // for the pattern (WP-4.4 reader bundle budget). Import new overlays /
 // sheets / panels from there, not directly.
 import {
+  AmbientGlow,
   EndOfIssueCard,
   MarkerEditor,
   MarkerModePill,
@@ -813,6 +816,20 @@ export function Reader({
     setEndCardArmed(true);
   }
 
+  // Optional visual effects (Settings → Theme → Effects). Page curl
+  // takes over adjacent key / click / tap-zone turns in paged mode on
+  // fine-pointer devices (`usePageCurl`); swipes, jumps and everything
+  // else keep the page-turn animation below, which steps aside via
+  // `skip` for the turns the curl animates.
+  const ambientGlowOn = useVisualEffect("ambient_glow");
+  const pageCurlOn = useVisualEffect("page_curl");
+  const pageCurl = usePageCurl({
+    enabled:
+      pageCurlOn && viewMode !== "webtoon" && markerModeForKeybinds === "idle",
+    position: viewMode === "double" ? currentGroupIdx : currentPage,
+    direction,
+  });
+
   // v0.3.44 / v0.3.45 page-turn animation. Webtoon mode skips
   // entirely (continuous scroll is its own animation). The hook
   // also gates on `prefers-reduced-motion` internally.
@@ -821,6 +838,7 @@ export function Reader({
     direction,
     mode:
       viewMode === "webtoon" ? "off" : (userDefaultPageAnimation ?? "slide"),
+    skip: pageCurl.skipTransition,
   });
 
   // Direction-aware navigation. In RTL, "next" should respond to ← and the
@@ -869,8 +887,19 @@ export function Reader({
       prevPage();
     }
   }, [viewMode, groups, currentGroupIdx, setPage, prevPage]);
-  const onLeftZone = direction === "rtl" ? goNext : goPrev;
-  const onRightZone = direction === "rtl" ? goPrev : goNext;
+  // Non-swipe turns (keys, tap zones) arm the page curl first; the swipe
+  // gesture calls goNext / goPrev directly and keeps its slide.
+  const { arm: armCurl } = pageCurl;
+  const turnNext = useCallback(() => {
+    armCurl(true);
+    goNext();
+  }, [armCurl, goNext]);
+  const turnPrev = useCallback(() => {
+    armCurl(false);
+    goPrev();
+  }, [armCurl, goPrev]);
+  const onLeftZone = direction === "rtl" ? turnNext : turnPrev;
+  const onRightZone = direction === "rtl" ? turnPrev : turnNext;
 
   // Bookmark-page list precomputed for the keymap hook's
   // `nextBookmark` / `prevBookmark` jumps. Sorted ascending so the
@@ -1077,8 +1106,8 @@ export function Reader({
     chromeOrStripVisible: chromeVisible || pageStripVisible,
     bookmarkPages,
     setPage,
-    onNext: goNext,
-    onPrev: goPrev,
+    onNext: turnNext,
+    onPrev: turnPrev,
     onNextIssue: goNextIssue,
     onPrevIssue: goPrevIssue,
     toggleChrome,
@@ -1334,6 +1363,24 @@ export function Reader({
       data-surface="reader"
       className="bg-reader-bg min-h-screen text-neutral-200"
     >
+      {ambientGlowOn && viewMode !== "webtoon" ? (
+        // Paged views only: in webtoon mode pages run edge to edge down a
+        // scrolling column, so there is no settled page to frame.
+        <AmbientGlow
+          urls={glowPages(
+            viewMode === "double" ? visiblePages : [currentPage],
+            direction,
+          ).map((p) => pageStripThumb(issueId, p, pageUrlVersion))}
+          preloadUrls={glowPages(
+            viewMode === "double"
+              ? (groups[currentGroupIdx + 1] ?? [])
+              : currentPage + 1 < totalPages
+                ? [currentPage + 1]
+                : [],
+            direction,
+          ).map((p) => pageStripThumb(issueId, p, pageUrlVersion))}
+        />
+      ) : null}
       <ReaderSkipLinks
         toggleChromeKey={bindings.toggleChrome}
         pageTextKey={bindings.togglePageText}
@@ -1533,6 +1580,28 @@ export function Reader({
         />
       ) : null}
     </div>
+  );
+}
+
+/** Page indices in visual (left-to-right) order for the ambient glow:
+ *  RTL spreads render right to left. */
+function glowPages(
+  pages: readonly number[],
+  direction: Direction,
+): readonly number[] {
+  return direction === "rtl" ? [...pages].reverse() : pages;
+}
+
+/** The strip-variant page thumbnail — the same URL `PageImage` uses for
+ *  its blur-up placeholder, so the glow samples an already-cached image. */
+function pageStripThumb(
+  issueId: string,
+  page: number,
+  version: string | null,
+): string {
+  return withContentVersion(
+    `/issues/${issueId}/pages/${page}/thumb?variant=strip`,
+    version,
   );
 }
 

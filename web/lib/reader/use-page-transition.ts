@@ -73,17 +73,27 @@ export function usePageTransition({
   currentPage,
   direction,
   mode,
+  skip,
 }: {
   currentPage: number;
   direction: Direction;
   /** `null` falls back to `'slide'` (the built-in default). */
   mode: PageAnimationMode | null;
+  /** Asked once per page change, from this hook's (passive) effect:
+   *  `true` means another animation owns this turn — the page curl
+   *  (`use-page-curl.ts`), which decides in a layout effect of the same
+   *  commit — so this hook stays out of the way for that turn only. */
+  skip?: () => boolean;
 }): PageTransitionResult {
   const [prevPage, setPrevPage] = useState<number | null>(null);
   const [exitAnimClass, setExitAnimClass] = useState<string | null>(null);
   const [enterAnimClass, setEnterAnimClass] = useState<string | null>(null);
   const lastPageRef = useRef<number>(currentPage);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipRef = useRef(skip);
+  useEffect(() => {
+    skipRef.current = skip;
+  }, [skip]);
   const reduceMotion = useSyncExternalStore(
     subscribeReducedMotion,
     getReducedMotionSnapshot,
@@ -105,6 +115,15 @@ export function usePageTransition({
       return;
     }
     if (prev === currentPage) return;
+    if (skipRef.current?.()) {
+      // Drop any transition still in flight so its overlay can't sit on
+      // top of the curl.
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setPrevPage(null);
+      setExitAnimClass(null);
+      setEnterAnimClass(null);
+      return;
+    }
 
     const forward = currentPage > prev;
     const slideLeft = direction === "ltr" ? forward : !forward;
