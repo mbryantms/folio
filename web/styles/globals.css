@@ -1505,3 +1505,14 @@ html.theme-reveal::view-transition-group(root) {
     var(--foreground) 12%
   );
 }
+
+/* Linked fact values (writers, genres, tags in the series header): no
+ * underline; on hover / focus the name eases toward the accent, pulled
+ * toward the foreground so it keeps text contrast in every theme. */
+.fact-link {
+  transition: color 150ms ease-out;
+}
+:is(a:hover, a:focus-visible) > .fact-link,
+.fact-link:hover {
+  color: color-mix(in oklab, var(--primary) 60%, var(--foreground));
+}

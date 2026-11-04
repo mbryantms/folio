@@ -37,7 +37,7 @@ export function ChipList({
   emptyLabel?: string;
   variant?: "secondary" | "outline" | "default";
   /** `text`: the items as a comma-separated line of plain `text-sm`
-   *  links (hover underline), like a fact value, instead of chips. */
+   *  links (accent colour on hover), like a fact value, instead of chips. */
   display?: "chips" | "text";
   /** `"horizontal"` lays the label in a fixed-width column with the chips
    *  flowing in the remaining width (a definition-list row) instead of
@@ -127,11 +127,7 @@ export function ChipList({
       display === "text" ? (
         <span
           key={item}
-          className={cn(
-            filterField || entityHref
-              ? "underline-offset-4 hover:underline"
-              : undefined,
-          )}
+          className={cn(filterField || entityHref ? "fact-link" : undefined)}
         >
           {item}
         </span>
