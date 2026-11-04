@@ -409,7 +409,7 @@ function ViewCardStack({
 }) {
   const covers = useViewCovers();
   return (
-    <CoverStackStage urls={covers.data?.get(viewId) ?? []} Icon={Icon}>
+    <CoverStackStage urls={covers.data?.get(viewId) ?? []} Icon={Icon} compact>
       {children}
     </CoverStackStage>
   );
@@ -604,8 +604,8 @@ function ViewCard({
 
   return (
     <div
-      className={`group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col rounded-lg border p-4 transition-colors ${
-        stacked ? "cover-stack-host gap-3" : "gap-2"
+      className={`group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col gap-2 rounded-lg border p-3 transition-colors ${
+        stacked ? "cover-stack-host" : ""
       }`}
     >
       {stacked ? (
@@ -627,11 +627,11 @@ function ViewCard({
         draggable={false}
         className="focus-visible:ring-ring min-w-0 space-y-0.5 rounded focus-visible:ring-2 focus-visible:outline-none"
       >
-        <div className="truncate font-medium" title={view.name}>
+        <div className="truncate text-sm font-medium" title={view.name}>
           {view.name}
         </div>
         {view.description ? (
-          <p className="text-muted-foreground line-clamp-2 text-sm">
+          <p className="text-muted-foreground line-clamp-1 text-xs">
             {view.description}
           </p>
         ) : null}
@@ -673,7 +673,10 @@ function CblCardStats({ list }: { list: CblListView }) {
   return (
     <div className="space-y-1.5 pt-0.5">
       <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <CblStatsPillsStatic stats={list.stats} />
+        <CblStatsPillsStatic
+          stats={list.stats}
+          className="min-w-0 shrink flex-wrap gap-1"
+        />
         {when ? (
           <span
             className="text-muted-foreground text-xs"

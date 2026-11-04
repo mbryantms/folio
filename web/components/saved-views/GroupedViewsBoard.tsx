@@ -22,6 +22,8 @@ import * as React from "react";
 import {
   DndContext,
   DragOverlay,
+  defaultDropAnimationSideEffects,
+  type DropAnimation,
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
@@ -116,7 +118,12 @@ import {
   type ViewSort,
 } from "@/lib/saved-views/view-board";
 import { cn } from "@/lib/utils";
-import { DRAG_LIFT_CLASS, useSpringSort } from "@/lib/ui/springy-drag";
+import {
+  DRAG_LIFT_CLASS,
+  SPRING_EASING,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
+import { useReducedMotion } from "@/lib/visual-effects";
 import { showUndoToast } from "@/lib/ui/undo-toast";
 
 // ──────────────────── delete + undo ────────────────────
@@ -301,6 +308,16 @@ export type GroupedViewsBoardProps = {
   panel?: React.ReactNode;
 };
 
+/** The held card springs into its slot on drop; the slot (the real card,
+ *  hidden while held) shows once it lands. */
+const DROP_ANIMATION: DropAnimation = {
+  duration: 280,
+  easing: SPRING_EASING,
+  sideEffects: defaultDropAnimationSideEffects({
+    styles: { active: { opacity: "0" } },
+  }),
+};
+
 export function GroupedViewsBoard({
   scope,
   views,
@@ -344,6 +361,10 @@ export function GroupedViewsBoard({
   const searching = query.trim().length > 0;
 
   const [activeId, setActiveId] = React.useState<UniqueIdentifier | null>(null);
+  const reduced = useReducedMotion();
+  // Where the held card started, so the section it is moving into (and
+  // only that one) can light up as the drop target.
+  const [dragFrom, setDragFrom] = React.useState<string | null>(null);
   const [newGroupOpen, setNewGroupOpen] = React.useState(false);
   const [newGroupSeedView, setNewGroupSeedView] = React.useState<string | null>(
     null,
@@ -430,6 +451,8 @@ export function GroupedViewsBoard({
   }, []);
 
   function onDragStart(ev: DragStartEvent) {
+    const a = parseDndId(ev.active.id);
+    setDragFrom(a?.type === "view" ? containerOf(board, a.id) : null);
     setActiveId(ev.active.id);
     setDraft(board);
   }
@@ -531,6 +554,10 @@ export function GroupedViewsBoard({
   }
 
   const activeParsed = activeId ? parseDndId(activeId) : null;
+  // The section a held card will land in when it's leaving its own.
+  const heldIn =
+    activeParsed?.type === "view" ? containerOf(board, activeParsed.id) : null;
+  const dropTarget = heldIn && heldIn !== dragFrom ? heldIn : null;
   const activeView =
     activeParsed?.type === "view"
       ? (views.find((v) => v.id === activeParsed.id) ?? null)
@@ -619,7 +646,17 @@ export function GroupedViewsBoard({
             onDragEnd={onDragEnd}
             onDragCancel={onDragCancel}
           >
-            <div className={cn("space-y-4", activeId && "select-none")}>
+            {/* While dragging, cards under the pointer must not react
+                (hover wash, cover fan, tint): the slot and the target
+                group's ring are the only feedback. Collision detection
+                uses rects, not pointer events. */}
+            <div
+              className={cn(
+                "space-y-4",
+                activeId &&
+                  "select-none [&_[data-board-card]]:pointer-events-none",
+              )}
+            >
               <SortableContext
                 items={board.groups.map((g) => groupDndId(g.id))}
                 strategy={verticalListSortingStrategy}
@@ -634,6 +671,7 @@ export function GroupedViewsBoard({
                     isFirst={idx === 0}
                     isLast={idx === board.groups.length - 1}
                     dragActive={activeId !== null}
+                    isDropTarget={dropTarget === group.id}
                     suppressClickUntil={suppressClickUntil}
                     renderCard={renderCard}
                     onRename={(name) =>
@@ -668,14 +706,24 @@ export function GroupedViewsBoard({
                 icon={Icon}
                 searching={searching}
                 dragActive={activeId !== null}
+                isDropTarget={dropTarget === UNGROUPED_ID}
                 suppressClickUntil={suppressClickUntil}
                 renderCard={renderCard}
               />
             </div>
 
-            <DragOverlay dropAnimation={null}>
+            <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
               {activeView ? (
-                <DragGhost icon={Icon} label={activeView.name} />
+                // A lifted copy of the card itself, at its own size, so
+                // what you hold is what lands.
+                <div
+                  className={cn(
+                    "pointer-events-none rounded-lg",
+                    DRAG_LIFT_CLASS,
+                  )}
+                >
+                  {renderCard(activeView)}
+                </div>
               ) : activeGroup ? (
                 <DragGhost
                   icon={GripVertical}
@@ -731,6 +779,7 @@ function GroupSection({
   isFirst,
   isLast,
   dragActive,
+  isDropTarget,
   suppressClickUntil,
   renderCard,
   onRename,
@@ -748,6 +797,8 @@ function GroupSection({
   isFirst: boolean;
   isLast: boolean;
   dragActive: boolean;
+  /** A held card from another section will land here. */
+  isDropTarget: boolean;
   suppressClickUntil: React.MutableRefObject<number>;
   renderCard: (view: SavedViewView) => React.ReactNode;
   onRename: (name: string) => void;
@@ -764,8 +815,6 @@ function GroupSection({
     transform,
     transition,
     isDragging,
-    isOver,
-    active,
   } = useSortable({
     id: groupDndId(group.id),
     data: { type: "group" },
@@ -775,8 +824,6 @@ function GroupSection({
   const open = forceOpen || !group.collapsed;
   const panelId = React.useId();
   // Highlight when a *card* hovers this section (not another group).
-  const cardOver = isOver && parseDndId(active?.id ?? "")?.type === "view";
-
   return (
     <section
       ref={setNodeRef}
@@ -785,7 +832,7 @@ function GroupSection({
       className={cn(
         "border-border/60 bg-card/40 rounded-xl border transition-shadow",
         isDragging && "opacity-50",
-        cardOver && "ring-primary/60 bg-primary/5 ring-2",
+        isDropTarget && "ring-primary/60 bg-primary/5 ring-2",
       )}
     >
       <header className="flex items-center gap-1.5 px-2 py-1.5 sm:px-3">
@@ -990,6 +1037,7 @@ function UngroupedSection({
   icon: Icon,
   searching,
   dragActive,
+  isDropTarget,
   suppressClickUntil,
   renderCard,
 }: {
@@ -1000,11 +1048,12 @@ function UngroupedSection({
   icon: LucideIcon;
   searching: boolean;
   dragActive: boolean;
+  /** A held card from another section will land here. */
+  isDropTarget: boolean;
   suppressClickUntil: React.MutableRefObject<number>;
   renderCard: (view: SavedViewView) => React.ReactNode;
 }) {
-  const { setNodeRef, isOver, active } = useDroppable({ id: UNGROUPED_ID });
-  const cardOver = isOver && parseDndId(active?.id ?? "")?.type === "view";
+  const { setNodeRef } = useDroppable({ id: UNGROUPED_ID });
   // Without any groups the "Ungrouped" framing is noise — render a plain
   // grid. Once a group exists the remainder needs a labelled home.
   const framed = hasGroups;
@@ -1016,8 +1065,8 @@ function UngroupedSection({
       className={cn(
         framed &&
           "rounded-xl border border-dashed border-transparent p-2 transition-colors sm:p-3",
-        framed && cardOver && "border-primary/60 bg-primary/5",
-        framed && dragActive && !cardOver && "border-border/60",
+        framed && isDropTarget && "border-primary/60 bg-primary/5",
+        framed && dragActive && !isDropTarget && "border-border/60",
       )}
     >
       {framed ? (
@@ -1080,7 +1129,7 @@ function CardGrid({
   return (
     <ul
       role="list"
-      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+      className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6"
     >
       {views.map((view) => (
         <BoardCard
@@ -1133,7 +1182,13 @@ function BoardCard({
     <li
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className={cn("group/card relative", isDragging && "opacity-40")}
+      data-board-card=""
+      className={cn(
+        "group/card relative rounded-lg",
+        // The card's slot while it's held: an outline where it will land.
+        isDragging &&
+          "outline-primary/60 bg-primary/5 outline-2 -outline-offset-2 outline-dashed [&>*]:invisible",
+      )}
     >
       {/* The whole card is a pointer drag surface (the grip button is the
           keyboard / AT path, `attributes` + `onKeyDown` below). The

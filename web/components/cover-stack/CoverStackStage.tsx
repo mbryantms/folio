@@ -18,9 +18,13 @@ export function CoverStackStage({
   urls,
   Icon,
   children,
+  compact = false,
   className,
 }: {
   urls: readonly string[];
+  /** Half-size stage for dense boards (Settings → Views); the card is
+   *  `p-3` instead of `p-4`. */
+  compact?: boolean;
   Icon?: LucideIcon;
   children?: React.ReactNode;
   className?: string;
@@ -29,7 +33,8 @@ export function CoverStackStage({
   return (
     <div
       className={cn(
-        "relative -mx-4 -mt-4 flex justify-center px-3 pt-7 pb-2",
+        "relative flex justify-center",
+        compact ? "-mx-3 -mt-3 px-2 pt-3 pb-0" : "-mx-4 -mt-4 px-3 pt-7 pb-2",
         className,
       )}
     >
@@ -53,10 +58,18 @@ export function CoverStackStage({
         urls={urls}
         Icon={Icon}
         spillScale={1.08}
-        className="relative w-full max-w-[22rem]"
+        className={cn(
+          "relative w-full",
+          compact ? "max-w-[8.5rem]" : "max-w-[22rem]",
+        )}
       />
       {children ? (
-        <div className="absolute top-2 right-2 z-[5] flex items-center gap-1.5">
+        <div
+          className={cn(
+            "absolute z-[5] flex items-center gap-1.5",
+            compact ? "top-1 right-1" : "top-2 right-2",
+          )}
+        >
           {children}
         </div>
       ) : null}
