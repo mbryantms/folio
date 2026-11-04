@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { useRouter } from "next/navigation";
-import { memo, useState, ViewTransition } from "react";
+import { memo, useState } from "react";
 
 import { Cover } from "@/components/Cover";
 import { CoverTilt } from "@/components/library/CoverTilt";
@@ -17,6 +17,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { BulkMarkReadDialog } from "@/components/library/BulkMarkReadDialog";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SeriesHoverPreview } from "@/components/library/CardHoverPreview";
@@ -161,6 +162,7 @@ function SeriesCardImpl({
             `/series/${encodeURIComponent(series.slug)}/resume`,
           );
           if (!resume.issue_slug) return;
+          morph.mark();
           router.push(
             `/read/${encodeURIComponent(resume.series_slug)}/${encodeURIComponent(resume.issue_slug)}`,
           );
@@ -215,14 +217,14 @@ function SeriesCardImpl({
             label={series.name}
           />
         )}
-        <ViewTransition name={morph.name} share="morph" default="none">
+        <CoverMorph name={morph.name}>
           <Cover
             src={series.cover_url}
             alt={series.name}
             fallback={series.publisher ?? series.name}
             className="w-full transition group-hover:brightness-110"
           />
-        </ViewTransition>
+        </CoverMorph>
         {!inSelectMode && (
           <PageScrub
             issueId={issueIdFromCoverUrl(series.cover_url)}
@@ -258,6 +260,7 @@ function SeriesCardImpl({
               actions={menuActions}
             />
             <SeriesPlayOverlay
+              onActivate={morph.mark}
               seriesSlug={series.slug}
               seriesName={series.name}
             />

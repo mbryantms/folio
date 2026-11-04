@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, ViewTransition } from "react";
+import { memo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
@@ -18,6 +18,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
@@ -173,7 +174,10 @@ function IssueCardImpl({
       issue.state === "active"
         ? {
             label: `Read ${heading}`,
-            onSelect: () => router.push(readerUrl(issue)),
+            onSelect: () => {
+              morph.mark();
+              router.push(readerUrl(issue));
+            },
           }
         : undefined,
     actions: sheetActions,
@@ -223,14 +227,14 @@ function IssueCardImpl({
             label={heading}
           />
         )}
-        <ViewTransition name={morph.name} share="morph" default="none">
+        <CoverMorph name={morph.name}>
           <Cover
             src={issue.cover_url}
             alt={heading}
             fallback={numberLabel}
             className="w-full transition group-hover:brightness-110"
           />
-        </ViewTransition>
+        </CoverMorph>
         {!inSelectMode && issue.state === "active" && (
           <PageScrub issueId={issue.id} pageCount={issue.page_count} />
         )}
@@ -276,6 +280,7 @@ function IssueCardImpl({
               actions={menuActions}
             />
             <QuickReadOverlay
+              onActivate={morph.mark}
               readerHref={readerUrl(issue)}
               label={`Read ${heading}`}
             />

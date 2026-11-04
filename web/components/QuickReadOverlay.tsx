@@ -39,15 +39,22 @@ export function QuickReadOverlay({
   readerHref,
   label,
   className,
+  onActivate,
 }: {
   readerHref: string;
   /** Required — describes the action contextually (e.g. "Continue reading
    *  Saga #1 from page 7"). */
   label: string;
   className?: string;
+  /** Runs just before the reader push — cards pass their cover morph's
+   *  `mark` so the cover flies into the reader (lib/ui/cover-morph.ts). */
+  onActivate?: () => void;
 }) {
   const router = useRouter();
-  const activate = () => router.push(readerHref);
+  const activate = () => {
+    onActivate?.();
+    router.push(readerHref);
+  };
   return (
     <span
       role="button"
@@ -102,11 +109,15 @@ export function SeriesPlayOverlay({
   seriesSlug,
   seriesName,
   className,
+  onActivate,
 }: {
   seriesSlug: string;
   /** Used to build a contextual ARIA label like "Read Saga". */
   seriesName: string;
   className?: string;
+  /** Runs once the resume target is known, just before the reader push
+   *  (the card's cover morph `mark`). */
+  onActivate?: () => void;
 }) {
   const router = useRouter();
   const [busy, setBusy] = React.useState(false);
@@ -120,6 +131,7 @@ export function SeriesPlayOverlay({
         `/series/${encodeURIComponent(seriesSlug)}/resume`,
       );
       if (!resume.issue_slug) return;
+      onActivate?.();
       router.push(
         `/read/${encodeURIComponent(resume.series_slug)}/${encodeURIComponent(resume.issue_slug)}`,
       );

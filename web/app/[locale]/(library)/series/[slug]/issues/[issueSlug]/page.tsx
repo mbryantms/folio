@@ -26,6 +26,7 @@ import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
 import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
+import { MorphLink } from "@/components/library/MorphLink";
 import { CoverTilt } from "@/components/library/CoverTilt";
 import { ChipList } from "@/components/library/ChipList";
 import {
@@ -316,9 +317,13 @@ export default async function IssuePage({
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {issue.state === "active" ? (
               <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
-                <Link href={readerUrl(issue, { cbl: cblSavedViewId })}>
+                <MorphLink
+                  href={readerUrl(issue, { cbl: cblSavedViewId })}
+                  morphName={issueCoverName(issue.series_slug, issue.slug)}
+                  morphSrc={`/issues/${issue.id}/pages/0/thumb`}
+                >
                   {readLabel}
-                </Link>
+                </MorphLink>
               </Button>
             ) : (
               <p

@@ -15,6 +15,7 @@ import { ViewTransition } from "react";
 import { CountUp } from "@/components/CountUp";
 import { FillProgress } from "@/components/FillProgress";
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { MorphLink } from "@/components/library/MorphLink";
 import { RecordVisit } from "@/components/search/RecordVisit";
 import { seriesVisit } from "@/lib/search/recent-visits";
 import { seriesCoverName } from "@/lib/ui/cover-morph-names";
@@ -282,7 +283,17 @@ export default async function SeriesPage({
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 max-sm:order-3 max-sm:col-span-full max-sm:max-w-none sm:max-w-sm lg:mx-0 lg:max-w-72">
             {nextHref ? (
               <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
-                <Link href={nextHref}>{readButtonLabel(nextState)}</Link>
+                <MorphLink
+                  href={nextHref}
+                  morphName={seriesCoverName(series.slug)}
+                  morphSrc={
+                    resume.issue_id
+                      ? `/issues/${resume.issue_id}/pages/0/thumb`
+                      : series.cover_url
+                  }
+                >
+                  {readButtonLabel(nextState)}
+                </MorphLink>
               </Button>
             ) : (
               <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-10">

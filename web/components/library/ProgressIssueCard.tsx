@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ViewTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { CoverTilt } from "@/components/library/CoverTilt";
 import {
@@ -105,10 +105,20 @@ export function ProgressIssueCard({
     },
     ...collectionActions.actions,
   ];
+  // Cover morph: into the issue page's header cover, or — on a resume
+  // tap — into the reader's loading slot, where it stands in for the
+  // first page until that page has decoded (ReaderCoverMorph.tsx).
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   const longPress = useCoverLongPressActions({
     primary: {
       label: `Continue reading ${headerTitle}`,
-      onSelect: () => router.push(resumeHref),
+      onSelect: () => {
+        morph.mark();
+        router.push(resumeHref);
+      },
     },
     actions: menuActions,
     label: `${card.series_name} · ${numberLabel}`,
@@ -123,16 +133,11 @@ export function ProgressIssueCard({
   // child — React synthetic events bubble through the React tree even
   // across portals, so a click inside the dialog would otherwise
   // propagate to the Link and route away.
-  // The reader has no cover to land on, so only detail-page taps morph.
-  const morph = useCoverMorph(
-    issueCoverName(issue.series_slug, issue.slug),
-    issue.cover_url,
-  );
   return (
     <div className={cn("flex flex-col", className)} data-card="">
       <Link
         href={resumesOnTap ? resumeHref : detailsHref}
-        onClick={resumesOnTap ? undefined : morph.onClick}
+        onClick={morph.onClick}
         data-tint-target=""
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
@@ -145,18 +150,14 @@ export function ProgressIssueCard({
           <span className="sr-only">Continue reading </span>
         ) : null}
         <CoverTilt className="relative" {...longPress.wrapperProps}>
-          <ViewTransition
-            name={resumesOnTap ? undefined : morph.name}
-            share="morph"
-            default="none"
-          >
+          <CoverMorph name={morph.name}>
             <Cover
               src={issue.cover_url}
               alt={headerTitle}
               fallback={numberLabel}
               className="w-full transition group-hover:brightness-110"
             />
-          </ViewTransition>
+          </CoverMorph>
           {/* Progress overlay: thin bar at the bottom of the cover. The
            *  bar always shows (not hover-gated) since it's a key signal
            *  for this rail's purpose. */}
@@ -173,6 +174,7 @@ export function ProgressIssueCard({
           <QuickReadOverlay
             readerHref={resumeHref}
             label={`Continue reading ${headerTitle}`}
+            onActivate={morph.mark}
           />
         </CoverTilt>
         <div className="min-w-0 px-1">

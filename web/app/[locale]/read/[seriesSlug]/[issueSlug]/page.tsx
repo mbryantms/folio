@@ -2,6 +2,7 @@ import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
 import { ReaderHealthToast } from "./ReaderHealthToast";
+import { ReaderCoverHandoff } from "./ReaderCoverMorph";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
   IssueDetailView,
@@ -287,6 +288,7 @@ export default async function ReadPage({
   return (
     <>
       <ReaderHealthToast seriesSlug={seriesSlug} issueSlug={issueSlug} />
+      <ReaderCoverHandoff />
       <Reader
         issueId={issue.id}
         seriesId={issue.series_id}

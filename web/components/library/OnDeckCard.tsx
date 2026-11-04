@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { ViewTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { CoverSkeleton } from "@/components/CoverSkeleton";
@@ -14,6 +13,7 @@ import {
 } from "@/components/CoverMenuButton";
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { formatIssueHeading } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
@@ -142,19 +142,20 @@ export function OnDeckCard({
         )}
       >
         <CoverTilt className="relative" {...longPress.wrapperProps}>
-          <ViewTransition name={morph.name} share="morph" default="none">
+          <CoverMorph name={morph.name}>
             <Cover
               src={issue.cover_url}
               alt={heading}
               fallback={numberLabel}
               className="w-full transition group-hover:brightness-110"
             />
-          </ViewTransition>
+          </CoverMorph>
           <CoverMenuButton
             label={`Actions for ${heading}`}
             actions={menuActions}
           />
           <QuickReadOverlay
+            onActivate={morph.mark}
             readerHref={readerUrl(issue, { cbl: cblParam })}
             label={`Read ${heading}`}
           />

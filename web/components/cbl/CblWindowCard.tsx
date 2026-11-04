@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { ViewTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
@@ -15,6 +14,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import type { CblWindowEntry } from "@/lib/api/types";
@@ -140,7 +140,7 @@ export function CblWindowCard({
           )}
           {...longPress.wrapperProps}
         >
-          <ViewTransition name={morph.name} share="morph" default="none">
+          <CoverMorph name={morph.name}>
             <Cover
               src={issue.cover_url}
               alt={heading}
@@ -150,7 +150,7 @@ export function CblWindowCard({
                 entry.finished && "opacity-50",
               )}
             />
-          </ViewTransition>
+          </CoverMorph>
           <Badge
             variant="secondary"
             className="bg-background/80 absolute bottom-2 left-2 backdrop-blur"
@@ -181,6 +181,7 @@ export function CblWindowCard({
                 actions={menuActions}
               />
               <QuickReadOverlay
+                onActivate={morph.mark}
                 readerHref={readerUrl(issue, { cbl: cblSavedViewId })}
                 label={primaryLabel}
               />

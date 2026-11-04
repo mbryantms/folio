@@ -1,9 +1,8 @@
 "use client";
 
-import { ViewTransition } from "react";
-
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { useActiveMorph } from "@/lib/ui/cover-morph";
 
 /**
@@ -16,8 +15,8 @@ export function MorphCoverSlot() {
   const morph = useActiveMorph();
   if (!morph?.src) return <CoverSkeleton />;
   return (
-    <ViewTransition name={morph.name} share="morph" default="none">
+    <CoverMorph name={morph.name}>
       <Cover src={morph.src} alt="" />
-    </ViewTransition>
+    </CoverMorph>
   );
 }
