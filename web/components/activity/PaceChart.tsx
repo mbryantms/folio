@@ -22,7 +22,9 @@ import {
 } from "./chart-style";
 
 /**
- * Per-session reading pace (seconds per page) plotted over time. The raw
+ * Per-session reading pace (seconds per page), one evenly spaced step per
+ * session in order, labelled with the day it fell on. (Plotted on a time
+ * axis, several sessions on one day stacked into a vertical spike.) The raw
  * sessions are a faint muted line with dots; the rolling 7-session average
  * is the accent line, so the trend reads first even when individual
  * sessions are spiky.
@@ -43,21 +45,28 @@ export function PaceChart({
   }
   const raw = points.map((p) => p.sec_per_page);
   const rows = points.map((p, i) => ({
+    i,
     ts: new Date(p.started_at).getTime(),
     raw: p.sec_per_page,
     avg: movingAverage(raw, i, 7),
   }));
+  // One tick per day: at the day's first session.
+  const dayKey = (ms: number) => new Date(ms).toDateString();
+  const ticks = rows
+    .filter((r, i) => i === 0 || dayKey(r.ts) !== dayKey(rows[i - 1]!.ts))
+    .map((r) => r.i);
+  const at = (i: number) => rows[Math.round(i)]?.ts ?? 0;
 
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
         <CartesianGrid {...GRID} />
         <XAxis
-          dataKey="ts"
+          dataKey="i"
           type="number"
-          domain={["dataMin", "dataMax"]}
-          scale="time"
-          tickFormatter={tickDate}
+          domain={[0, Math.max(1, rows.length - 1)]}
+          ticks={ticks}
+          tickFormatter={(i: number) => tickDate(at(i))}
           {...AXIS_BARE}
           minTickGap={32}
           tickMargin={6}
@@ -78,7 +87,7 @@ export function PaceChart({
           itemStyle={TOOLTIP_ITEM_STYLE}
           labelFormatter={(label) =>
             typeof label === "number"
-              ? new Date(label).toLocaleString(undefined, {
+              ? new Date(at(label)).toLocaleString(undefined, {
                   month: "short",
                   day: "numeric",
                   hour: "numeric",

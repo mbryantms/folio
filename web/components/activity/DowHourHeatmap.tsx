@@ -53,7 +53,7 @@ export function DowHourHeatmap({
   }
 
   return (
-    <figure className="space-y-3">
+    <figure className="flex flex-1 flex-col gap-3">
       <div
         role="img"
         aria-label="Reading time by day of week and hour"
@@ -74,7 +74,61 @@ export function DowHourHeatmap({
         ))}
       </div>
       <HeatLegend />
+      <RhythmSummary cells={cells} />
     </figure>
+  );
+}
+
+const HOUR_12 = (h: number) =>
+  `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "am" : "pm"}`;
+
+/**
+ * Three takeaways under the grid: the busiest hour slot, the busiest
+ * weekday and how many of the week's 168 hours you've read in. Pinned to
+ * the bottom of the card (`mt-auto`), so beside a taller Time of day card
+ * the gap sits above it instead of under the legend.
+ */
+function RhythmSummary({ cells }: { cells: ReadonlyArray<DowHourCell> }) {
+  if (cells.length === 0) return null;
+  const peak = cells.reduce((a, b) => (b.active_ms > a.active_ms ? b : a));
+  const byDay = new Map<number, number>();
+  for (const c of cells)
+    byDay.set(c.dow, (byDay.get(c.dow) ?? 0) + c.active_ms);
+  const [busyDow, busyMs] = [...byDay.entries()].reduce((a, b) =>
+    b[1] > a[1] ? b : a,
+  );
+  const dayName = (dow: number) => ROWS.find((r) => r.dow === dow)?.full ?? "";
+  const items = [
+    {
+      label: "Peak hour",
+      value: `${ROWS.find((r) => r.dow === peak.dow)?.short ?? ""} ${HOUR_12(peak.hour)}`,
+      sub: formatDurationMs(peak.active_ms),
+    },
+    {
+      label: "Busiest day",
+      value: dayName(busyDow),
+      sub: formatDurationMs(busyMs),
+    },
+    {
+      label: "Hours of the week",
+      value: `${cells.filter((c) => c.active_ms > 0).length} of 168`,
+      sub: "with some reading",
+    },
+  ];
+  return (
+    <dl className="border-border mt-auto grid grid-cols-3 gap-3 border-t pt-4">
+      {items.map((it) => (
+        <div key={it.label} className="min-w-0">
+          <dt className="text-muted-foreground truncate text-xs tracking-wide uppercase">
+            {it.label}
+          </dt>
+          <dd className="text-foreground mt-1 truncate text-base font-semibold tabular-nums">
+            {it.value}
+          </dd>
+          <dd className="text-muted-foreground truncate text-xs">{it.sub}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 

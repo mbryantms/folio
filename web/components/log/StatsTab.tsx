@@ -4,7 +4,12 @@ import { BarChart3 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useState } from "react";
 
-import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
+import { useIsPhone } from "@/lib/ui/use-is-phone";
+
+import {
+  ActivityRangeSelector,
+  parseRange,
+} from "@/components/activity/ActivityRangeSelector";
 import { DowHourHeatmap } from "@/components/activity/DowHourHeatmap";
 import { HeroCards } from "@/components/activity/HeroCards";
 import { RereadList } from "@/components/activity/RereadList";
@@ -59,8 +64,12 @@ const RANGE_DAYS: Partial<Record<ReadingStatsRange, number>> = {
   "1y": 365,
 };
 
-/** Above this many days the activity chart switches to one bar a week. */
+/** Above this many days the activity chart switches to one bar a week
+ *  (sooner on a phone, where 90 daily bars were hairlines). */
 const WEEKLY_AFTER_DAYS = 120;
+const WEEKLY_AFTER_DAYS_PHONE = 45;
+
+const DEFAULT_RANGE: ReadingStatsRange = "90d";
 
 /**
  * The reading log's Stats tab (`/log/stats`, folio-flair phase 4): the
@@ -69,8 +78,19 @@ const WEEKLY_AFTER_DAYS = 120;
  * activity over time, rankings, pace and rereads. Everything except the
  * streaks is scoped to the selected range.
  */
-export function StatsTab() {
-  const [range, setRange] = useState<ReadingStatsRange>("90d");
+export function StatsTab({ initialRange }: { initialRange?: string }) {
+  const [range, setRangeState] = useState<ReadingStatsRange>(() =>
+    parseRange(initialRange, DEFAULT_RANGE),
+  );
+  // The range lives in `?range=` so a reload or a shared link keeps it
+  // (replaceState: no history entry, no server round-trip).
+  const setRange = (next: ReadingStatsRange) => {
+    setRangeState(next);
+    const url = new URL(window.location.href);
+    if (next === DEFAULT_RANGE) url.searchParams.delete("range");
+    else url.searchParams.set("range", next);
+    window.history.replaceState(window.history.state, "", url.toString());
+  };
   const stats = useReadingStats({ type: "all" }, range);
   const reduced = useReducedMotion();
   const data = stats.data;
@@ -108,7 +128,12 @@ function StatsBody({
   range: ReadingStatsRange;
   animate: boolean;
 }) {
-  const series = activitySeries(data, range);
+  const phone = useIsPhone();
+  const series = activitySeries(
+    data,
+    range,
+    phone ? WEEKLY_AFTER_DAYS_PHONE : WEEKLY_AFTER_DAYS,
+  );
   return (
     <>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
@@ -160,7 +185,7 @@ function StatsBody({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <StatCard
           title="Reading pace"
-          description="Seconds per page each session, with a 7-session average."
+          description="Seconds per page, session by session, with a 7-session average."
         >
           <PaceChart points={data.pace_series ?? []} height={220} />
         </StatCard>
@@ -193,7 +218,7 @@ function StatCard({
   return (
     <section
       className={cn(
-        "border-border bg-card min-w-0 rounded-xl border p-4 sm:p-5",
+        "border-border bg-card flex min-w-0 flex-col rounded-xl border p-4 sm:p-5",
         className,
       )}
     >
@@ -349,6 +374,7 @@ function rangeSpan(data: ReadingStatsView, range: string): string | null {
 function activitySeries(
   data: ReadingStatsView,
   range: string,
+  weeklyAfter: number,
 ): { buckets: ReadingDayBucket[]; weekly: boolean } {
   const bounds = rangeBounds(data, range);
   if (!bounds) return { buckets: [...data.per_day], weekly: false };
@@ -359,7 +385,7 @@ function activitySeries(
       byDate.get(d) ?? { date: d, active_ms: 0, sessions: 0, pages: 0 },
     );
   }
-  if (days.length <= WEEKLY_AFTER_DAYS) return { buckets: days, weekly: false };
+  if (days.length <= weeklyAfter) return { buckets: days, weekly: false };
 
   const weeks = new Map<string, ReadingDayBucket>();
   for (const day of days) {
