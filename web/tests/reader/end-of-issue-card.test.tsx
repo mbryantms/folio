@@ -5,9 +5,13 @@
  * inspection reaches sub-component output without needing a DOM
  * environment, QueryClient, or router.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+
+// The finishing moment reads the account's motion preference (a query);
+// the static render has no QueryClient.
+vi.mock("@/lib/visual-effects", () => ({ useReducedMotion: () => false }));
 
 import { EndOfIssueCard } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/EndOfIssueCard";
 import type { IssueSummaryView, NextUpView } from "@/lib/api/types";
@@ -195,6 +199,49 @@ describe("<EndOfIssueCard>", () => {
     };
     const html = render({ data });
     expect(html).toMatch(/Invincible #2/);
+  });
+
+  it("leads with the finishing moment: the issue and the series ring", () => {
+    const data: NextUpView = { source: "series", target: issue() };
+    const html = render({
+      data,
+      finished: {
+        issueLabel: "Invincible #1",
+        progress: { seriesName: "Invincible", total: 4, before: 1, after: 2 },
+      },
+    });
+    expect(html).toMatch(/Finished/);
+    expect(html).toMatch(/Invincible #1/);
+    expect(html).toMatch(/of Invincible/);
+    expect(html).toMatch(/2 of 4 issues read/);
+    expect(html).toMatch(/\+1 this issue/);
+    // Still the full Up Next flow, with one Close button.
+    expect(html).toMatch(/Next up/);
+    expect(html).toMatch(/Eight Is Enough/);
+    expect(html.match(/aria-label="Close"/g)).toHaveLength(1);
+  });
+
+  it("calls out a completed series", () => {
+    const html = render({
+      data: { source: "none" },
+      finished: {
+        issueLabel: "Invincible #4",
+        progress: { seriesName: "Invincible", total: 4, before: 3, after: 4 },
+      },
+    });
+    // The static render shows the start of the ring animation; the
+    // label flips once it reaches the end (covered by the `done` check).
+    expect(html).toMatch(/4 of 4 issues read/);
+    expect(html).toMatch(/caught up/i);
+  });
+
+  it("omits the ring while the series progress is unknown", () => {
+    const html = render({
+      data: { source: "series", target: issue() },
+      finished: { issueLabel: "Invincible #1", progress: null },
+    });
+    expect(html).toMatch(/Invincible #1/);
+    expect(html).not.toMatch(/issues read/);
   });
 
   it("anchors to the right edge in LTR mode", () => {

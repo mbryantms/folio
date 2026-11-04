@@ -191,6 +191,10 @@ export default async function ReadPage({
     }
   }
 
+  // Finishing it again won't move the series' progress (end card ring).
+  const initiallyFinished =
+    delta?.records.find((r) => r.issue_id === issue.id)?.finished === true;
+
   // Series + library reading-direction layers of the resolution chain
   // (see `manga-and-bulk-metadata-1.0`). Both surfaced on
   // IssueDetailView so the read page doesn't need a second fetch. The
@@ -294,6 +298,7 @@ export default async function ReadPage({
         initialPage={initialPage}
         initialRun={initialRun}
         restartRun={restartRun}
+        initiallyFinished={initiallyFinished}
         pages={pages}
         pageUrlVersion={issue.last_rewrite_at ?? null}
         manga={issue.manga ?? null}

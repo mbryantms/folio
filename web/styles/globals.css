@@ -1516,3 +1516,49 @@ html.theme-reveal::view-transition-group(root) {
 .fact-link:hover {
   color: color-mix(in oklab, var(--primary) 60%, var(--foreground));
 }
+
+/* ===== folio-flair: finishing moment (reader end card) =====
+ * The next issue's cover slides in from the page-turn edge a beat after
+ * the card and tilts into place; finishing a series pops the ring. */
+.end-card-next {
+  opacity: 0;
+  transition:
+    transform 700ms cubic-bezier(0.34, 1.45, 0.64, 1) 250ms,
+    opacity 400ms ease-out 250ms;
+}
+.end-card-next.from-right {
+  transform: translateX(2.5rem) rotate(4deg);
+}
+.end-card-next.from-left {
+  transform: translateX(-2.5rem) rotate(-4deg);
+}
+.end-card-next.is-open {
+  opacity: 1;
+  transform: none;
+}
+.end-card-next > * {
+  box-shadow: 0 12px 26px -12px rgb(0 0 0 / 0.55);
+}
+@keyframes finish-ring-pop {
+  0% {
+    scale: 1;
+  }
+  40% {
+    scale: 1.14;
+  }
+  100% {
+    scale: 1;
+  }
+}
+.finish-ring-pop {
+  animation: finish-ring-pop 600ms cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .end-card-next {
+    transition: opacity 200ms ease-out;
+  }
+  .end-card-next.from-right,
+  .end-card-next.from-left {
+    transform: none;
+  }
+}

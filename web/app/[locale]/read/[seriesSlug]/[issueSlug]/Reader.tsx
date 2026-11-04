@@ -38,6 +38,7 @@ import {
 import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 
+import { seriesFinishProgress } from "@/lib/reader/finish-progress";
 import { ProgressUnavailableBanner } from "./ProgressUnavailableBanner";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
@@ -59,7 +60,12 @@ import {
   zoomOriginPercent,
   type ZoomState,
 } from "@/lib/reader/zoom";
-import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
+import {
+  useIssueMarkers,
+  useNextUp,
+  usePrevUp,
+  useSeries,
+} from "@/lib/api/queries";
 import {
   type AccountReaderPrefs,
   flushAccountPrefs,
@@ -171,6 +177,7 @@ export function Reader({
   seriesSlug = null,
   issueSlug = null,
   issueLabel = "This issue",
+  initiallyFinished = false,
   initialUserRating = null,
   initialUserNote = null,
   nextUpOverride,
@@ -186,6 +193,9 @@ export function Reader({
   issueSlug?: string | null;
   /** "Saga #11" — names the finished issue on the Wrap up pane. */
   issueLabel?: string;
+  /** The issue was already finished when the reader opened (a re-read):
+   *  finishing it again doesn't move the series' progress. */
+  initiallyFinished?: boolean;
   /** The caller's rating / closing note as of page load (from the
    *  issue detail the page already fetched). */
   initialUserRating?: number | null;
@@ -1189,6 +1199,45 @@ export function Reader({
   }, [router]);
   const suppressWrites = incognito || peekActive;
 
+  // Finishing moment: the series' finished count, captured once per issue
+  // as the end nears (before this read's finishing write lands) — the
+  // ring animates from it to now. Online only; the offline reader has
+  // no series endpoint.
+  const seriesProgressQ = useSeries(
+    endCardArmed && seriesId && nextUpOverride === undefined ? seriesId : "",
+  );
+  const [seriesSnap, setSeriesSnap] = useState<{
+    issueId: string;
+    name: string;
+    finished: number;
+    total: number;
+  } | null>(null);
+  const summary = seriesProgressQ.data?.progress_summary;
+  if (
+    summary &&
+    !seriesProgressQ.isFetching &&
+    seriesSnap?.issueId !== issueId
+  ) {
+    setSeriesSnap({
+      issueId,
+      name: seriesProgressQ.data?.name ?? "",
+      finished: summary.finished,
+      total: summary.total,
+    });
+  }
+  const snap = seriesSnap?.issueId === issueId ? seriesSnap : null;
+  const finishedMoment = useMemo(
+    () => ({
+      issueLabel,
+      progress: seriesFinishProgress(
+        snap?.name ?? "",
+        snap,
+        !initiallyFinished && !suppressWrites,
+      ),
+    }),
+    [issueLabel, snap, initiallyFinished, suppressWrites],
+  );
+
   useReaderProgressWrite({
     issueId,
     currentPage,
@@ -1677,6 +1726,7 @@ export function Reader({
           onContinue={continueFromEndCard}
           onDismiss={dismissEndCard}
           wrapUp={wrapUp}
+          finished={finishedMoment}
         />
       ) : null}
     </div>

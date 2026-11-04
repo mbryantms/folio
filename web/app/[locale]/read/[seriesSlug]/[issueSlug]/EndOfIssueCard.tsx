@@ -33,11 +33,13 @@ import { Button } from "@/components/ui/button";
 import type { Direction } from "@/lib/reader/detect";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import type { NextUpView, OnDeckCard } from "@/lib/api/types";
+import type { SeriesFinishProgress } from "@/lib/reader/finish-progress";
 import { nextUpListSubtitle } from "@/lib/reader/list-context";
 import { ratingFromKey, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
+import { FinishedMoment } from "./FinishedMoment";
 import { WrapUpBody, WrapUpStrip } from "./WrapUp";
 
 export function EndOfIssueCard({
@@ -51,6 +53,7 @@ export function EndOfIssueCard({
   onContinue,
   onDismiss,
   wrapUp,
+  finished,
 }: {
   open: boolean;
   /** Resolver result. `undefined` while the prefetch is in flight; the
@@ -79,6 +82,10 @@ export function EndOfIssueCard({
   /** Rating / closing note / markers for the issue just finished.
    *  Omitted (tests, embeds) → the card renders exactly as before. */
   wrapUp?: WrapUpProps;
+  /** The finishing moment at the top of the card: the issue just read
+   *  and the series' progress ring (`progress` null while unknown or
+   *  offline). Omitted → the card opens straight on Up Next. */
+  finished?: { issueLabel: string; progress: SeriesFinishProgress | null };
 }) {
   const target = data?.target;
   const source = data?.source ?? "none";
@@ -267,99 +274,116 @@ export function EndOfIssueCard({
         </>
       ) : (
         <>
-          <div className="flex items-start justify-between gap-3 p-4 pb-2">
+          {finished ? (
+            <div className="flex items-start justify-between gap-3 p-4 pb-3">
+              <div className="min-w-0 flex-1">
+                <FinishedMoment
+                  open={open}
+                  issueLabel={finished.issueLabel}
+                  progress={finished.progress}
+                />
+              </div>
+              <CloseButton onClick={onDismiss} />
+            </div>
+          ) : null}
+          <div
+            className={cn(
+              "flex items-start justify-between gap-3 px-4 pb-3",
+              finished ? "border-border border-t pt-3" : "pt-4",
+            )}
+          >
             <div className="min-w-0 flex-1">
               <p className="text-muted-foreground text-xs font-medium">
                 {failed
                   ? "End of issue"
                   : source === "none"
                     ? "End of the line"
-                    : "Next up:"}
+                    : "Next up"}
               </p>
               {source !== "none" && target ? (
-                <h2 className="mt-0.5 text-base leading-snug font-semibold">
-                  {heading}
-                </h2>
-              ) : failed ? (
-                <h2 className="mt-0.5 text-base leading-snug font-semibold">
-                  Couldn&apos;t load what&apos;s next
-                </h2>
-              ) : isLoading && !data ? (
-                <div className="bg-muted mt-1 h-5 w-40 animate-pulse rounded" />
-              ) : (
-                <h2 className="mt-0.5 text-base leading-snug font-semibold">
-                  You&apos;re caught up.
-                </h2>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={onDismiss}
-              aria-label="Close"
-              className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-
-          {source !== "none" && target ? (
-            <div className="px-4 pb-3">
-              <div className="mx-auto w-full">
-                <Cover
-                  src={target.cover_url ?? null}
-                  alt={heading}
-                  fallback={heading}
-                />
-              </div>
-              {(subheading || listSubtitle) && (
-                <div className="mt-2">
-                  {subheading ? (
-                    <p className="text-muted-foreground text-sm">
-                      {subheading}
-                    </p>
-                  ) : null}
-                  {listSubtitle ? (
-                    <p className="text-muted-foreground mt-1 text-xs">
-                      {listSubtitle}
-                    </p>
-                  ) : null}
+                <div className="mt-2 flex items-start gap-3">
+                  {/* The next cover slides in from the page-turn edge a
+                      beat after the card, tilting into place. */}
+                  <div
+                    className={cn(
+                      "end-card-next w-20 shrink-0",
+                      slideFromRight ? "from-right" : "from-left",
+                      open && "is-open",
+                    )}
+                  >
+                    <Cover
+                      src={target.cover_url ?? null}
+                      alt={heading}
+                      fallback={heading}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-base leading-snug font-semibold">
+                      {heading}
+                    </h2>
+                    {subheading ? (
+                      <p className="text-muted-foreground mt-0.5 text-sm">
+                        {subheading}
+                      </p>
+                    ) : null}
+                    {listSubtitle ? (
+                      <p className="text-muted-foreground mt-1 text-xs">
+                        {listSubtitle}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
+              ) : failed ? (
+                <>
+                  <h2 className="mt-0.5 text-base leading-snug font-semibold">
+                    Couldn&apos;t load what&apos;s next
+                  </h2>
+                  <p
+                    className="text-muted-foreground mt-1 text-sm"
+                    role="alert"
+                  >
+                    The next-issue lookup failed. Your progress is saved.
+                  </p>
+                </>
+              ) : isLoading && !data ? (
+                <div className="mt-2 flex items-start gap-3">
+                  <div
+                    // Themed token so the skeleton suits every theme.
+                    className="bg-muted aspect-[2/3] w-20 shrink-0 animate-pulse rounded-md"
+                    aria-busy="true"
+                    aria-label="Loading next issue"
+                  />
+                  <div className="flex-1 space-y-2 pt-1">
+                    <div className="bg-muted h-4 w-4/5 animate-pulse rounded" />
+                    <div className="bg-muted h-3 w-1/2 animate-pulse rounded" />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h2 className="mt-0.5 text-base leading-snug font-semibold">
+                    You&apos;re caught up.
+                  </h2>
+                  {data?.fallback_suggestion ? (
+                    <div className="mt-2">
+                      <p className="text-muted-foreground mb-2 text-sm">
+                        No next issue in this series, but here&apos;s a
+                        suggestion:
+                      </p>
+                      <FallbackSuggestionTile
+                        suggestion={data.fallback_suggestion}
+                        onNavigate={onDismiss}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      No next issue to suggest right now.
+                    </p>
+                  )}
+                </>
               )}
             </div>
-          ) : failed ? (
-            <div className="px-4 pb-3">
-              <p className="text-muted-foreground text-sm" role="alert">
-                The next-issue lookup failed. Your progress is saved.
-              </p>
-            </div>
-          ) : isLoading && !data ? (
-            <div className="px-4 pb-3">
-              <div
-                // Themed token, not hardcoded neutral-800: this card is
-                // `bg-background` (theme-aware), so a dark block would clash
-                // on light/amber themes. Matches the heading skeleton above.
-                className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md"
-                aria-busy="true"
-                aria-label="Loading next issue"
-              />
-            </div>
-          ) : data?.fallback_suggestion ? (
-            <div className="px-4 pb-3">
-              <p className="text-muted-foreground mb-2 text-sm">
-                No next issue in this series, but here&apos;s a suggestion:
-              </p>
-              <FallbackSuggestionTile
-                suggestion={data.fallback_suggestion}
-                onNavigate={onDismiss}
-              />
-            </div>
-          ) : (
-            <div className="px-4 pb-3">
-              <p className="text-muted-foreground text-sm">
-                No next issue to suggest right now.
-              </p>
-            </div>
-          )}
+            {finished ? null : <CloseButton onClick={onDismiss} />}
+          </div>
 
           <div className="border-border flex flex-col gap-2 border-t p-4">
             {source !== "none" && target ? (
@@ -460,6 +484,19 @@ export function EndOfIssueCard({
         </>
       )}
     </div>
+  );
+}
+
+function CloseButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Close"
+      className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
+    >
+      <X className="size-4" />
+    </button>
   );
 }
 
