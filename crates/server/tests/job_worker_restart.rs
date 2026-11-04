@@ -135,3 +135,90 @@ async fn workers_start_despite_a_fresh_registration_from_a_killed_server() {
         .expect("monitor did not stop after cancellation")
         .expect("monitor task panicked");
 }
+
+/// The backlog survives a stop/start mid-drain: every queued cover job is
+/// either finished by the first runtime or picked up by the second.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_backlog_survives_an_immediate_restart_mid_drain() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let db = &state.db;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(db, tmp.path()).await;
+    let series = seed_series(db, lib, "Backlog").await;
+    let mut ids = Vec::new();
+    for n in 1..=40u32 {
+        ids.push(
+            seed_issue(
+                db,
+                lib,
+                series,
+                &tmp.path().join(format!("Backlog {n:03}.cbz")),
+                format!("definitely-not-a-zip-backlog-{n}").as_bytes(),
+                f64::from(n),
+            )
+            .await,
+        );
+    }
+    for id in &ids {
+        assert!(enqueue_thumb_job(&state, ThumbsJob::cover(id.clone())).await);
+    }
+
+    let stamped = || async {
+        let mut n = 0;
+        for id in &ids {
+            let row = IssueEntity::find_by_id(id.clone())
+                .one(db)
+                .await
+                .unwrap()
+                .unwrap();
+            if row.thumbnails_error.is_some() {
+                n += 1;
+            }
+        }
+        n
+    };
+
+    let start = || async {
+        let runtime = JobRuntime::new(&state.cfg().redis_url, db.clone())
+            .await
+            .expect("job runtime");
+        let shutdown = CancellationToken::new();
+        let handle = tokio::spawn({
+            let (state, shutdown) = (state.clone(), shutdown.clone());
+            async move { runtime.run(state, shutdown).await }
+        });
+        (shutdown, handle)
+    };
+
+    // First runtime: let it get partway, then stop it.
+    let (stop1, h1) = start().await;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while stamped().await < 3 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("first runtime never started draining");
+    stop1.cancel();
+    h1.await.unwrap();
+    let after_first = stamped().await;
+    eprintln!("after first runtime: {after_first}/40");
+
+    // Second runtime, immediately.
+    let (stop2, h2) = start().await;
+    let res = tokio::time::timeout(Duration::from_secs(30), async {
+        while stamped().await < ids.len() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+    let final_count = stamped().await;
+    stop2.cancel();
+    h2.await.unwrap();
+    assert!(
+        res.is_ok(),
+        "backlog lost across restart: {final_count}/40 stamped ({after_first} by the first runtime)"
+    );
+}
