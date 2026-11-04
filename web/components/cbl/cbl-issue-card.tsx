@@ -4,6 +4,7 @@ import { Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
 import {
   CoverMenuButton,
@@ -201,10 +202,7 @@ export function CblIssueCard({
           className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
           aria-hidden="true"
         >
-          <div
-            className="bg-primary h-full transition-[width]"
-            style={{ width: `${percent}%` }}
-          />
+          <ProgressFill id={issue?.id ?? ""} percent={percent} />
         </div>
       )}
       {showActions && issue && !inSelectMode && (

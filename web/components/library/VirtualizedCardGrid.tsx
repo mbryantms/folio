@@ -11,6 +11,9 @@ import {
   estimateRowHeight,
   rowItemRange,
 } from "@/lib/library/grid-window";
+import { CARD_SIZE_EVENT } from "@/components/library/use-card-size";
+import { useFlipOnChange } from "@/lib/ui/use-flip-on-change";
+import { useReducedMotion } from "@/lib/visual-effects";
 import { useGridScrollRestore } from "@/lib/library/use-grid-scroll-restore";
 import { useContainerWidth } from "@/lib/use-container-width";
 
@@ -55,6 +58,8 @@ export function VirtualizedCardGrid({
   enableScrollRestore?: boolean;
 }) {
   const [containerRef, containerWidth] = useContainerWidth<HTMLDivElement>();
+  const flipRoot = React.useRef<HTMLDivElement | null>(null);
+  useFlipOnChange(flipRoot, cardSize, CARD_SIZE_EVENT, useReducedMotion());
   const columnsPerRow = computeColumnsPerRow(containerWidth, cardSize);
   const rowCount = computeRowCount(items.length, columnsPerRow);
   const columnWidth = computeColumnWidth(containerWidth, columnsPerRow);
@@ -139,7 +144,10 @@ export function VirtualizedCardGrid({
   return (
     <div ref={containerRef}>
       <div
-        ref={listRef}
+        ref={(el) => {
+          listRef.current = el;
+          flipRoot.current = el;
+        }}
         style={{
           height: `${virtualizer.getTotalSize()}px`,
           position: "relative",
@@ -173,7 +181,7 @@ export function VirtualizedCardGrid({
               {items.slice(start, end).map((item) => (
                 // Each row is a `role="list"`: its cells must be list
                 // items (axe `aria-required-children`, WP-8.5).
-                <div key={item.id} role="listitem">
+                <div key={item.id} role="listitem" data-flip-id={item.id}>
                   {renderCard(item)}
                 </div>
               ))}
