@@ -1,12 +1,12 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
-import { BookmarkPlus, Folder, Plus } from "lucide-react";
+import { Folder, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/admin/PageHeader";
-import { CoverStackStage } from "@/components/cover-stack/CoverStackStage";
+import { GroupedViewsBoard } from "@/components/saved-views/GroupedViewsBoard";
+import { ViewCard } from "@/components/saved-views/ViewsIndex";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -21,96 +21,69 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { collectServerErrors } from "@/lib/api/form-errors";
-import { useCollections, useViewCovers } from "@/lib/api/queries";
+import { useCollections } from "@/lib/api/queries";
 import { useCreateCollection } from "@/lib/api/mutations";
 import { TOAST } from "@/lib/api/toast-strings";
 import type { SavedViewView } from "@/lib/api/types";
 import { STACK_ASPECT } from "@/lib/cover-stack/variants";
 
-const WANT_TO_READ_KEY = "want_to_read";
-
-/** Standalone collections-only index — the day-to-day browse surface for
- *  the user's collections, reached from the main-UI sidebar "Collections"
- *  link (`/collections`). Want to Read is pinned to the front with a
- *  distinct icon so the built-in collection is visually separated from
- *  user-curated lists. Arrangement (pin-to-pages / sidebar) + the full
- *  three-type management view live on `/settings/views`. */
+/** Standalone collections index — the day-to-day browse surface for the
+ *  user's collections, reached from the main-UI sidebar "Collections"
+ *  link (`/collections`). The same grouped, drag-to-arrange board as
+ *  Settings → Views → Collections (one shared order and groups, `scope =
+ *  "collection"`), with large cover-led cards: drag a card to reorder or
+ *  regroup; its ⋯ menu pins, shows in the sidebar, moves between groups
+ *  and deletes (with Undo). */
 export function CollectionsIndex() {
   const collectionsQ = useCollections();
-  const coversQ = useViewCovers();
   const [createOpen, setCreateOpen] = React.useState(false);
-
-  const collections = collectionsQ.data ?? [];
+  // The sidebar shares the collections query, so the cache can already
+  // hold them when this route's segment hydrates; render the server's
+  // (loading) markup until hydrated, or React reports a mismatch.
+  const hydrated = React.useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
+  const collections = hydrated ? (collectionsQ.data ?? []) : [];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Collections"
-        description="Manual reading lists of mixed series and issues. Use the kebab menu on any cover to add items."
-        actions={
-          <Button type="button" onClick={() => setCreateOpen(true)}>
-            <Plus className="mr-1 size-4" /> New collection
-          </Button>
-        }
+        description="Manual reading lists of mixed series and issues. Drag cards to arrange them; add items from the ⋯ menu on any cover."
       />
-      {collectionsQ.isLoading ? (
-        <CollectionsGridSkeleton />
-      ) : collectionsQ.isError ? (
+      {collectionsQ.isError ? (
         <div className="text-destructive rounded-md border p-4 text-sm">
           Failed to load collections.
         </div>
-      ) : collections.length === 0 ? (
-        <EmptyState onCreate={() => setCreateOpen(true)} />
       ) : (
-        <ul role="list" className={COLLECTION_GRID}>
-          {collections.map((collection) => (
-            <li key={collection.id}>
-              <CollectionCard
-                collection={collection}
-                covers={coversQ.data?.get(collection.id) ?? []}
-              />
-            </li>
-          ))}
-        </ul>
+        <GroupedViewsBoard
+          scope="collection"
+          size="large"
+          views={collections}
+          loading={!hydrated || collectionsQ.isLoading}
+          blurb="Hand-picked series and issues."
+          noun="collection"
+          icon={Folder}
+          action={
+            <Button type="button" onClick={() => setCreateOpen(true)}>
+              <Plus className="mr-1 size-4" /> New collection
+            </Button>
+          }
+          renderCard={renderCollectionCard}
+          empty={<EmptyState onCreate={() => setCreateOpen(true)} />}
+        />
       )}
       <NewCollectionDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );
 }
 
-function CollectionCard({
-  collection,
-  covers,
-}: {
-  collection: SavedViewView;
-  covers: readonly string[];
-}) {
-  const isWantToRead = collection.system_key === WANT_TO_READ_KEY;
-  const Icon = isWantToRead ? BookmarkPlus : Folder;
-  return (
-    <Link
-      href={`/views/${isWantToRead ? "want-to-read" : collection.id}`}
-      className="group cover-stack-host hover:bg-accent/40 focus-visible:ring-ring border-border/60 flex h-full flex-col gap-3 overflow-visible rounded-lg border p-4 transition-colors focus-visible:ring-2 focus-visible:outline-none"
-    >
-      <CoverStackStage urls={covers} Icon={Icon}>
-        {isWantToRead ? (
-          <span className="text-muted-foreground bg-background/70 inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wider whitespace-nowrap uppercase backdrop-blur">
-            Built-in
-          </span>
-        ) : null}
-      </CoverStackStage>
-      <div className="min-w-0 space-y-0.5">
-        <div className="truncate font-medium" title={collection.name}>
-          {collection.name}
-        </div>
-        {collection.description ? (
-          <p className="text-muted-foreground line-clamp-2 text-sm">
-            {collection.description}
-          </p>
-        ) : null}
-      </div>
-    </Link>
-  );
+const noopSubscribe = () => () => {};
+
+function renderCollectionCard(view: SavedViewView) {
+  return <ViewCard view={view} Icon={Folder} isCollection size="large" />;
 }
 
 /** Fixed-width cards (15rem) rather than fluid columns, so a wide screen
@@ -157,7 +130,8 @@ export function CollectionsGridSkeleton({ count = 8 }: { count?: number }) {
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    <div className="border-border/60 rounded-lg border border-dashed p-10 text-center">
+    // The board draws the dashed frame around this.
+    <div className="py-4 text-center">
       <Folder
         className="text-muted-foreground/60 mx-auto h-10 w-10"
         aria-hidden="true"

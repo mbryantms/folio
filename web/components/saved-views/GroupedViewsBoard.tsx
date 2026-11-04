@@ -306,7 +306,22 @@ export type GroupedViewsBoardProps = {
   /** Optional panel rendered between the toolbar and the board (the
    *  reading-lists tab mounts its updates panel here). */
   panel?: React.ReactNode;
+  /** Card grid density: `compact` (Settings → Views, many small cards)
+   *  or `large` (the `/collections` page: fixed 15rem cards, big covers). */
+  size?: "compact" | "large";
 };
+
+const CARD_GRID_CLASS = {
+  compact:
+    "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6",
+  // Fixed-width cards, so a wide screen adds cards per row instead of
+  // blowing each one up; phones keep two flexible columns.
+  large:
+    "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,15rem)] sm:gap-4",
+} as const;
+const CardGridClassContext = React.createContext<string>(
+  CARD_GRID_CLASS.compact,
+);
 
 /** The held card springs into its slot on drop; the slot (the real card,
  *  hidden while held) shows once it lands. */
@@ -330,6 +345,7 @@ export function GroupedViewsBoard({
   renderCard,
   groupMenuExtra,
   panel,
+  size = "compact",
 }: GroupedViewsBoardProps) {
   const groupsQ = useViewGroups(scope);
   const replaceLayout = useReplaceViewGroupLayout(scope);
@@ -572,185 +588,187 @@ export function GroupedViewsBoard({
 
   return (
     <ViewBoardActionsContext.Provider value={actions}>
-      <div className="space-y-4">
-        {/* Toolbar: blurb + search + sort + new group + primary action */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-muted-foreground text-sm">{blurb}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {total > 0 ? (
-              <>
-                <div className="relative">
-                  <Search
-                    aria-hidden="true"
-                    className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-                  />
-                  <Input
-                    type="search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={`Search ${noun}s…`}
-                    aria-label={`Search ${noun}s`}
-                    className="h-9 w-44 pl-8 sm:w-56"
-                  />
-                </div>
-                <Select
-                  value={sort}
-                  onValueChange={(v) => setSort(v as ViewSort)}
-                >
-                  <SelectTrigger
-                    className="h-9 w-[11.5rem]"
-                    aria-label="Sort ungrouped"
-                    title="Order of the ungrouped section. Dragging a card pins the custom order."
+      <CardGridClassContext.Provider value={CARD_GRID_CLASS[size]}>
+        <div className="space-y-4">
+          {/* Toolbar: blurb + search + sort + new group + primary action */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-muted-foreground text-sm">{blurb}</p>
+            <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
+              {total > 0 ? (
+                <>
+                  <div className="relative max-sm:basis-full">
+                    <Search
+                      aria-hidden="true"
+                      className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                    />
+                    <Input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder={`Search ${noun}s…`}
+                      aria-label={`Search ${noun}s`}
+                      className="h-9 w-full pl-8 sm:w-56"
+                    />
+                  </div>
+                  <Select
+                    value={sort}
+                    onValueChange={(v) => setSort(v as ViewSort)}
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    {VIEW_SORT_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9"
-                  onClick={() => {
-                    setNewGroupSeedView(null);
-                    setNewGroupOpen(true);
-                  }}
-                >
-                  <FolderPlus className="mr-1.5 size-4" /> New group
-                </Button>
-              </>
-            ) : null}
-            {action}
+                    <SelectTrigger
+                      className="h-9 w-[11.5rem]"
+                      aria-label="Sort ungrouped"
+                      title="Order of the ungrouped section. Dragging a card pins the custom order."
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent align="end">
+                      {VIEW_SORT_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9"
+                    onClick={() => {
+                      setNewGroupSeedView(null);
+                      setNewGroupOpen(true);
+                    }}
+                  >
+                    <FolderPlus className="mr-1.5 size-4" /> New group
+                  </Button>
+                </>
+              ) : null}
+              {action}
+            </div>
           </div>
-        </div>
 
-        {panel}
+          {panel}
 
-        {loading || groupsQ.isLoading ? (
-          <BoardSkeleton />
-        ) : total === 0 ? (
-          <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-6 text-sm">
-            {empty}
-          </div>
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collisionDetection}
-            onDragStart={onDragStart}
-            onDragOver={onDragOver}
-            onDragEnd={onDragEnd}
-            onDragCancel={onDragCancel}
-          >
-            {/* While dragging, cards under the pointer must not react
+          {loading || groupsQ.isLoading ? (
+            <BoardSkeleton />
+          ) : total === 0 ? (
+            <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-6 text-sm">
+              {empty}
+            </div>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={collisionDetection}
+              onDragStart={onDragStart}
+              onDragOver={onDragOver}
+              onDragEnd={onDragEnd}
+              onDragCancel={onDragCancel}
+            >
+              {/* While dragging, cards under the pointer must not react
                 (hover wash, cover fan, tint): the slot and the target
                 group's ring are the only feedback. Collision detection
                 uses rects, not pointer events. */}
-            <div
-              className={cn(
-                "space-y-4",
-                activeId &&
-                  "select-none [&_[data-board-card]]:pointer-events-none",
-              )}
-            >
-              <SortableContext
-                items={board.groups.map((g) => groupDndId(g.id))}
-                strategy={verticalListSortingStrategy}
+              <div
+                className={cn(
+                  "space-y-4",
+                  activeId &&
+                    "select-none [&_[data-board-card]]:pointer-events-none",
+                )}
               >
-                {visibleBoard.groups.map((group, idx) => (
-                  <GroupSection
-                    key={group.id}
-                    group={group}
-                    totalInGroup={board.groups[idx]?.views.length ?? 0}
-                    forceOpen={searching}
-                    noun={noun}
-                    isFirst={idx === 0}
-                    isLast={idx === board.groups.length - 1}
-                    dragActive={activeId !== null}
-                    isDropTarget={dropTarget === group.id}
-                    suppressClickUntil={suppressClickUntil}
-                    renderCard={renderCard}
-                    onRename={(name) =>
-                      updateGroup.mutate({ id: group.id, name })
-                    }
-                    onToggleCollapsed={() =>
-                      updateGroup.mutate({
-                        id: group.id,
-                        collapsed: !group.collapsed,
-                      })
-                    }
-                    onMove={(dir) => {
-                      const next = moveGroup(board, idx, idx + dir);
-                      if (next !== board) commit(next);
-                    }}
-                    onDelete={() =>
-                      deleteGroup(
-                        board.groups.find((g) => g.id === group.id) ?? group,
-                        board,
-                      )
-                    }
-                    menuExtra={groupMenuExtra?.(board.groups[idx] ?? group)}
-                  />
-                ))}
-              </SortableContext>
-
-              <UngroupedSection
-                views={visibleBoard.ungrouped}
-                total={board.ungrouped.length}
-                hasGroups={showGroups}
-                noun={noun}
-                icon={Icon}
-                searching={searching}
-                dragActive={activeId !== null}
-                isDropTarget={dropTarget === UNGROUPED_ID}
-                suppressClickUntil={suppressClickUntil}
-                renderCard={renderCard}
-              />
-            </div>
-
-            <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
-              {activeView ? (
-                // A lifted copy of the card itself, at its own size, so
-                // what you hold is what lands.
-                <div
-                  className={cn(
-                    "pointer-events-none rounded-lg",
-                    DRAG_LIFT_CLASS,
-                  )}
+                <SortableContext
+                  items={board.groups.map((g) => groupDndId(g.id))}
+                  strategy={verticalListSortingStrategy}
                 >
-                  {renderCard(activeView)}
-                </div>
-              ) : activeGroup ? (
-                <DragGhost
-                  icon={GripVertical}
-                  label={activeGroup.name}
-                  meta={`${activeGroup.views.length} ${plural(noun, activeGroup.views.length)}`}
-                />
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-        )}
-      </div>
+                  {visibleBoard.groups.map((group, idx) => (
+                    <GroupSection
+                      key={group.id}
+                      group={group}
+                      totalInGroup={board.groups[idx]?.views.length ?? 0}
+                      forceOpen={searching}
+                      noun={noun}
+                      isFirst={idx === 0}
+                      isLast={idx === board.groups.length - 1}
+                      dragActive={activeId !== null}
+                      isDropTarget={dropTarget === group.id}
+                      suppressClickUntil={suppressClickUntil}
+                      renderCard={renderCard}
+                      onRename={(name) =>
+                        updateGroup.mutate({ id: group.id, name })
+                      }
+                      onToggleCollapsed={() =>
+                        updateGroup.mutate({
+                          id: group.id,
+                          collapsed: !group.collapsed,
+                        })
+                      }
+                      onMove={(dir) => {
+                        const next = moveGroup(board, idx, idx + dir);
+                        if (next !== board) commit(next);
+                      }}
+                      onDelete={() =>
+                        deleteGroup(
+                          board.groups.find((g) => g.id === group.id) ?? group,
+                          board,
+                        )
+                      }
+                      menuExtra={groupMenuExtra?.(board.groups[idx] ?? group)}
+                    />
+                  ))}
+                </SortableContext>
 
-      <NewGroupDialog
-        open={newGroupOpen}
-        onOpenChange={(o) => {
-          setNewGroupOpen(o);
-          if (!o) setNewGroupSeedView(null);
-        }}
-        seedViewName={
-          newGroupSeedView
-            ? views.find((v) => v.id === newGroupSeedView)?.name
-            : undefined
-        }
-        pending={createGroup.isPending}
-        onSubmit={submitNewGroup}
-        noun={noun}
-      />
+                <UngroupedSection
+                  views={visibleBoard.ungrouped}
+                  total={board.ungrouped.length}
+                  hasGroups={showGroups}
+                  noun={noun}
+                  icon={Icon}
+                  searching={searching}
+                  dragActive={activeId !== null}
+                  isDropTarget={dropTarget === UNGROUPED_ID}
+                  suppressClickUntil={suppressClickUntil}
+                  renderCard={renderCard}
+                />
+              </div>
+
+              <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
+                {activeView ? (
+                  // A lifted copy of the card itself, at its own size, so
+                  // what you hold is what lands.
+                  <div
+                    className={cn(
+                      "pointer-events-none rounded-lg",
+                      DRAG_LIFT_CLASS,
+                    )}
+                  >
+                    {renderCard(activeView)}
+                  </div>
+                ) : activeGroup ? (
+                  <DragGhost
+                    icon={GripVertical}
+                    label={activeGroup.name}
+                    meta={`${activeGroup.views.length} ${plural(noun, activeGroup.views.length)}`}
+                  />
+                ) : null}
+              </DragOverlay>
+            </DndContext>
+          )}
+        </div>
+
+        <NewGroupDialog
+          open={newGroupOpen}
+          onOpenChange={(o) => {
+            setNewGroupOpen(o);
+            if (!o) setNewGroupSeedView(null);
+          }}
+          seedViewName={
+            newGroupSeedView
+              ? views.find((v) => v.id === newGroupSeedView)?.name
+              : undefined
+          }
+          pending={createGroup.isPending}
+          onSubmit={submitNewGroup}
+          noun={noun}
+        />
+      </CardGridClassContext.Provider>
     </ViewBoardActionsContext.Provider>
   );
 }
@@ -1127,10 +1145,7 @@ function CardGrid({
   renderCard: (view: SavedViewView) => React.ReactNode;
 }) {
   return (
-    <ul
-      role="list"
-      className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6"
-    >
+    <ul role="list" className={React.useContext(CardGridClassContext)}>
       {views.map((view) => (
         <BoardCard
           key={view.id}
@@ -1276,13 +1291,23 @@ function DragGhost({
 }
 
 function BoardSkeleton() {
+  const grid = React.useContext(CardGridClassContext);
+  const large = grid === CARD_GRID_CLASS.large;
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Loading">
       <Skeleton className="h-10 w-full rounded-xl" />
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <ul
+        className={
+          large
+            ? grid
+            : "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        }
+      >
         {Array.from({ length: 4 }).map((_, i) => (
           <li key={i}>
-            <Skeleton className="h-28 w-full rounded-lg" />
+            <Skeleton
+              className={cn("w-full rounded-lg", large ? "h-96" : "h-28")}
+            />
           </li>
         ))}
       </ul>

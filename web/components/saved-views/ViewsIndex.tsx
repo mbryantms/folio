@@ -86,6 +86,7 @@ import { BatchRefreshProvider } from "@/lib/cbl/use-batch-refresh";
 import { formatRelativeDate } from "@/lib/format";
 import { UNGROUPED_ID, type BoardGroup } from "@/lib/saved-views/view-board";
 import { showUndoToast } from "@/lib/ui/undo-toast";
+import { cn } from "@/lib/utils";
 
 const WANT_TO_READ_KEY = "want_to_read";
 
@@ -401,29 +402,40 @@ function TabCount({ n }: { n: number }) {
 function ViewCardStack({
   viewId,
   Icon,
+  large = false,
   children,
 }: {
   viewId: string;
   Icon: LucideIcon;
+  large?: boolean;
   children?: React.ReactNode;
 }) {
   const covers = useViewCovers();
   return (
-    <CoverStackStage urls={covers.data?.get(viewId) ?? []} Icon={Icon} compact>
+    <CoverStackStage
+      urls={covers.data?.get(viewId) ?? []}
+      Icon={Icon}
+      compact={!large}
+    >
       {children}
     </CoverStackStage>
   );
 }
 
-function ViewCard({
+export function ViewCard({
   view,
   Icon,
   isCollection,
+  size = "compact",
 }: {
   view: SavedViewView;
   Icon: LucideIcon;
   isCollection: boolean;
+  /** `large`: the `/collections` page's big-cover card (p-4, full-size
+   *  stack, two-line description). */
+  size?: "compact" | "large";
 }) {
+  const large = size === "large";
   const qc = useQueryClient();
   // Undo instead of confirm (folio-flair-1.0): Delete fires at once and
   // the toast carries an Undo that rebuilds the view from a snapshot.
@@ -604,12 +616,14 @@ function ViewCard({
 
   return (
     <div
-      className={`group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col gap-2 rounded-lg border p-3 transition-colors ${
-        stacked ? "cover-stack-host" : ""
-      }`}
+      className={cn(
+        "group hover:bg-accent/40 border-border/60 bg-card flex h-full flex-col rounded-lg border transition-colors",
+        large ? "gap-3 p-4" : "gap-2 p-3",
+        stacked && "cover-stack-host",
+      )}
     >
       {stacked ? (
-        <ViewCardStack viewId={view.id} Icon={Icon}>
+        <ViewCardStack viewId={view.id} Icon={Icon} large={large}>
           {menu}
         </ViewCardStack>
       ) : (
@@ -627,11 +641,19 @@ function ViewCard({
         draggable={false}
         className="focus-visible:ring-ring min-w-0 space-y-0.5 rounded focus-visible:ring-2 focus-visible:outline-none"
       >
-        <div className="truncate text-sm font-medium" title={view.name}>
+        <div
+          className={cn("truncate font-medium", !large && "text-sm")}
+          title={view.name}
+        >
           {view.name}
         </div>
         {view.description ? (
-          <p className="text-muted-foreground line-clamp-1 text-xs">
+          <p
+            className={cn(
+              "text-muted-foreground",
+              large ? "line-clamp-2 text-sm" : "line-clamp-1 text-xs",
+            )}
+          >
             {view.description}
           </p>
         ) : null}
