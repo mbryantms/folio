@@ -1188,3 +1188,74 @@ body {
     rotate: none;
   }
 }
+
+/* ── Shell motion (folio-flair) ──
+ * Page cross-fade (components/shell/RouteFade.tsx): the content column
+ * fades between top-level pages. The topbar and phone tab bar carry
+ * static view-transition names and are held still (old snapshot hidden,
+ * new one live), and the root snapshot doesn't cross-fade either, so the
+ * sidebar and its sliding highlight update live instead of ghosting.
+ * Named cover-morph groups (.morph) keep their own animation above this.
+ * Reduced motion (OS or the account's Motion setting) swaps instantly. */
+::view-transition {
+  /* Clicks during the short fade reach the live page. */
+  pointer-events: none;
+}
+::view-transition-old(root) {
+  display: none;
+}
+::view-transition-group(root),
+::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-group(shell-topbar),
+::view-transition-group(shell-tabbar) {
+  animation: none;
+  z-index: 50;
+}
+::view-transition-old(shell-topbar),
+::view-transition-old(shell-tabbar) {
+  display: none;
+}
+::view-transition-new(shell-topbar),
+::view-transition-new(shell-tabbar) {
+  animation: none;
+}
+::view-transition-group(.route-fade) {
+  animation-duration: 180ms;
+  animation-timing-function: ease-out;
+}
+::view-transition-old(.route-fade) {
+  animation: 180ms ease-out both shell-route-fade-out;
+}
+::view-transition-new(.route-fade) {
+  animation: 180ms ease-out both shell-route-fade-in;
+}
+@keyframes shell-route-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes shell-route-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Reduced: no fade. The old snapshot is dropped rather than left at full
+ * opacity, which the pair's plus-lighter blend would brighten. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(.route-fade),
+  ::view-transition-new(.route-fade) {
+    animation: none !important;
+  }
+  ::view-transition-old(.route-fade) {
+    display: none;
+  }
+}
+[data-motion="reduced"]::view-transition-group(.route-fade),
+[data-motion="reduced"]::view-transition-new(.route-fade) {
+  animation: none !important;
+}
+[data-motion="reduced"]::view-transition-old(.route-fade) {
+  display: none;
+}

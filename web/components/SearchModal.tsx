@@ -1,10 +1,10 @@
 "use client";
 
-import { ArrowRight, BookOpen, ChevronRight } from "lucide-react";
+import { ArrowRight, BookOpen } from "lucide-react";
 import { Kbd } from "@/components/folio/kbd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   Command,
@@ -14,6 +14,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { ActionRowContent } from "@/components/search/ActionRowContent";
 import { RecentSearches } from "@/components/search/RecentSearches";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,16 +24,15 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useMe } from "@/lib/api/queries";
 import { useGlobalSearch } from "@/lib/search/use-search";
 import { useRecentSearches } from "@/lib/search/use-recent-searches";
 import { renderSearchSnippet } from "@/lib/search/render-snippet";
 import {
-  SEARCH_ACTIONS_CAP,
+  groupSearchActions,
   parseCommandPrefix,
-  rankSearchActions,
   type SearchAction,
 } from "@/lib/search/actions-registry";
+import { useSearchActions } from "@/lib/search/use-search-actions";
 import { SEARCH_CATEGORIES, type SearchHit } from "@/lib/search/types";
 import { cn } from "@/lib/utils";
 
@@ -49,8 +49,14 @@ const QUERY_DEBOUNCE_MS = 200;
  * (`useGlobalSearch`), so `shouldFilter={false}` disables cmdk's own
  * substring filter — it only does selection + a11y, not matching.
  *
- * A `>` prefix flips into command mode (action registry only). The footer
- * links to the dedicated `/search` page; `Mod+Enter` jumps there.
+ * A `>` prefix flips into command mode (action registry only, grouped by
+ * area: Actions / Library / Settings / Admin). An empty input offers a
+ * few suggested commands (continue reading, theme, sidebar, …) so the
+ * palette is keyboard-useful before the first keystroke; typed queries
+ * lead with up to six matching actions above the content hits. Actions
+ * come from `useSearchActions`, shared with the desktop topbar dropdown.
+ * The footer links to the dedicated `/search` page; `Mod+Enter` jumps
+ * there.
  *
  * Below `sm` it is the phone's search surface (the bottom tab bar's
  * Search tab opens it): a sheet from the top edge, full width, with a
@@ -66,7 +72,6 @@ export function SearchModal({
   onOpenChange: (next: boolean) => void;
 }) {
   const router = useRouter();
-  const me = useMe();
   const [raw, setRaw] = useState("");
   const [debounced, setDebounced] = useState("");
   const recents = useRecentSearches();
@@ -87,14 +92,21 @@ export function SearchModal({
 
   // Role-gated actions, recomputed per keystroke. Non-admins never see
   // admin destinations even via direct keyword match.
-  const actions = useMemo<readonly SearchAction[]>(
-    () =>
-      rankSearchActions(rawForActions, me.data?.role).slice(
-        0,
-        SEARCH_ACTIONS_CAP,
-      ),
-    [rawForActions, me.data?.role],
-  );
+  const {
+    actions,
+    run: runAction,
+    detailFor,
+    keyHintFor,
+  } = useSearchActions({ needle: rawForActions, commandMode, active: open });
+  const suggesting = !commandMode && rawForActions.trim().length === 0;
+  const actionSections = commandMode
+    ? groupSearchActions(actions).map((g) => ({
+        heading: g.group,
+        actions: g.actions,
+      }))
+    : actions.length > 0
+      ? [{ heading: suggesting ? "Suggested" : "Jump to…", actions }]
+      : [];
 
   const contentSections = commandMode
     ? []
@@ -105,9 +117,9 @@ export function SearchModal({
 
   const hasItems =
     actions.length > 0 || contentSections.some((s) => s.hits.length > 0);
-  // Empty-input states: recents chips (if any) or a short hint. Shown
-  // only when there's nothing to search yet (not enabled, not command
-  // mode) — once the user types, cmdk's list takes over.
+  // Empty-input states: recents chips (if any) or a short hint, above the
+  // suggested commands. Shown only when there's nothing to search yet
+  // (not enabled, not command mode).
   const showRecents = !commandMode && !enabled && recents.recents.length > 0;
   const showHint = !commandMode && !enabled && recents.recents.length === 0;
 
@@ -128,9 +140,15 @@ export function SearchModal({
     handleOpenChange(false);
     router.push(hit.href);
   }
+  // A command that opens another dialog (the shortcuts sheet) must keep
+  // focus there: Radix would otherwise hand focus back to this dialog's
+  // trigger on close, which reads as "focus outside" to the new dialog
+  // and dismisses it.
+  const keepFocusOnClose = useRef(false);
   function commitAction(action: SearchAction) {
+    keepFocusOnClose.current = action.command === "show-shortcuts";
     handleOpenChange(false);
-    router.push(action.href);
+    runAction(action);
   }
   function commitFullSearch() {
     if (contentQuery) recents.add(contentQuery);
@@ -158,6 +176,12 @@ export function SearchModal({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         showCloseButton={false}
+        onCloseAutoFocus={(e) => {
+          if (keepFocusOnClose.current) {
+            keepFocusOnClose.current = false;
+            e.preventDefault();
+          }
+        }}
         // Phones: globals.css turns every dialog into a bottom sheet; this
         // attribute picks the top-sheet geometry there instead (the input
         // stays put while the keyboard owns the bottom of the screen).
@@ -201,9 +225,7 @@ export function SearchModal({
               </Button>
             </DialogClose>
           </div>
-          {showHint ? (
-            <SearchHints />
-          ) : showRecents ? (
+          {showRecents ? (
             <RecentSearches
               recents={recents.recents}
               onPick={(q) => {
@@ -213,17 +235,19 @@ export function SearchModal({
               onRemove={recents.remove}
               onClear={recents.clear}
             />
-          ) : (
-            <CommandList className="min-h-0 flex-1 max-sm:max-h-none">
-              {isLoading && !hasItems ? (
-                <p
-                  role="status"
-                  className="text-muted-foreground px-4 py-6 text-center text-xs"
-                >
-                  Searching…
-                </p>
-              ) : null}
-              {/* cmdk auto-hides Empty while any item is mounted. */}
+          ) : null}
+          <CommandList className="min-h-0 flex-1 max-sm:max-h-none">
+            {isLoading && !hasItems ? (
+              <p
+                role="status"
+                className="text-muted-foreground px-4 py-6 text-center text-xs"
+              >
+                Searching…
+              </p>
+            ) : null}
+            {/* cmdk auto-hides Empty while any item is mounted. Nothing
+                  to be empty about before the user has typed. */}
+            {showHint || showRecents ? null : (
               <CommandEmpty>
                 {commandMode
                   ? "No commands match."
@@ -231,76 +255,61 @@ export function SearchModal({
                     ? "Searching…"
                     : `No matches for “${contentQuery}”.`}
               </CommandEmpty>
-              {actions.length > 0 ? (
-                <CommandGroup heading={commandMode ? "Commands" : "Jump to…"}>
-                  {actions.map((action) => {
-                    const Icon = action.icon;
-                    return (
-                      <CommandItem
-                        key={action.id}
-                        value={`action:${action.id}`}
-                        onSelect={() => commitAction(action)}
-                        className="gap-3 px-3 py-2"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="border-border bg-muted text-muted-foreground inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border"
-                        >
-                          <Icon className="size-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-medium">
-                            {action.label}
-                          </span>
-                          <span className="block truncate text-xs opacity-70">
-                            {action.group}
-                          </span>
-                        </span>
-                        <ChevronRight
-                          className="size-3.5 opacity-50"
-                          aria-hidden="true"
-                        />
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              ) : null}
-              {contentSections.map(({ def, hits }) => (
-                <CommandGroup key={def.key} heading={def.labelPlural}>
-                  {hits.map((hit) => (
-                    <CommandItem
-                      key={hit.id}
-                      value={`${def.key}:${hit.id}`}
-                      onSelect={() => commitHit(hit)}
-                      className="gap-3 px-3 py-2"
-                    >
-                      <Thumb hit={hit} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">
-                          {hit.title}
-                        </span>
-                        {hit.snippet ? (
-                          // `<mark>`-highlighted excerpt (sanitised) wins
-                          // over the static subtitle — it shows *why* the
-                          // row matched.
-                          <span
-                            className="[&_mark]:bg-primary/30 block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark]:text-current"
-                            dangerouslySetInnerHTML={{
-                              __html: renderSearchSnippet(hit.snippet),
-                            }}
-                          />
-                        ) : hit.subtitle ? (
-                          <span className="block truncate text-xs opacity-70">
-                            {hit.subtitle}
-                          </span>
-                        ) : null}
+            )}
+            {actionSections.map((section) => (
+              <CommandGroup key={section.heading} heading={section.heading}>
+                {section.actions.map((action) => (
+                  <CommandItem
+                    key={action.id}
+                    value={`action:${action.id}`}
+                    onSelect={() => commitAction(action)}
+                    className="gap-3 px-3 py-2"
+                  >
+                    <ActionRowContent
+                      action={action}
+                      detail={detailFor(action)}
+                      keyHint={keyHintFor(action)}
+                    />
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
+            {contentSections.map(({ def, hits }) => (
+              <CommandGroup key={def.key} heading={def.labelPlural}>
+                {hits.map((hit) => (
+                  <CommandItem
+                    key={hit.id}
+                    value={`${def.key}:${hit.id}`}
+                    onSelect={() => commitHit(hit)}
+                    className="gap-3 px-3 py-2"
+                  >
+                    <Thumb hit={hit} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">
+                        {hit.title}
                       </span>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              ))}
-            </CommandList>
-          )}
+                      {hit.snippet ? (
+                        // `<mark>`-highlighted excerpt (sanitised) wins
+                        // over the static subtitle — it shows *why* the
+                        // row matched.
+                        <span
+                          className="[&_mark]:bg-primary/30 block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark]:text-current"
+                          dangerouslySetInnerHTML={{
+                            __html: renderSearchSnippet(hit.snippet),
+                          }}
+                        />
+                      ) : hit.subtitle ? (
+                        <span className="block truncate text-xs opacity-70">
+                          {hit.subtitle}
+                        </span>
+                      ) : null}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
+          </CommandList>
+          {showHint ? <SearchHints /> : null}
           <SearchFooter
             enabled={enabled}
             query={debounced}
@@ -314,12 +323,15 @@ export function SearchModal({
   );
 }
 
-/** Short "type to search" prompt + key hints, shown when the input is
- *  empty and there are no recents. */
+/** Short "type to search" prompt + key hints, shown under the suggested
+ *  commands when the input is empty and there are no recents. */
 function SearchHints() {
   return (
-    <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
-      <p>Type at least 2 characters to search.</p>
+    <div className="text-muted-foreground border-border space-y-2 border-t px-4 py-3 text-center text-xs">
+      <p>
+        Type at least 2 characters to search, or <KbdGlyph>&gt;</KbdGlyph>for
+        commands.
+      </p>
       <p className="max-sm:hidden">
         <KbdGlyph>↵</KbdGlyph> opens the highlighted hit ·{" "}
         <KbdGlyph>⌘</KbdGlyph>

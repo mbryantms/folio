@@ -1,20 +1,20 @@
 "use client";
 
 import { Bookmark, ChevronRight, Clock, Search, X } from "lucide-react";
+import { ActionRowContent } from "@/components/search/ActionRowContent";
 import { Kbd } from "@/components/folio/kbd";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 
-import { useMe } from "@/lib/api/queries";
 import {
-  SEARCH_ACTIONS_CAP,
+  groupSearchActions,
   parseCommandPrefix,
-  rankSearchActions,
   type SearchAction,
 } from "@/lib/search/actions-registry";
 import { renderSearchSnippet } from "@/lib/search/render-snippet";
 import { useGlobalSearch } from "@/lib/search/use-search";
 import { useRecentSearches } from "@/lib/search/use-recent-searches";
+import { useSearchActions } from "@/lib/search/use-search-actions";
 import {
   SEARCH_CATEGORIES,
   flattenGroups,
@@ -51,7 +51,6 @@ const QUERY_DEBOUNCE_MS = 200;
  */
 export function TopbarSearchInline({ className }: { className?: string }) {
   const router = useRouter();
-  const me = useMe();
   const recents = useRecentSearches();
   const [raw, setRaw] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
@@ -75,10 +74,38 @@ export function TopbarSearchInline({ className }: { className?: string }) {
   const { enabled, isLoading, groups, total } = useGlobalSearch(contentQuery, {
     perCategory: MAX_PER_CATEGORY,
   });
-  const actions = React.useMemo<readonly SearchAction[]>(() => {
-    const ranked = rankSearchActions(rawForActions, me.data?.role);
-    return ranked.slice(0, SEARCH_ACTIONS_CAP);
-  }, [rawForActions, me.data?.role]);
+  // Shared with the ⌘K dialog: suggested commands on an empty field,
+  // up to six matches ahead of content hits, the full grouped list in
+  // command mode.
+  const {
+    actions: rankedActions,
+    run: runAction,
+    detailFor,
+    keyHintFor,
+  } = useSearchActions({ needle: rawForActions, commandMode, active: open });
+  const suggesting = !commandMode && rawForActions.trim().length === 0;
+  const actionSections = React.useMemo(
+    () =>
+      commandMode
+        ? groupSearchActions(rankedActions).map((g) => ({
+            heading: g.group as string,
+            actions: g.actions,
+          }))
+        : rankedActions.length > 0
+          ? [
+              {
+                heading: suggesting ? "Suggested" : "Jump to…",
+                actions: [...rankedActions],
+              },
+            ]
+          : [],
+    [commandMode, rankedActions, suggesting],
+  );
+  // Flat, in rendered order, so the highlight index walks the sections.
+  const actions = React.useMemo(
+    () => actionSections.flatMap((sec) => sec.actions),
+    [actionSections],
+  );
 
   const contentFlat = flattenGroups(groups, MAX_PER_CATEGORY);
   const flat: ReadonlyArray<SearchHit | SearchAction> = commandMode
@@ -120,7 +147,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
     if (!row) return;
     setOpen(false);
     if (isAction(row)) {
-      router.push(row.href);
+      runAction(row);
       return;
     }
     if (contentQuery) recents.add(contentQuery);
@@ -164,16 +191,8 @@ export function TopbarSearchInline({ className }: { className?: string }) {
     }
   }
 
-  const showRecentsRow =
-    !enabled &&
-    !commandMode &&
-    actions.length === 0 &&
-    recents.recents.length > 0;
-  const showEmptyHint =
-    !enabled &&
-    !commandMode &&
-    actions.length === 0 &&
-    recents.recents.length === 0;
+  const showRecentsRow = suggesting && !enabled && recents.recents.length > 0;
+  const showEmptyHint = suggesting && !enabled && recents.recents.length === 0;
   const showLoading =
     isLoading && !commandMode && total === 0 && actions.length === 0;
   const showNoMatch = enabled && flat.length === 0;
@@ -236,14 +255,11 @@ export function TopbarSearchInline({ className }: { className?: string }) {
           className="border-border bg-popover text-popover-foreground absolute top-[calc(100%+0.25rem)] right-0 left-0 z-40 max-h-[70vh] overflow-y-auto rounded-md border shadow-xl"
         >
           {showEmptyHint ? (
-            <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
-              <p>Type at least 2 characters to search.</p>
-              <p>
-                <Kbd className="mx-1">↵</Kbd>
-                opens · type <Kbd className="mx-1">&gt;</Kbd>
-                for commands
-              </p>
-            </div>
+            <p className="text-muted-foreground border-border border-b px-4 py-2.5 text-center text-xs">
+              Type 2+ characters to search · <Kbd className="mx-1">↵</Kbd>
+              opens · <Kbd className="mx-1">&gt;</Kbd>
+              for commands
+            </p>
           ) : null}
 
           {showRecentsRow ? (
@@ -306,41 +322,30 @@ export function TopbarSearchInline({ className }: { className?: string }) {
             </p>
           ) : null}
 
-          {actions.length > 0 ? (
-            <ResultSection title={commandMode ? "Commands" : "Jump to…"}>
-              {actions.map((action, i) => {
-                const idx = i;
-                const Icon = action.icon;
-                return (
-                  <ResultRow
-                    key={action.id}
-                    selected={idx === safeHighlighted}
-                    onHover={() => setHighlighted(idx)}
-                    onSelect={() => commitRow(action)}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="border-border bg-muted text-muted-foreground inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border"
+          {actionSections.map((section) => {
+            const sectionStart = actions.indexOf(section.actions[0]!);
+            return (
+              <ResultSection key={section.heading} title={section.heading}>
+                {section.actions.map((action, i) => {
+                  const idx = sectionStart + i;
+                  return (
+                    <ResultRow
+                      key={action.id}
+                      selected={idx === safeHighlighted}
+                      onHover={() => setHighlighted(idx)}
+                      onSelect={() => commitRow(action)}
                     >
-                      <Icon className="size-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">
-                        {action.label}
-                      </span>
-                      <span className="block truncate text-xs opacity-70">
-                        {action.group}
-                      </span>
-                    </span>
-                    <ChevronRight
-                      className="size-3.5 opacity-50"
-                      aria-hidden="true"
-                    />
-                  </ResultRow>
-                );
-              })}
-            </ResultSection>
-          ) : null}
+                      <ActionRowContent
+                        action={action}
+                        detail={detailFor(action)}
+                        keyHint={keyHintFor(action)}
+                      />
+                    </ResultRow>
+                  );
+                })}
+              </ResultSection>
+            );
+          })}
 
           {!commandMode
             ? SEARCH_CATEGORIES.map((def) => {

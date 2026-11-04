@@ -18,31 +18,60 @@ import {
   BarChart3,
   BookmarkCheck,
   BookOpen,
+  BookOpenCheck,
   Compass,
+  Copy,
+  Download,
   FileText,
   FolderClosed,
+  Gauge,
   History,
   Image as ImageIcon,
   Keyboard,
   LayoutDashboard,
   Library,
   ListChecks,
+  ListOrdered,
   Lock,
   Mail,
+  Map as MapIcon,
   Network,
   Palette,
+  PanelLeft,
   PlusSquare,
+  Radar,
   ScrollText,
   Search,
   Server,
   ShieldCheck,
   Sparkles,
+  SunMoon,
+  Tags,
   Users,
   Wrench,
 } from "lucide-react";
 
+import type { KeybindAction } from "@/lib/reader/keybinds";
+
 /** Role gate. `undefined` means visible to every signed-in user. */
 export type ActionRole = undefined | "admin";
+
+/** Non-navigation commands. The registry stays static and pure: an entry
+ *  names its command, and the surface's runner (`useSearchActions`)
+ *  carries it out with the hooks it needs (theme, sidebar, the
+ *  continue-reading query, the shortcuts sheet). */
+export type ShellCommand =
+  "continue-reading" | "toggle-theme" | "toggle-sidebar" | "show-shortcuts";
+
+/** Display group. Rendered as section headings in command mode, in this
+ *  order (`ACTION_GROUP_ORDER`). */
+export type ActionGroup = "Actions" | "Library" | "Settings" | "Admin";
+export const ACTION_GROUP_ORDER: readonly ActionGroup[] = [
+  "Actions",
+  "Library",
+  "Settings",
+  "Admin",
+];
 
 export interface SearchAction {
   /** Stable id — used as the React key + the "recent commands" cache
@@ -52,11 +81,18 @@ export interface SearchAction {
   label: string;
   /** Short hint shown under the label (e.g. "Settings", "Admin",
    *  "Library"). Helps disambiguate when the label is short. */
-  group: string;
+  group: ActionGroup;
   /** Lucide icon to render in the thumb slot. */
   icon: LucideIcon;
-  /** Destination route. Most actions are pure navigation. */
-  href: string;
+  /** Destination route. Most actions are pure navigation. Exactly one of
+   *  `href` / `command` is set (pinned by the registry test). */
+  href?: string;
+  /** A UI command instead of a route (theme, sidebar, …). */
+  command?: ShellCommand;
+  /** Keybind whose (user-resolved) chord the row shows as a hint. */
+  keybind?: KeybindAction;
+  /** A fixed key hint for shortcuts outside the rebindable registry. */
+  keyHint?: string;
   /** Extra search terms a user might type. The matcher checks these
    *  in addition to `label` + `group`, so "OPDS" finds the API tokens
    *  page even though the label is "API tokens". */
@@ -71,6 +107,52 @@ export interface SearchAction {
  *  list in a stable order. Keep grouped by area (account → library →
  *  admin). */
 export const SEARCH_ACTIONS: readonly SearchAction[] = [
+  // ── Commands ──
+  {
+    // Resolved at run time from `/me/continue-reading`: the row shows the
+    // issue it resumes and is hidden when nothing is in progress.
+    id: "cmd-continue-reading",
+    label: "Continue reading",
+    group: "Actions",
+    icon: BookOpenCheck,
+    command: "continue-reading",
+    keywords: ["resume", "last issue", "reader", "pick up"],
+  },
+  {
+    id: "cmd-toggle-theme",
+    label: "Toggle light / dark theme",
+    group: "Actions",
+    icon: SunMoon,
+    command: "toggle-theme",
+    keywords: ["theme", "dark mode", "light mode", "appearance"],
+  },
+  {
+    id: "cmd-toggle-sidebar",
+    label: "Toggle sidebar",
+    group: "Actions",
+    icon: PanelLeft,
+    command: "toggle-sidebar",
+    keybind: "toggleSidebar",
+    keywords: ["navigation", "rail", "collapse", "expand"],
+  },
+  {
+    id: "cmd-shortcuts",
+    label: "Show keyboard shortcuts",
+    group: "Actions",
+    icon: Keyboard,
+    command: "show-shortcuts",
+    keyHint: "?",
+    keywords: ["hotkeys", "cheat sheet", "keys", "help"],
+  },
+  {
+    id: "cmd-tour",
+    label: "Take the tour",
+    group: "Actions",
+    icon: MapIcon,
+    href: "/?tour=1",
+    keywords: ["onboarding", "help", "walkthrough", "guide", "intro"],
+  },
+
   // ── Account / settings ──
   {
     id: "open-account",
@@ -153,6 +235,14 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     icon: Activity,
     href: "/settings/activity",
     keywords: ["stats", "history", "minutes", "activity"],
+  },
+  {
+    id: "open-downloads",
+    label: "Downloads",
+    group: "Settings",
+    icon: Download,
+    href: "/settings/downloads",
+    keywords: ["offline", "saved issues", "storage"],
   },
 
   // ── Library / navigation ──
@@ -240,6 +330,60 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     href: "/admin/background-work",
     role: "admin",
     keywords: ["jobs", "queue", "scans", "workers", "thumbnails"],
+  },
+  {
+    id: "admin-scan-dashboard",
+    label: "Scan dashboard",
+    group: "Admin",
+    icon: Radar,
+    href: "/admin/scan-dashboard",
+    role: "admin",
+    keywords: ["scans", "library scan", "progress"],
+  },
+  {
+    id: "admin-findings",
+    label: "Library events",
+    group: "Admin",
+    icon: ListOrdered,
+    href: "/admin/findings",
+    role: "admin",
+    keywords: ["findings", "issues", "problems", "health"],
+  },
+  {
+    id: "admin-metadata",
+    label: "Metadata",
+    group: "Admin",
+    icon: Tags,
+    href: "/admin/metadata",
+    role: "admin",
+    keywords: ["comicvine", "providers", "match", "tags"],
+  },
+  {
+    id: "admin-duplicates",
+    label: "Duplicates",
+    group: "Admin",
+    icon: Copy,
+    href: "/admin/duplicates",
+    role: "admin",
+    keywords: ["dupes", "same issue", "merge"],
+  },
+  {
+    id: "admin-starter-lists",
+    label: "Starter lists",
+    group: "Admin",
+    icon: ListChecks,
+    href: "/admin/starter-lists",
+    role: "admin",
+    keywords: ["reading order", "new users", "onboarding"],
+  },
+  {
+    id: "admin-queue",
+    label: "Queue",
+    group: "Admin",
+    icon: Gauge,
+    href: "/admin/queue",
+    role: "admin",
+    keywords: ["redis", "workers", "jobs"],
   },
   {
     id: "admin-relationships",
@@ -373,11 +517,10 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
 export function rankSearchActions(
   needle: string,
   role: string | undefined,
+  opts: { exclude?: ReadonlySet<string> } = {},
 ): SearchAction[] {
   const lower = needle.trim().toLowerCase();
-  const visible = SEARCH_ACTIONS.filter(
-    (a) => a.role !== "admin" || role === "admin",
-  );
+  const visible = visibleActions(role, opts.exclude);
   if (lower.length === 0) return [...visible];
   type Scored = { a: SearchAction; score: number; pos: number };
   const scored: Scored[] = [];
@@ -397,6 +540,52 @@ export function rankSearchActions(
   }
   scored.sort((x, y) => y.score - x.score || x.pos - y.pos);
   return scored.map((s) => s.a);
+}
+
+/** Role- and context-filtered registry. `exclude` holds ids the current
+ *  surface can't run right now (no sidebar in the reader, nothing in
+ *  progress to continue). */
+function visibleActions(
+  role: string | undefined,
+  exclude: ReadonlySet<string> | undefined,
+): SearchAction[] {
+  return SEARCH_ACTIONS.filter(
+    (a) => (a.role !== "admin" || role === "admin") && !exclude?.has(a.id),
+  );
+}
+
+/** What an empty input offers: the handful of commands people reach for
+ *  most, so the palette is useful before the first keystroke. */
+export const SUGGESTED_ACTION_IDS: readonly string[] = [
+  "cmd-continue-reading",
+  "go-log",
+  "cmd-toggle-theme",
+  "cmd-toggle-sidebar",
+  "open-theme",
+];
+
+export function suggestedSearchActions(
+  role: string | undefined,
+  opts: { exclude?: ReadonlySet<string> } = {},
+): SearchAction[] {
+  const visible = new Map(
+    visibleActions(role, opts.exclude).map((a) => [a.id, a]),
+  );
+  return SUGGESTED_ACTION_IDS.flatMap((id) => {
+    const a = visible.get(id);
+    return a ? [a] : [];
+  });
+}
+
+/** Bucket ranked actions into display sections in `ACTION_GROUP_ORDER`,
+ *  keeping the ranked order inside each section. Empty sections drop. */
+export function groupSearchActions(
+  actions: readonly SearchAction[],
+): { group: ActionGroup; actions: SearchAction[] }[] {
+  return ACTION_GROUP_ORDER.map((group) => ({
+    group,
+    actions: actions.filter((a) => a.group === group),
+  })).filter((g) => g.actions.length > 0);
 }
 
 /** Detect the `>` prefix that flips the modal into pure command

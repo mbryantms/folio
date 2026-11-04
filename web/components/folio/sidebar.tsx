@@ -3,7 +3,7 @@
 /* Folio wrapper over the vendored shadcn Sidebar (components/ui is
  * pristine). What Folio adds, and nothing else:
  *  - `AppSidebarProvider`: the upstream provider plus the user-rebindable
- *    `toggleSidebar` keybind. The vendored provider already handles
+ *    `toggleSidebar` keybind (and the palette's `SIDEBAR_TOGGLE_EVENT`). The vendored provider already handles
  *    Mod+B itself, so that exact combination is left to it (a second
  *    listener would toggle twice and cancel out).
  *  - `AppSidebar`: icon-collapsible, positioned under Folio's full-width
@@ -32,6 +32,7 @@ import {
   resolveKeybinds,
   shouldSkipHotkey,
 } from "@/lib/reader/keybinds";
+import { SIDEBAR_TOGGLE_EVENT } from "@/lib/ui/shell-events";
 import { cn } from "@/lib/utils";
 
 export * from "@/components/ui/sidebar";
@@ -53,8 +54,14 @@ function SidebarKeybind() {
       e.preventDefault();
       toggleSidebar();
     };
+    // The command palette sits above this provider and asks by event.
+    const onRequest = () => toggleSidebar();
     window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener(SIDEBAR_TOGGLE_EVENT, onRequest);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      window.removeEventListener(SIDEBAR_TOGGLE_EVENT, onRequest);
+    };
   }, [bindings, toggleSidebar]);
   return null;
 }

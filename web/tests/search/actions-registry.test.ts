@@ -3,9 +3,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTION_GROUP_ORDER,
   SEARCH_ACTIONS,
+  SUGGESTED_ACTION_IDS,
+  groupSearchActions,
   parseCommandPrefix,
   rankSearchActions,
+  suggestedSearchActions,
 } from "@/lib/search/actions-registry";
 
 describe("parseCommandPrefix", () => {
@@ -39,12 +43,12 @@ describe("parseCommandPrefix", () => {
 });
 
 describe("SEARCH_ACTIONS registry", () => {
-  it("has 30 actions: 16 for every user + 14 admin-gated, unique ids", () => {
+  it("has 42 actions: 22 for every user + 20 admin-gated, unique ids", () => {
     const ids = SEARCH_ACTIONS.map((a) => a.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(SEARCH_ACTIONS.length).toBe(30);
-    expect(SEARCH_ACTIONS.filter((a) => a.role === undefined).length).toBe(16);
-    expect(SEARCH_ACTIONS.filter((a) => a.role === "admin").length).toBe(14);
+    expect(SEARCH_ACTIONS.length).toBe(42);
+    expect(SEARCH_ACTIONS.filter((a) => a.role === undefined).length).toBe(22);
+    expect(SEARCH_ACTIONS.filter((a) => a.role === "admin").length).toBe(20);
     // Every `admin-*` id is gated and nothing else is.
     for (const a of SEARCH_ACTIONS) {
       expect(a.role === "admin", a.id).toBe(a.id.startsWith("admin-"));
@@ -79,7 +83,7 @@ describe("rankSearchActions", () => {
 
   it("hides admin entries from non-admin users", () => {
     const out = rankSearchActions("", undefined);
-    expect(out.length).toBe(16);
+    expect(out.length).toBe(22);
     expect(out.every((a) => a.id !== "admin-libraries")).toBe(true);
     expect(out.every((a) => !a.id.startsWith("admin-"))).toBe(true);
     // The user-facing additions stay visible without a role.
@@ -147,5 +151,92 @@ describe("rankSearchActions", () => {
     expect(singular).toContain("admin-libraries");
     const plural = rankSearchActions("libraries", "admin").map((a) => a.id);
     expect(plural[0]).toBe("admin-libraries");
+  });
+});
+
+describe("palette commands (folio-flair)", () => {
+  const byId = new Map(SEARCH_ACTIONS.map((a) => [a.id, a]));
+
+  it("every entry is exactly one of a route or a command", () => {
+    for (const a of SEARCH_ACTIONS) {
+      expect(!!a.href !== !!a.command, a.id).toBe(true);
+    }
+  });
+
+  it("commands live in the Actions group and use the cmd- prefix", () => {
+    for (const a of SEARCH_ACTIONS) {
+      if (a.command) {
+        expect(a.group, a.id).toBe("Actions");
+        expect(a.id.startsWith("cmd-"), a.id).toBe(true);
+      }
+    }
+    expect(byId.get("cmd-continue-reading")?.command).toBe("continue-reading");
+    expect(byId.get("cmd-toggle-theme")?.command).toBe("toggle-theme");
+    expect(byId.get("cmd-toggle-sidebar")).toMatchObject({
+      command: "toggle-sidebar",
+      keybind: "toggleSidebar",
+    });
+    expect(byId.get("cmd-shortcuts")).toMatchObject({
+      command: "show-shortcuts",
+      keyHint: "?",
+    });
+    expect(byId.get("cmd-tour")?.href).toBe("/?tour=1");
+  });
+
+  it("fills the settings + admin gaps without duplicating routes", () => {
+    const hrefs = SEARCH_ACTIONS.flatMap((a) => (a.href ? [a.href] : []));
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+    expect(byId.get("open-downloads")?.href).toBe("/settings/downloads");
+    for (const [id, href] of [
+      ["admin-scan-dashboard", "/admin/scan-dashboard"],
+      ["admin-findings", "/admin/findings"],
+      ["admin-metadata", "/admin/metadata"],
+      ["admin-duplicates", "/admin/duplicates"],
+      ["admin-starter-lists", "/admin/starter-lists"],
+      ["admin-queue", "/admin/queue"],
+    ] as const) {
+      expect(byId.get(id), id).toMatchObject({ href, role: "admin" });
+    }
+  });
+
+  it("rankSearchActions honours the context exclude set", () => {
+    const exclude = new Set(["cmd-toggle-sidebar"]);
+    expect(
+      rankSearchActions("toggle", undefined, { exclude }).map((a) => a.id),
+    ).toEqual(["cmd-toggle-theme"]);
+    expect(rankSearchActions("dark mode", undefined)[0]?.id).toBe(
+      "cmd-toggle-theme",
+    );
+    expect(rankSearchActions("resume", undefined)[0]?.id).toBe(
+      "cmd-continue-reading",
+    );
+  });
+
+  it("suggested actions follow SUGGESTED_ACTION_IDS minus exclusions", () => {
+    expect(suggestedSearchActions(undefined).map((a) => a.id)).toEqual([
+      ...SUGGESTED_ACTION_IDS,
+    ]);
+    const out = suggestedSearchActions(undefined, {
+      exclude: new Set(["cmd-continue-reading"]),
+    }).map((a) => a.id);
+    expect(out).not.toContain("cmd-continue-reading");
+    expect(out.length).toBe(SUGGESTED_ACTION_IDS.length - 1);
+  });
+
+  it("groupSearchActions buckets in display order and drops empty groups", () => {
+    const groups = groupSearchActions(rankSearchActions("", "admin"));
+    expect(groups.map((g) => g.group)).toEqual([...ACTION_GROUP_ORDER]);
+    const userGroups = groupSearchActions(rankSearchActions("", undefined));
+    expect(userGroups.map((g) => g.group)).toEqual([
+      "Actions",
+      "Library",
+      "Settings",
+    ]);
+    // Ranked order is kept inside a group.
+    const ranked = rankSearchActions("log", "admin");
+    const lib = groupSearchActions(ranked).find((g) => g.group === "Library");
+    expect(lib?.actions.map((a) => a.id)).toEqual(
+      ranked.filter((a) => a.group === "Library").map((a) => a.id),
+    );
   });
 });

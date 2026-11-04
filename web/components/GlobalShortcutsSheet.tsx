@@ -17,6 +17,7 @@ import {
   resolveKeybinds,
   shouldSkipHotkey,
 } from "@/lib/reader/keybinds";
+import { SHORTCUTS_OPEN_EVENT } from "@/lib/ui/shell-events";
 
 /** The sheet (Radix Dialog + scroll lock + focus trap + the keybind
  *  tables) is only needed once someone presses `?` or picks "Keyboard
@@ -96,9 +97,14 @@ export function GlobalShortcutsSheet({
         toggle();
       }
     };
+    // The command palette sits outside this provider and asks by event.
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggle]);
+    window.addEventListener(SHORTCUTS_OPEN_EVENT, open);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(SHORTCUTS_OPEN_EVENT, open);
+    };
+  }, [toggle, open]);
 
   const inReader = pathname.includes("/read/");
 

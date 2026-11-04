@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
+import { useRef } from "react";
 
 import { ScanEventBeacon } from "@/components/admin/ScanEventBeacon";
 import {
@@ -19,6 +20,7 @@ import {
   useSidebar,
   useSidebarCollapsed,
 } from "@/components/folio/sidebar";
+import { SlidingNavHighlight } from "@/components/shell/SlidingNavHighlight";
 import { UserFooter } from "@/components/shell/UserFooter";
 import { useMarkerCount } from "@/lib/api/queries";
 import { useSidebarSectionCollapse } from "@/lib/use-sidebar-section-collapse";
@@ -49,6 +51,7 @@ export function MainSidebar({
   const { isMobile } = useSidebar();
   const markerCount = useMarkerCount({ enabled: showMarkerCount });
   const sectionCollapse = useSidebarSectionCollapse();
+  const navRef = useRef<HTMLElement | null>(null);
 
   return (
     <>
@@ -64,7 +67,19 @@ export function MainSidebar({
         </SidebarHeader>
       ) : null}
       <SidebarContent>
-        <nav aria-label="Library navigation" className="flex flex-col gap-2">
+        {/* `relative isolate`: the sliding highlight is positioned in the
+            nav's box and paints under the items (`-z-10` inside this
+            stacking context). Once it is placed, the active item drops
+            its own background so only the pill shows. */}
+        <nav
+          ref={navRef}
+          aria-label="Library navigation"
+          className="relative isolate flex flex-col gap-2 data-[nav-pill=ready]:[&_[data-sidebar=menu-button][data-active=true]]:bg-transparent"
+        >
+          <SlidingNavHighlight
+            containerRef={navRef}
+            className="bg-sidebar-accent rounded-md"
+          />
           {sections.map((section, sectionIdx) => {
             if (section.isSpacer) {
               return (

@@ -11,6 +11,7 @@ import {
   SidebarInset,
   SidebarTrigger,
 } from "@/components/folio/sidebar";
+import { RouteFade } from "@/components/shell/RouteFade";
 import { SkipToContent } from "@/components/shell/SkipToContent";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 import { cn } from "@/lib/utils";
@@ -62,7 +63,7 @@ export function AdminShell({
       <header
         className={cn(
           CHROME_BAND_CLASS,
-          "sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]",
+          "sticky top-0 z-30 flex h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1rem,var(--safe-right))] pl-[max(1rem,var(--safe-left))] [view-transition-name:shell-topbar] md:pr-[max(1.5rem,var(--safe-right))] md:pl-[max(1.5rem,var(--safe-left))]",
         )}
       >
         <SidebarTrigger aria-label="Toggle navigation" />
@@ -97,7 +98,9 @@ export function AdminShell({
           className="min-w-0 px-4 py-8 md:px-8"
         >
           {showRestartBanner ? <RestartPendingBanner /> : null}
-          {children}
+          {/* Cross-fades the content column between settings / admin
+              pages. */}
+          <RouteFade>{children}</RouteFade>
         </SidebarInset>
       </div>
     </AppSidebarProvider>

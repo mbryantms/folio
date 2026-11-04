@@ -11,11 +11,13 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
+import { SlidingNavHighlight } from "@/components/shell/SlidingNavHighlight";
 import { useSearchModal } from "@/lib/search/use-search-modal";
 import { cn } from "@/lib/utils";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
+import { useHideOnScroll } from "@/lib/ui/use-hide-on-scroll";
 
 const TAB_CLASS =
   "flex flex-1 flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors active:bg-secondary focus-visible:outline-2 focus-visible:outline-ring";
@@ -35,6 +37,14 @@ const TAB_CLASS =
  *
  * Reads `?library=all` to distinguish the Home and Library tabs, which share
  * the `/` path — so it must be mounted under a `Suspense` boundary.
+ *
+ * Motion (folio-flair, standard): the active tab's pill slides between
+ * tabs on navigation (`SlidingNavHighlight`), and the bar slides away
+ * while scrolling down and returns on scrolling up, near the top, at the
+ * page end, on navigation, when an overlay opens, or when keyboard focus
+ * enters it (`useHideOnScroll`). It only translates: `MainShell` keeps
+ * its `--bottom-tab-h` bottom padding either way, so content never
+ * reflows when the bar moves.
  */
 export function BottomTabBar({ onMore }: { onMore: () => void }) {
   const pathname = usePathname() ?? "";
@@ -44,6 +54,8 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
     pathname === "/bookmarks" || pathname.startsWith("/bookmarks/");
   const onSearch = pathname === "/search" || pathname.startsWith("/search/");
   const { open: searchOpen, setOpen: setSearchOpen } = useSearchModal();
+  const navRef = useRef<HTMLElement | null>(null);
+  const { hidden, reveal } = useHideOnScroll({ blocked: searchOpen });
   // Warm the lazy modal chunk on phones so the first tap opens at once
   // and the input's focus lands inside the tap gesture, which is when
   // iOS shows the keyboard. Desktop loads it on the first ⌘K as before.
@@ -54,15 +66,23 @@ export function BottomTabBar({ onMore }: { onMore: () => void }) {
 
   return (
     <nav
+      ref={navRef}
       aria-label="Primary"
+      data-hidden={hidden ? "true" : undefined}
+      onFocus={reveal}
       // Floating content (menus, popovers, selects) keeps clear of the bar:
       // `safeAreaCollisionPadding` reads this marker's height.
       data-bottom-inset=""
       className={cn(
         CHROME_BAND_CLASS,
-        "fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pr-(--safe-right) pb-(--safe-bottom) pl-(--safe-left) md:hidden",
+        "fixed inset-x-0 bottom-0 isolate z-30 flex h-[calc(var(--bottom-tab-h)+var(--safe-bottom))] items-stretch border-t pr-(--safe-right) pb-(--safe-bottom) pl-(--safe-left) transition-transform duration-200 ease-out [view-transition-name:shell-tabbar] data-hidden:translate-y-full md:hidden",
       )}
     >
+      <SlidingNavHighlight
+        containerRef={navRef}
+        inset={{ x: 10, y: 5 }}
+        className="bg-secondary rounded-lg"
+      />
       <TabLink
         href="/"
         icon={House}
