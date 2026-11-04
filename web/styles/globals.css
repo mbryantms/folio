@@ -1714,3 +1714,16 @@ html.theme-reveal::view-transition-group(root) {
 .log-line-in {
   animation: log-line-in 300ms ease both;
 }
+
+/* Queue lanes (folio-flair phase 5): running jobs' indeterminate bar. */
+@keyframes queue-indeterminate {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 300% 0;
+  }
+}
+.queue-indeterminate {
+  animation: queue-indeterminate 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
