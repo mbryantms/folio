@@ -47,6 +47,8 @@ import { toast } from "sonner";
 
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import {
   RelationshipFormDialog,
@@ -91,6 +93,7 @@ import type {
 } from "@/lib/api/types";
 import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
 import { kindOrder, scopeCaption } from "@/lib/relationships";
+import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { showUndoToast } from "@/lib/ui/undo-toast";
 import { useReturnFocus } from "@/lib/ui/use-return-focus";
 import { seriesUrl } from "@/lib/urls";
@@ -1003,24 +1006,33 @@ function RelatedCard({
   caption?: string;
   children?: React.ReactNode;
 }) {
+  // Same cover flair as SeriesCard: a `data-card` for the cover-tone
+  // wash, the optional tilt, and the morph into the series page.
+  const morph = useCoverMorph(seriesCoverName(series.slug), series.cover_url);
   return (
     <Link
       href={seriesUrl(series)}
+      onClick={morph.onClick}
+      data-card=""
       // Focus ring sits outside the card (offset) so the cover keeps the
       // grid's exact width; every container of these cards leaves ring room.
       className="group ring-offset-background focus-visible:ring-ring flex flex-col gap-1.5 rounded-md focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
       style={{ width: `${width}px` }}
       data-testid="related-card"
     >
-      <Cover
-        src={series.cover_url}
-        alt={series.name}
-        fallback={series.publisher}
-        className={cn(
-          "transition-opacity group-hover:opacity-90",
-          highlight && "ring-primary ring-2",
-        )}
-      />
+      <CoverTilt className="relative">
+        <CoverMorph name={morph.name}>
+          <Cover
+            src={series.cover_url}
+            alt={series.name}
+            fallback={series.publisher}
+            className={cn(
+              "transition group-hover:brightness-110",
+              highlight && "ring-primary ring-2",
+            )}
+          />
+        </CoverMorph>
+      </CoverTilt>
       <div className="space-y-0.5 px-0.5">
         {caption && (
           <p

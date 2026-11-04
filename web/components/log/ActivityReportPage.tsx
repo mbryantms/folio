@@ -13,6 +13,9 @@ import {
 } from "lucide-react";
 
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
+import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -26,6 +29,11 @@ import { useReadingLogInfinite, useReadingStats } from "@/lib/api/queries";
 import { formatTotalHours } from "@/lib/activity";
 import { formatRelativeDate } from "@/lib/format";
 import { issueUrl, seriesUrl } from "@/lib/urls";
+import {
+  issueCoverName,
+  seriesCoverName,
+  useCoverMorph,
+} from "@/lib/ui/cover-morph";
 import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type {
@@ -315,23 +323,26 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
       : event.series
         ? seriesUrl(event.series.slug)
         : null;
+  // Cover flair as on library cards: tone wash (`data-card` on the link),
+  // the optional tilt, and the morph into the issue / series page.
+  const morph = useCoverMorph(
+    event.series && event.issue
+      ? issueCoverName(event.series.slug, event.issue.slug)
+      : seriesCoverName(event.series?.slug ?? ""),
+    cover,
+  );
 
   const card = (
     <Card className="group/card hover:border-primary/40 flex h-full flex-col overflow-hidden transition-colors">
-      <div className="bg-muted relative aspect-2/3 w-full overflow-hidden">
-        {cover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+      <CoverTilt className="event-card-cover relative w-full">
+        <CoverMorph name={href ? morph.name : undefined}>
+          <Cover
             src={cover}
-            alt={`${seriesName} ${number ? `#${number}` : ""} cover`}
-            className="h-full w-full object-cover transition-transform duration-200 group-hover/card:scale-[1.02]"
-            loading="lazy"
+            alt={`${seriesName}${number ? ` #${number}` : ""} cover`}
+            fallback="No cover"
+            className="w-full transition group-hover/card:brightness-110"
           />
-        ) : (
-          <div className="text-muted-foreground/60 flex h-full w-full items-center justify-center text-xs">
-            No cover
-          </div>
-        )}
+        </CoverMorph>
         <span
           className={cn(
             "absolute top-2 left-2 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium tracking-wide uppercase backdrop-blur",
@@ -341,7 +352,7 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
           <Icon aria-hidden="true" className="size-3.5" />
           {KIND_LABEL[event.kind as ReadingLogEventKind]}
         </span>
-      </div>
+      </CoverTilt>
       <CardContent className="flex flex-1 flex-col gap-1.5 p-3.5">
         <div className="line-clamp-2 text-base leading-tight font-semibold">
           {seriesName}
@@ -378,7 +389,12 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
 
   if (href) {
     return (
-      <Link href={href} className="block focus:outline-none">
+      <Link
+        href={href}
+        className="block focus:outline-none"
+        data-card=""
+        onClick={morph.onClick}
+      >
         {card}
       </Link>
     );

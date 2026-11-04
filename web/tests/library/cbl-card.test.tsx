@@ -46,6 +46,17 @@ vi.mock("@/components/CoverLongPressActions", () => ({
   useCoverLongPressActions: () => ({ wrapperProps: {}, sheet: null }),
 }));
 
+// The cover morph keeps per-card state (`useId` + an external store);
+// tree inspection calls the component outside a renderer.
+vi.mock("@/lib/ui/cover-morph", () => ({
+  issueCoverName: (s: string, i: string) => `issue-cover-${s}-${i}`,
+  useCoverMorph: () => ({
+    name: undefined,
+    onClick: () => {},
+    mark: () => {},
+  }),
+}));
+
 import { Check } from "lucide-react";
 
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";

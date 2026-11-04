@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 
 import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
+import { CoverTilt } from "@/components/library/CoverTilt";
+import { PageScrub } from "@/components/library/PageScrub";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -17,6 +20,7 @@ import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { useUserProgress } from "@/lib/api/queries";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { cn } from "@/lib/utils";
 import type { CblEntryView, IssueSummaryView } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
@@ -115,13 +119,21 @@ export function CblIssueCard({
           ...menuActions,
         ]
       : menuActions;
+  // Cover morph into the issue page (or the reader), like IssueCard.
+  // Placeholder cards (no resolved issue) have nowhere to fly to.
+  const morph = useCoverMorph(
+    issue ? issueCoverName(issue.series_slug, issue.slug) : "",
+    issue?.cover_url,
+  );
   const longPress = useCoverLongPressActions({
     primary:
       issue && issue.state === "active"
         ? {
             label: `Read ${heading}`,
-            onSelect: () =>
-              router.push(readerUrl(issue, { cbl: cblSavedViewId })),
+            onSelect: () => {
+              morph.mark();
+              router.push(readerUrl(issue, { cbl: cblSavedViewId }));
+            },
           }
         : undefined,
     actions: sheetActions,
@@ -134,7 +146,7 @@ export function CblIssueCard({
   const coverWrapperProps = inSelectMode ? {} : longPress.wrapperProps;
 
   const cover = (showActions: boolean) => (
-    <div
+    <CoverTilt
       className={cn(
         "relative rounded-md transition-all",
         // Match `CblWindowCard`'s anchor ring — same primary tint,
@@ -152,15 +164,20 @@ export function CblIssueCard({
           label={heading}
         />
       )}
-      <Cover
-        src={issue?.cover_url}
-        alt={heading}
-        fallback={numberLabel}
-        className={cn(
-          "w-full transition group-hover:brightness-110",
-          !issue && "opacity-60",
-        )}
-      />
+      <CoverMorph name={issue ? morph.name : undefined}>
+        <Cover
+          src={issue?.cover_url}
+          alt={heading}
+          fallback={numberLabel}
+          className={cn(
+            "w-full transition group-hover:brightness-110",
+            !issue && "opacity-60",
+          )}
+        />
+      </CoverMorph>
+      {showActions && issue && !inSelectMode && (
+        <PageScrub issueId={issue.id} pageCount={issue.page_count} />
+      )}
       {/* Position badge moved to bottom-left so top-left is free for the
        *  kebab affordance. Match-status badge stays at top-right (it's
        *  the highest-priority signal for unresolved entries). */}
@@ -212,12 +229,13 @@ export function CblIssueCard({
             actions={menuActions}
           />
           <QuickReadOverlay
+            onActivate={morph.mark}
             readerHref={readerUrl(issue, { cbl: cblSavedViewId })}
             label={`Read ${heading}`}
           />
         </>
       )}
-    </div>
+    </CoverTilt>
   );
   const meta = (
     <div className="min-w-0 px-1">
@@ -268,6 +286,7 @@ export function CblIssueCard({
             href={issueUrl(issue, { cbl: cblSavedViewId })}
             className={wrapClass}
             data-card=""
+            onClick={morph.onClick}
           >
             {cover(issue.state === "active")}
             {meta}
