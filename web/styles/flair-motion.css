@@ -12,3 +12,39 @@
 .route-tab-in[data-route-tab-motion="back"] {
   animation: tab-panel-back 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+/* ===== Bottom-sheet grab handle + drag (lib/ui/sheet-swipe.ts) =====
+ * Bottom sheets (and dialogs, which are bottom sheets on phones) show a
+ * grab handle; dragging it (or the sheet while its content is at the top)
+ * pulls the sheet down to dismiss. While a drag is live, text selection
+ * is off. */
+[data-slot="sheet-content"][data-side="bottom"]::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  translate: -50% 0;
+  width: 40px;
+  height: 4px;
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+  pointer-events: none;
+}
+@media (width < 40rem) {
+  [data-slot="dialog-content"]:not([data-search-sheet])::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    translate: -50% 0;
+    width: 40px;
+    height: 4px;
+    border-radius: 9999px;
+    background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
+    pointer-events: none;
+  }
+}
+[data-sheet-dragging],
+[data-sheet-dragging] * {
+  user-select: none;
+}
