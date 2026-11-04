@@ -379,10 +379,16 @@ impl JobRuntime {
                 return;
             }
 
+            let started = std::time::Instant::now();
             let outcome = self
                 .clone()
                 .run_monitor_once(state.clone(), &shutdown)
                 .await;
+            // A monitor that ran healthily for a while earns a fresh backoff;
+            // only back-to-back failures should climb toward the 30s cap.
+            if started.elapsed() >= std::time::Duration::from_secs(60) {
+                delay = std::time::Duration::from_secs(1);
+            }
             if shutdown.is_cancelled() {
                 // The monitor has drained its in-flight jobs; write the
                 // cover stamps they left buffered so a restart does not
@@ -427,6 +433,29 @@ impl JobRuntime {
         let scan_concurrency = state.cfg().scan_worker_count;
         let post_concurrency = state.cfg().post_scan_worker_count;
 
+        // Free our worker names before registering them. apalis-redis refuses
+        // to register a worker whose name was seen within the orphan window,
+        // so a restart inside that window used to leave those workers dead
+        // (scans stuck "queued") until the next restart. Best effort: on a
+        // Redis error the monitor still starts, and apalis's own orphan
+        // recovery takes over once the window passes.
+        match self.release_stale_workers().await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(
+                requeued = n,
+                "apalis: released stale worker registrations; re-enqueued their in-flight jobs"
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, "apalis: could not release stale worker registrations")
+            }
+        }
+
+        // A worker whose future fails (a Redis outage, a registration
+        // refusal) is not restarted in place: apalis would retry it in a hot
+        // loop with no delay. Instead the failure stops this monitor
+        // gracefully and [`Self::run`] starts a fresh one after its backoff.
+        let worker_failed = shutdown.child_token();
+
         // apalis 1.0 registers a worker *factory*: the monitor rebuilds the
         // worker on every (re)start, so each registration captures its
         // storage + state and builds the chain inside the closure. Builder
@@ -465,7 +494,18 @@ impl JobRuntime {
             }};
         }
 
-        let monitor = Monitor::new();
+        let monitor = Monitor::new().should_restart({
+            let worker_failed = worker_failed.clone();
+            move |worker, error| {
+                tracing::error!(
+                    worker = %worker.name(),
+                    error = ?error,
+                    "apalis worker failed; restarting the job monitor"
+                );
+                worker_failed.cancel();
+                false
+            }
+        });
         let monitor = register!(
             monitor,
             "scan",
@@ -620,8 +660,10 @@ impl JobRuntime {
             sidecar_reemit::handle
         );
 
+        // Process shutdown, or a failed worker (`worker_failed` is a child
+        // of `shutdown`, so it fires for both).
         let shutdown_fut = {
-            let token = shutdown.clone();
+            let token = worker_failed.clone();
             async move {
                 token.cancelled().await;
                 Ok(())
@@ -908,6 +950,24 @@ fn storage<T>(conn: ConnectionManager) -> RedisStorage<T> {
     RedisStorage::new(conn).with_config(storage_config::<T>())
 }
 
+/// [`JobRuntime::release_stale_workers`]: apalis-redis's
+/// `reenqueue_orphaned.lua` for one named worker, minus the "has it
+/// expired" check. KEYS: workers zset, active list, signal list, in-flight
+/// set prefix. ARGV[1]: worker name. Returns the jobs re-enqueued.
+const RELEASE_WORKER_LUA: &str = r#"
+local inflight = KEYS[4] .. ":" .. ARGV[1]
+local jobs = redis.call("smembers", inflight)
+local n = #jobs
+if n > 0 then
+    redis.call("rpush", KEYS[2], unpack(jobs))
+    redis.call("del", inflight)
+    redis.call("del", KEYS[3])
+    redis.call("lpush", KEYS[3], 1)
+end
+redis.call("zrem", KEYS[1], ARGV[1])
+return n
+"#;
+
 /// Max seconds the apalis monitor waits for in-flight jobs to drain on shutdown
 /// before exiting anyway (OPS-3). Kept under a typical container stop grace
 /// period (~30s) so the process exits on its own rather than being SIGKILLed
@@ -998,6 +1058,40 @@ impl JobRuntime {
         let mut total = 0usize;
         for pattern in ["scan:in_flight:*", "scan:scan_id:*", "scan:queued:*"] {
             total += delete_matching_scan_keys(&mut conn, pattern).await?;
+        }
+        Ok(total)
+    }
+
+    /// Release the apalis worker registrations this process is about to
+    /// claim, re-enqueueing whatever jobs they still held.
+    ///
+    /// Each queue has one worker, named after the queue, and apalis-redis
+    /// keys its liveness (`{queue}:workers` zset) and in-flight set
+    /// (`{queue}:inflight:{name}`) by that name. Any registration found
+    /// before our monitor starts is left over from a previous process (or a
+    /// previous monitor in this one) and is dead, but apalis only treats it
+    /// as dead once the orphan window passes; until then it refuses to
+    /// register a worker with that name. This does what apalis's orphan
+    /// recovery would (move the in-flight jobs back onto `{queue}:active`,
+    /// wake fetchers, drop the registration) without waiting.
+    ///
+    /// Assumes one server process per Redis namespace, which the scan
+    /// coalescing keys ([`Self::clear_stale_scan_keys`]) already do. Returns
+    /// the number of jobs re-enqueued.
+    pub async fn release_stale_workers(&self) -> redis::RedisResult<usize> {
+        let script = redis::Script::new(RELEASE_WORKER_LUA);
+        let mut conn = self.redis.clone();
+        let mut total = 0usize;
+        for (name, cfg) in self.queue_configs() {
+            let n: usize = script
+                .key(cfg.workers_set())
+                .key(cfg.active_jobs_list())
+                .key(cfg.signal_list())
+                .key(cfg.inflight_jobs_set())
+                .arg(name)
+                .invoke_async(&mut conn)
+                .await?;
+            total += n;
         }
         Ok(total)
     }
