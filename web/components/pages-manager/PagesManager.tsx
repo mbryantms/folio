@@ -36,16 +36,6 @@ import { NewPageButton } from "@/components/library/NewPageButton";
 import { EditDescriptionDialog } from "@/components/saved-views/EditDescriptionDialog";
 import { ManagePinsDialog } from "@/components/saved-views/ManagePinsDialog";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   LoadingRegion,
   RowsSkeleton,
   TabStripSkeleton,
@@ -68,7 +58,6 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import {
-  useDeletePage,
   useReorderSavedViews,
   useTogglePageSidebar,
   useTogglePinOnPage,
@@ -79,6 +68,7 @@ import { useMe, useMePages, useSavedViews } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { PageView, SavedViewView } from "@/lib/api/types";
 import { Label } from "@/components/ui/label";
+import { useDeletePageWithUndo } from "@/lib/pages/use-delete-page-undo";
 import { useHeldOrder } from "@/lib/ui/held-order";
 import {
   DRAG_LIFT_CLASS,
@@ -208,7 +198,7 @@ function PageTabContent({ page }: { page: PageView }) {
 function PageHeader({ page }: { page: PageView }) {
   const updatePage = useUpdatePage(page.id);
   const toggleSidebar = useTogglePageSidebar(page.id);
-  const del = useDeletePage(page.id);
+  const del = useDeletePageWithUndo(page.id, { leaveRoute: false });
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(page.name);
   const [lastSeen, setLastSeen] = React.useState(page.name);
@@ -217,7 +207,6 @@ function PageHeader({ page }: { page: PageView }) {
     setDraft(page.name);
   }
   const [descOpen, setDescOpen] = React.useState(false);
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   React.useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -345,13 +334,11 @@ function PageHeader({ page }: { page: PageView }) {
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setConfirmOpen(true);
-                }}
+                disabled={del.isPending}
+                onSelect={() => void del.run()}
                 className="text-destructive focus:text-destructive"
               >
-                <Trash2 className="mr-2 size-4" /> Delete page…
+                <Trash2 className="mr-2 size-4" /> Delete page
               </DropdownMenuItem>
             </>
           )}
@@ -363,30 +350,6 @@ function PageHeader({ page }: { page: PageView }) {
         pageId={page.id}
         initial={page.description ?? ""}
       />
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this page?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Pins on this page will be removed. The saved views themselves stay
-              — you can pin them to other pages from Saved views.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                del.mutate();
-                setConfirmOpen(false);
-              }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete page
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </header>
   );
 }
