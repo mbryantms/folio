@@ -69,13 +69,11 @@ const REGULAR = {
   thumbW: "w-24",
   thumbWideW: "w-48",
   thumbH: "h-36",
-  activeScale: "scale-[1.6]",
+  /** Thumb scale by distance from the open page: 0 (open) … then 1. */
+  scales: [1.6, 1.32, 1.15, 1.06],
+  gap: 12,
   row: "gap-3 pt-28",
   bar: "h-[calc(12rem+var(--safe-bottom))]",
-  gapL: "ml-5",
-  gapR: "mr-5",
-  pairGapL: "ml-7",
-  pairGapR: "mr-7",
 } as const;
 const COMPACT = {
   w: 64,
@@ -85,14 +83,35 @@ const COMPACT = {
   thumbW: "w-16",
   thumbWideW: "w-32",
   thumbH: "h-24",
-  activeScale: "scale-[1.3]",
+  scales: [1.3, 1.16, 1.07],
+  gap: 8,
   row: "gap-2 pt-10",
   bar: "h-[calc(8.25rem+var(--safe-bottom))]",
-  gapL: "ml-2.5",
-  gapR: "mr-2.5",
-  pairGapL: "ml-3.5",
-  pairGapR: "mr-3.5",
 } as const;
+
+/** Opacity by distance from the open page; further pages sit back. */
+const THUMB_OPACITY = [1, 0.9, 0.8] as const;
+const THUMB_OPACITY_REST = 0.7;
+
+/**
+ * Pure: how a strip thumb is drawn at `distance` pages from the nearest
+ * open page — the strip swells toward the open page like a magnifier.
+ * `overhang` is how far the scaled thumb (base width `width`) reaches
+ * past its box on each side; the slot's margins take it up so neighbours
+ * keep an even gap instead of overlapping. Exported for tests.
+ */
+export function stripThumbLook(
+  distance: number,
+  scales: readonly number[],
+  width: number,
+): { scale: number; opacity: number; overhang: number } {
+  const scale = scales[distance] ?? 1;
+  return {
+    scale,
+    opacity: THUMB_OPACITY[distance] ?? THUMB_OPACITY_REST,
+    overhang: (width * (scale - 1)) / 2,
+  };
+}
 
 const COMPACT_QUERY = "(max-width: 639px), (max-height: 499px)";
 
@@ -289,6 +308,64 @@ export function PageStrip({
     return groups[idx] ?? [currentPage];
   }, [viewMode, coverSolo, pages, currentPage, totalPages, spreadOverrides]);
 
+  // Every slot's look and margins, plus where its centre lands along the
+  // row (excluding the row's start padding) once the margin transitions
+  // settle. Centring scrolls to that final spot directly; measuring the
+  // DOM mid-transition would aim at a stale layout.
+  const geometry = useMemo(() => {
+    const order = Array.from({ length: totalPages }, (_, i) => i);
+    if (direction === "rtl") order.reverse();
+    const slots = new Array<{
+      look: ReturnType<typeof stripThumbLook>;
+      marginLeft: number;
+      marginRight: number;
+      center: number;
+    }>(totalPages);
+    // Each slot's margins take up its thumb's overhang, so the row keeps
+    // an even gap however much each thumb is scaled; the margins
+    // transition with the scale, so neighbours glide apart as the
+    // magnified region moves. Between the two halves of an open spread
+    // the gap narrows a little, reading as the binding.
+    const binding = size.gap / 3;
+    let x = 0;
+    order.forEach((i, p) => {
+      const isActive = activePages.includes(i);
+      const prev = order[p - 1];
+      const next = order[p + 1];
+      const prevActive =
+        isActive && prev !== undefined && activePages.includes(prev);
+      const nextActive =
+        isActive && next !== undefined && activePages.includes(next);
+      // Rendered width: the thumb plus its 2px border each side.
+      const width = (isWideThumb(i) ? size.wideW : size.w) + 4;
+      const distance = Math.min(...activePages.map((a) => Math.abs(a - i)));
+      const look = stripThumbLook(distance, size.scales, width);
+      const marginLeft = look.overhang - (prevActive ? binding : 0);
+      const marginRight = look.overhang - (nextActive ? binding : 0);
+      if (p > 0) x += size.gap;
+      x += marginLeft;
+      const center = x + width / 2;
+      x += width + marginRight;
+      slots[i] = { look, marginLeft, marginRight, center };
+    });
+    return { order, slots };
+  }, [totalPages, direction, activePages, isWideThumb, size]);
+
+  /** Scroll so the open page sits in the middle of the strip. */
+  const centerOpenPage = useCallback(
+    (behavior: ScrollBehavior) => {
+      const el = stripRef.current;
+      const anchor = activePages[0];
+      const slot = anchor === undefined ? undefined : geometry.slots[anchor];
+      if (!el || !slot) return;
+      const padLeft = parseFloat(getComputedStyle(el).paddingLeft) || 0;
+      const left = padLeft + slot.center - el.clientWidth / 2;
+      if (typeof el.scrollTo === "function") el.scrollTo({ left, behavior });
+      else el.scrollLeft = left;
+    },
+    [activePages, geometry],
+  );
+
   const updateVisibleRange = useCallback(() => {
     const el = stripRef.current;
     if (!el) {
@@ -341,20 +418,14 @@ export function PageStrip({
       hasCenteredForOpenRef.current = false;
       return;
     }
-    const el = activeRef.current;
-    if (!el) return;
     const reduced =
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const isFirstScroll = !hasCenteredForOpenRef.current;
-    el.scrollIntoView({
-      block: "nearest",
-      inline: "center",
-      behavior: reduced || isFirstScroll ? "auto" : "smooth",
-    });
+    centerOpenPage(reduced || isFirstScroll ? "auto" : "smooth");
     hasCenteredForOpenRef.current = true;
     requestAnimationFrame(updateVisibleRange);
-  }, [currentPage, updateVisibleRange, visible]);
+  }, [currentPage, centerOpenPage, updateVisibleRange, visible]);
 
   useEffect(() => {
     if (!visible) return;
@@ -366,12 +437,19 @@ export function PageStrip({
   useEffect(() => {
     if (!visible) return;
     const onResize = () => {
-      activeRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
+      centerOpenPage("auto");
       requestAnimationFrame(updateVisibleRange);
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [visible, updateVisibleRange]);
+  }, [visible, centerOpenPage, updateVisibleRange]);
+
+  // Switching between the regular and compact sizes changes the whole
+  // geometry: re-centre at once rather than smooth-panning.
+  useEffect(() => {
+    if (visible) centerOpenPage("auto");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compact]);
 
   // Map vertical wheel input to horizontal strip scroll. Without this, a
   // mouse-wheel gesture over the strip scrolls the underlying reader
@@ -397,8 +475,7 @@ export function PageStrip({
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  const indices = Array.from({ length: totalPages }, (_, i) => i);
-  if (direction === "rtl") indices.reverse();
+  const indices = geometry.order;
 
   return (
     <TooltipProvider delayDuration={350}>
@@ -463,20 +540,11 @@ export function PageStrip({
           // Edges fade out so it reads as a row that scrolls on.
           className={`page-strip-fade relative flex items-end overflow-x-auto pr-[max(0.75rem,var(--safe-right))] pb-[calc(0.75rem+var(--safe-bottom))] pl-[max(0.75rem,var(--safe-left))] ${size.row}`}
         >
-          {indices.map((i, p) => {
+          {indices.map((i) => {
             const isActive = activePages.includes(i);
             // Anchor = first page of the active group. Used for the scroll
             // target so we always center on the leading half of a pair.
             const isAnchor = isActive && i === activePages[0];
-            // Detect adjacency to a same-group active sibling in *visual*
-            // (iteration) order — handles RTL implicitly since `indices`
-            // is already reversed for RTL above.
-            const prevIdx = indices[p - 1];
-            const nextIdx = indices[p + 1];
-            const prevActive =
-              prevIdx !== undefined && activePages.includes(prevIdx);
-            const nextActive =
-              nextIdx !== undefined && activePages.includes(nextIdx);
             const visualIndex = direction === "rtl" ? totalPages - 1 - i : i;
             const inViewport =
               visualIndex >= visibleRange.start &&
@@ -484,6 +552,7 @@ export function PageStrip({
             const shouldLoad = renderThumbs && (isActive || inViewport);
             const isDouble = isWideThumb(i);
             const spreadMode = pageSpreadMode(spreadOverrides, i);
+            const { look, marginLeft, marginRight } = geometry.slots[i]!;
             const button = (
               <button
                 ref={isAnchor ? activeRef : undefined}
@@ -491,9 +560,8 @@ export function PageStrip({
                 onClick={() => setPage(i)}
                 aria-label={`Jump to page ${i + 1}${isDouble ? " (double-page)" : ""}`}
                 aria-current={isActive ? "page" : undefined}
-                className={`group focus-visible:ring-accent relative block origin-bottom overflow-visible rounded-lg transition-transform duration-200 ease-out focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 focus-visible:outline-none motion-reduce:transition-none ${
-                  isActive ? size.activeScale : ""
-                }`}
+                style={{ scale: String(look.scale) }}
+                className="group focus-visible:ring-accent relative block origin-bottom overflow-visible rounded-lg transition-[scale] duration-300 ease-out focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 focus-visible:outline-none motion-reduce:transition-none"
               >
                 {/* Border/ring/shadow live on this inner wrapper so they
                  * frame the thumbnail only — the page number sits below
@@ -507,7 +575,7 @@ export function PageStrip({
                   className={`block overflow-hidden rounded-lg border-2 bg-neutral-900 transition-[border-color,opacity] duration-200 ease-out motion-reduce:transition-none ${
                     isActive
                       ? "border-accent"
-                      : "border-neutral-700/80 opacity-70 group-hover:border-neutral-500 group-hover:opacity-100 group-focus-visible:opacity-100"
+                      : "border-neutral-700/80 opacity-(--thumb-o) group-hover:border-neutral-500 group-hover:opacity-100 group-focus-visible:opacity-100"
                   }`}
                 >
                   {shouldLoad ? (
@@ -539,27 +607,19 @@ export function PageStrip({
                 </span>
               </button>
             );
-            // Active li is given extra horizontal margin so neighbors slide
-            // apart to make room for the larger active thumb. The margin
-            // transition runs at the same duration as the scale so the slide
-            // and the pop look like a single gesture.
-            //
-            // Outer edge of any active thumb keeps `m-5` (20px) to match
-            // the historic single-active spacing. The inner edge between
-            // two paired halves needs more room — each scaled thumb
-            // extends 28.8px past its box, so without a bump the two
-            // would overlap. `m-7` (28px) per side + `gap-3` (12px) leaves
-            // ~10px of visual gap that reads as the binding line of a
-            // printed spread.
-            const liMarginClass = !isActive
-              ? ""
-              : `z-10 ${prevActive ? size.pairGapL : size.gapL} ${
-                  nextActive ? size.pairGapR : size.gapR
-                }`;
             return (
               <ThumbSlot
                 key={i}
-                className={`group/thumb relative shrink-0 transition-[margin] duration-200 ease-out motion-reduce:transition-none ${liMarginClass}`}
+                style={
+                  {
+                    marginLeft,
+                    marginRight,
+                    "--thumb-o": look.opacity,
+                  } as React.CSSProperties
+                }
+                className={`group/thumb relative shrink-0 transition-[margin] duration-300 ease-out motion-reduce:transition-none ${
+                  isActive ? "z-10" : ""
+                }`}
               >
                 {(focused) => (
                   <>
@@ -608,9 +668,11 @@ export function PageStrip({
  */
 function ThumbSlot({
   className,
+  style,
   children,
 }: {
   className: string;
+  style?: React.CSSProperties;
   children: (focused: boolean) => ReactNode;
 }) {
   const [focused, setFocused] = useState(false);
@@ -624,6 +686,7 @@ function ThumbSlot({
         setFocused(false);
       }}
       className={className}
+      style={style}
     >
       {children(focused)}
     </li>
