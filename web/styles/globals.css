@@ -1149,6 +1149,24 @@ body {
   animation: none !important;
 }
 
+/* ── Cover colour on cards (folio-flair, lib/ui/cover-tone.ts) ──
+ * A card whose cover colours are known carries `--cover-tint` (the
+ * cover's most vibrant colour). Hovering washes the card in it and gives
+ * the cover a matching glow, so each card answers in its own colour. */
+@media (hover: hover) and (pointer: fine) {
+  [data-card][style*="--cover-tint"]:hover {
+    background-color: color-mix(in oklab, var(--cover-tint) 16%, transparent);
+  }
+  [data-card][style*="--cover-tint"]:hover .cover-box {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--cover-tint) 45%, transparent),
+      0 12px 28px -10px color-mix(in oklab, var(--cover-tint) 70%, transparent);
+  }
+}
+.cover-box {
+  transition: box-shadow 260ms ease-out;
+}
+
 /* ── Springy drag and drop (folio-flair) ──
  * The item being dragged gets `.drag-lift` (lib/ui/springy-drag.ts).
  * `scale` / `rotate` are separate from the inline `transform` dnd-kit

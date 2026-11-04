@@ -76,6 +76,23 @@ export function paletteFromPixels(
   return { average, vibrant: bestScore > 0.15 && best ? best : average };
 }
 
+/** Palette of an image that has already decoded (no refetch). Null for an
+ *  unreadable (cross-origin) or empty image. */
+export function paletteFromImage(img: HTMLImageElement): CoverPalette | null {
+  if (!img.naturalWidth) return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = SAMPLE_W;
+    canvas.height = SAMPLE_H;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, SAMPLE_W, SAMPLE_H);
+    return paletteFromPixels(ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data);
+  } catch {
+    return null;
+  }
+}
+
 function extract(url: string): Promise<CoverPalette | null> {
   return new Promise((resolve) => {
     const img = new Image();
