@@ -20,7 +20,6 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
   Check,
   Circle,
@@ -96,6 +95,11 @@ import { TOAST } from "@/lib/api/toast-strings";
 import { readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 import type { CollectionEntryView, SavedViewView } from "@/lib/api/types";
+import {
+  DRAG_LIFT_CLASS,
+  sortableStyle,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
 
 import { ViewHeader } from "./ViewHeader";
 
@@ -760,12 +764,12 @@ function SortableEntry({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: entry.id, disabled: dndDisabled });
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    zIndex: isDragging ? 10 : undefined,
-  };
+  } = useSortable({
+    id: entry.id,
+    disabled: dndDisabled,
+    transition: useSpringSort(),
+  });
+  const style = sortableStyle({ transform, transition, isDragging });
   // "Remove from this collection" is appended to the shared cover-menu
   // (mark read/unread + add-to-collection) via the new `extraActions`
   // prop on SeriesCard / IssueCard. Reusing those components means the
@@ -780,7 +784,7 @@ function SortableEntry({
     <li
       ref={setNodeRef}
       style={style}
-      className={cn("group relative", isDragging && "opacity-70")}
+      className={cn("group relative rounded-md", isDragging && DRAG_LIFT_CLASS)}
     >
       {/* Drag handle hidden while in select mode — the handle's
        *  drag gesture would conflict with tap-to-toggle. */}

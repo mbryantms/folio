@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { flyCoverToNav } from "@/lib/ui/fly-to-nav";
 import { collectServerErrors } from "@/lib/api/form-errors";
 import { queryKeys, useCollections } from "@/lib/api/queries";
 import {
@@ -267,6 +268,11 @@ function PickRow({
           { entry_kind: target.entry_kind, ref_id: target.ref_id },
           {
             onSuccess: (entry) => {
+              flyCoverToNav(
+                collection.system_key === "want_to_read"
+                  ? "want_to_read"
+                  : "collections",
+              );
               recordCollectionUse(collection.id);
               if (!entry) {
                 toast.success(`Added to ${collection.name}`);

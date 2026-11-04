@@ -16,6 +16,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { ListProgressBar } from "@/components/cbl/ListProgressBar";
 import { GithubIcon } from "@/components/icons/github";
 
 import {
@@ -226,15 +227,19 @@ function StatsCard({
     ambiguous: number;
     missing: number;
     manual: number;
+    read_count?: number;
   };
 }) {
   return (
-    <div className="bg-muted/50 grid grid-cols-2 gap-3 rounded-md p-3 text-sm sm:grid-cols-5">
-      <Stat label="Total" value={stats.total} />
-      <Stat label="Matched" value={stats.matched} tone="ok" />
-      <Stat label="Manual" value={stats.manual} tone="ok" />
-      <Stat label="Ambiguous" value={stats.ambiguous} tone="warn" />
-      <Stat label="Missing" value={stats.missing} tone="bad" />
+    <div className="bg-muted/50 space-y-3 rounded-md p-3 text-sm">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <Stat label="Total" value={stats.total} />
+        <Stat label="Matched" value={stats.matched} tone="ok" />
+        <Stat label="Manual" value={stats.manual} tone="ok" />
+        <Stat label="Ambiguous" value={stats.ambiguous} tone="warn" />
+        <Stat label="Missing" value={stats.missing} tone="bad" />
+      </div>
+      <ListProgressBar stats={stats} className="h-2" />
     </div>
   );
 }

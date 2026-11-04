@@ -18,7 +18,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
   ExternalLink,
   GripVertical,
@@ -74,6 +73,11 @@ import { useMe, useMePages, useSavedViews } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { PageView, SavedViewView } from "@/lib/api/types";
 import { Label } from "@/components/ui/label";
+import {
+  DRAG_LIFT_CLASS,
+  sortableStyle,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
 
 /** Server-side fallback when the `/auth/me` lookup hasn't resolved
  *  yet. Matches the column default in
@@ -524,17 +528,16 @@ function RailRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: view.id });
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : undefined,
-  };
+  } = useSortable({ id: view.id, transition: useSpringSort() });
+  const style = sortableStyle({ transform, transition, isDragging });
   return (
     <li
       ref={setNodeRef}
       style={style}
-      className="bg-background flex items-center gap-3 px-3 py-2"
+      className={cn(
+        "bg-background flex items-center gap-3 px-3 py-2",
+        isDragging && DRAG_LIFT_CLASS,
+      )}
     >
       <button
         type="button"

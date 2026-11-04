@@ -17,11 +17,11 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 
 import { useReorderLogWidgets } from "@/lib/api/mutations";
 import type { LogWidgetView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { sortableStyle, useSpringSort } from "@/lib/ui/springy-drag";
 
 import { WIDGET_REGISTRY } from "./widgets";
 import type { LogScope } from "./widgets/types";
@@ -156,12 +156,9 @@ function SortableWidget({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: widget.id });
+  } = useSortable({ id: widget.id, transition: useSpringSort() });
 
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
+  const style = sortableStyle({ transform, transition, isDragging });
 
   const dragInfo = React.useMemo<DragInfo>(
     () => ({

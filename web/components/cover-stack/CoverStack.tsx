@@ -23,11 +23,36 @@ export function useCoverStackStyle(): CoverStackStyle {
   return isCoverStackStyle(v) ? v : DEFAULT_COVER_STACK_STYLE;
 }
 
+/** How much a spilling stack grows past its card while fanned. */
+export const SPILL_SCALE = 1.18;
+
+/**
+ * Which way a spilling stack may grow without crossing `bounds` (the
+ * content area beside the sidebar): from its centre when there is room on
+ * both sides, otherwise pinned to the edge that would be clipped.
+ */
+export function spillOrigin(
+  stack: { left: number; right: number },
+  bounds: { left: number; right: number },
+  scale = SPILL_SCALE,
+  margin = 8,
+): "center" | "left" | "right" {
+  const grow = ((stack.right - stack.left) * (scale - 1)) / 2;
+  if (stack.left - grow < bounds.left + margin) return "left";
+  if (stack.right + grow > bounds.right - margin) return "right";
+  return "center";
+}
+
 /**
  * A fanned stack of up to four covers. Purely presentational: it fans out
  * when an ancestor marked `cover-stack-host` is hovered or holds keyboard
  * focus (see `styles/globals.css`), so the whole card is the hover target
  * and the stack itself never takes focus.
+ *
+ * With `spill` (the default) the fanned stack also grows past the card
+ * ("spill cover fan", folio-flair-1.0). Just before it does, it measures
+ * itself against the content area so a card in the first or last column
+ * grows inward instead of sliding under the sidebar or off screen.
  *
  * Fewer covers than slots draws only what exists; no covers draws a
  * three-deep placeholder stack with `Icon` on the front tile, so an empty
@@ -38,12 +63,15 @@ export function CoverStack({
   style,
   Icon,
   className,
+  spill = true,
 }: {
   urls: readonly string[];
   /** Override the user's preference (Settings previews). */
   style?: CoverStackStyle;
   Icon?: LucideIcon;
   className?: string;
+  /** Grow past the card while fanned. Off for fixed-size previews. */
+  spill?: boolean;
 }) {
   const userStyle = useCoverStackStyle();
   const layout = layoutFor(style ?? userStyle);
@@ -51,12 +79,45 @@ export function CoverStack({
   const empty = covers.length === 0;
   const count = empty ? 3 : covers.length;
   const layers = layout.layers.filter((l) => l.depth < count);
+  const ref = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    const el = ref.current;
+    const host = el?.closest<HTMLElement>(".cover-stack-host");
+    if (!spill || !el || !host) return;
+    const measure = () => {
+      // Layout box, not the (possibly already scaled) painted one: the
+      // host is the stack's offset parent (position: relative in CSS).
+      const left = host.getBoundingClientRect().left + el.offsetLeft;
+      const area = el.closest("main")?.getBoundingClientRect();
+      el.dataset.spill = spillOrigin(
+        { left, right: left + el.offsetWidth },
+        {
+          left: Math.max(0, area?.left ?? 0),
+          right: Math.min(window.innerWidth, area?.right ?? window.innerWidth),
+        },
+      );
+    };
+    host.addEventListener("pointerenter", measure);
+    host.addEventListener("focusin", measure);
+    return () => {
+      host.removeEventListener("pointerenter", measure);
+      host.removeEventListener("focusin", measure);
+    };
+  }, [spill]);
 
   return (
     <div
+      ref={ref}
       aria-hidden="true"
-      className={cn("cover-stack", className)}
-      style={{ aspectRatio: `1 / ${STACK_ASPECT}` }}
+      className={cn("cover-stack", spill && "cover-stack--spill", className)}
+      data-spill="center"
+      style={
+        {
+          aspectRatio: `1 / ${STACK_ASPECT}`,
+          "--cs-spill": SPILL_SCALE,
+        } as React.CSSProperties
+      }
     >
       {layers.map((layer) => {
         const src = covers[layer.depth];

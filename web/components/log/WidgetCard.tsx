@@ -31,6 +31,7 @@ import {
 import { useRemoveLogWidget } from "@/lib/api/mutations";
 import type { LogWidgetView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { DRAG_LIFT_CLASS } from "@/lib/ui/springy-drag";
 
 import { ConfigureWidgetDialog } from "./ConfigureWidgetDialog";
 import { useDragInfo } from "./LogWidgetGrid";
@@ -90,7 +91,7 @@ export function WidgetCard({
     <Card
       className={cn(
         "group/widget relative",
-        isDragging && "opacity-50",
+        isDragging && DRAG_LIFT_CLASS,
         className,
       )}
     >

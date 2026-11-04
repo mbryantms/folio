@@ -118,6 +118,7 @@ import {
   type ViewSort,
 } from "@/lib/saved-views/view-board";
 import { cn } from "@/lib/utils";
+import { DRAG_LIFT_CLASS, useSpringSort } from "@/lib/ui/springy-drag";
 
 // ──────────────────── ids ────────────────────
 
@@ -646,6 +647,7 @@ function GroupSection({
   } = useSortable({
     id: groupDndId(group.id),
     data: { type: "group" },
+    transition: useSpringSort(),
   });
   const [editing, setEditing] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
@@ -1018,6 +1020,7 @@ function BoardCard({
   } = useSortable({
     id: viewDndId(view.id),
     data: { type: "view", container },
+    transition: useSpringSort(),
   });
   const { onKeyDown, ...pointerListeners } = (listeners ?? {}) as Record<
     string,
@@ -1097,7 +1100,12 @@ function DragGhost({
   meta?: string;
 }) {
   return (
-    <div className="bg-popover text-popover-foreground border-border flex max-w-xs items-center gap-2 rounded-lg border px-3 py-2 shadow-xl">
+    <div
+      className={cn(
+        "bg-popover text-popover-foreground border-border flex max-w-xs items-center gap-2 rounded-lg border px-3 py-2 shadow-xl",
+        DRAG_LIFT_CLASS,
+      )}
+    >
       <Icon
         className="text-muted-foreground size-4 shrink-0"
         aria-hidden="true"

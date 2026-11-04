@@ -44,7 +44,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
 import { DropdownMenuResponsiveSub } from "@/components/folio/dropdown-menu-responsive-sub";
-import { Progress } from "@/components/ui/progress";
+import { ListProgressBar } from "@/components/cbl/ListProgressBar";
 import {
   Tabs,
   TabsContent,
@@ -671,8 +671,6 @@ function ViewCard({
  *  read-progress bar, and the last refresh time — enough to triage a
  *  long list of lists without opening each one. */
 function CblCardStats({ list }: { list: CblListView }) {
-  const { matched, read_count } = list.stats;
-  const percent = matched > 0 ? Math.round((read_count / matched) * 100) : 0;
   const when = formatRelativeDate(list.last_refreshed_at ?? list.imported_at);
   return (
     <div className="space-y-1.5 pt-0.5">
@@ -691,13 +689,7 @@ function CblCardStats({ list }: { list: CblListView }) {
           </span>
         ) : null}
       </div>
-      {matched > 0 ? (
-        <Progress
-          value={percent}
-          className="h-1"
-          aria-label={`${percent}% read`}
-        />
-      ) : null}
+      {list.stats.total > 0 ? <ListProgressBar stats={list.stats} /> : null}
     </div>
   );
 }

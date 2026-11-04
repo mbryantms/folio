@@ -17,7 +17,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
   ChevronDown,
   ChevronUp,
@@ -482,11 +481,8 @@ function SidebarRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id });
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
+  } = useSortable({ id, transition: useSpringSort() });
+  const style = sortableStyle({ transform, transition, isDragging });
 
   const isHeader = entry.kind === "header";
   const isSpacer = entry.kind === "spacer";
@@ -530,7 +526,7 @@ function SidebarRow({
       style={style}
       className={cn(
         "bg-background flex items-center gap-3 px-3 py-2",
-        isDragging && "opacity-60",
+        isDragging && DRAG_LIFT_CLASS,
         !entry.visible && "opacity-50",
         isHeader && "bg-muted/30",
         isSpacer && "bg-muted/10 py-1",
@@ -653,6 +649,11 @@ import {
 } from "@/components/ui/dialog";
 import { useSavedViews } from "@/lib/api/queries";
 import { useSidebarSavedView } from "@/lib/api/mutations";
+import {
+  DRAG_LIFT_CLASS,
+  sortableStyle,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
 
 /** Picker for the Sidebar settings page. Surfaces things the user
  *  can bring INTO the sidebar:

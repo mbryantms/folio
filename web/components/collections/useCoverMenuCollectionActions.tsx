@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/mutations";
 import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
 import type { CollectionEntryKind } from "@/lib/api/types";
+import { flyCoverToNav, trackCardOrigin } from "@/lib/ui/fly-to-nav";
 
 import {
   AddToCollectionDialog,
@@ -45,6 +46,7 @@ export function useCoverMenuCollectionActions(opts: {
   const addToWtr = useAddCollectionEntry(wtrId);
   const removeFromWtr = useRemoveCollectionEntry(wtrId);
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  React.useEffect(trackCardOrigin, []);
 
   const actions: CoverMenuAction[] = [
     {
@@ -66,6 +68,7 @@ export function useCoverMenuCollectionActions(opts: {
             // `useApiMutation` widens to `TData | null` — guard so we
             // never offer an Undo we can't fulfill.
             onSuccess: (entry) => {
+              flyCoverToNav("want_to_read");
               if (!entry) {
                 toast.success(`Added "${label}" to Want to Read`);
                 return;
