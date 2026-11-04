@@ -13,6 +13,7 @@
  *  - the heatmap renders at natural size inside a horizontal scroller
  *    (scrolled to the latest week) rather than scaling to a 3px strip.
  */
+import type * as ReactQuery from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -24,6 +25,13 @@ import type { LogWidgetView, ReadingStatsView } from "@/lib/api/types";
 
 vi.mock("@/lib/api/mutations", () => ({
   useRemoveLogWidget: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+// WidgetCard reads the query client for its Remove → Undo snapshot; these
+// layout tests never click it, so a stub client stands in for a provider.
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof ReactQuery>()),
+  useQueryClient: () => ({ getQueryData: vi.fn(), invalidateQueries: vi.fn() }),
 }));
 
 const statsData = {

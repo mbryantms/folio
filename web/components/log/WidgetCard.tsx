@@ -10,16 +10,6 @@ import {
   Trash2,
 } from "lucide-react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -28,10 +18,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
+import { useQueryClient } from "@tanstack/react-query";
+
 import { useRemoveLogWidget } from "@/lib/api/mutations";
-import type { LogWidgetView } from "@/lib/api/types";
+import { apiMutate } from "@/lib/api/mutations/_core";
+import { jsonFetch, queryKeys } from "@/lib/api/queries";
+import type { LogWidgetListView, LogWidgetView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { DRAG_LIFT_CLASS } from "@/lib/ui/springy-drag";
+import { restoreOrder, showUndoToast } from "@/lib/ui/undo-toast";
 
 import { ConfigureWidgetDialog } from "./ConfigureWidgetDialog";
 import { useDragInfo } from "./LogWidgetGrid";
@@ -41,7 +36,8 @@ import { useDragInfo } from "./LogWidgetGrid";
  *  Owns three dialog/menu surfaces:
  *    - Kebab dropdown: `Configure…` / `Remove`
  *    - Configure dialog: opens a kind-specific form (M5)
- *    - Remove confirm: AlertDialog → `useRemoveLogWidget`
+ *    - Remove: immediate `useRemoveLogWidget` + an Undo toast that
+ *      re-adds the widget (same kind + config) at its old position
  *
  *  The drag handle (left edge, hover-visible) accepts `dragHandleProps`
  *  from the parent grid — the grid spreads `@dnd-kit` listeners +
@@ -78,7 +74,7 @@ export function WidgetCard({
   className?: string;
 }) {
   const remove = useRemoveLogWidget(widget.id);
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const qc = useQueryClient();
   const [configureOpen, setConfigureOpen] = React.useState(false);
   // Drag handle + state come from the enclosing SortableContext via
   // `useDragInfo`. Null when the card renders outside a grid (e.g.,
@@ -171,11 +167,32 @@ export function WidgetCard({
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
-                onSelect={(e) => {
-                  // shadcn DropdownMenuItem closes on select; keep
-                  // focus and open the confirm dialog instead.
-                  e.preventDefault();
-                  setConfirmOpen(true);
+                onSelect={() => {
+                  // Undo instead of confirm (folio-flair-1.0): the
+                  // widget's kind + config are all it is, so Undo can
+                  // rebuild it exactly. Capture the grid order first so
+                  // it lands back in the same slot.
+                  const order =
+                    qc
+                      .getQueryData<LogWidgetListView>(queryKeys.logWidgets)
+                      ?.items.map((w) => w.id) ?? [];
+                  const snapshot = widget;
+                  remove.mutate(undefined, {
+                    onSuccess: () =>
+                      showUndoToast({
+                        message: `Removed "${title}"`,
+                        failedMessage: "Couldn't restore the widget",
+                        onUndo: async () => {
+                          try {
+                            await restoreLogWidget(snapshot, order);
+                          } finally {
+                            qc.invalidateQueries({
+                              queryKey: queryKeys.logWidgets,
+                            });
+                          }
+                        },
+                      }),
+                  });
                 }}
               >
                 <Trash2 aria-hidden="true" className="mr-2 size-4" />
@@ -184,27 +201,6 @@ export function WidgetCard({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Remove this widget?</AlertDialogTitle>
-              <AlertDialogDescription>
-                You can add it back any time from the &ldquo;Add widget&rdquo;
-                menu, or use &ldquo;Reset to defaults&rdquo; to restore the
-                original layout.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => remove.mutate()}
-                className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
-              >
-                Remove
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
         <ConfigureWidgetDialog
           widget={widget}
           open={configureOpen}
@@ -214,4 +210,30 @@ export function WidgetCard({
       <CardContent>{children}</CardContent>
     </Card>
   );
+}
+
+/** Undo for a widget removal: re-add one with the same kind + config
+ *  (the server appends it), then — when the pre-removal order is known —
+ *  reorder the grid so it takes its old slot. The reorder endpoint wants
+ *  the user's exact id set, so the current list is read first. */
+async function restoreLogWidget(
+  widget: Pick<LogWidgetView, "id" | "kind" | "config">,
+  orderBefore: readonly string[],
+): Promise<void> {
+  const created = await apiMutate<LogWidgetView>({
+    path: "/me/log/widgets",
+    method: "POST",
+    body: { kind: widget.kind, config: widget.config ?? {} },
+  });
+  if (!created || !orderBefore.includes(widget.id)) return;
+  const current = await jsonFetch<LogWidgetListView>("/me/log/widgets");
+  const ids = current.items.map((w) => w.id);
+  const before = orderBefore.map((id) => (id === widget.id ? created.id : id));
+  const next = restoreOrder(ids, before);
+  if (next.every((id, i) => id === ids[i])) return;
+  await apiMutate({
+    path: "/me/log/widgets/reorder",
+    method: "POST",
+    body: { ids: next },
+  });
 }

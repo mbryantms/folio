@@ -4,6 +4,7 @@ import * as React from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   KeyboardSensor,
@@ -44,16 +45,6 @@ import { SeriesCard } from "@/components/library/SeriesCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -74,6 +65,7 @@ import {
 } from "@/components/library/PhoneControlsBar";
 import { useCardSize } from "@/components/library/use-card-size";
 import {
+  jsonFetch,
   useCollectionEntriesInfinite,
   useCollectionNextUp,
   useMe,
@@ -87,14 +79,26 @@ import {
   useUpdateCollection,
 } from "@/lib/api/mutations";
 import { skippedEntryIds } from "@/lib/library/bulk-archive-skips";
-import { snapshotFromEntries } from "@/lib/collections/recreate";
+import { invalidateCollectionEntries } from "@/lib/api/mutations";
+import { apiMutate } from "@/lib/api/mutations/_core";
+import {
+  entryToMember,
+  fetchCollectionSnapshot,
+  snapshotFromEntries,
+  type CollectionMember,
+} from "@/lib/collections/recreate";
 import { useCollectionDeleteUndo } from "@/lib/collections/use-collection-undo";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
 import { readerUrl } from "@/lib/urls";
+import { restoreOrder, showUndoToast } from "@/lib/ui/undo-toast";
 import { cn } from "@/lib/utils";
-import type { CollectionEntryView, SavedViewView } from "@/lib/api/types";
+import type {
+  CollectionEntriesView,
+  CollectionEntryView,
+  SavedViewView,
+} from "@/lib/api/types";
 import {
   DRAG_LIFT_CLASS,
   sortableStyle,
@@ -151,6 +155,7 @@ export function CollectionViewDetail({
       void entriesQ.fetchNextPage();
     }
   }, [entriesQ]);
+  const qc = useQueryClient();
   const reorder = useReorderCollectionEntries(savedView.id);
   const remove = useRemoveCollectionEntry(savedView.id);
   const update = useUpdateCollection(savedView.id);
@@ -173,7 +178,6 @@ export function CollectionViewDetail({
   const bulkMark = useBulkMarkProgress();
   const bulkRemove = useBulkRemoveFromCollection(savedView.id);
   const [pickerOpen, setPickerOpen] = React.useState(false);
-  const [confirmRemove, setConfirmRemove] = React.useState(false);
   const [archiveEditOpen, setArchiveEditOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
   // Mount the lazy archive-edit dialog on first open; keep it mounted so its
@@ -181,7 +185,6 @@ export function CollectionViewDetail({
   const [archiveEditMounted, setArchiveEditMounted] = React.useState(false);
   if (archiveEditOpen && !archiveEditMounted) setArchiveEditMounted(true);
   const isAdmin = useMe().data?.role === "admin";
-  const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   const [optimisticOrder, setOptimisticOrder] = React.useState<string[] | null>(
     null,
@@ -298,17 +301,70 @@ export function CollectionViewDetail({
       },
     );
   };
+  // Undo instead of confirm (folio-flair-1.0): the items leave at once;
+  // Undo bulk-adds them back and replays the original order.
   const runBulkRemove = () => {
     if (selectedTargets.length === 0) return;
+    const removed = selectedTargets;
+    // Complete only once every page is loaded; otherwise restored items
+    // land at the tail instead of their old slots.
+    const originalOrder = allEntries
+      .map(entryToMember)
+      .filter((m): m is CollectionMember => m !== null);
+    const collectionId = savedView.id;
     bulkRemove.mutate(
-      { members: selectedTargets },
+      { members: removed },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
           selection.exit();
-          setConfirmRemove(false);
+          const n = data?.removed ?? removed.length;
+          if (n === 0) return;
+          showUndoToast({
+            // Replace the hook's own success toast (same id) rather than
+            // stacking a second one.
+            id: `bulk-remove-${collectionId}`,
+            message: `Removed ${n} item${n === 1 ? "" : "s"} from "${savedView.name}"`,
+            failedMessage: "Couldn't put the items back",
+            onUndo: async () => {
+              await restoreCollectionMembers(
+                collectionId,
+                removed,
+                originalOrder,
+              );
+              invalidateCollectionEntries(qc, collectionId);
+            },
+          });
         },
       },
     );
+  };
+
+  // Delete fires straight from the Edit dialog; the Undo toast replays
+  // a snapshot of name + description + ordered members taken first.
+  const deleteCollection = async () => {
+    let snapshot = snapshotFromEntries(
+      savedView.name,
+      savedView.description,
+      allEntries,
+    );
+    if (entriesQ.hasNextPage) {
+      // Unloaded tail: read the whole list so Undo restores all of it.
+      try {
+        snapshot = await fetchCollectionSnapshot(
+          savedView.id,
+          savedView.name,
+          savedView.description,
+        );
+      } catch {
+        // Fall back to what's loaded rather than blocking the delete.
+      }
+    }
+    del.mutate(undefined, {
+      onSuccess: () => {
+        router.push("/collections");
+        showDeleteUndo(snapshot);
+      },
+    });
   };
 
   // Gate: DnD is off while pagination is unresolved (a reorder
@@ -504,7 +560,7 @@ export function CollectionViewDetail({
             id: "remove",
             label: "Remove from this collection",
             icon: Trash2,
-            onClick: () => setConfirmRemove(true),
+            onClick: runBulkRemove,
             destructive: true,
           },
         ]}
@@ -579,73 +635,10 @@ export function CollectionViewDetail({
         }
         onDeleteRequest={() => {
           setEditOpen(false);
-          setConfirmDelete(true);
+          void deleteCollection();
         }}
         saving={update.isPending}
       />
-
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this collection?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Entries are removed from the collection but the underlying series
-              and issues are not touched. You can undo this right after.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                // Snapshot name + description + ordered members BEFORE the
-                // delete drops them, so Undo can replay the collection.
-                const snapshot = snapshotFromEntries(
-                  savedView.name,
-                  savedView.description,
-                  allEntries,
-                );
-                del.mutate(undefined, {
-                  onSuccess: () => {
-                    setConfirmDelete(false);
-                    router.push("/collections");
-                    showDeleteUndo(snapshot);
-                  },
-                });
-              }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Bulk-remove confirmation — destructive multi-select action.
-       *  The cards stay in the library; only the collection-membership
-       *  rows are removed. */}
-      <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Remove {selectedTargets.length} item
-              {selectedTargets.length === 1 ? "" : "s"} from this collection?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              The items stay in your library; only their membership in &ldquo;
-              {savedView.name}&rdquo; is removed.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={runBulkRemove}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <BulkAddToCollectionDialog
         open={pickerOpen}
@@ -690,6 +683,50 @@ export function CollectionViewDetail({
  *  expanded server-side) with `?collection=` so next-up keeps following
  *  the collection (post-audit T4.1). Hidden while loading, when the
  *  collection is empty, and once everything is finished. */
+const memberKey = (m: CollectionMember) => `${m.entry_kind}:${m.ref_id}`;
+
+/** Undo for the bulk "Remove from this collection": bulk-add the removed
+ *  members back (they land at the tail), then — when the pre-removal
+ *  order is known — reorder the whole list so each one returns to its old
+ *  slot. Entries added since keep their relative order after the
+ *  originals. The reorder endpoint needs every entry id, so the current
+ *  list is walked page by page first. Exported for tests. */
+export async function restoreCollectionMembers(
+  collectionId: string,
+  removed: readonly CollectionMember[],
+  originalOrder: readonly CollectionMember[],
+): Promise<void> {
+  await apiMutate({
+    path: `/me/collections/${collectionId}/members/bulk-add`,
+    method: "POST",
+    body: { members: removed },
+  });
+  if (originalOrder.length === 0) return;
+
+  const current: CollectionEntryView[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 30; page++) {
+    const q = new URLSearchParams({ limit: "200" });
+    if (cursor) q.set("cursor", cursor);
+    const view = await jsonFetch<CollectionEntriesView>(
+      `/me/collections/${collectionId}/entries?${q.toString()}`,
+    );
+    current.push(...view.items);
+    if (!view.next_cursor) break;
+    cursor = view.next_cursor;
+  }
+  const ordered = restoreOrder(current, originalOrder.map(memberKey), (e) => {
+    const m = entryToMember(e);
+    return m ? memberKey(m) : null;
+  }).map((e) => e.id);
+  if (ordered.every((id, i) => id === current[i]?.id)) return;
+  await apiMutate({
+    path: `/me/collections/${collectionId}/entries/reorder`,
+    method: "POST",
+    body: { entry_ids: ordered },
+  });
+}
+
 export function CollectionContinueButton({
   collectionId,
   iconOnly = false,

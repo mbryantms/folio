@@ -31,27 +31,16 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { mainNavIcons } from "@/components/library/main-nav-icons";
 import { railIconByKey } from "@/components/library/rail-icons";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CollapsiblePickerSection } from "@/components/folio/CollapsiblePickerSection";
 import { Input } from "@/components/ui/input";
 import { useSidebarLayout } from "@/lib/api/queries";
 import { useUpdateSidebarLayout } from "@/lib/api/mutations";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import { cn } from "@/lib/utils";
 import type {
   SidebarEntryView,
@@ -205,12 +194,22 @@ function SidebarSection() {
     );
   }
 
+  /** Undo instead of confirm (folio-flair-1.0): the reset fires at once
+   *  and Undo re-PATCHes the full pre-reset list (order, hidden rows,
+   *  custom headers + spacers with their labels). */
   function resetToDefaults() {
+    const before = toPayload(entries);
     setOptimistic(null);
     update.mutate(
       { entries: [] },
       {
-        onSuccess: () => toast.success("Sidebar reset to defaults"),
+        onSuccess: () =>
+          showUndoToast({
+            message: "Sidebar reset to defaults",
+            restoredMessage: "Restored your sidebar",
+            failedMessage: "Couldn't restore your sidebar",
+            onUndo: () => update.mutateAsync({ entries: before }),
+          }),
       },
     );
   }
@@ -274,10 +273,29 @@ function SidebarSection() {
    *  override so they can be re-added from the picker. */
   function removeRow(target: SidebarEntryView) {
     if (target.kind !== "header" && target.kind !== "spacer") return;
+    // A custom row (and a header's label) is gone for good once removed,
+    // so offer the same Undo the reset gets.
+    const before = toPayload(entries);
     const nextVisible = visibleEntries.filter(
       (e) => !(e.kind === target.kind && e.ref_id === target.ref_id),
     );
-    commitMutation(nextVisible);
+    setOptimistic([...nextVisible, ...hiddenEntries]);
+    update.mutate(
+      { entries: buildPayload(nextVisible) },
+      {
+        onSuccess: () =>
+          showUndoToast({
+            message:
+              target.kind === "header"
+                ? `Removed header "${target.label}"`
+                : "Removed spacer",
+            failedMessage: "Couldn't restore the row",
+            onUndo: () => update.mutateAsync({ entries: before }),
+          }),
+        onError: () => setOptimistic(null),
+        onSettled: () => setOptimistic(null),
+      },
+    );
   }
 
   if (layoutQ.isLoading) {
@@ -326,30 +344,16 @@ function SidebarSection() {
           <Rows3 className="mr-1.5 size-4" />
           Spacer
         </Button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="outline" size="sm" type="button">
-              <RotateCcw className="mr-1.5 size-4" />
-              Reset
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Reset sidebar to defaults?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Every customization here — removed rows, reorders, custom
-                headers + spacers — gets cleared. New libraries and saved views
-                you add later will automatically appear.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={resetToDefaults}>
-                Reset
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          onClick={resetToDefaults}
+          disabled={update.isPending}
+        >
+          <RotateCcw className="mr-1.5 size-4" />
+          Reset
+        </Button>
       </div>
       <DndContext
         sensors={sensors}

@@ -59,16 +59,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -95,14 +85,22 @@ import {
   SelectValue,
 } from "@/components/folio/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useQueryClient } from "@tanstack/react-query";
+
 import {
   useCreateViewGroup,
-  useDeleteViewGroup,
   useReplaceViewGroupLayout,
   useUpdateViewGroup,
 } from "@/lib/api/mutations";
-import { useViewGroups } from "@/lib/api/queries";
-import type { SavedViewView, ViewGroupScope } from "@/lib/api/types";
+import { apiMutate, useApiMutation } from "@/lib/api/mutations/_core";
+import { jsonFetch, queryKeys, useViewGroups } from "@/lib/api/queries";
+import type {
+  ReplaceLayoutReq,
+  SavedViewView,
+  ViewGroupListView,
+  ViewGroupScope,
+  ViewGroupView,
+} from "@/lib/api/types";
 import {
   UNGROUPED_ID,
   VIEW_SORT_OPTIONS,
@@ -119,6 +117,125 @@ import {
 } from "@/lib/saved-views/view-board";
 import { cn } from "@/lib/utils";
 import { DRAG_LIFT_CLASS, useSpringSort } from "@/lib/ui/springy-drag";
+import { showUndoToast } from "@/lib/ui/undo-toast";
+
+// ──────────────────── delete + undo ────────────────────
+
+/** The layout PUT that puts a re-created group back where the deleted
+ *  one sat. `before` is the scope's layout captured just before the
+ *  delete; `current` is the server's list after the group was re-created
+ *  under `newId`. Group order follows `before` (old id swapped for the
+ *  new one); groups made since trail it. Members come from `current`, so
+ *  moves made in the meantime aren't clobbered, and the ungrouped order
+ *  is the pre-delete one minus anything that has joined a group since.
+ *  Exported for tests. */
+export function restoredGroupLayout(
+  scope: ViewGroupScope,
+  before: ReturnType<typeof boardToLayout>,
+  oldId: string,
+  newId: string,
+  current: ViewGroupListView,
+): ReplaceLayoutReq {
+  const byId = new Map(current.groups.map((g) => [g.id, g]));
+  const order = before.groups.map((g) => (g.id === oldId ? newId : g.id));
+  for (const g of current.groups) if (!order.includes(g.id)) order.push(g.id);
+  const groups = order.flatMap((id) => {
+    const g = byId.get(id);
+    return g ? [{ id, view_ids: g.view_ids }] : [];
+  });
+  const grouped = new Set(groups.flatMap((g) => g.view_ids));
+  return {
+    scope,
+    groups,
+    ungrouped: before.ungrouped.filter((id) => !grouped.has(id)),
+  };
+}
+
+/** Delete a group immediately (optimistically dropped from the cache) and
+ *  offer Undo, which re-creates it with the same name, members, collapsed
+ *  state and slot. Only the grouping is ever lost — the views themselves
+ *  just fall back to Ungrouped — so no confirm is needed. */
+function useDeleteGroupWithUndo(scope: ViewGroupScope) {
+  const qc = useQueryClient();
+  const key = queryKeys.viewGroups(scope);
+  const del = useApiMutation<unknown, string>(
+    (id) => ({ path: `/me/view-groups/${id}`, method: "DELETE" }),
+    {
+      onMutate: async (id) => {
+        await qc.cancelQueries({ queryKey: key });
+        const snapshot = qc.getQueryData<ViewGroupListView>(key);
+        if (snapshot) {
+          qc.setQueryData<ViewGroupListView>(key, {
+            ...snapshot,
+            groups: snapshot.groups.filter((g) => g.id !== id),
+          });
+        }
+        return { snapshot };
+      },
+      onError: (_err, _id, ctx) => {
+        const c = ctx as { snapshot?: ViewGroupListView } | undefined;
+        if (c?.snapshot) qc.setQueryData(key, c.snapshot);
+      },
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: key });
+      },
+    },
+  );
+  const mutate = del.mutate;
+
+  return React.useCallback(
+    (group: BoardGroup, board: ViewBoard) => {
+      const before = boardToLayout(board);
+      const viewIds = group.views.map((v) => v.id);
+      mutate(group.id, {
+        onSuccess: () =>
+          showUndoToast({
+            message: `Deleted group "${group.name}"`,
+            description:
+              viewIds.length > 0 ? "Its views moved to Ungrouped." : undefined,
+            restoredMessage: `Restored group "${group.name}"`,
+            failedMessage: "Couldn't restore the group",
+            onUndo: async () => {
+              try {
+                const created = await apiMutate<ViewGroupView>({
+                  path: "/me/view-groups",
+                  method: "POST",
+                  body: { scope, name: group.name, view_ids: viewIds },
+                });
+                if (!created) throw new Error("create returned null");
+                if (group.collapsed) {
+                  await apiMutate({
+                    path: `/me/view-groups/${created.id}`,
+                    method: "PATCH",
+                    body: { collapsed: true },
+                  });
+                }
+                const current = await jsonFetch<ViewGroupListView>(
+                  `/me/view-groups?scope=${encodeURIComponent(scope)}`,
+                );
+                await apiMutate({
+                  path: "/me/view-groups/layout",
+                  method: "PUT",
+                  body: restoredGroupLayout(
+                    scope,
+                    before,
+                    group.id,
+                    created.id,
+                    current,
+                  ),
+                });
+              } finally {
+                qc.invalidateQueries({
+                  queryKey: queryKeys.viewGroups(scope),
+                });
+              }
+            },
+          }),
+      });
+    },
+    [mutate, qc, scope],
+  );
+}
 
 // ──────────────────── ids ────────────────────
 
@@ -201,7 +318,7 @@ export function GroupedViewsBoard({
   const replaceLayout = useReplaceViewGroupLayout(scope);
   const createGroup = useCreateViewGroup();
   const updateGroup = useUpdateViewGroup(scope);
-  const deleteGroup = useDeleteViewGroup(scope);
+  const deleteGroup = useDeleteGroupWithUndo(scope);
 
   const [sort, setSort] = React.useState<ViewSort>("custom");
   const [query, setQuery] = React.useState("");
@@ -532,7 +649,12 @@ export function GroupedViewsBoard({
                       const next = moveGroup(board, idx, idx + dir);
                       if (next !== board) commit(next);
                     }}
-                    onDelete={() => deleteGroup.mutate(group.id)}
+                    onDelete={() =>
+                      deleteGroup(
+                        board.groups.find((g) => g.id === group.id) ?? group,
+                        board,
+                      )
+                    }
                     menuExtra={groupMenuExtra?.(board.groups[idx] ?? group)}
                   />
                 ))}
@@ -650,7 +772,6 @@ function GroupSection({
     transition: useSpringSort(),
   });
   const [editing, setEditing] = React.useState(false);
-  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const open = forceOpen || !group.collapsed;
   const panelId = React.useId();
   // Highlight when a *card* hovers this section (not another group).
@@ -762,7 +883,7 @@ function GroupSection({
             ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onSelect={() => setConfirmDelete(true)}
+              onSelect={onDelete}
               className="text-destructive focus:text-destructive"
             >
               <Trash2 className="size-4" /> Delete group
@@ -799,25 +920,6 @@ function GroupSection({
           )}
         </div>
       </SortableContext>
-
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete group “{group.name}”?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Only the grouping goes away. Its {totalInGroup}{" "}
-              {plural(noun, totalInGroup)} move back to Ungrouped and keep their
-              pins, sidebar placement, and data.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onDelete}>
-              Delete group
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   );
 }
