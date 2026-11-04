@@ -91,7 +91,7 @@ export function TabsList({
           className={cn(
             "bg-primary pointer-events-none absolute top-0 left-0 h-0.5 rounded-full",
             indicator.animate &&
-              "transition-[translate,width] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "transition-[translate,width] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
           )}
           style={{
             width: indicator.width,

@@ -1668,18 +1668,18 @@ html.theme-reveal::view-transition-group(root) {
 @keyframes tab-panel-fwd {
   from {
     opacity: 0;
-    translate: 14px 0;
+    translate: 24px 0;
   }
 }
 @keyframes tab-panel-back {
   from {
     opacity: 0;
-    translate: -14px 0;
+    translate: -24px 0;
   }
 }
 [data-tab-motion="fwd"] [data-slot="tabs-content"][data-state="active"] {
-  animation: tab-panel-fwd 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: tab-panel-fwd 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 [data-tab-motion="back"] [data-slot="tabs-content"][data-state="active"] {
-  animation: tab-panel-back 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: tab-panel-back 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
