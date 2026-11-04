@@ -2,6 +2,7 @@ import { toast } from "sonner";
 
 import { formatIssueHeading } from "@/lib/format";
 
+import { DOWNLOAD_TOAST_ID, isTrackedDownload } from "./download-toast";
 import { getDownloadManager, trackOutboxProgress } from "./downloads";
 import { getOutbox } from "./outbox";
 
@@ -21,11 +22,14 @@ export function startOfflineDownloads(userId: string): () => void {
       { title: event.record.title, number: event.record.number },
       event.record.seriesName,
     );
-    if (event.type === "complete")
+    if (event.type === "complete") {
+      // A download started from the dialog reports in its own batch
+      // toast (same id), which would be replaced mid-progress.
+      if (isTrackedDownload(event.record.issueId)) return;
       toast.success(`${label} is ready to read offline`, {
-        id: "offline-download",
+        id: DOWNLOAD_TOAST_ID,
       });
-    else
+    } else
       toast.error(
         `${label}: ${event.record.errorMessage ?? "download failed"}`,
         { id: "offline-download-error" },

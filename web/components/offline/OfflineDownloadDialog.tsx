@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -18,7 +19,7 @@ import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useMe } from "@/lib/api/queries";
 import type { IssueDetailView, PageInfo } from "@/lib/api/types";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, formatIssueHeading } from "@/lib/format";
 import {
   defaultDownloadTier,
   estimateIssueBytes,
@@ -28,6 +29,7 @@ import {
   type OfflineListSource,
 } from "@/lib/pwa/downloads";
 import { DOWNLOAD_TIERS, type DownloadTier } from "@/lib/pwa/offline-store";
+import { newlyActive, trackDownloadToast } from "@/lib/pwa/download-toast";
 import { useDownload, useStorageUsage } from "@/lib/pwa/use-downloads";
 
 export type OfflineDownloadTarget =
@@ -142,6 +144,7 @@ export function OfflineDownloadDialog({
   target: OfflineDownloadTarget;
 }) {
   const me = useMe();
+  const router = useRouter();
   const [tier, setTier] = useState<DownloadTier>(initialTier);
   const [scopeKey, setScopeKey] = useState<ScopeKey>(initialScope);
   const scope = SCOPES.find((s) => s.key === scopeKey)?.scope ?? { count: 5 };
@@ -186,25 +189,34 @@ export function OfflineDownloadDialog({
       if (account && manager.account() !== account)
         await manager.setAccount(account);
       const reader = readerSnapshot(me.data);
+      // What was already queued / running, so the progress toast follows
+      // only the issues this request adds.
+      const before = manager.snapshot();
+      const track = (label: string) =>
+        trackDownloadToast(
+          manager,
+          newlyActive(before, manager.snapshot()),
+          label,
+          () => router.push("/downloads"),
+        );
       if (target.kind === "issue") {
         await manager.downloadIssue(target.issue, tier, {
           reader,
           seriesName: target.seriesName ?? null,
         });
-        toast.message("Downloading for offline reading", {
-          id: "offline-download",
-        });
+        track(
+          formatIssueHeading(
+            { title: target.issue.title, number: target.issue.number },
+            target.seriesName ?? null,
+          ),
+        );
       } else if (target.kind === "series") {
         const queued = await manager.downloadSeries(target.series, tier, {
           reader,
         });
         if (queued === 0)
           toast.info("Every issue in this series is already downloaded");
-        else
-          toast.message(
-            `Downloading ${queued} ${queued === 1 ? "issue" : "issues"} for offline reading`,
-            { id: "offline-download" },
-          );
+        else track(target.series.name);
       } else {
         try {
           localStorage.setItem(SCOPE_KEY, scopeKey);
@@ -223,11 +235,7 @@ export function OfflineDownloadDialog({
           toast.info(
             `The next ${selected === 1 ? "issue" : `${selected} issues`} of ${target.list.name} ${selected === 1 ? "is" : "are"} already downloaded`,
           );
-        else
-          toast.message(
-            `Downloading ${queued} ${queued === 1 ? "issue" : "issues"} from ${target.list.name} for offline reading`,
-            { id: "offline-download" },
-          );
+        else track(target.list.name);
       }
       onOpenChange(false);
     } catch (e) {
