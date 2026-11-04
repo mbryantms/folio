@@ -110,6 +110,7 @@ import type {
   BackgroundWorkView,
   DeadLetterView,
   DeadJobsView,
+  QueueJobsView,
   LogWidgetListView,
   ReadingLogFilters,
   ReadingLogPageView,
@@ -1116,6 +1117,29 @@ export function useDeadJobs(
       ),
     enabled: !!queue,
     staleTime: 5_000,
+  });
+}
+
+/**
+ * Per-queue job lanes (waiting / scheduled / running / recent cards) for the
+ * Queue page. `queue = null` lists every queue. The scan-events WS
+ * invalidates this on every `queue.activity` (coalesced), so the poll is only
+ * a fallback for a dropped socket. Admin-only; callers gate on
+ * `me.role === "admin"`.
+ */
+export function useQueueJobs(
+  queue: string | null,
+  opts?: { limit?: number; enabled?: boolean; intervalMs?: number },
+) {
+  const { limit = 20, enabled = true, intervalMs = 10_000 } = opts ?? {};
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (queue) params.set("queue", queue);
+  return useQuery({
+    queryKey: queryKeys.queueJobs(queue, limit),
+    queryFn: () => jsonFetch<QueueJobsView>(`/admin/queue/jobs?${params}`),
+    enabled,
+    refetchInterval: intervalMs,
+    staleTime: 1_000,
   });
 }
 

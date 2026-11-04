@@ -742,6 +742,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/queue/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_queue_jobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/relationship-suggestions": {
         parameters: {
             query?: never;
@@ -10897,6 +10913,67 @@ export interface components {
              */
             thumbnail_enqueued: boolean;
         };
+        /** @description One job in a lane. */
+        JobCard: {
+            /**
+             * Format: int32
+             * @description Attempts so far (the running one included), when known.
+             */
+            attempt?: number | null;
+            /** Format: int64 */
+            duration_ms?: number | null;
+            /** @description Done jobs that failed: the handler's error. */
+            error?: string | null;
+            /**
+             * Format: date-time
+             * @description Done jobs.
+             */
+            finished_at?: string | null;
+            /** @description What the job does, e.g. `"Cover thumbnail"`, `"Library scan"`. */
+            label: string;
+            /**
+             * Format: date-time
+             * @description Scheduled jobs: when the retry is due.
+             */
+            next_run_at?: string | null;
+            /** @description Done jobs: `true` on success. */
+            ok?: boolean | null;
+            queue: string;
+            /**
+             * Format: date-time
+             * @description Running and done jobs: when execution started.
+             */
+            started_at?: string | null;
+            state: components["schemas"]["JobCardState"];
+            target?: components["schemas"]["JobTarget"] | null;
+            /** @description apalis task id (ULID); stable across lanes, so it keys the card. */
+            task_id: string;
+        };
+        /**
+         * @description Where a job card sits.
+         * @enum {string}
+         */
+        JobCardState: "waiting" | "scheduled" | "running" | "done";
+        /** @description The entity a job works on, resolved for display. */
+        JobTarget: {
+            /** @description Thumbnail URL: the issue's cover, or the series cover. */
+            cover_url?: string | null;
+            id: string;
+            issue_slug?: string | null;
+            /** @description `issue` | `series` | `library`. */
+            kind: string;
+            library?: components["schemas"]["JobTargetLibrary"] | null;
+            /** @description Slugs for links (issue and series targets). */
+            series_slug?: string | null;
+            /** @description `"The Flash #12 — Learning Curve"`, `"The Flash (1987)"`, `"DC"`. */
+            title: string;
+        };
+        /** @description The library a job's target belongs to. */
+        JobTargetLibrary: {
+            id: string;
+            name: string;
+            slug: string;
+        };
         LatestReleaseView: {
             /** @description Browse URL on the host's release page. */
             html_url: string;
@@ -13052,6 +13129,35 @@ export interface components {
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
+        };
+        /**
+         * @description One queue's lanes. Each list is capped at the request's `limit`; the
+         *     `*_count` fields are exact.
+         */
+        QueueJobsLane: {
+            queue: string;
+            /** @description Newest first. Process-local: empty after a restart. */
+            recent: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            recent_count: number;
+            /** @description Longest-running first; prefetched (not yet started) jobs last. */
+            running: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            running_count: number;
+            /** @description Soonest retry first. */
+            scheduled: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            scheduled_count: number;
+            /** @description Next to run first. */
+            waiting: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            waiting_count: number;
+        };
+        QueueJobsView: {
+            /** Format: date-time */
+            generated_at: string;
+            /** @description One entry per queue (or just the requested one), in a stable order. */
+            queues: components["schemas"]["QueueJobsLane"][];
         };
         /** @description One queue's jobs by where they are held. */
         QueueWorkView: {
@@ -18020,6 +18126,44 @@ export interface operations {
             };
             /** @description admin only */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_queue_jobs: {
+        parameters: {
+            query?: {
+                /** @description Queue label; omit for every queue. */
+                queue?: string | null;
+                /** @description Cards per lane (default 20, max 100). */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueJobsView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown queue */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

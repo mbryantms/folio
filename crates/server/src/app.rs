@@ -717,6 +717,8 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     let monitor_handle = tokio::spawn(async move {
         jobs_handle.run(jobs_state, jobs_shutdown).await;
     });
+    // Aggregated `queue.activity` events for the admin queue lanes.
+    crate::jobs::activity::spawn_flusher(state.clone(), shutdown.clone());
 
     // Cron scheduler — best-effort. Failure here doesn't block startup.
     match crate::jobs::scheduler::start(state.clone()).await {

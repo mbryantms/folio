@@ -66,6 +66,7 @@ use redis::aio::ConnectionManager;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
+pub mod activity;
 pub mod archive_edit;
 pub mod archive_transforms;
 pub mod audit_log_retention;
@@ -455,7 +456,10 @@ impl JobRuntime {
                         .backend(storage.clone().poll_with_interval(JOB_POLL_INTERVAL))
                         .concurrency($concurrency)
                         .data(state.clone())
-                        .layer(metrics_layer::JobMetricsLayer::new($name))
+                        .layer(
+                            metrics_layer::JobMetricsLayer::new($name)
+                                .with_activity(state.job_activity.clone()),
+                        )
                         .build($wrapped)
                 })
             }};
@@ -1077,7 +1081,7 @@ impl JobRuntime {
     /// Every apalis queue, by its admin label, with the storage config that
     /// names its Redis keys. One list so the depth, dead-letter and gauge
     /// readers can never disagree about which queues exist.
-    fn queue_configs(&self) -> [(&'static str, &RedisConfig); QUEUE_COUNT] {
+    pub(crate) fn queue_configs(&self) -> [(&'static str, &RedisConfig); QUEUE_COUNT] {
         [
             ("scan", self.scan_storage.get_config()),
             ("scan_series", self.scan_series_storage.get_config()),
@@ -1206,6 +1210,80 @@ impl JobRuntime {
         Ok(out)
     }
 
+    /// Lane totals for the named queues, in the order given (unknown labels
+    /// are skipped): `waiting` = the `active` list plus `scheduled` entries
+    /// already due (apalis-redis 1.0 pushes every new job into `scheduled`
+    /// stamped `run_at = now`; a fetch promotes it), `scheduled` = entries
+    /// with a future `run_at` (retry-delayed), `running` = the worker
+    /// in-flight sets. Two pipelined round-trips however many queues.
+    pub async fn lane_counts(
+        &self,
+        labels: &[&str],
+    ) -> redis::RedisResult<Vec<(&'static str, activity::LaneCounts)>> {
+        let all = self.queue_configs();
+        let queues: Vec<(&'static str, &RedisConfig)> = labels
+            .iter()
+            .filter_map(|l| all.iter().find(|(q, _)| q == l).copied())
+            .collect();
+        if queues.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.redis.clone();
+        let now = unix_now_secs();
+        let mut pipe = redis::pipe();
+        for (_, cfg) in &queues {
+            pipe.llen(cfg.active_jobs_list())
+                .zcount(cfg.scheduled_jobs_set(), "-inf", now)
+                .zcount(cfg.scheduled_jobs_set(), format!("({now}"), "+inf")
+                .zrange(cfg.workers_set(), 0, -1);
+        }
+        type Row = (i64, i64, i64, Vec<String>);
+        let rows: Vec<Row> = {
+            let flat: Vec<redis::Value> = pipe.query_async(&mut conn).await?;
+            let mut it = flat.into_iter();
+            let mut rows = Vec::with_capacity(queues.len());
+            while let (Some(a), Some(d), Some(f), Some(w)) =
+                (it.next(), it.next(), it.next(), it.next())
+            {
+                rows.push((
+                    redis::from_redis_value(a)?,
+                    redis::from_redis_value(d)?,
+                    redis::from_redis_value(f)?,
+                    redis::from_redis_value(w)?,
+                ));
+            }
+            rows
+        };
+        let mut pipe = redis::pipe();
+        let mut any = false;
+        for ((_, cfg), (_, _, _, workers)) in queues.iter().zip(&rows) {
+            for w in workers {
+                pipe.scard(inflight_set_key(cfg, w));
+                any = true;
+            }
+        }
+        let sizes: Vec<i64> = if any {
+            pipe.query_async(&mut conn).await?
+        } else {
+            Vec::new()
+        };
+        let mut sizes = sizes.into_iter();
+        Ok(queues
+            .iter()
+            .zip(rows)
+            .map(|((label, _), (active, due, future, workers))| {
+                (
+                    *label,
+                    activity::LaneCounts {
+                        waiting: active + due,
+                        scheduled: future,
+                        running: sizes.by_ref().take(workers.len()).sum(),
+                    },
+                )
+            })
+            .collect())
+    }
+
     /// The thumbnail jobs Redis still holds (waiting, retry-delayed or
     /// fetched by a worker), decoded from the queue's job-data hash. Read
     /// once at boot to re-seed the process-local dedupe set
@@ -1273,7 +1351,7 @@ fn decode_job_args<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
 }
 
 /// Unix seconds, the clock apalis-redis stamps `run_at` with.
-fn unix_now_secs() -> u64 {
+pub(crate) fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1283,7 +1361,7 @@ fn unix_now_secs() -> u64 {
 /// A worker's in-flight SET (`{queue}:inflight:{worker}`) — the key
 /// `Config::inflight_set_for` derives, for a worker name read back from
 /// the `{queue}:workers` ZSET rather than a live `WorkerContext`.
-fn inflight_set_key(cfg: &RedisConfig, worker: &str) -> String {
+pub(crate) fn inflight_set_key(cfg: &RedisConfig, worker: &str) -> String {
     format!("{}:{worker}", cfg.inflight_jobs_set())
 }
 

@@ -1672,6 +1672,56 @@
         }
       }
     },
+    "/api/admin/queue/jobs": {
+      "get": {
+        "operationId": "admin_queue_jobs",
+        "parameters": [
+          {
+            "name": "queue",
+            "in": "query",
+            "description": "Queue label; omit for every queue.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Cards per lane (default 20, max 100).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueJobsView"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "admin only"
+          },
+          "422": {
+            "description": "unknown queue"
+          }
+        }
+      }
+    },
     "/api/admin/relationship-suggestions": {
       "get": {
         "operationId": "relationship_suggestions_list",
@@ -25895,6 +25945,180 @@
           }
         }
       },
+      "JobCard": {
+        "type": "object",
+        "description": "One job in a lane.",
+        "required": [
+          "task_id",
+          "queue",
+          "state",
+          "label"
+        ],
+        "properties": {
+          "attempt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Attempts so far (the running one included), when known.",
+            "minimum": 0
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Done jobs that failed: the handler's error."
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Done jobs."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the job does, e.g. `\"Cover thumbnail\"`, `\"Library scan\"`."
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Scheduled jobs: when the retry is due."
+          },
+          "ok": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Done jobs: `true` on success."
+          },
+          "queue": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Running and done jobs: when execution started."
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobCardState"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/JobTarget",
+                "description": "The issue / series / library the job targets, when its payload names\none that still exists."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_id": {
+            "type": "string",
+            "description": "apalis task id (ULID); stable across lanes, so it keys the card."
+          }
+        }
+      },
+      "JobCardState": {
+        "type": "string",
+        "description": "Where a job card sits.",
+        "enum": [
+          "waiting",
+          "scheduled",
+          "running",
+          "done"
+        ]
+      },
+      "JobTarget": {
+        "type": "object",
+        "description": "The entity a job works on, resolved for display.",
+        "required": [
+          "kind",
+          "id",
+          "title"
+        ],
+        "properties": {
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Thumbnail URL: the issue's cover, or the series cover."
+          },
+          "id": {
+            "type": "string"
+          },
+          "issue_slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "description": "`issue` | `series` | `library`."
+          },
+          "library": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/JobTargetLibrary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "series_slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Slugs for links (issue and series targets)."
+          },
+          "title": {
+            "type": "string",
+            "description": "`\"The Flash #12 — Learning Curve\"`, `\"The Flash (1987)\"`, `\"DC\"`."
+          }
+        }
+      },
+      "JobTargetLibrary": {
+        "type": "object",
+        "description": "The library a job's target belongs to.",
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "LatestReleaseView": {
         "type": "object",
         "required": [
@@ -30527,6 +30751,90 @@
             "type": "integer",
             "format": "int64",
             "description": "Sum across all queues — convenient for the topbar pill."
+          }
+        }
+      },
+      "QueueJobsLane": {
+        "type": "object",
+        "description": "One queue's lanes. Each list is capped at the request's `limit`; the\n`*_count` fields are exact.",
+        "required": [
+          "queue",
+          "waiting",
+          "waiting_count",
+          "scheduled",
+          "scheduled_count",
+          "running",
+          "running_count",
+          "recent",
+          "recent_count"
+        ],
+        "properties": {
+          "queue": {
+            "type": "string"
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobCard"
+            },
+            "description": "Newest first. Process-local: empty after a restart."
+          },
+          "recent_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "running": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobCard"
+            },
+            "description": "Longest-running first; prefetched (not yet started) jobs last."
+          },
+          "running_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "scheduled": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobCard"
+            },
+            "description": "Soonest retry first."
+          },
+          "scheduled_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "waiting": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobCard"
+            },
+            "description": "Next to run first."
+          },
+          "waiting_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "QueueJobsView": {
+        "type": "object",
+        "required": [
+          "queues",
+          "generated_at"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "queues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueJobsLane"
+            },
+            "description": "One entry per queue (or just the requested one), in a stable order."
           }
         }
       },

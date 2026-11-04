@@ -801,3 +801,165 @@ async fn dead_jobs_resolve_their_targets_to_labels_and_slugs() {
     // The raw payload is still there for the details view.
     assert_eq!(body["jobs"][0]["payload"]["issue_id"], issue_id);
 }
+
+// ───── Job lanes (Flair phase 5 B4) ─────
+
+#[tokio::test]
+async fn queue_jobs_lists_lanes_with_cards_and_targets() {
+    use common::seed::{seed_issue, seed_library, seed_series};
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let st = app.state();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = seed_library(&st.db, tmp.path()).await;
+    let series = seed_series(&st.db, lib, "Lane Test").await;
+    let issue = seed_issue(
+        &st.db,
+        lib,
+        series,
+        &tmp.path().join("Lane Test 001.cbz"),
+        b"lane-test-bytes",
+        1.0,
+    )
+    .await;
+
+    let cfg = st.jobs.post_scan_thumbs_storage.get_config().clone();
+    let mut conn = st.jobs.redis.clone();
+    let payload = json!({ "issue_id": issue, "kind": "cover" }).to_string();
+    for id in ["w1", "w2", "w3", "s1", "r1", "r2", "done1"] {
+        let _: i64 = conn.hset(cfg.job_data_hash(), id, &payload).await.unwrap();
+    }
+    // Three waiting in the list, one due in `scheduled` (a fresh push), one
+    // retry-delayed, two fetched by a worker.
+    let _: i64 = conn
+        .rpush(cfg.active_jobs_list(), &["w1", "w2", "w3"])
+        .await
+        .unwrap();
+    let _: i64 = conn
+        .zadd(cfg.scheduled_jobs_set(), "due1", 1i64)
+        .await
+        .unwrap();
+    let _: i64 = conn
+        .zadd(cfg.scheduled_jobs_set(), "s1", 9_999_999_999i64)
+        .await
+        .unwrap();
+    let _: () = conn
+        .hset_multiple(format!("{}:s1", cfg.job_meta_hash()), &[("attempts", "2")])
+        .await
+        .unwrap();
+    let _: i64 = conn
+        .zadd(cfg.workers_set(), "worker-a", 1i64)
+        .await
+        .unwrap();
+    let _: i64 = conn
+        .sadd(
+            format!("{}:worker-a", cfg.inflight_jobs_set()),
+            &["r1", "r2"],
+        )
+        .await
+        .unwrap();
+    // The hub saw r2 start, and one job finish.
+    let _r2 = st
+        .job_activity
+        .start("post_scan_thumbs", "r2".into(), Some(1));
+    let done = st
+        .job_activity
+        .start("post_scan_thumbs", "done1".into(), Some(1));
+    st.job_activity
+        .finish(done, false, Some("bad archive".into()), Some(1));
+
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::GET,
+        "/api/admin/queue/jobs?queue=post_scan_thumbs&limit=2",
+        None,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let queues = body["queues"].as_array().unwrap();
+    assert_eq!(queues.len(), 1);
+    let q = &queues[0];
+    assert_eq!(q["queue"], "post_scan_thumbs");
+
+    // Waiting: list head first, capped at the limit, exact count incl. due.
+    assert_eq!(q["waiting_count"], 4);
+    let waiting: Vec<&str> = q["waiting"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["task_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(waiting, ["w1", "w2"]);
+    let w1 = &q["waiting"][0];
+    assert_eq!(w1["state"], "waiting");
+    assert_eq!(w1["label"], "Cover thumbnail");
+    assert_eq!(w1["target"]["kind"], "issue");
+    assert_eq!(w1["target"]["id"], issue);
+    assert!(
+        w1["target"]["title"]
+            .as_str()
+            .unwrap()
+            .starts_with("Lane Test #1")
+    );
+    assert_eq!(
+        w1["target"]["cover_url"],
+        format!("/issues/{issue}/pages/0/thumb")
+    );
+    assert_eq!(w1["target"]["library"]["id"], lib.to_string());
+
+    // Scheduled: the retry-delayed one, with attempt + next_run_at.
+    assert_eq!(q["scheduled_count"], 1);
+    let s1 = &q["scheduled"][0];
+    assert_eq!(s1["task_id"], "s1");
+    assert_eq!(s1["attempt"], 2);
+    assert!(s1["next_run_at"].as_str().is_some());
+
+    // Running: the executing one (started_at known) before the prefetched.
+    assert_eq!(q["running_count"], 2);
+    assert_eq!(q["running"][0]["task_id"], "r2");
+    assert!(q["running"][0]["started_at"].as_str().is_some());
+    assert_eq!(q["running"][1]["task_id"], "r1");
+    assert!(q["running"][1]["started_at"].is_null());
+
+    // Recent: from the hub's ring.
+    assert_eq!(q["recent_count"], 1);
+    let d = &q["recent"][0];
+    assert_eq!(d["task_id"], "done1");
+    assert_eq!(d["state"], "done");
+    assert_eq!(d["ok"], false);
+    assert_eq!(d["error"], "bad archive");
+    assert!(d["duration_ms"].as_u64().is_some());
+
+    // Omitting `queue` lists every queue.
+    let resp = send_authed(&app, &admin, Method::GET, "/api/admin/queue/jobs", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["queues"].as_array().unwrap().len(), 17);
+
+    // Lane counts for the activity event agree with the listing.
+    let counts = st.jobs.lane_counts(&["post_scan_thumbs"]).await.unwrap();
+    assert_eq!(counts[0].1.waiting, 4);
+    assert_eq!(counts[0].1.scheduled, 1);
+    assert_eq!(counts[0].1.running, 2);
+}
+
+#[tokio::test]
+async fn queue_jobs_rejects_unknown_queue_and_non_admins() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::GET,
+        "/api/admin/queue/jobs?queue=nope",
+        None,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
+    let resp = send_authed(&app, &user, Method::GET, "/api/admin/queue/jobs", None).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}

@@ -284,6 +284,12 @@ export type DeadLetterView = Schemas["DeadLetterView"];
 export type DeadJob = Schemas["DeadJob"];
 export type WorkTargetView = Schemas["WorkTargetView"];
 export type DeadJobsView = Schemas["DeadJobsView"];
+export type QueueJobsView = Schemas["QueueJobsView"];
+export type QueueJobsLane = Schemas["QueueJobsLane"];
+export type JobCard = Schemas["JobCard"];
+export type JobCardState = Schemas["JobCardState"];
+export type JobTarget = Schemas["JobTarget"];
+export type JobTargetLibrary = Schemas["JobTargetLibrary"];
 export type DeadJobRetryReq = Schemas["DeadJobRetryReq"];
 export type DeadJobRetryResp = Schemas["DeadJobRetryResp"];
 export type DeadJobsPurgeReq = Schemas["DeadJobsPurgeReq"];
@@ -699,13 +705,22 @@ export type ScanEvent =
       active_workers?: number;
       dirty_folders?: number;
       skipped_folders?: number;
+      /** Remaining work ÷ the recent (~10 s) rate; absent until it settles. */
       eta_ms?: number;
+      /** "Scan all" batch this run belongs to, as on `scan.started`. */
+      batch_id?: string;
     }
   | {
+      // Sent once a folder's files are ingested; throttled per library
+      // (new and changed series separately).
       type: "scan.series_updated";
       library_id: string;
       series_id: string;
       name: string;
+      /** The scan created this series (vs. changed an existing one). */
+      created?: boolean;
+      /** `/issues/{id}/pages/0/thumb` of the series cover, when it has one. */
+      cover_url?: string;
     }
   | {
       type: "scan.health_issue";
@@ -786,7 +801,31 @@ export type ScanEvent =
       processed: number;
       skipped: number;
     }
+  | {
+      // Job lifecycle for the queue lanes: one aggregated event per ~500 ms
+      // flush, only when something started or finished. Lists are capped at
+      // 50 per queue; the `*_count` fields are exact.
+      type: "queue.activity";
+      at: string;
+      queues: QueueActivity[];
+    }
   | { type: "lagged"; skipped: number };
+
+/** One queue's share of a `queue.activity` event. */
+export type QueueActivity = {
+  queue: string;
+  started: string[];
+  started_count: number;
+  finished: {
+    task_id: string;
+    ok: boolean;
+    duration_ms: number;
+    error?: string;
+  }[];
+  finished_count: number;
+  /** Current lane totals, when the server's Redis read succeeded. */
+  counts?: { waiting: number; scheduled: number; running: number };
+};
 
 export type ApiError = {
   error: { code: string; message: string; details?: unknown };

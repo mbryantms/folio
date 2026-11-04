@@ -100,6 +100,10 @@ export function invalidationsForEvent(
       // A background backfill drain finished — refresh the queue depth pill
       // and the metadata dashboard (which hosts the backfill cards). B17.
       return [queryKeys.queueDepth, queryKeys.adminMetadataDashboard];
+    case "queue.activity":
+      // Jobs moved between lanes: refresh every job-lanes listing and the
+      // header depth pill.
+      return [queryKeys.queueJobsAll, queryKeys.queueDepth];
     case "lagged":
       // We missed events — recover by sweeping every WS-driven cache.
       return [["libraries"], ["admin"], ["series"], ["issues"]];

@@ -141,6 +141,14 @@ async fn worker_loop_consumes_a_queued_job_and_writes_its_side_effect() {
         "idle worker pickup took {idle_latency:?}"
     );
 
+    // Flair phase 5 B3: the metrics layer reported both jobs to the activity
+    // hub with their apalis task ids (the soft-failed thumbnail returns Ok).
+    let recent = state.job_activity.recent("post_scan_thumbs");
+    assert_eq!(recent.len(), 2, "{recent:?}");
+    assert!(recent.iter().all(|r| r.ok && !r.task_id.is_empty()));
+    assert!(recent.iter().all(|r| r.attempt == Some(1)), "{recent:?}");
+    assert!(state.job_activity.running_in("post_scan_thumbs").is_empty());
+
     // Stop the loop before TestApp drops: an orphaned worker would keep polling
     // a Redis index the pool hands to the next test.
     shutdown.cancel();

@@ -214,6 +214,11 @@ export const queryKeys = {
   /** Paginated dead-job list for one queue (`/admin/queue/dead-jobs`). */
   deadJobs: (queue: string, page: number) =>
     ["admin", "queue", "dead-jobs", queue, page] as const,
+  /** Every limit/filter of the job-lanes listing (`/admin/queue/jobs`). */
+  queueJobsAll: ["admin", "queue", "jobs"] as const,
+  /** Job lanes for one queue (`null` = all queues). */
+  queueJobs: (queue: string | null, limit: number) =>
+    ["admin", "queue", "jobs", queue ?? "all", limit] as const,
   thumbnailsStatus: (libraryId: string) =>
     ["admin", "libraries", libraryId, "thumbnails-status"] as const,
   thumbnailsSettings: (libraryId: string) =>

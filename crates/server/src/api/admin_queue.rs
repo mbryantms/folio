@@ -8,6 +8,7 @@
 //! apalis's own `Storage::len()` is only the first of those, so it reads 0
 //! while the last jobs of a drain are still running.
 
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use apalis::prelude::{FetchById, TaskId, TaskSink};
@@ -32,6 +33,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(dead_jobs))
         .routes(routes!(retry_dead_job))
         .routes(routes!(purge_dead_jobs))
+        .routes(routes!(queue_jobs))
 }
 
 /// The apalis queue labels, matching the keys in
@@ -810,6 +812,653 @@ async fn purge_dead(app: &AppState, keys: &DeadKeys) -> redis::RedisResult<usize
     }
     let _: () = pipe.query_async(&mut conn).await?;
     Ok(n)
+}
+
+// ───────────────────────── job lanes (Flair phase 5 B4) ─────────────────────────
+//
+// The Queue page's lanes show individual jobs moving Queued → Running → Done.
+// Waiting / scheduled / running come from each queue's Redis keys (the same
+// layout `JobRuntime::queue_counts` documents); Done comes from the
+// process-local completion ring in `AppState::job_activity`, which also knows
+// when each running job actually started.
+
+/// Where a job card sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JobCardState {
+    /// Waiting for a worker.
+    Waiting,
+    /// Waiting out a retry delay until `next_run_at`.
+    Scheduled,
+    /// Fetched by a worker. `started_at` is set once it is executing (a
+    /// prefetched job has none yet).
+    Running,
+    /// Finished (`ok` says how).
+    Done,
+}
+
+/// The library a job's target belongs to.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema, PartialEq, Eq)]
+pub struct JobTargetLibrary {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+}
+
+/// The entity a job works on, resolved for display.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema, PartialEq, Eq)]
+pub struct JobTarget {
+    /// `issue` | `series` | `library`.
+    pub kind: String,
+    pub id: String,
+    /// `"The Flash #12 — Learning Curve"`, `"The Flash (1987)"`, `"DC"`.
+    pub title: String,
+    /// Thumbnail URL: the issue's cover, or the series cover.
+    pub cover_url: Option<String>,
+    pub library: Option<JobTargetLibrary>,
+    /// Slugs for links (issue and series targets).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series_slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_slug: Option<String>,
+}
+
+/// One job in a lane.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct JobCard {
+    /// apalis task id (ULID); stable across lanes, so it keys the card.
+    pub task_id: String,
+    pub queue: String,
+    pub state: JobCardState,
+    /// What the job does, e.g. `"Cover thumbnail"`, `"Library scan"`.
+    pub label: String,
+    /// Attempts so far (the running one included), when known.
+    pub attempt: Option<u32>,
+    /// Scheduled jobs: when the retry is due.
+    pub next_run_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Running and done jobs: when execution started.
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Done jobs.
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub duration_ms: Option<u64>,
+    /// Done jobs: `true` on success.
+    pub ok: Option<bool>,
+    /// Done jobs that failed: the handler's error.
+    pub error: Option<String>,
+    /// The issue / series / library the job targets, when its payload names
+    /// one that still exists.
+    pub target: Option<JobTarget>,
+}
+
+/// One queue's lanes. Each list is capped at the request's `limit`; the
+/// `*_count` fields are exact.
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct QueueJobsLane {
+    pub queue: String,
+    /// Next to run first.
+    pub waiting: Vec<JobCard>,
+    pub waiting_count: i64,
+    /// Soonest retry first.
+    pub scheduled: Vec<JobCard>,
+    pub scheduled_count: i64,
+    /// Longest-running first; prefetched (not yet started) jobs last.
+    pub running: Vec<JobCard>,
+    pub running_count: i64,
+    /// Newest first. Process-local: empty after a restart.
+    pub recent: Vec<JobCard>,
+    pub recent_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+pub struct QueueJobsView {
+    /// One entry per queue (or just the requested one), in a stable order.
+    pub queues: Vec<QueueJobsLane>,
+    pub generated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct QueueJobsQuery {
+    /// Queue label; omit for every queue.
+    pub queue: Option<String>,
+    /// Cards per lane (default 20, max 100).
+    pub limit: Option<u32>,
+}
+
+/// Default and ceiling for [`QueueJobsQuery::limit`].
+const JOBS_DEFAULT_LIMIT: u32 = 20;
+const JOBS_MAX_LIMIT: u32 = 100;
+
+#[utoipa::path(
+    operation_id = "admin_queue_jobs", get,
+    path = "/admin/queue/jobs",
+    params(QueueJobsQuery),
+    responses(
+        (status = 200, body = QueueJobsView),
+        (status = 403, description = "admin only"),
+        (status = 422, description = "unknown queue"),
+    )
+)]
+#[handler]
+pub async fn queue_jobs(
+    axum::extract::State(app): axum::extract::State<AppState>,
+    _admin: RequireAdmin,
+    Query(q): Query<QueueJobsQuery>,
+) -> impl IntoResponse {
+    let limit = q
+        .limit
+        .unwrap_or(JOBS_DEFAULT_LIMIT)
+        .clamp(1, JOBS_MAX_LIMIT) as usize;
+    let labels: Vec<&'static str> = match q.queue.as_deref().filter(|s| !s.is_empty()) {
+        Some(name) => match DEAD_QUEUES.iter().find(|l| **l == name) {
+            Some(l) => vec![*l],
+            None => return unknown_queue(name),
+        },
+        None => DEAD_QUEUES.to_vec(),
+    };
+    match list_queue_jobs(&app, &labels, limit).await {
+        Ok(queues) => Json(QueueJobsView {
+            queues,
+            generated_at: chrono::Utc::now(),
+        })
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "queue_jobs: redis read failed");
+            internal()
+        }
+    }
+}
+
+/// One queue's raw read before cards are built.
+struct RawLane {
+    label: &'static str,
+    data_hash: String,
+    meta_prefix: String,
+    waiting: Vec<String>,
+    waiting_count: i64,
+    /// `(task_id, run_at unix secs)`.
+    scheduled: Vec<(String, f64)>,
+    scheduled_count: i64,
+    running: Vec<String>,
+    running_count: i64,
+}
+
+async fn list_queue_jobs(
+    app: &AppState,
+    labels: &[&'static str],
+    limit: usize,
+) -> anyhow::Result<Vec<QueueJobsLane>> {
+    let all = app.jobs.queue_configs();
+    let queues: Vec<(&'static str, &apalis_redis::Config)> = labels
+        .iter()
+        .filter_map(|l| all.iter().find(|(q, _)| q == l).copied())
+        .collect();
+    let mut conn = app.jobs.redis.clone();
+    let now = crate::jobs::unix_now_secs();
+    let lim = limit as isize;
+
+    // Round-trip 1: every list head + count, and the worker names.
+    let mut pipe = redis::pipe();
+    for (_, cfg) in &queues {
+        pipe.lrange(cfg.active_jobs_list(), 0, lim - 1)
+            .llen(cfg.active_jobs_list())
+            .cmd("ZRANGEBYSCORE")
+            .arg(cfg.scheduled_jobs_set())
+            .arg("-inf")
+            .arg(now)
+            .arg("LIMIT")
+            .arg(0)
+            .arg(limit)
+            .zcount(cfg.scheduled_jobs_set(), "-inf", now)
+            .cmd("ZRANGEBYSCORE")
+            .arg(cfg.scheduled_jobs_set())
+            .arg(format!("({now}"))
+            .arg("+inf")
+            .arg("WITHSCORES")
+            .arg("LIMIT")
+            .arg(0)
+            .arg(limit)
+            .zcount(cfg.scheduled_jobs_set(), format!("({now}"), "+inf")
+            .zrange(cfg.workers_set(), 0, -1);
+    }
+    type First = (
+        Vec<String>,
+        i64,
+        Vec<String>,
+        i64,
+        Vec<(String, f64)>,
+        i64,
+        Vec<String>,
+    );
+    let flat: Vec<redis::Value> = if queues.is_empty() {
+        Vec::new()
+    } else {
+        pipe.query_async(&mut conn).await?
+    };
+    let mut it = flat.into_iter();
+    let mut firsts: Vec<First> = Vec::with_capacity(queues.len());
+    for _ in &queues {
+        let mut next = || {
+            it.next()
+                .ok_or_else(|| anyhow::anyhow!("short redis reply"))
+        };
+        firsts.push((
+            redis::from_redis_value(next()?)?,
+            redis::from_redis_value(next()?)?,
+            redis::from_redis_value(next()?)?,
+            redis::from_redis_value(next()?)?,
+            redis::from_redis_value(next()?)?,
+            redis::from_redis_value(next()?)?,
+            redis::from_redis_value(next()?)?,
+        ));
+    }
+
+    // Round-trip 2: every worker's in-flight set.
+    let mut pipe = redis::pipe();
+    let mut any = false;
+    for ((_, cfg), first) in queues.iter().zip(&firsts) {
+        for w in &first.6 {
+            pipe.smembers(crate::jobs::inflight_set_key(cfg, w));
+            any = true;
+        }
+    }
+    let sets: Vec<Vec<String>> = if any {
+        pipe.query_async(&mut conn).await?
+    } else {
+        Vec::new()
+    };
+    let mut sets = sets.into_iter();
+
+    let mut raws = Vec::with_capacity(queues.len());
+    for ((label, cfg), (active, active_len, due, due_count, future, future_count, workers)) in
+        queues.iter().zip(firsts)
+    {
+        let mut running: Vec<String> = sets.by_ref().take(workers.len()).flatten().collect();
+        running.sort();
+        running.dedup();
+        // Due `scheduled` entries are waiting too (apalis-redis 1.0 pushes
+        // every new job there with `run_at = now`); they run after the list.
+        let mut waiting = active;
+        waiting.extend(due);
+        waiting.truncate(limit);
+        raws.push(RawLane {
+            label,
+            data_hash: cfg.job_data_hash(),
+            meta_prefix: cfg.job_meta_hash(),
+            waiting,
+            waiting_count: active_len + due_count,
+            scheduled: future,
+            scheduled_count: future_count,
+            running_count: running.len() as i64,
+            running,
+        });
+    }
+
+    // The ring is process-local; read it and the running clock once.
+    let mut lanes_recent = Vec::with_capacity(raws.len());
+    let mut lanes_running = Vec::with_capacity(raws.len());
+    for raw in &mut raws {
+        let started: HashMap<String, crate::jobs::activity::RunningJob> =
+            app.job_activity.running_in(raw.label).into_iter().collect();
+        // Executing jobs first (longest-running first), then prefetched.
+        raw.running
+            .sort_by(|a, b| match (started.get(a), started.get(b)) {
+                (Some(x), Some(y)) => x.started_at.cmp(&y.started_at),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.cmp(b),
+            });
+        raw.running.truncate(limit);
+        let recent = app.job_activity.recent(raw.label);
+        lanes_recent.push((
+            recent.len() as i64,
+            recent.into_iter().take(limit).collect::<Vec<_>>(),
+        ));
+        lanes_running.push(started);
+    }
+
+    // Round-trip 3: payloads + meta (attempts, lock time) for every card.
+    let mut pipe = redis::pipe();
+    let mut card_ids: Vec<Vec<String>> = Vec::with_capacity(raws.len());
+    for (raw, (_, recent)) in raws.iter().zip(&lanes_recent) {
+        let ids: Vec<String> = raw
+            .waiting
+            .iter()
+            .cloned()
+            .chain(raw.scheduled.iter().map(|(id, _)| id.clone()))
+            .chain(raw.running.iter().cloned())
+            .chain(recent.iter().map(|r| r.task_id.clone()))
+            .collect();
+        for id in &ids {
+            pipe.hget(&raw.data_hash, id);
+            pipe.cmd("HMGET")
+                .arg(format!("{}:{id}", raw.meta_prefix))
+                .arg("attempts")
+                .arg("locked_at");
+        }
+        card_ids.push(ids);
+    }
+    let total_ids: usize = card_ids.iter().map(Vec::len).sum();
+    type Meta = (Option<String>, Option<String>);
+    let flat: Vec<redis::Value> = if total_ids == 0 {
+        Vec::new()
+    } else {
+        pipe.query_async(&mut conn).await?
+    };
+    let mut it = flat.into_iter();
+    let mut payloads: HashMap<(&'static str, String), serde_json::Value> = HashMap::new();
+    let mut metas: HashMap<(&'static str, String), Meta> = HashMap::new();
+    for (raw, ids) in raws.iter().zip(&card_ids) {
+        for id in ids {
+            let (Some(data), Some(meta)) = (it.next(), it.next()) else {
+                break;
+            };
+            let data: Option<String> = redis::from_redis_value(data).unwrap_or(None);
+            if let Some(v) = data.and_then(|d| serde_json::from_str(&d).ok()) {
+                payloads.insert((raw.label, id.clone()), v);
+            }
+            let meta: Meta = redis::from_redis_value(meta).unwrap_or((None, None));
+            metas.insert((raw.label, id.clone()), meta);
+        }
+    }
+
+    let targets = resolve_job_targets(app, payloads.values()).await;
+
+    let card = |label: &'static str, id: &str, state: JobCardState| -> JobCard {
+        let key = (label, id.to_owned());
+        let payload = payloads.get(&key);
+        let (attempts, _) = metas.get(&key).cloned().unwrap_or((None, None));
+        JobCard {
+            task_id: id.to_owned(),
+            queue: label.to_owned(),
+            state,
+            label: job_label(label, payload),
+            attempt: attempts
+                .and_then(|a| a.parse::<u32>().ok())
+                .filter(|a| *a > 0),
+            next_run_at: None,
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            ok: None,
+            error: None,
+            target: payload.and_then(|p| targets.primary(p)),
+        }
+    };
+
+    let mut out = Vec::with_capacity(raws.len());
+    for ((raw, (recent_count, recent)), started) in raws.iter().zip(lanes_recent).zip(lanes_running)
+    {
+        let waiting = raw
+            .waiting
+            .iter()
+            .map(|id| card(raw.label, id, JobCardState::Waiting))
+            .collect();
+        let scheduled = raw
+            .scheduled
+            .iter()
+            .map(|(id, at)| {
+                let mut c = card(raw.label, id, JobCardState::Scheduled);
+                c.next_run_at = chrono::DateTime::from_timestamp(*at as i64, 0);
+                c
+            })
+            .collect();
+        let running = raw
+            .running
+            .iter()
+            .map(|id| {
+                let mut c = card(raw.label, id, JobCardState::Running);
+                if let Some(r) = started.get(id) {
+                    c.started_at = Some(r.started_at);
+                    c.attempt = c.attempt.or(r.attempt);
+                }
+                c
+            })
+            .collect();
+        let recent = recent
+            .into_iter()
+            .map(|r| {
+                let mut c = card(raw.label, &r.task_id, JobCardState::Done);
+                c.attempt = r.attempt.or(c.attempt);
+                c.started_at = Some(r.started_at);
+                c.finished_at = Some(r.finished_at);
+                c.duration_ms = Some(r.duration_ms);
+                c.ok = Some(r.ok);
+                c.error = r.error;
+                c
+            })
+            .collect();
+        out.push(QueueJobsLane {
+            queue: raw.label.to_owned(),
+            waiting,
+            waiting_count: raw.waiting_count,
+            scheduled,
+            scheduled_count: raw.scheduled_count,
+            running,
+            running_count: raw.running_count,
+            recent,
+            recent_count,
+        });
+    }
+    Ok(out)
+}
+
+/// A human label for a job, from its queue and (when it refines it) payload.
+pub(crate) fn job_label(queue: &str, payload: Option<&serde_json::Value>) -> String {
+    let field = |k: &str| payload.and_then(|p| p.get(k)).and_then(|v| v.as_str());
+    let label = match queue {
+        "scan" => {
+            let scoped = payload
+                .and_then(|p| p.get("scope"))
+                .is_some_and(|s| s.as_array().is_some_and(|a| !a.is_empty()));
+            match (
+                scoped,
+                payload
+                    .and_then(|p| p.get("force"))
+                    .and_then(|f| f.as_bool()),
+            ) {
+                (true, _) => "Folder scan",
+                (false, Some(true)) => "Full library rescan",
+                _ => "Library scan",
+            }
+        }
+        "scan_series" => match field("kind") {
+            Some("issue") => "Issue rescan",
+            _ => "Series rescan",
+        },
+        "post_scan_thumbs" => match field("kind") {
+            Some("strip") => "Page thumbnails",
+            Some("cover_and_strip") => "Cover + page thumbnails",
+            _ => "Cover thumbnail",
+        },
+        "post_scan_search" => "Search index update",
+        "post_scan_dictionary" => "Search dictionary rebuild",
+        "metadata_search_series" => "Metadata search (series)",
+        "metadata_search_issue" => "Metadata search (issue)",
+        "metadata_apply_series" => "Metadata apply (series)",
+        "metadata_apply_issue" => "Metadata apply (issue)",
+        "rewrite_issue_sidecars" => "Sidecar rewrite",
+        "archive_edit" => "Archive edit",
+        "backfill" => match field("kind") {
+            Some("cover_phash") => "Cover fingerprint backfill",
+            Some("variant_cover") => "Variant cover backfill",
+            Some("cover_variant") => "Cover variant backfill",
+            Some("name_suffixes") => "Name suffix backfill",
+            Some("csv_cache") => "Search cache backfill",
+            _ => "Backfill",
+        },
+        "hash_backfill" => "Content hash backfill",
+        "relationship_suggest" => "Relationship suggestions",
+        "provider_coverage" => "Provider coverage analysis",
+        "entity_enrich" => {
+            return match field("kind") {
+                Some(k) => format!("Profile fetch ({})", k.replace('_', " ")),
+                None => "Profile fetch".to_owned(),
+            };
+        }
+        "sidecar_reemit" => "Sidecar re-emit",
+        other => return other.replace('_', " "),
+    };
+    label.to_owned()
+}
+
+/// Display targets for a set of payloads: [`work_targets`] labels and slugs,
+/// plus each target's cover and library.
+///
+/// [`work_targets`]: crate::api::work_targets
+struct JobTargets {
+    resolved: crate::api::work_targets::Resolved,
+    issue_covers: HashSet<String>,
+    series_covers: HashMap<uuid::Uuid, String>,
+    /// Owning library per issue / series / library id.
+    library_of: HashMap<String, uuid::Uuid>,
+    libraries: HashMap<uuid::Uuid, JobTargetLibrary>,
+}
+
+impl JobTargets {
+    /// The payload's first target (issue, then series, then library).
+    fn primary(&self, payload: &serde_json::Value) -> Option<JobTarget> {
+        let t = crate::api::work_targets::targets_for(payload, &self.resolved)
+            .into_iter()
+            .next()?;
+        let cover_url = match t.kind.as_str() {
+            "issue" if self.issue_covers.contains(&t.id) => {
+                Some(format!("/issues/{}/pages/0/thumb", t.id))
+            }
+            "series" => uuid::Uuid::parse_str(&t.id)
+                .ok()
+                .and_then(|u| self.series_covers.get(&u))
+                .map(|issue| format!("/issues/{issue}/pages/0/thumb")),
+            _ => None,
+        };
+        let library = self
+            .library_of
+            .get(&t.id)
+            .and_then(|l| self.libraries.get(l))
+            .cloned();
+        Some(JobTarget {
+            kind: t.kind,
+            id: t.id,
+            title: t.label,
+            cover_url,
+            library,
+            series_slug: t.series_slug,
+            issue_slug: t.issue_slug,
+        })
+    }
+}
+
+async fn resolve_job_targets<'a>(
+    app: &AppState,
+    payloads: impl Iterator<Item = &'a serde_json::Value>,
+) -> JobTargets {
+    use entity::{issue, library, series};
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+    let payloads: Vec<&serde_json::Value> = payloads.collect();
+    let mut refs = crate::api::work_targets::TargetRefs::default();
+    for p in &payloads {
+        crate::api::work_targets::collect_refs(p, &mut refs);
+    }
+    let resolved = match crate::api::work_targets::resolve(app, refs).await {
+        Ok(r) => r,
+        Err(e) => {
+            // Labels are a convenience; the cards still show.
+            tracing::warn!(error = %e, "queue_jobs: target labels failed");
+            crate::api::work_targets::Resolved::default()
+        }
+    };
+    let mut out = JobTargets {
+        resolved,
+        issue_covers: HashSet::new(),
+        series_covers: HashMap::new(),
+        library_of: HashMap::new(),
+        libraries: HashMap::new(),
+    };
+    // Only the primary target of each payload is shown.
+    let primaries: Vec<crate::api::work_targets::WorkTargetView> = payloads
+        .iter()
+        .filter_map(|p| {
+            crate::api::work_targets::targets_for(p, &out.resolved)
+                .into_iter()
+                .next()
+        })
+        .collect();
+    let issue_ids: HashSet<String> = primaries
+        .iter()
+        .filter(|t| t.kind == "issue")
+        .map(|t| t.id.clone())
+        .collect();
+    let series_ids: HashSet<uuid::Uuid> = primaries
+        .iter()
+        .filter(|t| t.kind == "series")
+        .filter_map(|t| uuid::Uuid::parse_str(&t.id).ok())
+        .collect();
+    let mut library_ids: HashSet<uuid::Uuid> = primaries
+        .iter()
+        .filter(|t| t.kind == "library")
+        .filter_map(|t| uuid::Uuid::parse_str(&t.id).ok())
+        .collect();
+    for l in &library_ids {
+        out.library_of.insert(l.to_string(), *l);
+    }
+    if !issue_ids.is_empty() {
+        let rows: Vec<(String, uuid::Uuid, issue::IssueState)> = issue::Entity::find()
+            .select_only()
+            .column(issue::Column::Id)
+            .column(issue::Column::LibraryId)
+            .column(issue::Column::State)
+            .filter(issue::Column::Id.is_in(issue_ids.iter().cloned()))
+            .into_tuple()
+            .all(&app.db)
+            .await
+            .unwrap_or_default();
+        for (id, lib, state) in rows {
+            if state == issue::IssueState::Active {
+                out.issue_covers.insert(id.clone());
+            }
+            library_ids.insert(lib);
+            out.library_of.insert(id, lib);
+        }
+    }
+    if !series_ids.is_empty() {
+        let ids: Vec<uuid::Uuid> = series_ids.iter().copied().collect();
+        out.series_covers = crate::api::series::series_cover_issue_ids(&app.db, &ids).await;
+        let rows: Vec<(uuid::Uuid, uuid::Uuid)> = series::Entity::find()
+            .select_only()
+            .column(series::Column::Id)
+            .column(series::Column::LibraryId)
+            .filter(series::Column::Id.is_in(ids))
+            .into_tuple()
+            .all(&app.db)
+            .await
+            .unwrap_or_default();
+        for (id, lib) in rows {
+            library_ids.insert(lib);
+            out.library_of.insert(id.to_string(), lib);
+        }
+    }
+    if !library_ids.is_empty() {
+        let rows: Vec<(uuid::Uuid, String, String)> = library::Entity::find()
+            .select_only()
+            .column(library::Column::Id)
+            .column(library::Column::Name)
+            .column(library::Column::Slug)
+            .filter(library::Column::Id.is_in(library_ids))
+            .into_tuple()
+            .all(&app.db)
+            .await
+            .unwrap_or_default();
+        for (id, name, slug) in rows {
+            out.libraries.insert(
+                id,
+                JobTargetLibrary {
+                    id: id.to_string(),
+                    name,
+                    slug,
+                },
+            );
+        }
+    }
+    out
 }
 
 fn unknown_queue(queue: &str) -> axum::response::Response {

@@ -172,6 +172,36 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
     expected: [queryKeys.queueDepth, queryKeys.adminMetadataDashboard],
   },
   {
+    // A newly discovered series (Flair phase 5 B2) routes like any other.
+    evt: {
+      type: "scan.series_updated",
+      library_id: LIB,
+      series_id: "ser-2",
+      name: "New",
+      created: true,
+      cover_url: "/issues/abc/pages/0/thumb",
+    },
+    expected: [["series"]],
+  },
+  {
+    // Jobs moved between lanes → every job-lanes listing + the depth pill.
+    evt: {
+      type: "queue.activity",
+      at: "2026-11-04T10:00:00Z",
+      queues: [
+        {
+          queue: "post_scan_thumbs",
+          started: ["A"],
+          started_count: 1,
+          finished: [{ task_id: "B", ok: true, duration_ms: 12 }],
+          finished_count: 1,
+          counts: { waiting: 3, scheduled: 0, running: 1 },
+        },
+      ],
+    },
+    expected: [queryKeys.queueJobsAll, queryKeys.queueDepth],
+  },
+  {
     // Dropped events → broad recovery sweep over every WS-driven cache.
     evt: { type: "lagged", skipped: 5 },
     expected: [["libraries"], ["admin"], ["series"], ["issues"]],
@@ -200,9 +230,25 @@ describe("invalidationsForEvent", () => {
       "thumbs.completed",
       "thumbs.failed",
       "metadata.applied",
+      "queue.activity",
       "lagged",
     ];
     for (const t of allTypes) expect(covered.has(t)).toBe(true);
+  });
+});
+
+describe("queue jobs keys", () => {
+  it("every per-queue / per-limit listing sits under queueJobsAll", () => {
+    const prefix = queryKeys.queueJobsAll;
+    for (const key of [
+      queryKeys.queueJobs(null, 20),
+      queryKeys.queueJobs("post_scan_thumbs", 50),
+    ]) {
+      expect(key.slice(0, prefix.length)).toEqual([...prefix]);
+    }
+    expect(queryKeys.queueJobs(null, 20)).not.toEqual(
+      queryKeys.queueJobs("scan", 20),
+    );
   });
 });
 

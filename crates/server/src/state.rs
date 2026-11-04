@@ -156,6 +156,13 @@ pub struct Inner {
     /// N-L3). Invalidated by catalogue-changing scans, duplicate decisions
     /// and Removed-tab restores. See [`crate::api::duplicates`].
     pub duplicates: Arc<crate::api::duplicates::DuplicateGroupsCache>,
+    /// Per-job start/finish hub behind the admin queue lanes (Flair phase 5
+    /// B3): the jobs executing now, the last completions per queue, and the
+    /// aggregated `queue.activity` events. Fed by the jobs' metrics layer.
+    pub job_activity: Arc<crate::jobs::activity::JobActivity>,
+    /// Per-scan progress pacing (Flair phase 5 B1): recent-window rates,
+    /// ETA, phase clock, emit throttle and the decoupled snapshot write.
+    pub scan_progress: Arc<crate::library::scanner::pacer::ProgressPacers>,
 }
 
 impl AppState {
@@ -249,6 +256,8 @@ impl AppState {
             similarity: Arc::new(crate::similarity::SimilarityCache::new()),
             page_hash_backfill_inflight: Arc::new(std::sync::Mutex::new(HashSet::new())),
             duplicates: Arc::new(crate::api::duplicates::DuplicateGroupsCache::new()),
+            job_activity: Arc::new(crate::jobs::activity::JobActivity::new()),
+            scan_progress: Arc::new(crate::library::scanner::pacer::ProgressPacers::default()),
         }))
     }
 
