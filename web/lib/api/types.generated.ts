@@ -9407,6 +9407,47 @@ export interface components {
             /** @enum {string} */
             status: "queued";
         };
+        /**
+         * @description Per-account on/off switches for decorative effects (folio-flair-1.0).
+         *
+         *     Stored as the `users.effects` JSON object. Every field is optional: an
+         *     absent key means "use the web's built-in default" (the defaults live in
+         *     `web/lib/effects.ts`, so they can change without a migration). Unknown
+         *     keys are rejected so a typo can't be stored silently.
+         *
+         *     On `PATCH /me/preferences` the object is **merged** into the stored one:
+         *     a key set to `true`/`false` overwrites, a key set to `null` clears it back
+         *     to the default, and absent keys are left alone.
+         */
+        EffectPrefs: {
+            /** @description The reader's background glows with the current page's edge colours. */
+            ambient_glow?: boolean | null;
+            /** @description Library cards tilt toward the pointer with a light sheen. */
+            cover_tilt?: boolean | null;
+            /** @description Series and issue pages get a blurred, cover-tinted backdrop. */
+            hero_backdrop?: boolean | null;
+            /** @description Creator and character chips open a preview card on hover / long-press. */
+            hover_cards?: boolean | null;
+            /** @description Paged-mode page turns animate as a page curl (fine pointer only). */
+            page_curl?: boolean | null;
+            /** @description Moving across a cover flips through a few of its pages. */
+            page_scrub?: boolean | null;
+            /** @description Series cards show stacked page edges that grow with the issue count. */
+            spine_stack?: boolean | null;
+        };
+        /**
+         * @description `PATCH` body for [`EffectPrefs`]: same keys, but each one distinguishes
+         *     absent (leave alone) from `null` (clear to default).
+         */
+        EffectPrefsPatch: {
+            ambient_glow?: boolean | null;
+            cover_tilt?: boolean | null;
+            hero_backdrop?: boolean | null;
+            hover_cards?: boolean | null;
+            page_curl?: boolean | null;
+            page_scrub?: boolean | null;
+            spine_stack?: boolean | null;
+        };
         EmailStatusView: {
             /**
              * @description `true` when the live sender is a real transport (Lettre or Mock),
@@ -11658,6 +11699,11 @@ export interface components {
             default_view_mode?: components["schemas"]["ViewMode"] | null;
             density?: components["schemas"]["Density"] | null;
             display_name: string;
+            /**
+             * @description On/off switches for decorative effects; a missing key means the
+             *     web's built-in default.
+             */
+            effects: components["schemas"]["EffectPrefs"];
             email?: string | null;
             /** @description True when `/me/account` accepts email edits for this user. */
             email_editable: boolean;
@@ -12511,6 +12557,7 @@ export interface components {
             default_reading_direction?: components["schemas"]["ReadingDirection"] | null;
             default_view_mode?: components["schemas"]["ViewMode"] | null;
             density?: components["schemas"]["Density"] | null;
+            effects?: components["schemas"]["EffectPrefsPatch"] | null;
             /**
              * @description Stats v2: privacy toggle. When true, admin server-wide aggregates
              *     exclude this user's sessions.

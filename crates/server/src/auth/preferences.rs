@@ -207,6 +207,100 @@ pub fn opt_from_db<E: FromStr>(value: Option<&str>) -> Option<E> {
     value.and_then(|s| s.parse().ok())
 }
 
+/// Per-account on/off switches for decorative effects (folio-flair-1.0).
+///
+/// Stored as the `users.effects` JSON object. Every field is optional: an
+/// absent key means "use the web's built-in default" (the defaults live in
+/// `web/lib/effects.ts`, so they can change without a migration). Unknown
+/// keys are rejected so a typo can't be stored silently.
+///
+/// On `PATCH /me/preferences` the object is **merged** into the stored one:
+/// a key set to `true`/`false` overwrites, a key set to `null` clears it back
+/// to the default, and absent keys are left alone.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EffectPrefs {
+    /// Library cards tilt toward the pointer with a light sheen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_tilt: Option<bool>,
+    /// Moving across a cover flips through a few of its pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_scrub: Option<bool>,
+    /// Series cards show stacked page edges that grow with the issue count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spine_stack: Option<bool>,
+    /// Series and issue pages get a blurred, cover-tinted backdrop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hero_backdrop: Option<bool>,
+    /// Creator and character chips open a preview card on hover / long-press.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hover_cards: Option<bool>,
+    /// The reader's background glows with the current page's edge colours.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ambient_glow: Option<bool>,
+    /// Paged-mode page turns animate as a page curl (fine pointer only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_curl: Option<bool>,
+}
+
+impl EffectPrefs {
+    /// Read the stored JSON. A row that somehow holds a malformed object
+    /// projects to all-defaults rather than failing `/me`.
+    #[must_use]
+    pub fn from_db(v: &serde_json::Value) -> Self {
+        serde_json::from_value(v.clone()).unwrap_or_default()
+    }
+}
+
+/// `PATCH` body for [`EffectPrefs`]: same keys, but each one distinguishes
+/// absent (leave alone) from `null` (clear to default).
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EffectPrefsPatch {
+    #[serde(default, deserialize_with = "some_value")]
+    pub cover_tilt: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "some_value")]
+    pub page_scrub: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "some_value")]
+    pub spine_stack: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "some_value")]
+    pub hero_backdrop: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "some_value")]
+    pub hover_cards: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "some_value")]
+    pub ambient_glow: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "some_value")]
+    pub page_curl: Option<Option<bool>>,
+}
+
+impl EffectPrefsPatch {
+    /// Apply this patch on top of `base` and return the merged value.
+    #[must_use]
+    pub fn apply(&self, mut base: EffectPrefs) -> EffectPrefs {
+        macro_rules! merge {
+            ($($f:ident),*) => { $( if let Some(v) = self.$f { base.$f = v; } )* };
+        }
+        merge!(
+            cover_tilt,
+            page_scrub,
+            spine_stack,
+            hero_backdrop,
+            hover_cards,
+            ambient_glow,
+            page_curl
+        );
+        base
+    }
+}
+
+fn some_value<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,5 +343,42 @@ mod tests {
         assert_eq!("original".parse(), Ok(FitMode::Original));
         assert_eq!("contain".parse(), Ok(FitMode::Contain));
         assert!("zoom".parse::<FitMode>().is_err());
+    }
+
+    #[test]
+    fn effects_patch_merges_and_clears() {
+        let base = EffectPrefs {
+            cover_tilt: Some(true),
+            page_curl: Some(false),
+            ..Default::default()
+        };
+        let patch: EffectPrefsPatch =
+            serde_json::from_str(r#"{"cover_tilt":null,"ambient_glow":true}"#).unwrap();
+        let merged = patch.apply(base);
+        assert_eq!(merged.cover_tilt, None);
+        assert_eq!(merged.ambient_glow, Some(true));
+        assert_eq!(merged.page_curl, Some(false), "absent keys are left alone");
+        assert_eq!(
+            serde_json::to_value(&merged).unwrap(),
+            serde_json::json!({"ambient_glow": true, "page_curl": false})
+        );
+    }
+
+    #[test]
+    fn effects_reject_unknown_keys_and_bad_types() {
+        assert!(serde_json::from_str::<EffectPrefsPatch>(r#"{"sparkles":true}"#).is_err());
+        assert!(serde_json::from_str::<EffectPrefsPatch>(r#"{"cover_tilt":"yes"}"#).is_err());
+    }
+
+    #[test]
+    fn effects_from_db_tolerates_garbage() {
+        assert_eq!(
+            EffectPrefs::from_db(&serde_json::json!({"nope": 1})),
+            EffectPrefs::default()
+        );
+        assert_eq!(
+            EffectPrefs::from_db(&serde_json::json!({"page_scrub": true})).page_scrub,
+            Some(true)
+        );
     }
 }

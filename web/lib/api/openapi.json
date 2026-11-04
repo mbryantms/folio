@@ -21988,6 +21988,111 @@
           }
         ]
       },
+      "EffectPrefs": {
+        "type": "object",
+        "description": "Per-account on/off switches for decorative effects (folio-flair-1.0).\n\nStored as the `users.effects` JSON object. Every field is optional: an\nabsent key means \"use the web's built-in default\" (the defaults live in\n`web/lib/effects.ts`, so they can change without a migration). Unknown\nkeys are rejected so a typo can't be stored silently.\n\nOn `PATCH /me/preferences` the object is **merged** into the stored one:\na key set to `true`/`false` overwrites, a key set to `null` clears it back\nto the default, and absent keys are left alone.",
+        "properties": {
+          "ambient_glow": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The reader's background glows with the current page's edge colours."
+          },
+          "cover_tilt": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Library cards tilt toward the pointer with a light sheen."
+          },
+          "hero_backdrop": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Series and issue pages get a blurred, cover-tinted backdrop."
+          },
+          "hover_cards": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Creator and character chips open a preview card on hover / long-press."
+          },
+          "page_curl": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Paged-mode page turns animate as a page curl (fine pointer only)."
+          },
+          "page_scrub": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Moving across a cover flips through a few of its pages."
+          },
+          "spine_stack": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Series cards show stacked page edges that grow with the issue count."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EffectPrefsPatch": {
+        "type": "object",
+        "description": "`PATCH` body for [`EffectPrefs`]: same keys, but each one distinguishes\nabsent (leave alone) from `null` (clear to default).",
+        "properties": {
+          "ambient_glow": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "cover_tilt": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hero_backdrop": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hover_cards": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "page_curl": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "page_scrub": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "spine_stack": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "EmailStatusView": {
         "type": "object",
         "required": [
@@ -27390,6 +27495,7 @@
           "show_marker_count",
           "max_rails_per_page",
           "cover_stack_style",
+          "effects",
           "count_specials_in_completeness"
         ],
         "properties": {
@@ -27495,6 +27601,10 @@
           },
           "display_name": {
             "type": "string"
+          },
+          "effects": {
+            "$ref": "#/components/schemas/EffectPrefs",
+            "description": "On/off switches for decorative effects; a missing key means the\nweb's built-in default."
           },
           "email": {
             "type": [
@@ -29285,6 +29395,17 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Density"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effects": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EffectPrefsPatch",
+                "description": "Effect switches, merged into the stored object: `true`/`false`\noverwrite, `null` resets that effect to its default, absent keys are\nleft alone. Unknown keys or non-boolean values 400."
               },
               {
                 "type": "null"

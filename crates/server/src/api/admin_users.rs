@@ -336,6 +336,7 @@ pub async fn create(
         opds_progress_glyphs: Set(true),
         max_rails_per_page: Set(12),
         cover_stack_style: Set("pickup".into()),
+        effects: Set(serde_json::json!({})),
         onboarding_completed_at: Set(None),
         reader_brightness: Set(None),
         reader_sepia: Set(None),
