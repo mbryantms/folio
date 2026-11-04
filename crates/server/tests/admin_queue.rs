@@ -963,3 +963,43 @@ async fn queue_jobs_rejects_unknown_queue_and_non_admins() {
     let resp = send_authed(&app, &user, Method::GET, "/api/admin/queue/jobs", None).await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+/// Clearing drops jobs, never the live workers' registrations: apalis
+/// refuses to fetch for a worker missing from `{queue}:workers`, so the
+/// old clear killed the queue's worker until the job monitor restarted.
+#[tokio::test]
+async fn clear_keeps_worker_registrations() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let st = app.state();
+    let cfg = server::jobs::storage_config::<server::jobs::post_scan::ThumbsJob>();
+    let mut conn = st.jobs.redis.clone();
+    let workers = cfg.workers_set();
+    let meta = format!("{}:metadata:post_scan_thumbs", workers);
+    let _: () = conn
+        .zadd(&workers, "post_scan_thumbs", 1_i64)
+        .await
+        .unwrap();
+    let _: () = conn.hset(&meta, "service", "x").await.unwrap();
+    let _: () = conn
+        .rpush(cfg.active_jobs_list(), "queued-task")
+        .await
+        .unwrap();
+
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::POST,
+        "/api/admin/queue/clear",
+        Some(json!({ "target": "thumbnails" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let queued: bool = conn.exists(cfg.active_jobs_list()).await.unwrap();
+    assert!(!queued, "queued jobs are cleared");
+    let still: Option<i64> = conn.zscore(&workers, "post_scan_thumbs").await.unwrap();
+    assert_eq!(still, Some(1), "worker registration kept");
+    let meta_kept: bool = conn.exists(&meta).await.unwrap();
+    assert!(meta_kept, "worker metadata kept");
+}

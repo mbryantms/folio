@@ -1549,6 +1549,11 @@ fn clear_patterns(target: QueueClearTarget) -> &'static [&'static str] {
     }
 }
 
+/// `{queue}:workers` (liveness zset) and `{queue}:workers:metadata:{name}`.
+fn is_worker_registration(key: &str) -> bool {
+    key.ends_with(":workers") || key.contains(":workers:metadata:")
+}
+
 async fn delete_matching_keys(
     conn: &mut ConnectionManager,
     pattern: &str,
@@ -1571,6 +1576,12 @@ async fn delete_matching_keys(
             break;
         }
     }
+
+    // Keep the live workers' registrations. apalis-redis refuses to fetch
+    // for a worker missing from `{queue}:workers` ("worker not registered"),
+    // so deleting it killed the queue's worker until the job monitor
+    // restarted. Clearing is about jobs, not workers.
+    keys.retain(|k| !is_worker_registration(k));
 
     let mut deleted = 0_usize;
     for chunk in keys.chunks(500) {
