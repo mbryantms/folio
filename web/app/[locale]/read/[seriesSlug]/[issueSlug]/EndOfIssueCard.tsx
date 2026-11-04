@@ -104,6 +104,29 @@ export function EndOfIssueCard({
       : null;
 
   const [pane, setPane] = useState<"next" | "wrap">("next");
+  // Which way the panes move: Wrap up comes in from the right (a step
+  // deeper), Up Next returns from the left. "none" on (re)open.
+  const [paneMotion, setPaneMotion] = useState<"none" | "fwd" | "back">("none");
+  const showWrap = () => {
+    setPaneMotion("fwd");
+    setPane("wrap");
+  };
+  const showNext = () => {
+    setPaneMotion("back");
+    setPane("next");
+  };
+
+  // The card eases between the two panes' heights instead of snapping:
+  // it follows the content's measured height (capped at 85vh).
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentHeight, setContentHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setContentHeight(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // The card is always mounted; a reopen starts on Up Next again.
   // Render-phase adjust (React's "storing information from previous
   // renders" pattern) rather than an effect, so there is no extra
@@ -111,7 +134,10 @@ export function EndOfIssueCard({
   const [lastOpen, setLastOpen] = useState(open);
   if (open !== lastOpen) {
     setLastOpen(open);
-    if (!open) setPane("next");
+    if (!open) {
+      setPane("next");
+      setPaneMotion("none");
+    }
   }
 
   // Focus the primary CTA on open so keyboard users can hit Enter to
@@ -207,7 +233,7 @@ export function EndOfIssueCard({
         // CSS-only slide animation. `pointer-events-none` while closed
         // keeps the offscreen card from intercepting clicks on the
         // reader chrome below it.
-        "transition-transform duration-300 ease-out",
+        "transition-[transform,translate,height] duration-300 ease-out motion-reduce:transition-[transform,translate]",
         slideFromRight ? "right-4" : "left-4",
         open
           ? "translate-x-0"
@@ -215,274 +241,296 @@ export function EndOfIssueCard({
             ? "pointer-events-none translate-x-[calc(100%+1.5rem)]"
             : "pointer-events-none -translate-x-[calc(100%+1.5rem)]",
       )}
+      style={contentHeight != null ? { height: contentHeight + 2 } : undefined}
     >
-      {pane === "wrap" && wrapUp ? (
-        <>
-          <div className="flex items-center gap-2 px-2.5 pt-3 pb-2">
-            <button
-              ref={backButtonRef}
-              type="button"
-              onClick={() => setPane("next")}
-              aria-label="Back to Up Next"
-              className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
-            >
-              <ChevronLeft className="size-4" />
-            </button>
-            <div className="min-w-0 flex-1">
-              <p className="text-muted-foreground text-xs font-medium">
-                Wrap up
-              </p>
-              <h2
-                className="mt-0.5 truncate text-base leading-snug font-semibold"
-                title={wrapUp.issueLabel}
-              >
-                {wrapUp.issueLabel}
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={onDismiss}
-              aria-label="Close"
-              className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-          <div className="min-h-0 overflow-y-auto">
-            <WrapUpBody wrapUp={wrapUp} noteId="end-card-closing-note" />
-          </div>
-          <div className="border-border flex flex-col gap-2 border-t p-4">
-            {source !== "none" && target ? (
-              <Button onClick={onContinue} className="w-full">
-                <span className="truncate">{readLabel}</span>
-              </Button>
-            ) : (
-              <Button asChild variant="outline" className="w-full">
-                <Link href={exitUrl} onClick={onDismiss}>
-                  Exit reader
-                </Link>
-              </Button>
-            )}
-            <button
-              type="button"
-              onClick={() => setPane("next")}
-              className="text-muted-foreground hover:text-foreground self-center text-xs transition-colors"
-            >
-              Back to Up Next
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          {finished ? (
-            <div className="flex items-start justify-between gap-3 p-4 pb-3">
-              <div className="min-w-0 flex-1">
-                <FinishedMoment
-                  open={open}
-                  issueLabel={finished.issueLabel}
-                  progress={finished.progress}
-                />
-              </div>
-              <CloseButton onClick={onDismiss} />
-            </div>
-          ) : null}
-          <div
-            className={cn(
-              "flex items-start justify-between gap-3 px-4 pb-3",
-              finished ? "border-border border-t pt-3" : "pt-4",
-            )}
-          >
-            <div className="min-w-0 flex-1">
-              <p className="text-muted-foreground text-xs font-medium">
-                {failed
-                  ? "End of issue"
-                  : source === "none"
-                    ? "End of the line"
-                    : "Next up"}
-              </p>
-              {source !== "none" && target ? (
-                <div className="mt-2 flex items-start gap-3">
-                  {/* The next cover slides in from the page-turn edge a
-                      beat after the card, tilting into place. */}
-                  <div
-                    className={cn(
-                      "end-card-next w-20 shrink-0",
-                      slideFromRight ? "from-right" : "from-left",
-                      open && "is-open",
-                    )}
+      <div
+        ref={contentRef}
+        className="flex max-h-[calc(85vh-2px)] min-h-0 shrink-0 flex-col"
+      >
+        <div
+          key={pane}
+          data-end-pane={pane}
+          className={cn(
+            "flex min-h-0 flex-col",
+            paneMotion === "fwd" && "end-pane-fwd",
+            paneMotion === "back" && "end-pane-back",
+          )}
+        >
+          {pane === "wrap" && wrapUp ? (
+            <>
+              <div className="flex items-center gap-2 px-2.5 pt-3 pb-2">
+                <button
+                  ref={backButtonRef}
+                  type="button"
+                  onClick={showNext}
+                  aria-label="Back to Up Next"
+                  className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
+                >
+                  <ChevronLeft className="size-4" />
+                </button>
+                <div className="min-w-0 flex-1">
+                  <p className="text-muted-foreground text-xs font-medium">
+                    Wrap up
+                  </p>
+                  <h2
+                    className="mt-0.5 truncate text-base leading-snug font-semibold"
+                    title={wrapUp.issueLabel}
                   >
-                    <Cover
-                      src={target.cover_url ?? null}
-                      alt={heading}
-                      fallback={heading}
+                    {wrapUp.issueLabel}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={onDismiss}
+                  aria-label="Close"
+                  className="text-muted-foreground hover:text-foreground hover:bg-accent flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              <div className="min-h-0 overflow-y-auto">
+                <WrapUpBody wrapUp={wrapUp} noteId="end-card-closing-note" />
+              </div>
+              <div className="border-border flex flex-col gap-2 border-t p-4">
+                {source !== "none" && target ? (
+                  <Button onClick={onContinue} className="w-full">
+                    <span className="truncate">{readLabel}</span>
+                  </Button>
+                ) : (
+                  <Button asChild variant="outline" className="w-full">
+                    <Link href={exitUrl} onClick={onDismiss}>
+                      Exit reader
+                    </Link>
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  onClick={showNext}
+                  className="text-muted-foreground hover:text-foreground self-center text-xs transition-colors"
+                >
+                  Back to Up Next
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {finished ? (
+                <div className="flex items-start justify-between gap-3 p-4 pb-3">
+                  <div className="min-w-0 flex-1">
+                    <FinishedMoment
+                      open={open}
+                      issueLabel={finished.issueLabel}
+                      progress={finished.progress}
                     />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-base leading-snug font-semibold">
-                      {heading}
-                    </h2>
-                    {subheading ? (
-                      <p className="text-muted-foreground mt-0.5 text-sm">
-                        {subheading}
-                      </p>
-                    ) : null}
-                    {listSubtitle ? (
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        {listSubtitle}
-                      </p>
-                    ) : null}
-                  </div>
+                  <CloseButton onClick={onDismiss} />
                 </div>
-              ) : failed ? (
-                <>
-                  <h2 className="mt-0.5 text-base leading-snug font-semibold">
-                    Couldn&apos;t load what&apos;s next
-                  </h2>
-                  <p
-                    className="text-muted-foreground mt-1 text-sm"
-                    role="alert"
-                  >
-                    The next-issue lookup failed. Your progress is saved.
+              ) : null}
+              <div
+                className={cn(
+                  "flex items-start justify-between gap-3 px-4 pb-3",
+                  finished ? "border-border border-t pt-3" : "pt-4",
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-muted-foreground text-xs font-medium">
+                    {failed
+                      ? "End of issue"
+                      : source === "none"
+                        ? "End of the line"
+                        : "Next up"}
                   </p>
-                </>
-              ) : isLoading && !data ? (
-                <div className="mt-2 flex items-start gap-3">
-                  <div
-                    // Themed token so the skeleton suits every theme.
-                    className="bg-muted aspect-[2/3] w-20 shrink-0 animate-pulse rounded-md"
-                    aria-busy="true"
-                    aria-label="Loading next issue"
-                  />
-                  <div className="flex-1 space-y-2 pt-1">
-                    <div className="bg-muted h-4 w-4/5 animate-pulse rounded" />
-                    <div className="bg-muted h-3 w-1/2 animate-pulse rounded" />
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <h2 className="mt-0.5 text-base leading-snug font-semibold">
-                    You&apos;re caught up.
-                  </h2>
-                  {data?.fallback_suggestion ? (
-                    <div className="mt-2">
-                      <p className="text-muted-foreground mb-2 text-sm">
-                        No next issue in this series, but here&apos;s a
-                        suggestion:
+                  {source !== "none" && target ? (
+                    <div className="mt-2 flex items-start gap-3">
+                      {/* The next cover slides in from the page-turn edge a
+                      beat after the card, tilting into place. */}
+                      <div
+                        className={cn(
+                          "end-card-next w-20 shrink-0",
+                          slideFromRight ? "from-right" : "from-left",
+                          open && "is-open",
+                        )}
+                      >
+                        <Cover
+                          src={target.cover_url ?? null}
+                          alt={heading}
+                          fallback={heading}
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h2 className="text-base leading-snug font-semibold">
+                          {heading}
+                        </h2>
+                        {subheading ? (
+                          <p className="text-muted-foreground mt-0.5 text-sm">
+                            {subheading}
+                          </p>
+                        ) : null}
+                        {listSubtitle ? (
+                          <p className="text-muted-foreground mt-1 text-xs">
+                            {listSubtitle}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : failed ? (
+                    <>
+                      <h2 className="mt-0.5 text-base leading-snug font-semibold">
+                        Couldn&apos;t load what&apos;s next
+                      </h2>
+                      <p
+                        className="text-muted-foreground mt-1 text-sm"
+                        role="alert"
+                      >
+                        The next-issue lookup failed. Your progress is saved.
                       </p>
-                      <FallbackSuggestionTile
-                        suggestion={data.fallback_suggestion}
-                        onNavigate={onDismiss}
+                    </>
+                  ) : isLoading && !data ? (
+                    <div className="mt-2 flex items-start gap-3">
+                      <div
+                        // Themed token so the skeleton suits every theme.
+                        className="bg-muted aspect-[2/3] w-20 shrink-0 animate-pulse rounded-md"
+                        aria-busy="true"
+                        aria-label="Loading next issue"
                       />
+                      <div className="flex-1 space-y-2 pt-1">
+                        <div className="bg-muted h-4 w-4/5 animate-pulse rounded" />
+                        <div className="bg-muted h-3 w-1/2 animate-pulse rounded" />
+                      </div>
                     </div>
                   ) : (
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      No next issue to suggest right now.
-                    </p>
+                    <>
+                      <h2 className="mt-0.5 text-base leading-snug font-semibold">
+                        You&apos;re caught up.
+                      </h2>
+                      {data?.fallback_suggestion ? (
+                        <div className="mt-2">
+                          <p className="text-muted-foreground mb-2 text-sm">
+                            No next issue in this series, but here&apos;s a
+                            suggestion:
+                          </p>
+                          <FallbackSuggestionTile
+                            suggestion={data.fallback_suggestion}
+                            onNavigate={onDismiss}
+                          />
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground mt-1 text-sm">
+                          No next issue to suggest right now.
+                        </p>
+                      )}
+                    </>
                   )}
-                </>
-              )}
-            </div>
-            {finished ? null : <CloseButton onClick={onDismiss} />}
-          </div>
+                </div>
+                {finished ? null : <CloseButton onClick={onDismiss} />}
+              </div>
 
-          <div className="border-border flex flex-col gap-2 border-t p-4">
-            {source !== "none" && target ? (
-              <>
-                <Button
-                  ref={primaryButtonRef}
-                  onClick={onContinue}
-                  className="w-full"
-                >
-                  Read
-                </Button>
-                {/* Detail-page escape hatches: a matched outline pair for
+              <div className="border-border flex flex-col gap-2 border-t p-4">
+                {source !== "none" && target ? (
+                  <>
+                    <Button
+                      ref={primaryButtonRef}
+                      onClick={onContinue}
+                      className="w-full"
+                    >
+                      Read
+                    </Button>
+                    {/* Detail-page escape hatches: a matched outline pair for
                     the issue just finished (the chrome-exit destination)
                     and the resolver's pick, so the user can inspect either
                     issue page instead of committing to keep reading. The
                     label sits centered inside a hairline divider (the
                     auth-form "or continue with" treatment) so it reads as
                     a structural separator, not a stray caption. */}
-                <div className="flex items-center gap-2">
-                  <div className="bg-border h-px flex-1" aria-hidden="true" />
-                  <span className="text-muted-foreground text-xs">
-                    Go to issue page
-                  </span>
-                  <div className="bg-border h-px flex-1" aria-hidden="true" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button asChild variant="outline">
-                    <Link href={exitUrl} onClick={onDismiss}>
-                      This issue
-                    </Link>
-                  </Button>
-                  <Button asChild variant="outline">
-                    <Link href={issueUrl(target)} onClick={onDismiss}>
-                      Next issue
-                    </Link>
-                  </Button>
-                </div>
-              </>
-            ) : failed ? (
-              <>
-                <Button
-                  ref={primaryButtonRef}
-                  onClick={onRetry}
-                  className="w-full"
-                  disabled={!onRetry}
-                >
-                  Retry
-                </Button>
-                <Button asChild variant="outline" className="w-full">
-                  <Link
-                    href={exitUrl}
-                    onClick={() => {
-                      onDismiss();
-                    }}
-                  >
-                    Exit reader
-                  </Link>
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button asChild className="w-full">
-                  <Link
-                    ref={primaryLinkRef}
-                    href="/"
-                    onClick={() => {
-                      onDismiss();
-                    }}
-                  >
-                    Browse the library
-                  </Link>
-                </Button>
-                <Button asChild variant="outline" className="w-full">
-                  <Link
-                    href={exitUrl}
-                    onClick={() => {
-                      onDismiss();
-                    }}
-                  >
-                    Exit reader
-                  </Link>
-                </Button>
-              </>
-            )}
-          </div>
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="bg-border h-px flex-1"
+                        aria-hidden="true"
+                      />
+                      <span className="text-muted-foreground text-xs">
+                        Go to issue page
+                      </span>
+                      <div
+                        className="bg-border h-px flex-1"
+                        aria-hidden="true"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button asChild variant="outline">
+                        <Link href={exitUrl} onClick={onDismiss}>
+                          This issue
+                        </Link>
+                      </Button>
+                      <Button asChild variant="outline">
+                        <Link href={issueUrl(target)} onClick={onDismiss}>
+                          Next issue
+                        </Link>
+                      </Button>
+                    </div>
+                  </>
+                ) : failed ? (
+                  <>
+                    <Button
+                      ref={primaryButtonRef}
+                      onClick={onRetry}
+                      className="w-full"
+                      disabled={!onRetry}
+                    >
+                      Retry
+                    </Button>
+                    <Button asChild variant="outline" className="w-full">
+                      <Link
+                        href={exitUrl}
+                        onClick={() => {
+                          onDismiss();
+                        }}
+                      >
+                        Exit reader
+                      </Link>
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button asChild className="w-full">
+                      <Link
+                        ref={primaryLinkRef}
+                        href="/"
+                        onClick={() => {
+                          onDismiss();
+                        }}
+                      >
+                        Browse the library
+                      </Link>
+                    </Button>
+                    <Button asChild variant="outline" className="w-full">
+                      <Link
+                        href={exitUrl}
+                        onClick={() => {
+                          onDismiss();
+                        }}
+                      >
+                        Exit reader
+                      </Link>
+                    </Button>
+                  </>
+                )}
+              </div>
 
-          {/* Bottom strip: rate the issue just finished, or flip to the
+              {/* Bottom strip: rate the issue just finished, or flip to the
               Wrap up pane. Last so the Up Next flow above reads exactly
               as before; the darker band marks it as "this issue", not
               the next one. */}
-          {wrapUp ? (
-            <WrapUpStrip
-              wrapUp={wrapUp}
-              onOpen={() => setPane("wrap")}
-              className="border-border border-t"
-            />
-          ) : null}
-        </>
-      )}
+              {wrapUp ? (
+                <WrapUpStrip
+                  wrapUp={wrapUp}
+                  onOpen={showWrap}
+                  className="border-border border-t"
+                />
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
