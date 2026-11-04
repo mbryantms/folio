@@ -55,3 +55,52 @@ export function sortableStyle({
     zIndex: isDragging ? 20 : undefined,
   };
 }
+
+/** Elements inside a draggable item that keep their own click / input
+ *  behaviour instead of starting a drag. */
+const NO_DRAG =
+  'button, [role="button"], [role="menuitem"], [role="checkbox"], [role="switch"], input, select, textarea, label, [contenteditable="true"], [data-no-drag]';
+
+// dnd-kit's SyntheticListenerMap (`Record<string, Function>`).
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+type PointerListeners = Record<string, Function>;
+
+/**
+ * Grab-anywhere dragging (folio-flair): spread the result on a sortable
+ * item so a mouse or pen can pick the whole item up, not just its grip.
+ * Presses on the item's own controls (buttons, menus, inputs) keep their
+ * normal behaviour; touch keeps the grip handle (a drag from anywhere
+ * would fight page scrolling); the click that ends a drag is swallowed so
+ * a card that is also a link doesn't navigate when dropped. Keyboard
+ * sorting stays on the grip, which carries `attributes` + `onKeyDown`.
+ * Pair with a PointerSensor `distance` constraint so plain clicks pass.
+ */
+export function grabAnywhere(
+  listeners: PointerListeners | undefined,
+): React.HTMLAttributes<HTMLElement> {
+  // The press point is kept on the element, not in this closure: the
+  // item re-renders while it is dragged, which would reset a local.
+  return {
+    onPointerDown: (e) => {
+      e.currentTarget.dataset.downAt = `${e.clientX},${e.clientY}`;
+      if (e.pointerType === "touch" || e.button !== 0) return;
+      if ((e.target as Element).closest(NO_DRAG)) return;
+      (
+        listeners?.onPointerDown as
+          ((e: React.PointerEvent) => void) | undefined
+      )?.(e);
+    },
+    onClickCapture: (e) => {
+      const at = e.currentTarget.dataset.downAt;
+      delete e.currentTarget.dataset.downAt;
+      if (!at) return;
+      const [x, y] = at.split(",").map(Number);
+      if (Math.hypot(e.clientX - (x ?? 0), e.clientY - (y ?? 0)) > 4) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    // Native image / link dragging would fight the pointer sensor.
+    onDragStart: (e) => e.preventDefault(),
+  };
+}

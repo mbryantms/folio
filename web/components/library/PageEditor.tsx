@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 import type { IssueDetailView, TransformStep } from "@/lib/api/types";
 import {
   DRAG_LIFT_CLASS,
+  grabAnywhere,
   sortableStyle,
   useSpringSort,
 } from "@/lib/ui/springy-drag";
@@ -389,6 +390,7 @@ function PageCard({
     <li
       ref={setNodeRef}
       style={style}
+      {...grabAnywhere(listeners)}
       className={cn(
         "border-border bg-card relative flex flex-col overflow-hidden rounded-md border",
         slot.removed && "opacity-50",

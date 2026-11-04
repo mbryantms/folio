@@ -91,7 +91,10 @@ export function WidgetCard({
         className,
       )}
     >
-      <CardHeader className="flex flex-row items-center gap-2 pb-3">
+      <CardHeader
+        {...drag?.dragSurfaceProps}
+        className="flex flex-row items-center gap-2 pb-3"
+      >
         <button
           type="button"
           aria-label="Reorder widget"

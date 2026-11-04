@@ -73,8 +73,10 @@ import { useMe, useMePages, useSavedViews } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { PageView, SavedViewView } from "@/lib/api/types";
 import { Label } from "@/components/ui/label";
+import { useHeldOrder } from "@/lib/ui/held-order";
 import {
   DRAG_LIFT_CLASS,
+  grabAnywhere,
   sortableStyle,
   useSpringSort,
 } from "@/lib/ui/springy-drag";
@@ -389,7 +391,6 @@ function PageRailsList({
   const reorder = useReorderSavedViews();
   const toggle = useTogglePinOnPage();
   const [pinOpen, setPinOpen] = React.useState(false);
-  const [optimistic, setOptimistic] = React.useState<string[] | null>(null);
 
   const pinned = React.useMemo(
     () => railsQ.data?.items ?? [],
@@ -399,7 +400,8 @@ function PageRailsList({
   // response is currently pinned here; preserve the server order until
   // an active drag-end overrides it.
   const pinnedIds = React.useMemo(() => pinned.map((v) => v.id), [pinned]);
-  const renderIds = optimistic ?? pinnedIds;
+  const held = useHeldOrder(pinnedIds);
+  const renderIds = held.order;
   const viewById = React.useMemo(() => {
     const m = new Map<string, SavedViewView>();
     for (const v of pinned) m.set(v.id, v);
@@ -423,12 +425,12 @@ function PageRailsList({
     const newIdx = renderIds.indexOf(String(over.id));
     if (oldIdx < 0 || newIdx < 0) return;
     const next = arrayMove(renderIds, oldIdx, newIdx);
-    setOptimistic(next);
+    held.hold(next);
     reorder.mutate(
       { page_id: pageId, view_ids: next },
       {
-        onError: () => setOptimistic(null),
-        onSettled: () => setOptimistic(null),
+        onError: held.release,
+        onSuccess: () => held.releaseLater(next),
       },
     );
   };
@@ -534,6 +536,7 @@ function RailRow({
     <li
       ref={setNodeRef}
       style={style}
+      {...grabAnywhere(listeners)}
       className={cn(
         "bg-background flex items-center gap-3 px-3 py-2",
         isDragging && DRAG_LIFT_CLASS,

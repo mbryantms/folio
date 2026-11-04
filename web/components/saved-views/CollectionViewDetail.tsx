@@ -101,6 +101,7 @@ import type {
 } from "@/lib/api/types";
 import {
   DRAG_LIFT_CLASS,
+  grabAnywhere,
   sortableStyle,
   useSpringSort,
 } from "@/lib/ui/springy-drag";
@@ -220,6 +221,13 @@ export function CollectionViewDetail({
     () => allEntries.map((e) => e.id),
     [allEntries],
   );
+  // Hold the dropped order until the refetched server order matches it.
+  // Clearing it on the mutation's success instead let the stale cached
+  // order render for a frame or two before the refetch landed — the
+  // dropped card flashed back to its old slot first.
+  if (optimisticOrder && sameOrder(optimisticOrder, serverOrderIds)) {
+    setOptimisticOrder(null);
+  }
   const renderIds = optimisticOrder ?? serverOrderIds;
   const orderedEntries = renderIds
     .map((id) => entryById.get(id))
@@ -390,10 +398,13 @@ export function CollectionViewDetail({
           toast.error("Couldn't save the new order");
         },
         onSuccess: () => {
-          // Clear local override once the server-fresh order lands —
-          // otherwise a stale optimistic copy lingers if the user
-          // edits and we re-fetch.
-          setOptimisticOrder(null);
+          // Normally cleared above once the refetch matches; if the
+          // server settles on a different order (a concurrent edit),
+          // let it win after a moment rather than pinning ours.
+          setTimeout(
+            () => setOptimisticOrder((cur) => (cur === next ? null : cur)),
+            4000,
+          );
         },
       },
     );
@@ -821,6 +832,9 @@ function SortableEntry({
     <li
       ref={setNodeRef}
       style={style}
+      // Pick the card up from anywhere (mouse / pen); the grip stays for
+      // touch and keyboard.
+      {...(selectMode?.isActive || dndDisabled ? {} : grabAnywhere(listeners))}
       className={cn("group relative rounded-md", isDragging && DRAG_LIFT_CLASS)}
     >
       {/* Drag handle hidden while in select mode — the handle's
@@ -852,6 +866,10 @@ function SortableEntry({
       )}
     </li>
   );
+}
+
+function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 function DragHandle({

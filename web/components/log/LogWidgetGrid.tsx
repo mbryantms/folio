@@ -21,7 +21,12 @@ import {
 import { useReorderLogWidgets } from "@/lib/api/mutations";
 import type { LogWidgetView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-import { sortableStyle, useSpringSort } from "@/lib/ui/springy-drag";
+import {
+  grabAnywhere,
+  sortableStyle,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
+import { useHeldOrder } from "@/lib/ui/held-order";
 
 import { WIDGET_REGISTRY } from "./widgets";
 import type { LogScope } from "./widgets/types";
@@ -33,6 +38,9 @@ import type { LogScope } from "./widgets/types";
  *  and the descendant WidgetCard pulls from context. */
 type DragInfo = {
   dragHandleProps: React.HTMLAttributes<HTMLButtonElement>;
+  /** Spread on the widget's header: a mouse / pen picks the widget up
+   *  from anywhere on it (its buttons keep their clicks). */
+  dragSurfaceProps: React.HTMLAttributes<HTMLElement>;
   isDragging: boolean;
 };
 const DragInfoContext = React.createContext<DragInfo | null>(null);
@@ -61,7 +69,6 @@ export function LogWidgetGrid({
   scope: LogScope;
 }) {
   const reorder = useReorderLogWidgets();
-  const [optimistic, setOptimistic] = React.useState<string[] | null>(null);
 
   const widgetById = React.useMemo(() => {
     const m = new Map<string, LogWidgetView>();
@@ -69,12 +76,16 @@ export function LogWidgetGrid({
     return m;
   }, [widgets]);
 
-  const ids: string[] =
-    optimistic ??
-    widgets
-      .slice()
-      .sort((a, b) => a.position - b.position)
-      .map((w) => w.id);
+  const serverIds = React.useMemo(
+    () =>
+      widgets
+        .slice()
+        .sort((a, b) => a.position - b.position)
+        .map((w) => w.id),
+    [widgets],
+  );
+  const held = useHeldOrder(serverIds);
+  const ids = held.order;
 
   const sensors = useSensors(
     // 4px activation distance prevents accidental drags on every
@@ -92,12 +103,12 @@ export function LogWidgetGrid({
     const newIdx = ids.indexOf(String(over.id));
     if (oldIdx < 0 || newIdx < 0) return;
     const next = arrayMove(ids, oldIdx, newIdx);
-    setOptimistic(next);
+    held.hold(next);
     reorder.mutate(
       { ids: next },
       {
-        onError: () => setOptimistic(null),
-        onSettled: () => setOptimistic(null),
+        onError: held.release,
+        onSuccess: () => held.releaseLater(next),
       },
     );
   };
@@ -167,6 +178,7 @@ function SortableWidget({
         ...attributes,
         ...listeners,
       } as React.HTMLAttributes<HTMLButtonElement>,
+      dragSurfaceProps: grabAnywhere(listeners),
       isDragging,
     }),
     [setActivatorNodeRef, attributes, listeners, isDragging],

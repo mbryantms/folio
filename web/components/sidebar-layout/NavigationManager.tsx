@@ -528,6 +528,7 @@ function SidebarRow({
     <li
       ref={setNodeRef}
       style={style}
+      {...(editing ? {} : grabAnywhere(listeners))}
       className={cn(
         "bg-background flex items-center gap-3 px-3 py-2",
         isDragging && DRAG_LIFT_CLASS,
@@ -655,6 +656,7 @@ import { useSavedViews } from "@/lib/api/queries";
 import { useSidebarSavedView } from "@/lib/api/mutations";
 import {
   DRAG_LIFT_CLASS,
+  grabAnywhere,
   sortableStyle,
   useSpringSort,
 } from "@/lib/ui/springy-drag";
