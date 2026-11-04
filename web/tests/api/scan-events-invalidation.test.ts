@@ -32,6 +32,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       queryKeys.backgroundWork,
       queryKeys.adminScanRunsAll,
       queryKeys.adminScanBatchesAll,
+      queryKeys.adminOverview,
     ],
   },
   {
@@ -49,6 +50,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       queryKeys.backgroundWork,
       queryKeys.adminScanRunsAll,
       queryKeys.adminScanBatchesAll,
+      queryKeys.adminOverview,
       queryKeys.library(LIB),
       queryKeys.health(LIB),
       queryKeys.adminHealthIssuesAll,
@@ -64,6 +66,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       queryKeys.backgroundWork,
       queryKeys.adminScanRunsAll,
       queryKeys.adminScanBatchesAll,
+      queryKeys.adminOverview,
     ],
   },
   {
@@ -88,7 +91,11 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
   },
   {
     evt: { type: "thumbs.started", library_id: LIB, issue_id: "iss-1" },
-    expected: [queryKeys.thumbnailsStatus(LIB), queryKeys.queueDepth],
+    expected: [
+      queryKeys.thumbnailsStatus(LIB),
+      queryKeys.queueDepth,
+      queryKeys.backgroundWork,
+    ],
   },
   {
     evt: {
@@ -97,7 +104,11 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       issue_id: "iss-1",
       pages: 3,
     },
-    expected: [queryKeys.thumbnailsStatus(LIB), queryKeys.queueDepth],
+    expected: [
+      queryKeys.thumbnailsStatus(LIB),
+      queryKeys.queueDepth,
+      queryKeys.backgroundWork,
+    ],
   },
   {
     evt: {
@@ -106,7 +117,11 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       issue_id: "iss-1",
       error: "x",
     },
-    expected: [queryKeys.thumbnailsStatus(LIB), queryKeys.queueDepth],
+    expected: [
+      queryKeys.thumbnailsStatus(LIB),
+      queryKeys.queueDepth,
+      queryKeys.backgroundWork,
+    ],
   },
   {
     evt: { type: "metadata.applied", library_id: LIB, series_id: "ser-1" },
@@ -199,7 +214,11 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
         },
       ],
     },
-    expected: [queryKeys.queueJobsAll, queryKeys.queueDepth],
+    expected: [
+      queryKeys.queueJobsAll,
+      queryKeys.queueDepth,
+      queryKeys.backgroundWork,
+    ],
   },
   {
     // Dropped events → broad recovery sweep over every WS-driven cache.

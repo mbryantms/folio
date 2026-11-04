@@ -48,3 +48,10 @@
 [data-sheet-dragging] * {
   user-select: none;
 }
+
+/* ===== Live admin progress bars =====
+ * Polled / event-driven progress glides to each new value instead of
+ * jumping (the vendored indicator's 150ms `transition-all`). */
+.live-progress > [data-slot="progress-indicator"] {
+  transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}

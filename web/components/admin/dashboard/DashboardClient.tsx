@@ -23,8 +23,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { BumpNumber } from "@/components/admin/BumpNumber";
 import { fillDayBuckets, lastUtcDays, sparklinePoints } from "@/lib/activity";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
+import { useHydrated } from "@/lib/ui/use-hydrated";
 import { cn } from "@/lib/utils";
 import {
   useAdminLatestScanPerLibrary,
@@ -234,6 +236,11 @@ function ScansCard({
       return t > Date.parse(best.started_at) ? row : best;
     }, null);
   }, [latest.data]);
+  // The queue total comes from the depth query the admin top bar keeps
+  // warm: render nothing data-driven until hydrated so the server HTML and
+  // the first client render agree. The counts refresh on the admin event
+  // socket's scan and queue events (lib/api/scan-events), not just polls.
+  const hydrated = useHydrated();
 
   return (
     <Card>
@@ -249,8 +256,22 @@ function ScansCard({
         <ListChecks className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
-        {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+        {!hydrated || loading || !data ? (
+          <div
+            className="grid grid-cols-3 gap-3"
+            role="status"
+            aria-label="Loading scans"
+          >
+            {["Running", "Queued", "All jobs"].map((label) => (
+              <div
+                key={label}
+                className="border-border bg-background rounded-md border p-3"
+              >
+                <Skeleton className="h-3 w-12" />
+                <Skeleton className="mt-2 h-6 w-8" />
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="grid grid-cols-3 gap-3 text-sm">
             <Stat
@@ -266,7 +287,7 @@ function ScansCard({
             <Stat label="All jobs" value={queueTotal} live={queueTotal > 0} />
           </div>
         )}
-        {mostRecent ? (
+        {hydrated && mostRecent ? (
           <p className="text-muted-foreground text-xs">
             Last scan:{" "}
             <span className="text-foreground">{mostRecent.library_name}</span> ·{" "}
@@ -489,7 +510,9 @@ function Stat({
           />
         ) : null}
       </p>
-      <p className="text-foreground mt-1 text-xl font-semibold">{value}</p>
+      <p className="text-foreground mt-1 text-xl font-semibold">
+        <BumpNumber value={value} format={String} />
+      </p>
     </div>
   );
 }

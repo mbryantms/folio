@@ -49,6 +49,7 @@ export function invalidationsForEvent(
         queryKeys.backgroundWork,
         queryKeys.adminScanRunsAll,
         queryKeys.adminScanBatchesAll,
+        queryKeys.adminOverview,
       ];
     case "scan.completed":
       return [
@@ -56,6 +57,7 @@ export function invalidationsForEvent(
         queryKeys.backgroundWork,
         queryKeys.adminScanRunsAll,
         queryKeys.adminScanBatchesAll,
+        queryKeys.adminOverview,
         queryKeys.library(evt.library_id),
         queryKeys.health(evt.library_id),
         queryKeys.adminHealthIssuesAll,
@@ -76,7 +78,13 @@ export function invalidationsForEvent(
     case "thumbs.started":
     case "thumbs.completed":
     case "thumbs.failed":
-      return [queryKeys.thumbnailsStatus(evt.library_id), queryKeys.queueDepth];
+      // `backgroundWork`: the Background work page's per-library cover
+      // bars follow the thumbnails as they land (coalesced per window).
+      return [
+        queryKeys.thumbnailsStatus(evt.library_id),
+        queryKeys.queueDepth,
+        queryKeys.backgroundWork,
+      ];
     case "metadata.applied":
       // DB-direct apply: refresh issue/series caches + the admin metadata
       // dashboards (whose 60s poll is dropped now this covers them).
@@ -103,7 +111,11 @@ export function invalidationsForEvent(
     case "queue.activity":
       // Jobs moved between lanes: refresh every job-lanes listing and the
       // header depth pill.
-      return [queryKeys.queueJobsAll, queryKeys.queueDepth];
+      return [
+        queryKeys.queueJobsAll,
+        queryKeys.queueDepth,
+        queryKeys.backgroundWork,
+      ];
     case "lagged":
       // We missed events — recover by sweeping every WS-driven cache.
       return [["libraries"], ["admin"], ["series"], ["issues"]];

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { CheckCircle2, Play, Square, X, XCircle } from "lucide-react";
 
+import { BumpNumber } from "@/components/admin/BumpNumber";
 import { ScanAllButton } from "@/components/admin/library/ScanAllButton";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,7 +29,6 @@ import { useBackgroundWork } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
 import type { LibraryWorkView, ScanEvent } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-import { useReducedMotion } from "@/lib/visual-effects";
 
 type Lib = Pick<LibraryWorkView, "id" | "name" | "slug">;
 
@@ -351,8 +351,8 @@ function Ring({ pct, done }: { pct: number; done: boolean }) {
   );
 }
 
-/** A counter that bumps when its value changes (not for the busy file
- *  count, which would never stop bouncing). */
+/** A counter that bumps when it ticks up (not for the busy file count,
+ *  which would never stop bouncing). */
 function Counter({
   label,
   value,
@@ -364,25 +364,16 @@ function Counter({
   warn?: boolean;
   quiet?: boolean;
 }) {
-  const reduced = useReducedMotion();
-  const [bump, setBump] = React.useState(0);
-  const [prev, setPrev] = React.useState(value);
-  if (prev !== value) {
-    setPrev(value);
-    if (!quiet && !reduced && value > prev) setBump((b) => b + 1);
-  }
   return (
     <div className="min-w-0">
       <dt className="text-muted-foreground truncate text-xs">{label}</dt>
       <dd
-        key={bump}
         className={cn(
-          "inline-block text-xl font-bold tabular-nums",
+          "text-xl font-bold tabular-nums",
           warn && value > 0 && "text-warning",
-          bump > 0 && "count-bump",
         )}
       >
-        {value.toLocaleString()}
+        <BumpNumber value={value} on={quiet ? "never" : "up"} />
       </dd>
     </div>
   );
