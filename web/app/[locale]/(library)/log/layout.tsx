@@ -1,4 +1,4 @@
-import { LogChrome } from "@/components/log/LogChrome";
+import { LogChrome, LogPanel } from "@/components/log/LogChrome";
 
 /** Reading log shell: the shared header + tabs (Overview · Finished ·
  *  Stats · Sessions) over each tab's page. Plan:
@@ -11,7 +11,7 @@ export default function ReadingLogLayout({
   return (
     <div className="space-y-6">
       <LogChrome />
-      {children}
+      <LogPanel>{children}</LogPanel>
     </div>
   );
 }

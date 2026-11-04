@@ -1,2 +1,14 @@
 /* Flair pre-merge polish, group "motion" (2026-11-04). Owned by that group; keyframes and
  * component classes only. Reduced motion is handled globally in globals.css. */
+
+/* ===== Link-tab panels (components/folio/route-tab-panel.tsx) =====
+ * A route switch under the reading-log / admin-library tab navs enters
+ * from the side its tab sits on, reusing the Radix tab panel keyframes
+ * (globals.css). The class is dropped on animationend so the leftover
+ * `translate` never becomes a containing block for fixed descendants. */
+.route-tab-in[data-route-tab-motion="fwd"] {
+  animation: tab-panel-fwd 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.route-tab-in[data-route-tab-motion="back"] {
+  animation: tab-panel-back 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}

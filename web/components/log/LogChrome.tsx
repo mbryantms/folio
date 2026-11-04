@@ -3,9 +3,15 @@
 import { Download } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRef } from "react";
 
 import { PageHeader } from "@/components/admin/PageHeader";
+import { RouteTabPanel } from "@/components/folio/route-tab-panel";
 import { Button } from "@/components/ui/button";
+import {
+  SLIDE_TRANSITION,
+  useSlidingIndicator,
+} from "@/lib/ui/use-sliding-indicator";
 import { cn } from "@/lib/utils";
 
 /** The reading log's tabs (folio-flair phase 4). Each is its own route so
@@ -29,13 +35,39 @@ export function activeLogTab(pathname: string): string | null {
   return hit?.href ?? null;
 }
 
+const LOG_INDICATOR = {
+  active: '[aria-current="page"]',
+  items: "a",
+  attributes: ["aria-current"],
+};
+
+/** The log's tab pages: a tab switch slides the new page in from the
+ *  side its tab sits on (folio-flair). */
+export function LogPanel({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() ?? "/log";
+  const active = activeLogTab(pathname);
+  return (
+    <RouteTabPanel index={LOG_TABS.findIndex((t) => t.href === active)}>
+      {children}
+    </RouteTabPanel>
+  );
+}
+
 /**
  * Header + tab bar shared by every reading-log page. Hidden on the
  * full-screen year in review (`/log/year/…`), which draws its own frame.
  */
 export function LogChrome() {
   const pathname = usePathname() ?? "/log";
-  if (/\/log\/year(\/|$)/.test(pathname)) return null;
+  const strip = useRef<HTMLUListElement | null>(null);
+  const year = /\/log\/year(\/|$)/.test(pathname);
+  // One underline glides between the tabs (folio-flair), like the Radix
+  // tab strips; each link's own `::after` stays hidden while it shows.
+  const indicator = useSlidingIndicator(strip, {
+    ...LOG_INDICATOR,
+    enabled: !year,
+  });
+  if (year) return null;
   const active = activeLogTab(pathname);
   return (
     <div className="space-y-4">
@@ -58,7 +90,11 @@ export function LogChrome() {
         }
       />
       <nav aria-label="Reading log sections" className="-mt-2 overflow-x-auto">
-        <ul className="border-border flex min-w-max gap-1 border-b">
+        <ul
+          ref={strip}
+          data-indicator={indicator ? "" : undefined}
+          className="group/strip border-border relative flex min-w-max gap-1 border-b"
+        >
           {LOG_TABS.map((t) => {
             const on = active === t.href;
             return (
@@ -72,6 +108,7 @@ export function LogChrome() {
                     on
                       ? "text-foreground after:bg-primary"
                       : "text-muted-foreground hover:text-foreground after:bg-transparent",
+                    "group-data-[indicator]/strip:after:opacity-0",
                   )}
                 >
                   {t.label}
@@ -79,6 +116,21 @@ export function LogChrome() {
               </li>
             );
           })}
+          {indicator ? (
+            <li
+              aria-hidden
+              className={cn(
+                "bg-primary pointer-events-none absolute top-0 left-0 h-0.5 rounded-full",
+                indicator.animate && SLIDE_TRANSITION,
+              )}
+              style={{
+                // Where the link's own underline sat: inset 8px each side,
+                // over the strip's bottom border.
+                width: Math.max(0, indicator.width - 16),
+                translate: `${indicator.left + 8}px ${indicator.top + indicator.height - 1}px`,
+              }}
+            />
+          ) : null}
         </ul>
       </nav>
     </div>

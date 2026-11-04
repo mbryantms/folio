@@ -15,6 +15,10 @@
 import * as React from "react";
 
 import { Tabs as UiTabs, TabsList as UiTabsList } from "@/components/ui/tabs";
+import {
+  SLIDE_TRANSITION,
+  useSlidingIndicator,
+} from "@/lib/ui/use-sliding-indicator";
 import { cn } from "@/lib/utils";
 
 // Re-exported explicitly: `Tabs` and `TabsList` are Folio wrappers below.
@@ -55,6 +59,18 @@ function useEdgeFade<T extends HTMLElement>(): [
   return [ref, fade];
 }
 
+/** The line strip's accent underline as one element that glides to the
+ *  active tab (folio-flair), instead of each trigger fading its own
+ *  `::after` in and out. While it is shown the strip carries
+ *  `data-indicator`, which hides the per-trigger underline (globals.css).
+ *  The measuring lives in `useSlidingIndicator`, shared with the link
+ *  navs and segmented controls. */
+const TAB_INDICATOR = {
+  active: ':scope > [role="tab"][data-state="active"]',
+  items: ':scope > [role="tab"]',
+  attributes: ["data-state"],
+};
+
 export function TabsList({
   className,
   ref,
@@ -64,7 +80,10 @@ export function TabsList({
 }: React.ComponentProps<typeof UiTabsList>) {
   const [inner, fade] = useEdgeFade<HTMLDivElement>();
   React.useImperativeHandle(ref, () => inner.current as HTMLDivElement);
-  const indicator = useSlidingIndicator(inner, variant === "line");
+  const indicator = useSlidingIndicator(inner, {
+    ...TAB_INDICATOR,
+    enabled: variant === "line",
+  });
   return (
     <UiTabsList
       ref={inner}
@@ -90,89 +109,19 @@ export function TabsList({
           data-slot="tabs-indicator"
           className={cn(
             "bg-primary pointer-events-none absolute top-0 left-0 h-0.5 rounded-full",
-            indicator.animate &&
-              "transition-[translate,width] duration-[420ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+            indicator.animate && SLIDE_TRANSITION,
           )}
           style={{
             width: indicator.width,
-            translate: `${indicator.left}px ${indicator.top}px`,
+            // Same spot as the trigger's own underline: 2px tall, its
+            // bottom edge 4px below the trigger (inside the strip's
+            // padding).
+            translate: `${indicator.left}px ${indicator.top + indicator.height + 2}px`,
           }}
         />
       ) : null}
     </UiTabsList>
   );
-}
-
-type Indicator = { left: number; top: number; width: number; animate: boolean };
-
-/**
- * The line strip's accent underline as one element that glides to the
- * active tab (folio-flair), instead of each trigger fading its own
- * `::after` in and out. Tracks the active trigger (`data-state`) and its
- * size; the first placement and resizes jump, tab changes slide. While
- * it is shown the strip carries `data-indicator`, which hides the
- * per-trigger underline (globals.css). Reduced motion zeroes the
- * transition through the global reset.
- */
-function useSlidingIndicator(
-  list: React.RefObject<HTMLDivElement | null>,
-  enabled: boolean,
-): Indicator | null {
-  const [ind, setInd] = React.useState<Indicator | null>(null);
-  React.useEffect(() => {
-    const el = list.current;
-    if (!enabled || !el) return;
-    let active: HTMLElement | null = null;
-    const place = (animate: boolean) => {
-      const tab = el.querySelector<HTMLElement>(
-        ':scope > [role="tab"][data-state="active"]',
-      );
-      if (!tab) {
-        active = null;
-        setInd(null);
-        return;
-      }
-      const changed = active !== null && tab !== active;
-      active = tab;
-      // Same spot as the trigger's own underline: 2px tall, its bottom
-      // edge 4px below the trigger (inside the strip's padding).
-      const next = {
-        left: tab.offsetLeft,
-        top: tab.offsetTop + tab.offsetHeight + 2,
-        width: tab.offsetWidth,
-        animate: animate && changed,
-      };
-      setInd((prev) =>
-        prev &&
-        prev.left === next.left &&
-        prev.top === next.top &&
-        prev.width === next.width &&
-        prev.animate === next.animate
-          ? prev
-          : next,
-      );
-    };
-    place(false);
-    const mo = new MutationObserver(() => place(true));
-    mo.observe(el, {
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["data-state"],
-      childList: true,
-    });
-    const ro =
-      typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => place(false))
-        : null;
-    ro?.observe(el);
-    for (const t of el.querySelectorAll(':scope > [role="tab"]'))
-      ro?.observe(t);
-    return () => {
-      mo.disconnect();
-      ro?.disconnect();
-    };
-  }, [list, enabled]);
-  return ind;
 }
 
 /**
