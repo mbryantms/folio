@@ -4,9 +4,10 @@
  * itself is exercised in (forthcoming) DOM tests once a jsdom env exists.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { useReaderStore } from "@/lib/reader/store";
+import { resetSessionPageStrip, useReaderStore } from "@/lib/reader/store";
 
 function reset() {
+  resetSessionPageStrip();
   useReaderStore.setState({
     issueId: "",
     seriesId: null,
@@ -15,6 +16,7 @@ function reset() {
     chromeVisible: true,
     chromeAutoHide: true,
     chromePinned: false,
+    pageStripEnabled: true,
     pageStripVisible: false,
     brightness: 1,
     sepia: 0,
@@ -46,7 +48,7 @@ describe("reader store — chrome controls", () => {
     expect(s.chromeVisible).toBe(true);
   });
 
-  it("toggleChrome carries pageStripVisible along (open/fade together)", () => {
+  it("toggleChrome carries an enabled strip along (open/fade together)", () => {
     const { toggleChrome } = useReaderStore.getState();
     expect(useReaderStore.getState().pageStripVisible).toBe(false);
     toggleChrome();
@@ -59,7 +61,7 @@ describe("reader store — chrome controls", () => {
     expect(s.pageStripVisible).toBe(true);
   });
 
-  it("setChromeVisible mirrors the value into pageStripVisible", () => {
+  it("setChromeVisible mirrors the value into an enabled strip", () => {
     const { setChromeVisible } = useReaderStore.getState();
     setChromeVisible(false);
     let s = useReaderStore.getState();
@@ -71,12 +73,38 @@ describe("reader store — chrome controls", () => {
     expect(s.pageStripVisible).toBe(true);
   });
 
-  it("togglePageStrip flips only pageStripVisible (the m-keybind path)", () => {
-    useReaderStore.setState({ chromeVisible: false, pageStripVisible: false });
+  it("turning the strip on (m / settings) shows it at once, chrome untouched", () => {
+    useReaderStore.setState({
+      chromeVisible: false,
+      pageStripEnabled: false,
+      pageStripVisible: false,
+    });
     useReaderStore.getState().togglePageStrip();
     const s = useReaderStore.getState();
+    expect(s.pageStripEnabled).toBe(true);
     expect(s.pageStripVisible).toBe(true);
     expect(s.chromeVisible).toBe(false);
+  });
+
+  it("a strip turned off stays off however the chrome comes and goes", () => {
+    const st = useReaderStore.getState;
+    st().togglePageStrip(); // enabled → off
+    expect(st().pageStripEnabled).toBe(false);
+    expect(st().pageStripVisible).toBe(false);
+    st().toggleChrome();
+    st().toggleChrome();
+    expect(st().chromeVisible).toBe(true);
+    expect(st().pageStripVisible).toBe(false);
+    st().setChromeVisible(false);
+    st().setChromeVisible(true);
+    expect(st().pageStripVisible).toBe(false);
+    // Back on: it shows, and follows the chrome again.
+    st().togglePageStrip();
+    expect(st().pageStripVisible).toBe(true);
+    st().setChromeVisible(false);
+    expect(st().pageStripVisible).toBe(false);
+    st().setChromeVisible(true);
+    expect(st().pageStripVisible).toBe(true);
   });
 
   it("setChromeAutoHide updates only the auto-hide flag", () => {
@@ -99,6 +127,26 @@ describe("reader store — chrome controls", () => {
     setChromePinned(false);
     s = useReaderStore.getState();
     expect(s.chromePinned).toBe(false);
+  });
+
+  it("the strip choice carries to the next issue; untouched, the account default applies", () => {
+    const base = {
+      seriesId: null,
+      totalPages: 10,
+      initialPage: 0,
+      initialDirection: "ltr" as const,
+      initialViewMode: "single" as const,
+    };
+    const st = useReaderStore.getState;
+    st().init({ ...base, issueId: "a", initialPageStripVisible: true });
+    expect(st().pageStripEnabled).toBe(true);
+    st().togglePageStrip(); // off
+    st().init({ ...base, issueId: "b", initialPageStripVisible: true });
+    expect(st().pageStripEnabled).toBe(false);
+    expect(st().pageStripVisible).toBe(false);
+    resetSessionPageStrip(); // a reload
+    st().init({ ...base, issueId: "c", initialPageStripVisible: true });
+    expect(st().pageStripEnabled).toBe(true);
   });
 
   it("init preserves user's chromeAutoHide preference", () => {

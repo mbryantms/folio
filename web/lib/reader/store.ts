@@ -267,6 +267,13 @@ export interface ReaderState {
   /** Held by interactive surfaces (open popover, focused input) to prevent
    * the auto-hide timer from collapsing chrome out from under the user. */
   chromePinned: boolean;
+  /** The page strip setting (reader settings switch, `m`). Off means
+   *  the strip never shows, whatever the chrome does, until it is turned
+   *  back on. Per tab: kept across issues, reset to the account default
+   *  (`default_page_strip`) on reload. */
+  pageStripEnabled: boolean;
+  /** Whether the strip is on screen right now: only ever true while
+   *  `pageStripEnabled`; follows the chrome otherwise. */
   pageStripVisible: boolean;
   /** Multiplier applied to a CSS `filter: brightness(...)` over the page
    * surface. 1 = unchanged. Range used by the slider is 0.5–1.5. */
@@ -372,6 +379,15 @@ export interface ReaderState {
   }) => void;
 }
 
+/** The page strip switch as last set in this tab (null: not touched yet,
+ *  so the account default applies). Survives issue changes, not reloads. */
+let sessionPageStrip: boolean | null = null;
+
+/** Tests: forget the tab's page strip choice. */
+export function resetSessionPageStrip() {
+  sessionPageStrip = null;
+}
+
 export const useReaderStore = create<ReaderState>((set, get) => ({
   issueId: "",
   initSeq: 0,
@@ -386,6 +402,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   chromeVisible: false,
   chromeAutoHide: true,
   chromePinned: false,
+  pageStripEnabled: false,
   pageStripVisible: false,
   brightness: DEFAULT_FILTERS.brightness,
   sepia: DEFAULT_FILTERS.sepia,
@@ -437,9 +454,10 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   },
 
   // Chrome and the page strip travel together: showing chrome reveals the
-  // strip, hiding it (auto-hide or manual toggle) fades both at the same
-  // frequency. The `m` keybind hits `togglePageStrip` instead, so users can
-  // still flip the strip independently when chrome is hidden.
+  // strip (when the strip is enabled), hiding it (auto-hide or manual
+  // toggle) fades both at the same frequency. `togglePageStrip` (the
+  // settings switch, `m`) turns the strip itself on or off; turning it on
+  // shows it at once, even with the chrome hidden.
   // A toggle is always the user's doing (tap on the page, the `t` key, the
   // chrome button): hiding records the choice once it has settled past
   // the double-tap window (`noteChromeToggle`). `setChromeVisible` is the
@@ -447,7 +465,10 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   toggleChrome: () => {
     const next = !get().chromeVisible;
     noteChromeToggle(!next);
-    set({ chromeVisible: next, pageStripVisible: next });
+    set({
+      chromeVisible: next,
+      pageStripVisible: next && get().pageStripEnabled,
+    });
   },
   // Esc closes whatever is up; it is a chrome choice only when the chrome
   // itself was showing (not when only the `m` page strip was).
@@ -460,10 +481,14 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     set({ chromeVisible: false, pageStripVisible: false });
   },
   setChromeVisible: (v: boolean) =>
-    set({ chromeVisible: v, pageStripVisible: v }),
+    set({ chromeVisible: v, pageStripVisible: v && get().pageStripEnabled }),
   setChromeAutoHide: (v: boolean) => set({ chromeAutoHide: v }),
   setChromePinned: (v: boolean) => set({ chromePinned: v }),
-  togglePageStrip: () => set({ pageStripVisible: !get().pageStripVisible }),
+  togglePageStrip: () => {
+    const next = !get().pageStripEnabled;
+    sessionPageStrip = next;
+    set({ pageStripEnabled: next, pageStripVisible: next });
+  },
 
   // Brightness 0.5–1.5 keeps the slider sane (no pure black, no flooded
   // whites). Sepia 0–1 matches the CSS function's input domain. Every
@@ -573,6 +598,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     // Stored per-series choice always wins over the auto-detected default and
     // over the user's global preference. Resolution order:
     //   server(per-series) > localStorage(per-series) > user default > built-in.
+    const stripEnabled = sessionPageStrip ?? initialPageStripVisible ?? false;
     const stored = load("fitMode", seriesId, isFitMode);
     const fit: FitMode = stored ?? initialFitMode ?? "width";
     set({
@@ -591,7 +617,8 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       chromeVisible: initialChromeVisible(),
       chromeAutoHide: get().chromeAutoHide,
       chromePinned: false,
-      pageStripVisible: initialPageStripVisible ?? false,
+      pageStripEnabled: stripEnabled,
+      pageStripVisible: stripEnabled,
       // Vision adjustments are a viewing-comfort setting, not a per-issue
       // choice. Persisted globally, so re-hydrate from localStorage on
       // every issue switch / reload (falling back to the live value, then

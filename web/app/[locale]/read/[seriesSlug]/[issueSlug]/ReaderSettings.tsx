@@ -76,7 +76,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   const fitMode = useReaderStore((s) => s.fitMode);
   const viewMode = useReaderStore((s) => s.viewMode);
   const direction = useReaderStore((s) => s.direction);
-  const pageStripVisible = useReaderStore((s) => s.pageStripVisible);
+  const pageStripEnabled = useReaderStore((s) => s.pageStripEnabled);
   const chromeAutoHide = useReaderStore((s) => s.chromeAutoHide);
   const brightness = useReaderStore((s) => s.brightness);
   const sepia = useReaderStore((s) => s.sepia);
@@ -165,7 +165,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
         <SwitchRow
           label="Page strip"
           description="Thumbnail strip at the bottom."
-          checked={pageStripVisible}
+          checked={pageStripEnabled}
           onChange={togglePageStrip}
         />
         <SwitchRow
