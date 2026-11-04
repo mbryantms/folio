@@ -1,7 +1,12 @@
 "use client";
 
-import { Bookmark, ChevronRight, Clock, Search, X } from "lucide-react";
+import { ChevronRight, Clock, Search, X } from "lucide-react";
 import { ActionRowContent } from "@/components/search/ActionRowContent";
+import {
+  RecentVisitsHeader,
+  SearchHitRowContent,
+  VisitRowContent,
+} from "@/components/search/SearchResultRow";
 import { Kbd } from "@/components/folio/kbd";
 import { useRouter } from "next/navigation";
 import * as React from "react";
@@ -11,9 +16,10 @@ import {
   parseCommandPrefix,
   type SearchAction,
 } from "@/lib/search/actions-registry";
-import { renderSearchSnippet } from "@/lib/search/render-snippet";
 import { useGlobalSearch } from "@/lib/search/use-search";
 import { useRecentSearches } from "@/lib/search/use-recent-searches";
+import { useRecentVisits } from "@/lib/search/use-recent-visits";
+import type { RecentVisit } from "@/lib/search/recent-visits";
 import { useSearchActions } from "@/lib/search/use-search-actions";
 import {
   SEARCH_CATEGORIES,
@@ -52,6 +58,7 @@ const QUERY_DEBOUNCE_MS = 200;
 export function TopbarSearchInline({ className }: { className?: string }) {
   const router = useRouter();
   const recents = useRecentSearches();
+  const recentVisits = useRecentVisits();
   const [raw, setRaw] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
   const [open, setOpen] = React.useState(false);
@@ -107,10 +114,13 @@ export function TopbarSearchInline({ className }: { className?: string }) {
     [actionSections],
   );
 
+  // Recently visited pages lead the empty-field state, as navigable
+  // rows ahead of the suggested commands.
+  const visits: readonly RecentVisit[] =
+    suggesting && !enabled ? recentVisits.visits : [];
   const contentFlat = flattenGroups(groups, MAX_PER_CATEGORY);
-  const flat: ReadonlyArray<SearchHit | SearchAction> = commandMode
-    ? actions
-    : [...actions, ...contentFlat];
+  const flat: ReadonlyArray<RecentVisit | SearchHit | SearchAction> =
+    commandMode ? actions : [...visits, ...actions, ...contentFlat];
   const safeHighlighted =
     flat.length === 0 ? 0 : Math.min(highlighted, flat.length - 1);
   const fullSearchHref = enabled
@@ -139,13 +149,23 @@ export function TopbarSearchInline({ className }: { className?: string }) {
     setHighlighted(0);
   }, [debounced, commandMode]);
 
-  function isAction(row: SearchHit | SearchAction): row is SearchAction {
+  function isAction(
+    row: RecentVisit | SearchHit | SearchAction,
+  ): row is SearchAction {
     return "group" in row;
   }
 
-  function commitRow(row: SearchHit | SearchAction | undefined) {
+  function commitRow(
+    row: RecentVisit | SearchHit | SearchAction | undefined,
+    index: number,
+  ) {
     if (!row) return;
     setOpen(false);
+    const visit = index < visits.length ? visits[index] : undefined;
+    if (visit) {
+      router.push(visit.href);
+      return;
+    }
     if (isAction(row)) {
       runAction(row);
       return;
@@ -177,7 +197,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
       if (!commandMode && (e.metaKey || e.ctrlKey)) {
         commitFullSearch();
       } else if (flat.length > 0) {
-        commitRow(flat[safeHighlighted]);
+        commitRow(flat[safeHighlighted], safeHighlighted);
       } else if (!commandMode && enabled) {
         commitFullSearch();
       }
@@ -322,8 +342,27 @@ export function TopbarSearchInline({ className }: { className?: string }) {
             </p>
           ) : null}
 
+          {visits.length > 0 ? (
+            <section className="pb-1" aria-label="Recently visited">
+              <RecentVisitsHeader onClear={recentVisits.clear} />
+              <ul>
+                {visits.map((visit, idx) => (
+                  <ResultRow
+                    key={`${visit.kind}:${visit.id}`}
+                    selected={idx === safeHighlighted}
+                    onHover={() => setHighlighted(idx)}
+                    onSelect={() => commitRow(visit, idx)}
+                  >
+                    <VisitRowContent visit={visit} />
+                  </ResultRow>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           {actionSections.map((section) => {
-            const sectionStart = actions.indexOf(section.actions[0]!);
+            const sectionStart =
+              visits.length + actions.indexOf(section.actions[0]!);
             return (
               <ResultSection key={section.heading} title={section.heading}>
                 {section.actions.map((action, i) => {
@@ -333,7 +372,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                       key={action.id}
                       selected={idx === safeHighlighted}
                       onHover={() => setHighlighted(idx)}
-                      onSelect={() => commitRow(action)}
+                      onSelect={() => commitRow(action, idx)}
                     >
                       <ActionRowContent
                         action={action}
@@ -352,6 +391,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                 const hits = groups[def.key].slice(0, MAX_PER_CATEGORY);
                 if (hits.length === 0) return null;
                 const sectionStart =
+                  visits.length +
                   actions.length +
                   SEARCH_CATEGORIES.slice(0, SEARCH_CATEGORIES.indexOf(def))
                     .map((d) => groups[d.key].slice(0, MAX_PER_CATEGORY).length)
@@ -365,26 +405,9 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                           key={hit.id}
                           selected={idx === safeHighlighted}
                           onHover={() => setHighlighted(idx)}
-                          onSelect={() => commitRow(hit)}
+                          onSelect={() => commitRow(hit, idx)}
                         >
-                          <Thumb hit={hit} />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate font-medium">
-                              {hit.title}
-                            </span>
-                            {hit.snippet ? (
-                              <span
-                                className="[&_mark]:bg-primary/30 block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark]:text-current"
-                                dangerouslySetInnerHTML={{
-                                  __html: renderSearchSnippet(hit.snippet),
-                                }}
-                              />
-                            ) : hit.subtitle ? (
-                              <span className="block truncate text-xs opacity-70">
-                                {hit.subtitle}
-                              </span>
-                            ) : null}
-                          </span>
+                          <SearchHitRowContent hit={hit} query={contentQuery} />
                         </ResultRow>
                       );
                     })}
@@ -443,9 +466,16 @@ function ResultRow({
   onSelect: () => void;
   children: React.ReactNode;
 }) {
+  // Keep the keyboard-highlighted row in view as ↑/↓ walk past the
+  // panel's scroll edge.
+  const ref = React.useRef<HTMLButtonElement | null>(null);
+  React.useEffect(() => {
+    if (selected) ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [selected]);
   return (
     <li>
       <button
+        ref={ref}
         type="button"
         role="option"
         aria-selected={selected}
@@ -459,56 +489,5 @@ function ResultRow({
         {children}
       </button>
     </li>
-  );
-}
-
-/** Cover thumbnail for content hits. Falls back to the bookmark glyph
- *  on coverless or icon-only hits. */
-function Thumb({ hit }: { hit: SearchHit }) {
-  const cls =
-    "border-border bg-muted h-12 w-9 shrink-0 overflow-hidden rounded border";
-  if (hit.thumbUrl) {
-    if (hit.region) {
-      const scaleW = Math.min(100, 100 / Math.max(hit.region.w, 1));
-      const scaleH = Math.min(100, 100 / Math.max(hit.region.h, 1));
-      return (
-        <div className={cn(cls, "relative")}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={hit.thumbUrl}
-            alt={hit.title}
-            loading="lazy"
-            decoding="async"
-            className="max-w-none"
-            style={{
-              position: "absolute",
-              width: `${scaleW * 100}%`,
-              height: `${scaleH * 100}%`,
-              left: `${-hit.region.x * scaleW}%`,
-              top: `${-hit.region.y * scaleH}%`,
-            }}
-          />
-        </div>
-      );
-    }
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={hit.thumbUrl}
-        alt={hit.title}
-        loading="lazy"
-        decoding="async"
-        className={cn(cls, "object-cover")}
-      />
-    );
-  }
-  const Icon = hit.icon ?? Bookmark;
-  return (
-    <div
-      aria-hidden="true"
-      className={cn(cls, "text-muted-foreground grid place-items-center")}
-    >
-      <Icon className="size-4" />
-    </div>
   );
 }

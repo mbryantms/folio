@@ -7,6 +7,8 @@ import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { EntityKindPath } from "@/lib/api/queries";
 import type { EntityDetailView } from "@/lib/api/types";
 import { signInUrl } from "@/lib/api/sign-in-url";
+import { RecordVisit } from "@/components/search/RecordVisit";
+import { entityVisit } from "@/lib/search/recent-visits";
 
 /** Server body shared by `/characters/[slug]`, `/teams/[slug]`,
  *  `/arcs/[slug]` and `/publishers/[slug]` (WP-5.5). Fetches the header
@@ -32,7 +34,12 @@ export async function EntityDetailPage({
     }
     throw e;
   }
-  return <EntityDetail kind={kind} detail={detail} />;
+  return (
+    <>
+      <RecordVisit visit={entityVisit(kind, detail)} />
+      <EntityDetail kind={kind} detail={detail} />
+    </>
+  );
 }
 
 /** Server body shared by the four browse-index pages. */

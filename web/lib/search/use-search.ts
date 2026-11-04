@@ -430,7 +430,13 @@ export function useGlobalSearch(
       id: s.id,
       title: s.name,
       subtitle:
-        [s.publisher, s.year != null ? String(s.year) : null]
+        [
+          s.publisher,
+          s.year != null ? String(s.year) : null,
+          s.issue_count != null
+            ? `${s.issue_count} ${s.issue_count === 1 ? "issue" : "issues"}`
+            : null,
+        ]
           .filter(Boolean)
           .join(" · ") || null,
       href: seriesUrl(s),
@@ -445,7 +451,12 @@ export function useGlobalSearch(
         (i.number != null ? `#${i.number}` : i.series_name) ??
         "Untitled",
       subtitle:
-        [i.series_name, i.number != null ? `#${i.number}` : null]
+        [
+          i.series_name,
+          // Untitled issues already show `#n` as the title.
+          i.title && i.number != null ? `#${i.number}` : null,
+          i.year != null ? String(i.year) : null,
+        ]
           .filter(Boolean)
           .join(" · ") || null,
       href: issueUrl(i),

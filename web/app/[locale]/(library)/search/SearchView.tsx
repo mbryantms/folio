@@ -36,6 +36,10 @@ import {
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { RecentSearches } from "@/components/search/RecentSearches";
+import {
+  RecentVisitsHeader,
+  VisitRowContent,
+} from "@/components/search/SearchResultRow";
 import { IssueCard } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
@@ -73,6 +77,7 @@ import {
 } from "@/lib/api/queries";
 import { renderSearchSnippet } from "@/lib/search/render-snippet";
 import { useRecentSearches } from "@/lib/search/use-recent-searches";
+import { useRecentVisits } from "@/lib/search/use-recent-visits";
 import {
   useGlobalSearch,
   type GlobalSearchPayloads,
@@ -417,7 +422,8 @@ export function SearchView({
  *  not collapse and regrow on every keystroke. */
 function SearchEmptyState({ onPick }: { onPick: (q: string) => void }) {
   const recents = useRecentSearches();
-  if (recents.recents.length === 0) {
+  const { visits, clear: clearVisits } = useRecentVisits();
+  if (recents.recents.length === 0 && visits.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
         Results appear here as you type: series, issues, bookmarks, people,
@@ -426,13 +432,34 @@ function SearchEmptyState({ onPick }: { onPick: (q: string) => void }) {
     );
   }
   return (
-    <RecentSearches
-      recents={recents.recents}
-      onPick={onPick}
-      onRemove={recents.remove}
-      onClear={recents.clear}
-      className="-mx-3 flex-none"
-    />
+    <div className="-mx-3 space-y-2">
+      {recents.recents.length > 0 ? (
+        <RecentSearches
+          recents={recents.recents}
+          onPick={onPick}
+          onRemove={recents.remove}
+          onClear={recents.clear}
+          className="flex-none"
+        />
+      ) : null}
+      {visits.length > 0 ? (
+        <section aria-label="Recently visited" className="max-w-xl">
+          <RecentVisitsHeader onClear={clearVisits} />
+          <ul>
+            {visits.map((visit) => (
+              <li key={`${visit.kind}:${visit.id}`}>
+                <Link
+                  href={visit.href}
+                  className="hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  <VisitRowContent visit={visit} />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
   );
 }
 

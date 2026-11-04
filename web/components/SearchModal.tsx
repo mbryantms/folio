@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Kbd } from "@/components/folio/kbd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -16,6 +16,11 @@ import {
 } from "@/components/ui/command";
 import { ActionRowContent } from "@/components/search/ActionRowContent";
 import { RecentSearches } from "@/components/search/RecentSearches";
+import {
+  RecentVisitsHeader,
+  SearchHitRowContent,
+  VisitRowContent,
+} from "@/components/search/SearchResultRow";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,7 +31,8 @@ import {
 } from "@/components/ui/dialog";
 import { useGlobalSearch } from "@/lib/search/use-search";
 import { useRecentSearches } from "@/lib/search/use-recent-searches";
-import { renderSearchSnippet } from "@/lib/search/render-snippet";
+import { useRecentVisits } from "@/lib/search/use-recent-visits";
+import type { RecentVisit } from "@/lib/search/recent-visits";
 import {
   groupSearchActions,
   parseCommandPrefix,
@@ -34,7 +40,6 @@ import {
 } from "@/lib/search/actions-registry";
 import { useSearchActions } from "@/lib/search/use-search-actions";
 import { SEARCH_CATEGORIES, type SearchHit } from "@/lib/search/types";
-import { cn } from "@/lib/utils";
 
 const MAX_PER_CATEGORY = 5;
 const QUERY_DEBOUNCE_MS = 200;
@@ -75,6 +80,7 @@ export function SearchModal({
   const [raw, setRaw] = useState("");
   const [debounced, setDebounced] = useState("");
   const recents = useRecentSearches();
+  const recentVisits = useRecentVisits();
 
   const { needle: rawForActions, commandMode } = parseCommandPrefix(raw);
 
@@ -121,7 +127,14 @@ export function SearchModal({
   // suggested commands. Shown only when there's nothing to search yet
   // (not enabled, not command mode).
   const showRecents = !commandMode && !enabled && recents.recents.length > 0;
-  const showHint = !commandMode && !enabled && recents.recents.length === 0;
+  // Recently visited detail pages: real cmdk items (arrow-navigable),
+  // above the suggested commands.
+  const showVisits = !commandMode && !enabled && recentVisits.visits.length > 0;
+  const showHint =
+    !commandMode &&
+    !enabled &&
+    recents.recents.length === 0 &&
+    recentVisits.visits.length === 0;
 
   const fullSearchHref = enabled
     ? `/search?q=${encodeURIComponent(contentQuery)}`
@@ -133,6 +146,11 @@ export function SearchModal({
       setDebounced("");
     }
     onOpenChange(next);
+  }
+
+  function commitVisit(visit: RecentVisit) {
+    handleOpenChange(false);
+    router.push(visit.href);
   }
 
   function commitHit(hit: SearchHit) {
@@ -234,7 +252,11 @@ export function SearchModal({
               }}
               onRemove={recents.remove}
               onClear={recents.clear}
+              className={showVisits ? "flex-none" : undefined}
             />
+          ) : null}
+          {showVisits ? (
+            <RecentVisitsHeader onClear={recentVisits.clear} />
           ) : null}
           <CommandList className="min-h-0 flex-1 max-sm:max-h-none">
             {isLoading && !hasItems ? (
@@ -247,7 +269,7 @@ export function SearchModal({
             ) : null}
             {/* cmdk auto-hides Empty while any item is mounted. Nothing
                   to be empty about before the user has typed. */}
-            {showHint || showRecents ? null : (
+            {showHint || showRecents || showVisits ? null : (
               <CommandEmpty>
                 {commandMode
                   ? "No commands match."
@@ -256,6 +278,29 @@ export function SearchModal({
                     : `No matches for “${contentQuery}”.`}
               </CommandEmpty>
             )}
+            {showVisits ? (
+              <>
+                {/* The visible header (above the list) carries the
+                    Clear button, since cmdk hides its own heading from
+                    AT; this heading stays visually hidden and only
+                    names the group. */}
+                <CommandGroup
+                  heading="Recently visited"
+                  className="pt-0 **:[[cmdk-group-heading]]:sr-only"
+                >
+                  {recentVisits.visits.map((visit) => (
+                    <CommandItem
+                      key={`${visit.kind}:${visit.id}`}
+                      value={`visit:${visit.kind}:${visit.id}`}
+                      onSelect={() => commitVisit(visit)}
+                      className="gap-3 px-3 py-2"
+                    >
+                      <VisitRowContent visit={visit} />
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </>
+            ) : null}
             {actionSections.map((section) => (
               <CommandGroup key={section.heading} heading={section.heading}>
                 {section.actions.map((action) => (
@@ -283,27 +328,7 @@ export function SearchModal({
                     onSelect={() => commitHit(hit)}
                     className="gap-3 px-3 py-2"
                   >
-                    <Thumb hit={hit} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">
-                        {hit.title}
-                      </span>
-                      {hit.snippet ? (
-                        // `<mark>`-highlighted excerpt (sanitised) wins
-                        // over the static subtitle — it shows *why* the
-                        // row matched.
-                        <span
-                          className="[&_mark]:bg-primary/30 block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark]:text-current"
-                          dangerouslySetInnerHTML={{
-                            __html: renderSearchSnippet(hit.snippet),
-                          }}
-                        />
-                      ) : hit.subtitle ? (
-                        <span className="block truncate text-xs opacity-70">
-                          {hit.subtitle}
-                        </span>
-                      ) : null}
-                    </span>
+                    <SearchHitRowContent hit={hit} query={contentQuery} />
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -343,55 +368,6 @@ function SearchHints() {
 
 function KbdGlyph({ children }: { children: React.ReactNode }) {
   return <Kbd className="mx-1">{children}</Kbd>;
-}
-
-function Thumb({ hit }: { hit: SearchHit }) {
-  const cls =
-    "border-border bg-muted h-12 w-9 shrink-0 overflow-hidden rounded border";
-  if (hit.thumbUrl) {
-    if (hit.region) {
-      const scaleW = Math.min(100, 100 / Math.max(hit.region.w, 1));
-      const scaleH = Math.min(100, 100 / Math.max(hit.region.h, 1));
-      return (
-        <div className={cn(cls, "relative")}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={hit.thumbUrl}
-            alt={hit.title}
-            loading="lazy"
-            decoding="async"
-            className="max-w-none"
-            style={{
-              position: "absolute",
-              width: `${scaleW * 100}%`,
-              height: `${scaleH * 100}%`,
-              left: `${-hit.region.x * scaleW}%`,
-              top: `${-hit.region.y * scaleH}%`,
-            }}
-          />
-        </div>
-      );
-    }
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={hit.thumbUrl}
-        alt={hit.title}
-        loading="lazy"
-        decoding="async"
-        className={cn(cls, "object-cover")}
-      />
-    );
-  }
-  const Icon = hit.icon ?? BookOpen;
-  return (
-    <div
-      aria-hidden="true"
-      className={cn(cls, "text-muted-foreground grid place-items-center")}
-    >
-      <Icon className="size-4" />
-    </div>
-  );
 }
 
 function SearchFooter({

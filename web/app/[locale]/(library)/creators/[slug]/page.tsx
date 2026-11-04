@@ -8,6 +8,8 @@ import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail"
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { CreatorDetailView, CreatorRoleRail } from "@/lib/api/types";
+import { RecordVisit } from "@/components/search/RecordVisit";
+import { creatorVisit } from "@/lib/search/recent-visits";
 
 /** Hard cap on cards mounted per role rail on the overview page.
  *  The rail is a horizontal scroller, so the cap never shows as a
@@ -87,6 +89,7 @@ export default async function CreatorPage({
 
   return (
     <div className="space-y-8">
+      <RecordVisit visit={creatorVisit(detail)} />
       <CreatorHeader
         detail={detail}
         activeRole={activeRole}

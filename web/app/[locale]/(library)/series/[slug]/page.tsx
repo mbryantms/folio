@@ -15,6 +15,8 @@ import { ViewTransition } from "react";
 import { CountUp } from "@/components/CountUp";
 import { FillProgress } from "@/components/FillProgress";
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { RecordVisit } from "@/components/search/RecordVisit";
+import { seriesVisit } from "@/lib/search/recent-visits";
 import { seriesCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
 
@@ -205,6 +207,7 @@ export default async function SeriesPage({
     // `order`: the issue list moves above the metadata tabs there.
     <div className="relative isolate flex flex-col gap-6 sm:gap-10">
       <HeroBackdrop src={series.cover_url} />
+      <RecordVisit visit={seriesVisit(series)} />
       {/* Only admins reach a soft-deleted series (the API 404s everyone
           else, and no list surface shows it). Say so up front and point at
           the Removed tab, which holds Restore / Confirm removal. */}

@@ -17,6 +17,8 @@ import Link from "next/link";
 import { ViewTransition } from "react";
 
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { RecordVisit } from "@/components/search/RecordVisit";
+import { issueVisit } from "@/lib/search/recent-visits";
 import { issueCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
 
@@ -233,6 +235,7 @@ export default async function IssuePage({
 
   return (
     <div className="relative isolate space-y-10">
+      <RecordVisit visit={issueVisit(issue)} />
       <HeroBackdrop
         src={
           issue.state === "active" ? `/issues/${issue.id}/pages/0/thumb` : null
