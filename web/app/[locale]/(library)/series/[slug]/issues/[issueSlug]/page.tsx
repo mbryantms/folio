@@ -24,6 +24,7 @@ import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
 import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import { ChipList } from "@/components/library/ChipList";
 import {
   DetailSection,
@@ -1245,16 +1246,21 @@ function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
   return (
     <Link
       href={issueUrl(issue)}
+      // `data-card`: same cover-colour hover glow as every other card.
+      data-card=""
       className="group block min-w-0 space-y-1.5 rounded-md focus-visible:outline-none"
     >
-      <Cover
-        src={issue.cover_url}
-        alt={issue.title ?? `Issue ${issue.number ?? ""}`}
-        fallback={
-          issue.state === "active" ? "Cover" : issueStateLabel(issue.state)
-        }
-        className="group-focus-visible:ring-ring transition duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
-      />
+      {/* Same tilt + sheen as the library cards (when that effect is on). */}
+      <CoverTilt className="relative">
+        <Cover
+          src={issue.cover_url}
+          alt={issue.title ?? `Issue ${issue.number ?? ""}`}
+          fallback={
+            issue.state === "active" ? "Cover" : issueStateLabel(issue.state)
+          }
+          className="group-focus-visible:ring-ring transition duration-200 group-hover:brightness-110 group-focus-visible:ring-2"
+        />
+      </CoverTilt>
       <div className="min-w-0">
         <p className="text-foreground truncate text-xs font-medium">
           {issue.number ? `#${issue.number}` : "—"}
