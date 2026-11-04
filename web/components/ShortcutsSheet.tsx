@@ -17,6 +17,7 @@ import {
   formatKey,
   type KeybindAction,
 } from "@/lib/reader/keybinds";
+import { ISSUE_SHORTCUTS } from "@/lib/keyboard/issue-shortcuts";
 
 /**
  * Display-only key aliases for registry actions. Values are
@@ -113,6 +114,21 @@ export function ShortcutsSheet({
       ))}
     </Section>
   );
+  const issueSection = (
+    <Section
+      title="Issue page"
+      hint="On an issue's details page, outside text fields."
+      key="issue"
+    >
+      {ISSUE_SHORTCUTS.map((entry) => (
+        <Row
+          key={entry.action}
+          label={entry.adminOnly ? `${entry.label} (admin)` : entry.label}
+          keys={[formatKey(entry.key)]}
+        />
+      ))}
+    </Section>
+  );
   const markerSection = (
     <Section
       title="While drawing a region (mouse held)"
@@ -126,8 +142,8 @@ export function ShortcutsSheet({
   );
   const sections =
     initialSection === "reader"
-      ? [readerSection, globalSection, markerSection]
-      : [globalSection, readerSection, markerSection];
+      ? [readerSection, globalSection, markerSection, issueSection]
+      : [globalSection, issueSection, readerSection, markerSection];
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -148,14 +164,15 @@ export function ShortcutsSheet({
           </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          {/* Desktop (md+): two-column grid. Reader spans both rows
-           *  on the left (it's the dominant section); Global + Marker
-           *  stack on the right. Both columns visible at once means
+          {/* Desktop (md+): two-column grid. Reader spans the rows on
+           *  the left (it's the dominant section); Global, Issue page
+           *  and Marker stack on the right. Both columns visible at once means
            *  `initialSection` doesn't pick a "lead" here — it only
            *  steers the mobile fallback below. */}
           <div className="hidden gap-x-6 gap-y-4 md:grid md:grid-cols-2">
-            <div className="md:row-span-2">{readerSection}</div>
+            <div className="md:row-span-3">{readerSection}</div>
             <div>{globalSection}</div>
+            <div>{issueSection}</div>
             <div>{markerSection}</div>
           </div>
           {/* Mobile (single column): respect `initialSection` so the
