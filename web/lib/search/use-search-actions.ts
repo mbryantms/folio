@@ -19,6 +19,7 @@ import {
   type SearchAction,
 } from "@/lib/search/actions-registry";
 import { writeThemeCookie } from "@/lib/theme";
+import { revealTheme } from "@/lib/ui/theme-reveal";
 import {
   requestShortcutsSheet,
   requestSidebarToggle,
@@ -136,7 +137,7 @@ export function useSearchActions({
         case "toggle-theme": {
           const next = nextToggleTheme(resolvedTheme);
           writeThemeCookie(next);
-          setTheme(next);
+          revealTheme(next, setTheme);
           updatePrefs.mutate({ theme: next });
           break;
         }

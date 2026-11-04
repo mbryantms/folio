@@ -1319,3 +1319,24 @@ body {
 [data-motion="reduced"]::view-transition-old(.route-fade) {
   display: none;
 }
+
+/* ── Theme switch reveal (folio-flair, lib/ui/theme-reveal.ts) ──
+ * While `html.theme-reveal` is set, the root snapshot is the whole story:
+ * named groups (topbar, tab bar, cover morphs) are dissolved into it so
+ * the circle reveals them too, and the shell's "no root cross-fade" rules
+ * are overridden — the old page holds still and the new one is clipped to
+ * the growing circle by JS. */
+html.theme-reveal * {
+  view-transition-name: none !important;
+}
+html.theme-reveal::view-transition-old(root) {
+  display: block;
+  animation: none;
+}
+html.theme-reveal::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+html.theme-reveal::view-transition-group(root) {
+  animation: none;
+}

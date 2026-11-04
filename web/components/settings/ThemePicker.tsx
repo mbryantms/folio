@@ -28,6 +28,7 @@ import {
   writeRadiusCookie,
   writeThemeCookie,
 } from "@/lib/theme";
+import { revealTheme } from "@/lib/ui/theme-reveal";
 
 import { SegmentedControl } from "./SegmentedControl";
 import { SettingsSection } from "./SettingsSection";
@@ -118,7 +119,7 @@ export function ThemePicker() {
 
   function pickTheme(next: Theme) {
     writeThemeCookie(next);
-    setTheme(next);
+    revealTheme(next, setTheme);
     update.mutate({ theme: next });
   }
   function pickAccent(next: Accent) {
