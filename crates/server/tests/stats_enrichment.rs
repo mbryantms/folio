@@ -637,3 +637,145 @@ async fn range_1y_is_accepted() {
     let (s, _) = get(&app, &auth, "/api/me/reading-stats?range=1y").await;
     assert_eq!(s, StatusCode::OK);
 }
+
+async fn set_user_timezone(app: &TestApp, user_id: Uuid, tz: &str) {
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let mut am: entity::user::ActiveModel = entity::user::Entity::find_by_id(user_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.timezone = Set(tz.to_owned());
+    am.update(&db).await.unwrap();
+}
+
+fn ts(s: &str) -> chrono::DateTime<chrono::FixedOffset> {
+    chrono::DateTime::parse_from_rfc3339(s).unwrap()
+}
+
+#[tokio::test]
+async fn range_calendar_year_scopes_to_that_year() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "yara@example.com").await;
+    let (lib, series, issues) = seed_library_with_issues(&app, "yara", 3, None, None).await;
+    grant_library(&app, auth.user_id, lib).await;
+
+    // One session in Dec 2025, two in 2026, one in Jan 2027 (UTC user).
+    let seeds = [
+        ("2025-12-31T23:30:00+00:00", &issues[0], 10_000),
+        ("2026-01-01T00:00:00+00:00", &issues[1], 20_000),
+        ("2026-07-15T12:00:00+00:00", &issues[1], 40_000),
+        ("2027-01-01T00:00:00+00:00", &issues[2], 80_000),
+    ];
+    for (t, issue, ms) in seeds {
+        insert_session(&app, auth.user_id, issue, series, ts(t), ms, 10, 9, None).await;
+    }
+
+    let (s, body) = get(&app, &auth, "/api/me/reading-stats?range=2026").await;
+    assert_eq!(s, StatusCode::OK, "body={body}");
+    assert_eq!(body["range"], "2026");
+    assert_eq!(body["totals"]["sessions"], 2);
+    assert_eq!(body["totals"]["active_ms"], 60_000);
+    assert_eq!(body["totals"]["distinct_issues"], 1);
+    let dates: Vec<&str> = body["per_day"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["date"].as_str().unwrap())
+        .collect();
+    assert_eq!(dates, ["2026-01-01", "2026-07-15"]);
+    assert_eq!(body["pace_series"].as_array().unwrap().len(), 2);
+    let dow_total: i64 = body["dow_hour"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["sessions"].as_i64().unwrap())
+        .sum();
+    assert_eq!(dow_total, 2);
+    assert_eq!(body["completion"]["started"], 1);
+    assert!(
+        body["first_read_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-01-01")
+    );
+    assert!(
+        body["last_read_at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-07-15")
+    );
+
+    // The neighbouring years see only their own sessions.
+    let (_, b25) = get(&app, &auth, "/api/me/reading-stats?range=2025").await;
+    assert_eq!(b25["totals"]["sessions"], 1);
+    let (_, b27) = get(&app, &auth, "/api/me/reading-stats?range=2027").await;
+    assert_eq!(b27["totals"]["sessions"], 1);
+}
+
+#[tokio::test]
+async fn range_calendar_year_uses_user_timezone() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "zeke@example.com").await;
+    let (lib, series, issues) = seed_library_with_issues(&app, "zeke", 1, None, None).await;
+    grant_library(&app, auth.user_id, lib).await;
+    set_user_timezone(&app, auth.user_id, "America/New_York").await;
+
+    // 23:30 on Dec 31 2025 in New York = 04:30 UTC on Jan 1 2026.
+    insert_session(
+        &app,
+        auth.user_id,
+        &issues[0],
+        series,
+        ts("2025-12-31T23:30:00-05:00"),
+        30_000,
+        10,
+        9,
+        None,
+    )
+    .await;
+    // 23:30 on Dec 31 2026 in New York = 04:30 UTC on Jan 1 2027.
+    insert_session(
+        &app,
+        auth.user_id,
+        &issues[0],
+        series,
+        ts("2026-12-31T23:30:00-05:00"),
+        50_000,
+        10,
+        9,
+        None,
+    )
+    .await;
+
+    let (s, b25) = get(&app, &auth, "/api/me/reading-stats?range=2025").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(b25["timezone"], "America/New_York");
+    assert_eq!(b25["totals"]["sessions"], 1);
+    assert_eq!(b25["totals"]["active_ms"], 30_000);
+    assert_eq!(b25["per_day"][0]["date"], "2025-12-31");
+
+    let (_, b26) = get(&app, &auth, "/api/me/reading-stats?range=2026").await;
+    assert_eq!(b26["totals"]["sessions"], 1);
+    assert_eq!(b26["totals"]["active_ms"], 50_000);
+    assert_eq!(b26["per_day"][0]["date"], "2026-12-31");
+}
+
+#[tokio::test]
+async fn range_invalid_year_is_rejected() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "quill@example.com").await;
+    for bad in ["999", "20x6", "1969", "2101", "02026"] {
+        let (s, body) = get(&app, &auth, &format!("/api/me/reading-stats?range={bad}")).await;
+        assert_eq!(
+            s,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "range={bad} body={body}"
+        );
+        assert_eq!(
+            body["error"]["code"], "validation",
+            "range={bad} body={body}"
+        );
+    }
+}

@@ -569,7 +569,15 @@ export type ReadingSessionUpsertReq = {
   client_meta?: Record<string, unknown>;
 };
 
-export type ReadingStatsRange = "7d" | "30d" | "60d" | "90d" | "1y" | "all";
+/** Preset windows, or a four-digit calendar year such as "2026". */
+export type ReadingStatsRange =
+  | "7d"
+  | "30d"
+  | "60d"
+  | "90d"
+  | "1y"
+  | "all"
+  | `${number}`;
 
 export type ReadingLogEventKind =
   | "issue_finished"

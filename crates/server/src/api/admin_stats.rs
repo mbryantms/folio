@@ -263,7 +263,7 @@ pub async fn overview(State(app): State<AppState>, _admin: RequireAdmin) -> Resp
     path = "/admin/users/{id}/reading-stats",
     params(
         ("id" = String, Path, description = "target user id (uuid)"),
-        ("range" = Option<String>, Query, description = "'7d', '30d', '90d', 'all'"),
+        ("range" = Option<String>, Query, description = "'7d', '30d', '60d', '90d', '1y', 'all', or a four-digit calendar year 'YYYY' (1970-2100, e.g. '2026') bounded to Jan 1 - Dec 31 in the target user's timezone. Defaults to '30d'."),
     ),
     responses(
         (status = 200, body = ReadingStatsView),

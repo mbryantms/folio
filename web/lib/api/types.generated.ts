@@ -19578,7 +19578,7 @@ export interface operations {
     admin_stats_user_reading_stats: {
         parameters: {
             query?: {
-                /** @description '7d', '30d', '90d', 'all' */
+                /** @description '7d', '30d', '60d', '90d', '1y', 'all', or a four-digit calendar year 'YYYY' (1970-2100, e.g. '2026') bounded to Jan 1 - Dec 31 in the target user's timezone. Defaults to '30d'. */
                 range?: string;
             };
             header?: never;
@@ -24872,7 +24872,7 @@ export interface operations {
     reading_sessions_stats: {
         parameters: {
             query?: {
-                /** @description '7d', '30d', '90d', 'all' */
+                /** @description '7d', '30d', '60d', '90d', '1y', 'all', or a four-digit calendar year 'YYYY' (1970-2100, e.g. '2026') bounded to Jan 1 - Dec 31 in the user's timezone. Defaults to '30d'. */
                 range?: string;
                 issue_id?: string;
                 series_id?: string;
