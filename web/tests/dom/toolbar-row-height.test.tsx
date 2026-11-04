@@ -18,7 +18,6 @@ vi.mock("@/lib/api/mutations", () => ({
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
-import { AddWidgetMenu } from "@/components/log/AddWidgetMenu";
 import { NotesExportMenu } from "@/components/markers/NotesExportMenu";
 import { Input } from "@/components/ui/input";
 
@@ -75,13 +74,8 @@ describe("toolbar row height", () => {
     expect(btn.className).toMatch(/\bml-auto\b/);
   });
 
-  it("the /log header controls match: range selector + Add widget", () => {
-    render(
-      <>
-        <ActivityRangeSelector value="30d" onChange={() => {}} />
-        <AddWidgetMenu current={[]} />
-      </>,
-    );
+  it("the stats range selector matches the toolbar row", () => {
+    render(<ActivityRangeSelector value="30d" onChange={() => {}} />);
     const range = screen.getByRole("group", { name: "Stats range" });
     expect(range.className).toMatch(H9);
     // Joins the 44px touch floor with its Button siblings (rule 9).
@@ -92,8 +86,5 @@ describe("toolbar row height", () => {
       expect(b.className).toMatch(/\bpy-1\.5\b/);
     }
     expect(range.className).toMatch(/\[&>button\]:py-0/);
-    expect(
-      screen.getByRole("button", { name: "Add widget" }).className,
-    ).toMatch(H9);
   });
 });

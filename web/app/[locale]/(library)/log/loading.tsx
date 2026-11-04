@@ -1,34 +1,24 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Reading-log fallback. `ReadingLogPage` is a `PageHeader` (range selector
- * + Export CSV + reset) over a masonry-style widget grid — not the
- * inherited `(library)` cover grid. Mirror the header + the same
- * `columns-1 md:columns-2` widget flow `ReadingLogPage` shows while its
- * widgets load, so navigating here doesn't flash a cover grid.
+ * Reading-log fallback, shaped like the Overview tab (the log layout's
+ * header and tabs render around it): four stat tiles, the year banner,
+ * the heatmap card and the milestone grid.
  */
 export default function ReadingLogLoading() {
   return (
-    <div className="space-y-6" aria-hidden>
-      {/* PageHeader: title + range / export / reset actions */}
-      <div className="border-border flex flex-wrap items-end justify-between gap-4 border-b pb-4">
-        <div className="min-w-0 space-y-2">
-          <Skeleton className="h-7 w-44" />
-          <Skeleton className="h-4 w-64" />
-        </div>
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-9 w-32 rounded-md" />
-          <Skeleton className="h-9 w-28 rounded-md" />
-          <Skeleton className="h-9 w-9 rounded-md" />
-        </div>
+    <div className="space-y-8" aria-hidden>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-28 rounded-xl" />
+        ))}
       </div>
-
-      {/* Widget grid — same multicolumn flow as LogWidgetGrid. */}
-      <div className="columns-1 gap-x-6 md:columns-2">
-        <Skeleton className="mb-6 inline-block h-64 w-full break-inside-avoid" />
-        <Skeleton className="mb-6 inline-block h-48 w-full break-inside-avoid" />
-        <Skeleton className="mb-6 inline-block h-56 w-full break-inside-avoid" />
-        <Skeleton className="mb-6 inline-block h-32 w-full break-inside-avoid" />
+      <Skeleton className="h-32 rounded-xl" />
+      <Skeleton className="h-56 rounded-xl" />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Skeleton key={i} className="h-20 rounded-xl" />
+        ))}
       </div>
       <span className="sr-only">Loading reading log…</span>
     </div>

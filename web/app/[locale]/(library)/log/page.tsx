@@ -1,10 +1,9 @@
-import { ReadingLogPage } from "@/components/log/ReadingLogPage";
+import { OverviewPage } from "@/components/log/overview/OverviewPage";
 
-/** `/log` — reverse-chronological reading-activity feed plus a
- *  right-rail of summary widgets (stats hero, year heatmap, top
- *  creators). M2 ships a hard-coded default layout; M3-M5 will turn
- *  the right rail into a customizable widget grid. Spec at
- *  ~/.claude/plans/reading-log.md. */
+/** `/log` — the reading log's Overview tab (folio-flair phase 4): this
+ *  year's numbers, the year in review, a year of activity, milestones and
+ *  recent reading. Header + tabs come from the log layout. Plan:
+ *  ~/.claude/plans/folio-flair-phase4-log.md */
 export default function ReadingLogRoute() {
-  return <ReadingLogPage />;
+  return <OverviewPage />;
 }

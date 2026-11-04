@@ -3,7 +3,6 @@
 import * as React from "react";
 import Link from "next/link";
 import {
-  ArrowLeft,
   BookOpen,
   Check,
   ChevronDown,
@@ -14,7 +13,6 @@ import {
 } from "lucide-react";
 
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -74,9 +72,8 @@ function rangeToFrom(range: ReadingStatsRange): string | undefined {
   return cutoff.toISOString();
 }
 
-/** Full activity report — the rich counterpart to the `/log` page's
- *  Activity widget. Reached by clicking the widget's title.
- *  Headline stats sit at the top; below, every event in the
+/** The reading log's Finished tab (`/log/activity`): headline stats for
+ *  the window at the top; below, every event in the
  *  selected range renders as a large cover-first card grid grouped
  *  by day / week / month. */
 export function ActivityReportPage() {
@@ -188,42 +185,25 @@ function ReportHeader({
   onGroupByChange: (next: GroupBy) => void;
 }) {
   return (
-    <header className="flex flex-col gap-3">
-      <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
-        <Link href="/log">
-          <ArrowLeft aria-hidden="true" className="mr-1 size-4" />
-          Back to reading log
-        </Link>
-      </Button>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <ScrollText className="text-muted-foreground size-5" />
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Activity report
-            </h1>
-            <p className="text-muted-foreground text-sm">
-              Everything you&rsquo;ve finished in the selected window — full
-              covers, credits, and read dates.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ActivityRangeSelector value={range} onChange={onRangeChange} />
-          <Select
-            value={groupBy}
-            onValueChange={(v) => onGroupByChange(v as GroupBy)}
-          >
-            <SelectTrigger className="w-32" aria-label="Group events by">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="day">By day</SelectItem>
-              <SelectItem value="week">By week</SelectItem>
-              <SelectItem value="month">By month</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <p className="text-muted-foreground max-w-prose text-sm">
+        Every issue you&rsquo;ve finished, grouped by {groupBy}.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <ActivityRangeSelector value={range} onChange={onRangeChange} />
+        <Select
+          value={groupBy}
+          onValueChange={(v) => onGroupByChange(v as GroupBy)}
+        >
+          <SelectTrigger className="w-32" aria-label="Group events by">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="day">By day</SelectItem>
+            <SelectItem value="week">By week</SelectItem>
+            <SelectItem value="month">By month</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
     </header>
   );
@@ -282,13 +262,13 @@ function StatTile({
   Icon: typeof BookOpen;
 }) {
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-1.5 p-4">
+    <Card className="rounded-xl py-0">
+      <CardContent className="flex flex-col gap-1.5 p-5">
         <Icon aria-hidden="true" className="text-muted-foreground size-4" />
-        <div className="text-2xl leading-tight font-semibold tabular-nums">
+        <div className="text-3xl leading-tight font-semibold tabular-nums">
           {value}
         </div>
-        <div className="text-muted-foreground text-[11px] tracking-wider uppercase">
+        <div className="text-muted-foreground text-xs tracking-wide uppercase">
           {label}
         </div>
       </CardContent>
@@ -308,7 +288,7 @@ function SectionHeader({
   return (
     <div className="border-border/40 mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">{label}</h2>
+        <h2 className="text-lg font-semibold">{label}</h2>
         {subtitle ? (
           <p className="text-muted-foreground text-sm">{subtitle}</p>
         ) : null}
@@ -354,7 +334,7 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
         )}
         <span
           className={cn(
-            "absolute top-2 left-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase backdrop-blur",
+            "absolute top-2 left-2 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium tracking-wide uppercase backdrop-blur",
             KIND_TINT[event.kind as ReadingLogEventKind],
           )}
         >
