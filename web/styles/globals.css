@@ -8,6 +8,12 @@
 /* Variants (`data-open:`, `data-checked:`, …) and utilities the current
  * shadcn registry components are written against; same package as the CLI. */
 @import "shadcn/tailwind.css";
+/* Flair pre-merge polish: one file per work group so parallel edits never
+ * touch this file. Tokens and the reduced-motion reset stay here. */
+@import "./flair-cards.css";
+@import "./flair-loading.css";
+@import "./flair-interaction.css";
+@import "./flair-motion.css";
 
 @variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
