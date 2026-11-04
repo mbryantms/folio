@@ -65,6 +65,7 @@ import {
   useIssueMarkers,
   useNextUp,
   usePrevUp,
+  useSavedView,
   useSeries,
 } from "@/lib/api/queries";
 import {
@@ -1209,6 +1210,11 @@ export function Reader({
   const cblListId =
     nextUp.data?.source === "cbl" ? (nextUp.data.cbl_list_id ?? null) : null;
   const listProgressQ = useCblList(online && cblListId ? cblListId : "");
+  // The list's own (renameable) name reads better than the imported CBL
+  // title ("[Marvel] … (WEB-CBRO)"); the CBL title is the fallback.
+  const listViewQ = useSavedView(
+    online && cblListId && cblSavedViewId ? cblSavedViewId : "",
+  );
   const seriesProgressQ = useSeries(
     online && !cblListId && seriesId ? seriesId : "",
   );
@@ -1250,13 +1256,15 @@ export function Reader({
     () => ({
       issueLabel,
       progress: seriesFinishProgress(
-        snap?.name ?? "",
+        (snap?.scope === "list" ? listViewQ.data?.name : null) ??
+          snap?.name ??
+          "",
         snap,
         !initiallyFinished && !suppressWrites,
         snap?.scope,
       ),
     }),
-    [issueLabel, snap, initiallyFinished, suppressWrites],
+    [issueLabel, snap, initiallyFinished, suppressWrites, listViewQ.data?.name],
   );
 
   useReaderProgressWrite({

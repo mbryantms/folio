@@ -4,6 +4,7 @@ import { Check } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { SeriesFinishProgress } from "@/lib/reader/finish-progress";
+import { displayListName } from "@/lib/reader/list-context";
 import { cn } from "@/lib/utils";
 import { useReducedMotion } from "@/lib/visual-effects";
 
@@ -133,22 +134,31 @@ export function FinishedMoment({
               />
             ) : null}
           </div>
-          <div className="min-w-0 text-sm">
-            <p className="leading-tight">
-              <span className="text-lg font-semibold tabular-nums">{pct}%</span>{" "}
-              <span className="text-muted-foreground">
-                of {progress.seriesName}
-              </span>
+          <div className="min-w-0">
+            <p className="text-2xl leading-none font-semibold tabular-nums">
+              {pct}%
             </p>
-            <p className="text-muted-foreground text-xs tabular-nums">
-              {after} of {total} {total === 1 ? "issue" : "issues"} read
-              {gained > 0 && !done ? (
-                <span className="text-success font-medium">
-                  {" "}
-                  · +1 this issue
+            <p className="text-muted-foreground mt-1 text-xs tabular-nums">
+              {after.toLocaleString()} of {total.toLocaleString()}{" "}
+              {total === 1 ? "issue" : "issues"} read
+            </p>
+            {progress.seriesName ? (
+              // The series or list sits with its figure. Reading-list names
+              // run long ("[Marvel] Marvel NOW! … Part #1 (WEB-CBRO)"), so
+              // the publisher and release-source tags are dropped for display
+              // (the full name stays in the tooltip) and it wraps to two lines.
+              <p
+                className="text-foreground/80 mt-1.5 line-clamp-2 text-xs font-medium break-words"
+                title={progress.seriesName}
+              >
+                <span className="sr-only">
+                  {progress.scope === "list" ? "Reading list: " : "Series: "}
                 </span>
-              ) : null}
-            </p>
+                {progress.scope === "list"
+                  ? displayListName(progress.seriesName)
+                  : progress.seriesName}
+              </p>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -14,6 +14,7 @@ import { createElement } from "react";
 vi.mock("@/lib/visual-effects", () => ({ useReducedMotion: () => false }));
 
 import { EndOfIssueCard } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/EndOfIssueCard";
+import { displayListName } from "@/lib/reader/list-context";
 import type { IssueSummaryView, NextUpView } from "@/lib/api/types";
 
 function issue(overrides: Partial<IssueSummaryView> = {}): IssueSummaryView {
@@ -218,9 +219,10 @@ describe("<EndOfIssueCard>", () => {
     });
     expect(html).toMatch(/Finished/);
     expect(html).toMatch(/Invincible #1/);
-    expect(html).toMatch(/of Invincible/);
+    expect(html).toMatch(/Series: <\/span>Invincible/);
     expect(html).toMatch(/2 of 4 issues read/);
-    expect(html).toMatch(/\+1 this issue/);
+    // Finishing always adds this issue, so it isn't called out.
+    expect(html).not.toMatch(/this issue/);
     // Still the full Up Next flow, with one Close button.
     expect(html).toMatch(/Next up/);
     expect(html).toMatch(/Eight Is Enough/);
@@ -267,9 +269,8 @@ describe("<EndOfIssueCard>", () => {
         },
       },
     });
-    expect(html).toMatch(/of Civil War/);
+    expect(html).toMatch(/Reading list: <\/span>Civil War/);
     expect(html).toMatch(/3 of 10 issues read/);
-    expect(html).not.toMatch(/of Invincible</);
   });
 
   it("omits the ring while the series progress is unknown", () => {
@@ -299,5 +300,15 @@ describe("<EndOfIssueCard>", () => {
     const html = render({ open: false });
     expect(html).toMatch(/translate-x-\[calc/);
     expect(html).toMatch(/pointer-events-none/);
+  });
+});
+
+describe("displayListName", () => {
+  it("drops curation tags but keeps years", () => {
+    expect(
+      displayListName("[Marvel] Marvel NOW!- Marvel NOW! Part #1 (WEB-CBRO)"),
+    ).toBe("Marvel NOW!- Marvel NOW! Part #1");
+    expect(displayListName("Civil War (2006)")).toBe("Civil War (2006)");
+    expect(displayListName("[DC]")).toBe("[DC]");
   });
 });

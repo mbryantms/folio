@@ -17,7 +17,7 @@ export function nextUpListSubtitle(
     data.cbl_total &&
     data.cbl_list_name
   ) {
-    return `Issue ${data.cbl_position} of ${data.cbl_total} in ${data.cbl_list_name}`;
+    return `Issue ${data.cbl_position} of ${data.cbl_total} in ${displayListName(data.cbl_list_name)}`;
   }
   if (
     data.source === "collection" &&
@@ -28,4 +28,17 @@ export function nextUpListSubtitle(
     return `Issue ${data.collection_position} of ${data.collection_total} in ${data.collection_name}`;
   }
   return null;
+}
+
+/**
+ * Reading-list names carry curation tags: a leading "[Publisher]" and a
+ * trailing all-caps release source like "(WEB-CBRO)". Drop both for
+ * display; years like "(2016)" stay.
+ */
+export function displayListName(name: string): string {
+  const cleaned = name
+    .replace(/^\s*\[[^\]]+\]\s*/, "")
+    .replace(/\s*\([A-Z][A-Z0-9-]*\)\s*$/, "")
+    .trim();
+  return cleaned || name;
 }
