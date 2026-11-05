@@ -150,7 +150,7 @@ export function ProgressIssueCard({
           <span className="sr-only">Continue reading </span>
         ) : null}
         <CoverTilt className="relative" {...longPress.wrapperProps}>
-          <CoverMorph name={morph.name}>
+          <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
               alt={headerTitle}

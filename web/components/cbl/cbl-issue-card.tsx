@@ -164,7 +164,10 @@ export function CblIssueCard({
           label={heading}
         />
       )}
-      <CoverMorph name={issue ? morph.name : undefined}>
+      <CoverMorph
+        name={issue ? morph.name : undefined}
+        landing={issue ? morph.landing : undefined}
+      >
         <Cover
           src={issue?.cover_url}
           alt={heading}

@@ -91,7 +91,14 @@ export function useCoverMorph(name: string, src: string | null | undefined) {
     () => markCoverMorph(name, src, token),
     [token, name, src],
   );
-  return { name: isActive ? name : undefined, onClick, mark };
+  return {
+    name: isActive ? name : undefined,
+    /** Always set: where the in-app Back flight lands (`CoverMorph`'s
+     *  `landing`). */
+    landing: name || undefined,
+    onClick,
+    mark,
+  };
 }
 
 /** The cover currently in flight, for the loading skeleton. */

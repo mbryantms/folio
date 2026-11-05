@@ -15,14 +15,25 @@ import { ViewTransition } from "react";
  */
 export function CoverMorph({
   name,
+  landing,
   children,
 }: {
   name: string | undefined;
+  /** The card's permanent cover name: marks it as a landing spot for the
+   *  in-app Back flight (lib/ui/back-flight.ts). A `display: contents`
+   *  wrapper, so layout is untouched. */
+  landing?: string;
   children: React.ReactNode;
 }) {
-  return (
+  const boundary = (
     <ViewTransition key={name ?? ""} name={name} share="morph" default="none">
       {children}
     </ViewTransition>
+  );
+  if (!landing) return boundary;
+  return (
+    <div className="contents" data-cover-landing={landing}>
+      {boundary}
+    </div>
   );
 }

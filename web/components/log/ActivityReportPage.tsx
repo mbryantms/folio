@@ -339,7 +339,10 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
   const card = (
     <Card className="group/card hover:border-primary/40 flex h-full flex-col overflow-hidden transition-colors">
       <CoverTilt className="event-card-cover relative w-full">
-        <CoverMorph name={href ? morph.name : undefined}>
+        <CoverMorph
+          name={href ? morph.name : undefined}
+          landing={href ? morph.landing : undefined}
+        >
           <Cover
             src={cover}
             alt={`${seriesName}${number ? ` #${number}` : ""} cover`}

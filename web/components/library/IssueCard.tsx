@@ -227,7 +227,7 @@ function IssueCardImpl({
             label={heading}
           />
         )}
-        <CoverMorph name={morph.name}>
+        <CoverMorph name={morph.name} landing={morph.landing}>
           <Cover
             src={issue.cover_url}
             alt={heading}
