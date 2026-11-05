@@ -20,6 +20,32 @@ this file starts at the first release that ships with a curated changelog.
 
 * Folio Flair 1.0 — motion, optional effects, reading log and live admin ([#1466](https://github.com/mbryantms/folio/issues/1466)) ([73a1671](https://github.com/mbryantms/folio/commit/73a16714f61213a19f340b8a44992f6bd46bac78))
 
+### Highlights
+
+- **Effects** (Settings → Theme → Effects): per-account switches for cover
+  tilt and sheen, tinted hero backdrops, page scrub on hover, series
+  thickness, creator/character hover previews, and in the reader ambient
+  page glow and page curl. Standard motion is on by default; the heavier
+  effects are opt-in and respect reduced motion.
+- **Motion**: covers morph from cards into detail pages and into the reader;
+  route cross-fades, sliding tab underlines and segmented thumbs, count-up
+  stats, gliding progress, swipe-to-dismiss sheets, branded pull-to-refresh.
+- **Reader**: momentum drag-to-turn, a page scrubber with previews, a
+  magnifying page strip, and a finishing moment with series, reading-list
+  and collection progress.
+- **Reading log**: an Overview with Finished, Stats and Sessions tabs, and a
+  Year in review story.
+- **Collections and views**: drag-to-arrange boards; Undo replaces confirm
+  dialogs for recoverable removals; mark read/unread is instant and undoable.
+- **Admin**: a live scan panel on the Scan dashboard and Queued → Running →
+  Done queue lanes.
+- **Loading states**: every page's skeleton now matches the page it stands
+  in for.
+- **Fixed**: background workers survive a quick server restart (scans no
+  longer sit "Queued"); clearing the queue keeps the live workers.
+
+Upgrade: one additive migration (per-user effect preferences).
+
 ## [0.74.0](https://github.com/mbryantms/folio/compare/v0.73.0...v0.74.0) (2026-11-03)
 
 
