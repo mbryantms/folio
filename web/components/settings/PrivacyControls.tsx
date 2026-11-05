@@ -22,7 +22,7 @@ import {
 } from "@/lib/api/mutations";
 
 /**
- * Privacy block on /settings/activity. Bundles:
+ * The controls on /settings/privacy. Bundles:
  *  - Capture reading sessions (kill switch)
  *  - Exclude my activity from server-wide aggregates
  *  - Delete all reading history (audited destructive)

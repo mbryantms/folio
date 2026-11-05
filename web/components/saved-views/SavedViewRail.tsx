@@ -34,6 +34,7 @@ import {
   SimilarSeriesRailBody,
   useSystemRailIsEmpty,
 } from "./system-rails";
+import { cardWidth } from "@/lib/library/card-size";
 
 /** URL for the rail's "View all" affordance + header link.
  *
@@ -69,10 +70,14 @@ const RECENTLY_ADDED_VIEW_ID = "00000000-0000-0000-0000-000000000001";
 export function SavedViewRail({
   view,
   cardSize,
+  cardSizeKey,
   priority = false,
 }: {
   view: SavedViewView;
   cardSize: number;
+  /** The page's card-size key: the stored size applies from the first
+   *  frame, before `cardSize` rehydrates (lib/library/card-size.ts). */
+  cardSizeKey?: string;
   /** First/above-the-fold rail: eager-load + high-priority its covers so
    *  the LCP image isn't deferred. Off for every other rail. */
   priority?: boolean;
@@ -84,7 +89,9 @@ export function SavedViewRail({
   const systemEmpty = useSystemRailIsEmpty(systemKey);
   if (view.kind === "system" && systemEmpty) return null;
 
-  const itemStyle: React.CSSProperties = { width: `${cardSize}px` };
+  const itemStyle: React.CSSProperties = {
+    width: cardWidth(cardSizeKey, cardSize),
+  };
   // "View all" trailing tile fires for surfaces that have a finite preview
   // but a deeper detail page. Suppressed when the rail body says it's
   // already showing everything (returns hasMore: false).

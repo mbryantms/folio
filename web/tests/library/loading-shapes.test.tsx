@@ -46,7 +46,9 @@ describe("loading shapes", () => {
     const html = renderToStaticMarkup(
       createElement(RailsSkeleton, { rails: 3, label: "Loading views…" }),
     );
-    expect(count(html, "cover-skeleton__masthead")).toBe(24);
+    // 16 cards per rail: enough to cross a wide screen at the smallest
+    // card size.
+    expect(count(html, "cover-skeleton__masthead")).toBe(48);
     expect(html).toContain("Loading views…");
   });
 

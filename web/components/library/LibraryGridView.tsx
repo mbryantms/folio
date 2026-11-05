@@ -67,12 +67,13 @@ import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 import { useReducedMotion } from "@/lib/visual-effects";
+import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = "folio.libraryGrid.cardSize";
+const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.library;
 
 /** Library grid: paginated series listing with metadata-driven
  *  filters in a right-side Sheet drawer. Default sort is alphabetical
@@ -337,7 +338,7 @@ export function LibraryGridView({
   // virtual row nearing the loaded end) — the windowed DOM makes a
   // bottom IntersectionObserver sentinel unreliable.
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
   };
 
   // Server populates `total` only on the first page (no cursor) so
@@ -704,6 +705,7 @@ export function LibraryGridView({
         ) : (
           <div className={isSeriesMode ? "max-sm:pr-2" : undefined}>
             <VirtualizedCardGrid
+              cardSizeKey={CARD_SIZE_STORAGE_KEY}
               items={items}
               cardSize={cardSize}
               estimateTextHeight={isSeriesMode ? SERIES_TEXT_H : ISSUE_TEXT_H}

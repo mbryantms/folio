@@ -29,10 +29,12 @@ import type { SavedViewView } from "@/lib/api/types";
 export function LazyRail({
   view,
   cardSize,
+  cardSizeKey,
   priority = false,
 }: {
   view: SavedViewView;
   cardSize: number;
+  cardSizeKey?: string;
   /** First/above-the-fold rail: mount immediately (skip the
    *  intersection-observer wait) and eager-load its covers, so the LCP
    *  cover paints fast instead of being deferred. */
@@ -80,7 +82,12 @@ export function LazyRail({
 
   if (mounted) {
     return (
-      <SavedViewRail view={view} cardSize={cardSize} priority={priority} />
+      <SavedViewRail
+        view={view}
+        cardSize={cardSize}
+        cardSizeKey={cardSizeKey}
+        priority={priority}
+      />
     );
   }
 

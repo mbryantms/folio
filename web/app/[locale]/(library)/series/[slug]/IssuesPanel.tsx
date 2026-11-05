@@ -72,6 +72,7 @@ import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { SpecialsExtrasSection } from "./SpecialsExtrasSection";
+import { cardGridColumns } from "@/lib/library/card-size";
 
 // Bulk dialogs are heavy (metadata form / archive-edit + dnd) and only open
 // from the selection toolbar — lazy so they stay out of the series-page
@@ -414,7 +415,7 @@ export function IssuesPanel({
   // default px value keeps the grid sane during initial paint before the
   // localStorage rehydrate effect runs.
   const gridStyle = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
   } as CSSProperties;
 
   // One card renderer for the main grid and every specials section, so

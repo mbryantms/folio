@@ -1,14 +1,7 @@
-import { PageHeader } from "@/components/admin/PageHeader";
-import { ActivityPanel } from "@/components/settings/ActivityPanel";
+import { redirect } from "next/navigation";
 
-export default async function ActivityPage() {
-  return (
-    <>
-      <PageHeader
-        title="Reading history & privacy"
-        description="Choose whether your reading sessions are recorded and shared in server-wide stats, or delete your history."
-      />
-      <ActivityPanel />
-    </>
-  );
+/** Old home of the privacy controls ("Reading history & privacy");
+ *  bookmarks and recent-visit entries still point here. */
+export default function ActivitySettingsRedirect() {
+  redirect("/settings/privacy");
 }

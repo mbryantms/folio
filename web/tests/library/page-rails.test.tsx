@@ -32,6 +32,7 @@ vi.mock("@/components/library/use-card-size", () => ({
     lastStorageKey = storageKey;
     return [160, () => undefined] as const;
   },
+  usePageSlugRecord: () => undefined,
 }));
 
 vi.mock("@/components/library/CardSizeOptions", () => ({

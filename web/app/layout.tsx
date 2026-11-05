@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { baseViewport, themeHeadMeta } from "@/lib/viewport";
 import { appleStartupImages } from "@/lib/pwa/apple-splash";
+import { CARD_SIZE_BOOTSTRAP } from "@/lib/library/card-size";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies, headers } from "next/headers";
@@ -100,7 +101,7 @@ export default async function RootLayout({
   // Rust origin forwards its `Content-Security-Policy` header on the
   // proxy hop (upstream/mod.rs::forward); Next nonces its own framework
   // scripts from it automatically, but userland inline scripts —
-  // next-themes' theme bootstrap is our only one — need the nonce
+  // next-themes' theme bootstrap and the card-size script below — need the nonce
   // passed explicitly. A hash allowlist can't work here: the script
   // body serializes `defaultTheme`, which varies per user cookie.
   // Absent header (e.g. hitting :3000 directly) ⇒ no nonce attr, which
@@ -139,6 +140,14 @@ export default async function RootLayout({
           is the legacy (pre-16.4) standalone opt-in and what makes
           `navigator.standalone` true. */}
       <head>
+        {/* Card sizes → `--card-size-*` on <html> before first paint, so
+            cover grids and their route skeletons start at the reader's
+            size (lib/library/card-size.ts). Nonce'd like next-themes'
+            script; `<html>` already suppresses the attribute mismatch. */}
+        <script
+          nonce={nonce}
+          dangerouslySetInnerHTML={{ __html: CARD_SIZE_BOOTSTRAP }}
+        />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="Folio" />

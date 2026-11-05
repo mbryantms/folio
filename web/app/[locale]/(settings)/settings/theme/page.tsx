@@ -11,10 +11,14 @@ export default function ThemeSettingsPage() {
         title="Theme"
         description="Theme, accent, density, cover stacks, and effects. Changes apply instantly and sync across devices."
       />
-      <ThemePicker />
-      <CoverStackPicker />
-      <EffectsPicker />
-      <AppInstallation />
+      {/* One rhythm for every section: ThemePicker's own sections are
+          space-y-6, so the pickers after it match that gap. */}
+      <div className="space-y-6">
+        <ThemePicker />
+        <CoverStackPicker />
+        <EffectsPicker />
+        <AppInstallation />
+      </div>
     </>
   );
 }

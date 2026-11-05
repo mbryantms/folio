@@ -43,6 +43,7 @@ import {
   ScrollText,
   Search,
   Server,
+  Shield,
   ShieldCheck,
   Sparkles,
   SunMoon,
@@ -229,11 +230,11 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     keywords: ["opds", "koreader", "tokens", "scoped"],
   },
   {
-    id: "open-activity",
-    label: "Reading history & privacy",
+    id: "open-privacy",
+    label: "Privacy",
     group: "Settings",
-    icon: Activity,
-    href: "/settings/activity",
+    icon: Shield,
+    href: "/settings/privacy",
     keywords: ["privacy", "history", "tracking", "delete", "activity"],
   },
   {
@@ -295,7 +296,7 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
   },
   {
     // `/log` is the reading log; its Stats tab (`/log/stats`) is the
-    // per-user stats deep-dive. `/settings/activity` keeps only privacy.
+    // per-user stats deep-dive. `/settings/privacy` keeps only the privacy controls.
     id: "go-log",
     label: "Reading log & stats",
     group: "Library",

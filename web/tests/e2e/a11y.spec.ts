@@ -192,10 +192,7 @@ const ROUTES: Route[] = [
   { path: "/settings/reading", label: "settings, reading" },
   { path: "/settings/keybinds", label: "settings, keyboard shortcuts" },
   { path: "/settings/theme", label: "settings, theme" },
-  {
-    path: "/settings/activity",
-    label: "settings, reading history & privacy",
-  },
+  { path: "/settings/privacy", label: "settings, privacy" },
   { path: "/settings/downloads", label: "settings, downloads" },
   { path: "/settings/views", label: "settings, views" },
   { path: "/settings/pages", label: "settings, pages" },

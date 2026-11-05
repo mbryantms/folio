@@ -1,3 +1,5 @@
+import { CARD_SIZE_KEYS } from "./card-size";
+
 /**
  * Card-size bounds for the series page's View → Card size slider
  * (IssuesPanel). The issue grid uses `repeat(auto-fill, minmax(<size>px,
@@ -11,7 +13,7 @@
  * the one slider.
  */
 export const SERIES_CARD_SIZE = {
-  storageKey: "folio.series.cardSize",
+  storageKey: CARD_SIZE_KEYS.series,
   min: 120,
   max: 280,
   step: 20,

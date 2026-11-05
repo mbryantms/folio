@@ -41,6 +41,7 @@ import { useSelection } from "@/lib/selection/use-selection";
 
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
+import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
@@ -48,7 +49,7 @@ const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
 /** Shared with `<FilterViewDetail>` so one density slider covers every
  *  filter-view page. */
-const CARD_SIZE_STORAGE_KEY = "folio.savedView.cardSize";
+const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 
 /** Issue-level (`filter_issues`, WP-5.4) view detail page: header +
  *  cursor-paginated issue grid, auto-loading the next page from an
@@ -113,7 +114,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
     defaultSize: CARD_SIZE_DEFAULT,
   });
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
   };
   const items = React.useMemo(
     () => (results.data?.pages ?? []).flatMap((p) => p.items),

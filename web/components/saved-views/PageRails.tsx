@@ -11,13 +11,17 @@ import {
 } from "@/components/library/CardSizeOptions";
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
-import { useCardSize } from "@/components/library/use-card-size";
+import {
+  useCardSize,
+  usePageSlugRecord,
+} from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { useLibraryList, useMe, useSavedViews } from "@/lib/api/queries";
 
 import { LazyRail } from "./LazyRail";
 import { PageActionsMenu } from "./PageActionsMenu";
 import { PageHeading } from "./PageHeading";
+import { CARD_SIZE_KEYS } from "@/lib/library/card-size";
 
 /** Card-size bounds for the page rails. Mirrors the library-grid bounds
  *  so toggling between a page and a library grid feels consistent, but
@@ -64,14 +68,16 @@ export function PageRails({
   // vice versa). System page keeps the legacy global key so existing
   // users' Home density survives the M5 rename without a migration.
   const storageKey = isSystem
-    ? "folio.home.cardSize"
-    : `folio.page.cardSize.${pageId}`;
+    ? CARD_SIZE_KEYS.home
+    : CARD_SIZE_KEYS.page(pageId);
   const [cardSize, setCardSize] = useCardSize({
     storageKey,
     min: CARD_SIZE_MIN,
     max: CARD_SIZE_MAX,
     defaultSize: CARD_SIZE_DEFAULT,
   });
+
+  usePageSlugRecord(isSystem ? null : pageId);
 
   const items = pinnedQ.data?.items ?? [];
 
@@ -141,6 +147,7 @@ export function PageRails({
 
       {pinnedQ.isLoading ? (
         <RailsSkeleton
+          cardSizeKey={storageKey}
           rails={3}
           card={isSystem ? "issue" : "series"}
           label="Loading views…"
@@ -168,6 +175,7 @@ export function PageRails({
               key={view.id}
               view={view}
               cardSize={cardSize}
+              cardSizeKey={storageKey}
               // Prioritize the first (above-the-fold) rail's covers — the
               // LCP element lives there; the rest stay lazy.
               priority={idx === 0}

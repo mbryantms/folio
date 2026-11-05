@@ -164,11 +164,7 @@ export function settingsNav(localePrefix: string): NavSection[] {
           icon: "Keyboard",
         },
         { href: p("/theme"), label: "Theme", icon: "Palette" },
-        {
-          href: p("/activity"),
-          label: "Reading history & privacy",
-          icon: "Activity",
-        },
+        { href: p("/privacy"), label: "Privacy", icon: "Shield" },
         { href: p("/downloads"), label: "Downloads", icon: "Download" },
       ],
     },

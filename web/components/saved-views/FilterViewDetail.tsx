@@ -45,6 +45,7 @@ import type { SavedViewView } from "@/lib/api/types";
 
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
+import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 /** Saved-view-page card-size bounds. Mirrors the series Issues panel
  *  but stored under a separate localStorage key so users can tune the
@@ -53,7 +54,7 @@ const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = "folio.savedView.cardSize";
+const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 
 /** Filter-view detail page: header + paginated series grid. The
  *  cursor-paginated results endpoint pages at 60; an IntersectionObserver
@@ -214,7 +215,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   // user drags. Falls back to the default px while localStorage
   // rehydrates so the SSR markup stays stable.
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
   };
 
   return (
