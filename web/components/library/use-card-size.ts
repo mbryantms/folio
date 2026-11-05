@@ -2,7 +2,13 @@
 
 import * as React from "react";
 
-import { cardSizeVarName, syncCardSizeVars } from "@/lib/library/card-size";
+import { useParams } from "next/navigation";
+
+import {
+  cardSizeVarName,
+  PAGE_SLUG_ID_PREFIX,
+  syncCardSizeVars,
+} from "@/lib/library/card-size";
 import { captureCardLayout, playCardFlip } from "@/lib/ui/card-flip";
 
 /** Same-page broadcast for card-size changes (WP-7.7). Every
@@ -139,4 +145,23 @@ export function useCardSize(opts: {
   );
 
   return [cardSize, persistAndSet] as const;
+}
+
+/** `/pages/<slug>`'s route skeleton only knows the slug: record which
+ *  page it is (`folio.page.slugId.<slug>` → id), so the next load of
+ *  that page draws its rails at the page's card size
+ *  (lib/library/card-size.ts). `null` (the system Home page) skips it. */
+export function usePageSlugRecord(pageId: string | null): void {
+  const slug = useParams<{ slug?: string }>()?.slug;
+  React.useEffect(() => {
+    if (!pageId || !slug) return;
+    try {
+      const key = PAGE_SLUG_ID_PREFIX + slug;
+      if (localStorage.getItem(key) === pageId) return;
+      localStorage.setItem(key, pageId);
+    } catch {
+      return;
+    }
+    syncCardSizeVars();
+  }, [pageId, slug]);
 }

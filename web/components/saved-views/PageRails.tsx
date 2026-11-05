@@ -1,8 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import * as React from "react";
 import { RailError } from "@/components/saved-views/RailError";
 import { RailsSkeleton } from "@/components/skeletons/LoadingShapes";
 import { FolderPlus, LibraryBig } from "lucide-react";
@@ -13,18 +11,17 @@ import {
 } from "@/components/library/CardSizeOptions";
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
-import { useCardSize } from "@/components/library/use-card-size";
+import {
+  useCardSize,
+  usePageSlugRecord,
+} from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { useLibraryList, useMe, useSavedViews } from "@/lib/api/queries";
 
 import { LazyRail } from "./LazyRail";
 import { PageActionsMenu } from "./PageActionsMenu";
 import { PageHeading } from "./PageHeading";
-import {
-  CARD_SIZE_KEYS,
-  PAGE_SLUG_ID_PREFIX,
-  syncCardSizeVars,
-} from "@/lib/library/card-size";
+import { CARD_SIZE_KEYS } from "@/lib/library/card-size";
 
 /** Card-size bounds for the page rails. Mirrors the library-grid bounds
  *  so toggling between a page and a library grid feels consistent, but
@@ -80,20 +77,7 @@ export function PageRails({
     defaultSize: CARD_SIZE_DEFAULT,
   });
 
-  // `/pages/<slug>`'s skeleton only knows the slug: record which page it
-  // is, so its rails load at this page's size (lib/library/card-size.ts).
-  const slug = useParams<{ slug?: string }>()?.slug;
-  React.useEffect(() => {
-    if (isSystem || !slug) return;
-    try {
-      const key = PAGE_SLUG_ID_PREFIX + slug;
-      if (localStorage.getItem(key) === pageId) return;
-      localStorage.setItem(key, pageId);
-    } catch {
-      return;
-    }
-    syncCardSizeVars();
-  }, [isSystem, slug, pageId]);
+  usePageSlugRecord(isSystem ? null : pageId);
 
   const items = pinnedQ.data?.items ?? [];
 

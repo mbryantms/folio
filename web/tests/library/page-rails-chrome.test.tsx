@@ -17,6 +17,7 @@ vi.mock("@/lib/api/queries", () => ({
 }));
 vi.mock("@/components/library/use-card-size", () => ({
   useCardSize: () => [160, () => undefined] as const,
+  usePageSlugRecord: () => undefined,
 }));
 vi.mock("@/components/saved-views/PageActionsMenu", () => ({
   PageActionsMenu: () => (
