@@ -210,36 +210,23 @@ export function AccountBodySkeleton() {
   );
 }
 
-/* ───────────────────────── /settings/activity ───────────────────────── */
+/* ───────────────────────── /settings/privacy ───────────────────────── */
 
-/** `ActivityPanel`: the "stats moved" link card, then Privacy's three
- *  rows (two switches + Delete history). */
-export function ActivityBodySkeleton() {
+/** "Reading activity": `PrivacyControls`' three rows (two switches +
+ *  Delete history). */
+export function PrivacyBodySkeleton() {
   return (
-    <div className="space-y-8">
-      <div className="border-border bg-card flex items-center gap-4 rounded-xl border p-5">
-        <Skeleton className="size-10 shrink-0 rounded-lg" />
-        <div className="min-w-0 flex-1">
-          <TextLineSkeleton
-            lineClassName="h-6"
-            className="h-4 w-80 max-w-full"
-          />
-          <TextLineSkeleton className="w-[28rem] max-w-full" />
-        </div>
-        <Skeleton className="size-5 shrink-0 rounded" />
+    <SettingsSectionSkeleton title="w-32" description={["w-[30rem]"]}>
+      <div className="space-y-4">
+        <ToggleRowSkeleton title="w-44" lines={["w-[32rem]", "w-48"]} />
+        <ToggleRowSkeleton title="w-56" lines={["w-[32rem]", "w-[28rem]"]} />
+        <ToggleRowSkeleton
+          title="w-40"
+          lines={["w-[31rem]", "w-72"]}
+          right="button"
+        />
       </div>
-      <SettingsSectionSkeleton title="w-16" description={["w-[46rem]"]}>
-        <div className="space-y-4">
-          <ToggleRowSkeleton title="w-44" lines={["w-[32rem]", "w-48"]} />
-          <ToggleRowSkeleton title="w-56" lines={["w-[32rem]", "w-[28rem]"]} />
-          <ToggleRowSkeleton
-            title="w-40"
-            lines={["w-[31rem]", "w-72"]}
-            right="button"
-          />
-        </div>
-      </SettingsSectionSkeleton>
-    </div>
+    </SettingsSectionSkeleton>
   );
 }
 

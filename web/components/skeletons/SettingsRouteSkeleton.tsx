@@ -6,7 +6,7 @@ import type * as React from "react";
 import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import {
   AccountBodySkeleton,
-  ActivityBodySkeleton,
+  PrivacyBodySkeleton,
   ApiTokensBodySkeleton,
   DownloadsBodySkeleton,
   HiddenRailItemsSkeleton,
@@ -79,11 +79,11 @@ const PAGES: Record<string, Page> = {
     label: "Loading account…",
     body: <AccountBodySkeleton />,
   },
-  activity: {
-    title: "w-64",
+  privacy: {
+    title: "w-20",
     description: ["w-[40rem]"],
-    label: "Loading reading history settings…",
-    body: <ActivityBodySkeleton />,
+    label: "Loading privacy settings…",
+    body: <PrivacyBodySkeleton />,
   },
   "api-tokens": {
     title: "w-40",
