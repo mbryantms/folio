@@ -179,7 +179,7 @@ export function ActivityReportPage() {
         </div>
       )}
       {!query.hasNextPage && events.length > 0 && (
-        <p className="text-muted-foreground/70 text-center text-xs">
+        <p className="text-muted-foreground text-center text-xs">
           End of activity for this range.
         </p>
       )}
@@ -376,12 +376,12 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
         ) : null}
         <div className="mt-auto pt-1.5">
           {pageCount != null ? (
-            <p className="text-muted-foreground/80 text-xs">
+            <p className="text-muted-foreground text-xs">
               {pageCount} page{pageCount === 1 ? "" : "s"}
             </p>
           ) : null}
           <p
-            className="text-muted-foreground/70 text-xs"
+            className="text-muted-foreground text-xs"
             title={new Date(readAt).toLocaleString()}
           >
             Read: {formatRelativeDate(readAt)}

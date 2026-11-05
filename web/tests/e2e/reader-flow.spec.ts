@@ -287,8 +287,11 @@ test.describe("Reader flow", () => {
         { timeout: 30_000, message: "offline shell stored" },
       )
       .toBe(true);
+    // The dialog's batch toast finishes as "Ready offline" (issue name +
+    // size underneath); a download started elsewhere still says
+    // "… is ready to read offline".
     await expect(
-      reader.getByText(/is ready to read offline/).first(),
+      reader.getByText(/^Ready offline$|is ready to read offline/).first(),
     ).toBeVisible();
 
     // Settings → Downloads lists it with its size.
