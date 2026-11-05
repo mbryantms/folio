@@ -13,6 +13,21 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.76.0](https://github.com/mbryantms/folio/compare/v0.75.0...v0.76.0) (2026-11-05)
+
+
+### Added
+
+* **web:** in-app Back on series and issue pages, with the cover flying back into its card ([2e14ed8](https://github.com/mbryantms/folio/commit/2e14ed8326c7524811e13e84a81037cf37f33582))
+* **web:** loading skeletons match the reader's card size on every grid and rail ([8ccc24b](https://github.com/mbryantms/folio/commit/8ccc24baa479987a7b9ba6d34d7f3b0e5ffd3a35))
+* **web:** Settings → Privacy replaces Reading History & Privacy ([8ccc24b](https://github.com/mbryantms/folio/commit/8ccc24baa479987a7b9ba6d34d7f3b0e5ffd3a35))
+
+
+### Fixed
+
+* **web:** even spacing above the Effects section on Settings → Theme ([8ccc24b](https://github.com/mbryantms/folio/commit/8ccc24baa479987a7b9ba6d34d7f3b0e5ffd3a35))
+* **web:** series page on phones matches the issue page (full-width cover, tabs above the issue list) ([2e14ed8](https://github.com/mbryantms/folio/commit/2e14ed8326c7524811e13e84a81037cf37f33582))
+
 ## [0.75.0](https://github.com/mbryantms/folio/compare/v0.74.0...v0.75.0) (2026-11-05)
 
 
