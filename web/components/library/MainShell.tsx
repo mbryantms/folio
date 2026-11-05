@@ -15,6 +15,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/folio/sidebar";
+import { BackFlightLayer } from "@/components/shell/BackFlightLayer";
 import { RouteFade } from "@/components/shell/RouteFade";
 import { SkipToContent } from "@/components/shell/SkipToContent";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
@@ -107,6 +108,7 @@ export function MainShell({
         >
           {/* Cross-fades the content column between top-level pages. */}
           <RouteFade>{children}</RouteFade>
+          <BackFlightLayer />
         </SidebarInset>
       </div>
       {/* Mobile bottom tab bar. Reads `?library=all` (Suspense-gated) to

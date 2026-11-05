@@ -17,22 +17,21 @@ export default function SeriesDetailLoading() {
       {/* Breadcrumb */}
       <Skeleton className="h-3 w-40" />
 
-      {/* Hero: mirrors page.tsx — on phones a 2fr/3fr grid with the
-          cover beside the title block and the Read row spanning both;
-          sm+ the stacked cover sidebar, lg+ side by side. */}
-      <header className="grid grid-cols-[2fr_3fr] gap-4 sm:grid-cols-1 sm:gap-8 lg:grid-cols-[18rem_1fr]">
-        <div className="flex flex-col gap-3 max-sm:contents sm:gap-4">
-          <div className="mx-auto w-full max-w-full max-sm:order-1 sm:w-56 lg:mx-0 lg:w-72">
+      {/* Hero: mirrors page.tsx — one column (cover, Read row, title
+          block, summary, facts) until lg, then side by side. */}
+      <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
+        <div className="flex flex-col gap-3 sm:gap-4">
+          <div className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72">
             <MorphCoverSlot />
           </div>
-          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 max-sm:order-3 max-sm:col-span-full max-sm:max-w-none sm:max-w-sm sm:flex-col lg:mx-0 lg:max-w-72">
+          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             <Skeleton className="h-12 flex-1 rounded-md sm:h-10" />
-            <Skeleton className="h-12 w-12 rounded-md sm:h-10" />
+            <Skeleton className="h-12 w-12 rounded-md sm:h-10 sm:w-10" />
           </div>
         </div>
 
-        <div className="min-w-0 max-sm:contents sm:space-y-5">
-          <div className="space-y-3 max-sm:order-2">
+        <div className="min-w-0 space-y-5">
+          <div className="space-y-3">
             <Skeleton className="h-9 w-3/4" />
             <Skeleton className="h-4 w-1/2" />
             <div className="flex flex-wrap gap-2">
@@ -41,12 +40,12 @@ export default function SeriesDetailLoading() {
               <Skeleton className="h-6 w-24 rounded-full" />
             </div>
           </div>
-          <div className="space-y-2 max-sm:order-3 max-sm:col-span-full">
+          <div className="space-y-2">
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-2/3" />
           </div>
-          <div className="grid gap-x-6 gap-y-4 max-sm:order-3 max-sm:col-span-full sm:grid-cols-2">
+          <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             {Array.from({ length: 4 }, (_, i) => (
               <div
                 key={i}
@@ -60,13 +59,10 @@ export default function SeriesDetailLoading() {
         </div>
       </header>
 
-      {/* Stats — a horizontal strip on phones, 4-up from sm. */}
-      <section className="grid grid-cols-2 gap-3 max-sm:-mx-4 max-sm:flex max-sm:[scrollbar-width:none] max-sm:overflow-x-auto max-sm:px-4 sm:grid-cols-4">
+      {/* Stats — 2×2 on phones, 4-up from sm. */}
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {Array.from({ length: 4 }, (_, i) => (
-          <Skeleton
-            key={i}
-            className="h-20 w-full rounded-lg max-sm:min-w-[9rem] max-sm:shrink-0"
-          />
+          <Skeleton key={i} className="h-20 w-full rounded-lg" />
         ))}
       </section>
 

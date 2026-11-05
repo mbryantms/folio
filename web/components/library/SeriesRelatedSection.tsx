@@ -1021,7 +1021,7 @@ function RelatedCard({
       data-testid="related-card"
     >
       <CoverTilt className="relative">
-        <CoverMorph name={morph.name}>
+        <CoverMorph name={morph.name} landing={morph.landing}>
           <Cover
             src={series.cover_url}
             alt={series.name}

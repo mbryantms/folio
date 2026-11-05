@@ -140,7 +140,7 @@ export function CblWindowCard({
           )}
           {...longPress.wrapperProps}
         >
-          <CoverMorph name={morph.name}>
+          <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
               alt={heading}

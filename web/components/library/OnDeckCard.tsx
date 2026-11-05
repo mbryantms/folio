@@ -142,7 +142,7 @@ export function OnDeckCard({
         )}
       >
         <CoverTilt className="relative" {...longPress.wrapperProps}>
-          <CoverMorph name={morph.name}>
+          <CoverMorph name={morph.name} landing={morph.landing}>
             <Cover
               src={issue.cover_url}
               alt={heading}

@@ -21,6 +21,7 @@ import { seriesVisit } from "@/lib/search/recent-visits";
 import { seriesCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
 
+import { BackButton } from "@/components/shell/BackButton";
 import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
 import { Cover } from "@/components/Cover";
 import { ChipList } from "@/components/library/ChipList";
@@ -241,30 +242,32 @@ export default async function SeriesPage({
           admin PageHeader breadcrumbs). The library segment scopes the
           home grid to this series' library (`?library=<id>`). On phones
           the trail stays one line — a long library name truncates. */}
-      <Breadcrumbs
-        className="max-sm:[&_a]:truncate max-sm:[&_li]:min-w-0 max-sm:[&_ol]:flex-nowrap"
-        items={[
-          { label: "Library", href: "/" },
-          ...(library
-            ? [{ label: library.name, href: `/?library=${library.id}` }]
-            : []),
-        ]}
-      />
+      {/* In-app Back (returns to wherever you came from, cover flying
+          home) ahead of the parent trail. */}
+      <div className="flex min-w-0 items-center gap-2">
+        <BackButton />
+        <Breadcrumbs
+          className="min-w-0 max-sm:[&_a]:truncate max-sm:[&_li]:min-w-0 max-sm:[&_ol]:flex-nowrap"
+          items={[
+            { label: "Library", href: "/" },
+            ...(library
+              ? [{ label: library.name, href: `/?library=${library.id}` }]
+              : []),
+          ]}
+        />
+      </div>
 
-      {/* Phone (< sm): a 2fr/3fr grid — cover on the left, title block
-          beside it, then the Read row, summary and facts spanning both
-          columns. The two column wrappers become `display: contents`
-          there so their children place directly on this grid (`order`
-          pulls the title block up next to the cover). sm+ keeps the
-          prior layout: a stacked cover sidebar, then the text column
-          (side by side from lg). */}
-      <header className="grid grid-cols-[2fr_3fr] gap-4 sm:grid-cols-1 sm:gap-8 lg:grid-cols-[18rem_1fr]">
-        {/* v0.5.10 mobile hero reshape — mirrors the issue page so
-            the two surfaces feel consistent on phones. Read + Actions
-            collapse to a single 48px-tall row with Actions as an
-            icon-only kebab. sm+ keeps the prior stacked sidebar layout. */}
-        <div className="flex flex-col gap-3 max-sm:contents sm:gap-4">
-          <div className="mx-auto w-full max-w-full max-sm:order-1 sm:w-56 lg:mx-0 lg:w-72">
+      {/* One column on phones and tablets (side by side from lg), like the
+          issue page: the cover leads at ~80% of the viewport, then the
+          Read row, title block, summary and facts. */}
+      <header className="grid grid-cols-1 gap-6 sm:gap-8 lg:grid-cols-[18rem_1fr]">
+        {/* Mirrors the issue page's hero: Read + Actions share one
+            48px-tall row on phones, Actions an icon-only kebab. */}
+        <div className="flex flex-col gap-3 sm:gap-4">
+          <div
+            data-cover-hero={seriesCoverName(series.slug)}
+            className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72"
+          >
             <ViewTransition
               name={seriesCoverName(series.slug)}
               share="morph"
@@ -280,7 +283,7 @@ export default async function SeriesPage({
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon
               to its right rather than a full-width stacked button. */}
-          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 max-sm:order-3 max-sm:col-span-full max-sm:max-w-none sm:max-w-sm lg:mx-0 lg:max-w-72">
+          <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {nextHref ? (
               <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
                 <MorphLink
@@ -308,7 +311,7 @@ export default async function SeriesPage({
             />
           </div>
           {caughtUp ? (
-            <p className="text-muted-foreground mx-auto flex max-w-xs items-start gap-1.5 text-center text-xs text-balance max-sm:order-3 max-sm:col-span-full sm:max-w-sm lg:mx-0 lg:max-w-72 lg:text-left">
+            <p className="text-muted-foreground mx-auto flex max-w-xs items-start gap-1.5 text-center text-xs text-balance sm:max-w-sm lg:mx-0 lg:max-w-72 lg:text-left">
               <CheckCircle2
                 aria-hidden="true"
                 className="text-primary mt-px size-3.5 shrink-0"
@@ -324,8 +327,8 @@ export default async function SeriesPage({
             than buried under a tab. */}
         {/* `hero-chips`: every pill in the header shares one surface that
             stays legible over the tinted backdrop (globals.css). */}
-        <div className="hero-chips min-w-0 max-sm:contents sm:space-y-5">
-          <div className="min-w-0 max-sm:order-2">
+        <div className="hero-chips min-w-0 space-y-5">
+          <div className="min-w-0">
             {/* Prominent volume caption above the H1 — mirrors the
                 issue page's `Vol. N` badge so the multi-volume signal
                 is visible without drilling into the Details tab. Only
@@ -359,14 +362,14 @@ export default async function SeriesPage({
               <CollectionBadge series={series} />
             </div>
           </div>
-          <div className="min-w-0 max-sm:order-3 max-sm:col-span-full">
+          <div className="min-w-0">
             <Description text={series.summary} />
           </div>
 
           {/* Writers and Publication hide on phones: writers lead the
               Credits tab and the status is already the badge above (and
               the first stat), so the hero stays short there. */}
-          <div className="grid gap-x-6 gap-y-4 max-sm:order-3 max-sm:col-span-full sm:grid-cols-2">
+          <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             <FactBlock label="Writers" className="max-sm:hidden">
               {series.writers && series.writers.length > 0 ? (
                 <ChipList
@@ -419,12 +422,9 @@ export default async function SeriesPage({
       </section>
 
       {/* WP-7.7: the strip is a client wrapper so `?tab=` deep-links and
-          stays in sync, and the Related label carries a live count. On
-          phones the tabs drop below the issue list (`order-last`): the
-          covers are what a phone visit is for, and the Credits panel
-          alone was several screens of chips. */}
+          stays in sync, and the Related label carries a live count. The
+          issue list sits below the tabs at every width. */}
       <SeriesTabs
-        className="max-sm:order-last"
         seriesSlug={series.slug}
         initialTab={initialTab ?? null}
         relationshipCount={series.relationship_count ?? null}
@@ -763,9 +763,8 @@ export default async function SeriesPage({
       {/* The footer carries its own `mt-8`, sized for the old margin-
           collapsing `space-y` root; in this gap column the wrapper
           cancels it so the footer sits one gap below the last block
-          (and, with no attribution to show, costs nothing). Phones:
-          `order-last` keeps it below the tabs. */}
-      <div className="-mt-8 empty:hidden max-sm:order-last">
+          (and, with no attribution to show, costs nothing). */}
+      <div className="-mt-8 empty:hidden">
         <SeriesSourcesFooter seriesSlug={series.slug} />
       </div>
     </div>

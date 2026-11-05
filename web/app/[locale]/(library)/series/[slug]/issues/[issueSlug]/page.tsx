@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { ViewTransition } from "react";
 
+import { BackButton } from "@/components/shell/BackButton";
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
 import { RecordVisit } from "@/components/search/RecordVisit";
 import { issueVisit } from "@/lib/search/recent-visits";
@@ -241,7 +242,14 @@ export default async function IssuePage({
           issue.state === "active" ? `/issues/${issue.id}/pages/0/thumb` : null
         }
       />
-      <nav aria-label="Breadcrumb" className="text-muted-foreground text-xs">
+      <nav
+        aria-label="Breadcrumb"
+        className="group/crumbs text-muted-foreground flex min-w-0 items-center gap-2 text-xs"
+      >
+        {/* In-app Back: returns to wherever you came from, the cover
+            flying home. With it shown, the phone parent link drops its
+            own chevron. */}
+        <BackButton />
         {/* Mobile: a back chevron + parent series name only. The H1
             already announces the issue title, so the breadcrumb's
             trailing "All Hope Lies in Doom" was just visual noise on
@@ -253,7 +261,10 @@ export default async function IssuePage({
             className="hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
             aria-label={series ? `Back to ${series.name}` : "Back to library"}
           >
-            <ChevronLeft className="size-4" aria-hidden="true" />
+            <ChevronLeft
+              className="size-4 group-has-[[data-back-button]]/crumbs:hidden"
+              aria-hidden="true"
+            />
             <span>{series?.name ?? "Library"}</span>
           </Link>
         </div>
@@ -289,7 +300,10 @@ export default async function IssuePage({
             sidebar layout (cover 14rem/18rem column, buttons stacked
             below). */}
         <div className="flex flex-col gap-3 sm:gap-4">
-          <div className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72">
+          <div
+            data-cover-hero={issueCoverName(issue.series_slug, issue.slug)}
+            className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72"
+          >
             <ViewTransition
               name={issueCoverName(issue.series_slug, issue.slug)}
               share="morph"
