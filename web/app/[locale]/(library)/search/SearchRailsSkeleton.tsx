@@ -1,5 +1,6 @@
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CARD_SIZE_KEYS, cardWidth } from "@/lib/library/card-size";
 
 /** Category rails while search results load: shared by the route
  *  fallback and `SearchView`'s own "searching" state. */
@@ -15,8 +16,12 @@ export function SearchRailsSkeleton() {
             <Skeleton className="h-3 w-12" />
           </div>
           <div className="flex gap-4 overflow-hidden">
-            {Array.from({ length: 8 }, (_, i) => (
-              <div key={i} className="w-40 shrink-0 space-y-2">
+            {Array.from({ length: 16 }, (_, i) => (
+              <div
+                key={i}
+                className="shrink-0 space-y-2"
+                style={{ width: cardWidth(CARD_SIZE_KEYS.search) }}
+              >
                 <CoverSkeleton />
                 <Skeleton className="h-4 w-3/4" />
                 <Skeleton className="h-3 w-1/2" />

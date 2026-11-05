@@ -41,6 +41,7 @@ import type {
   SeriesView,
 } from "@/lib/api/types";
 import { seriesUrl } from "@/lib/urls";
+import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 /** Query filters for the New Issues detail grid: the FULL ingest-ordered
  *  issue list. Deliberately uncapped — the home rail's per-series cap is
@@ -53,7 +54,7 @@ const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 180;
-const CARD_SIZE_STORAGE_KEY = "folio.systemView.cardSize";
+const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.systemView;
 
 /**
  * Full-page detail view for system rails (Continue reading / On deck).
@@ -191,7 +192,7 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
       <div
         className="grid gap-4"
         style={{
-          gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+          gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
         }}
       >
         {isContinueReading ? (

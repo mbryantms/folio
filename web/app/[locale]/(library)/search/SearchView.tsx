@@ -106,6 +106,11 @@ import {
   issueReadStatusToParam,
 } from "@/lib/search/issue-search-filters";
 import { FilterPill } from "@/components/folio/filter-pill";
+import {
+  CARD_SIZE_KEYS,
+  cardGridColumns,
+  cardWidth,
+} from "@/lib/library/card-size";
 
 const QUERY_DEBOUNCE_MS = 250;
 
@@ -113,7 +118,7 @@ const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = "folio.search.cardSize";
+const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.search;
 
 /**
  * Full-page search experience. Two layouts share the same fetch + input
@@ -637,7 +642,9 @@ function CategoryRailBody({
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
   }
   const viewAllHref = `/search?q=${encodeURIComponent(query)}&category=${def.key}`;
-  const itemStyle: CSSProperties = { width: `${cardSize}px` };
+  const itemStyle: CSSProperties = {
+    width: cardWidth(CARD_SIZE_STORAGE_KEY, cardSize),
+  };
   return (
     <HorizontalScrollRail viewAllHref={viewAllHref} itemWidthPx={cardSize}>
       {renderRailItems(def, payloads, hits, itemStyle)}
@@ -708,7 +715,7 @@ function CategoryGrid({
     );
   }
   const gridStyle: CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
   };
   const clearFilters = activeFilterCount > 0 ? onClearFilters : undefined;
   if (def.key === "series") {

@@ -97,6 +97,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/folio/dropdown-menu";
+import { CARD_SIZE_KEYS } from "@/lib/library/card-size";
 
 type KindFilter = BookmarksFeedKind | "all" | "favorite";
 
@@ -134,7 +135,7 @@ const CARD_SIZE_MIN = 100;
 const CARD_SIZE_MAX = 220;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 140;
-const CARD_SIZE_STORAGE_KEY = "folio.bookmarks.cardSize";
+const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.bookmarks;
 
 /** Preset server-side scope for an embedded list (WP-5.2). */
 export type MarkersListScope =

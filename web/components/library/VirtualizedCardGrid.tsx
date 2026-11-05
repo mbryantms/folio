@@ -14,6 +14,7 @@ import {
 } from "@/lib/library/grid-window";
 import { useGridScrollRestore } from "@/lib/library/use-grid-scroll-restore";
 import { useContainerWidth } from "@/lib/use-container-width";
+import { cardGridColumns } from "@/lib/library/card-size";
 
 /**
  * Window-virtualized responsive card grid (audit G1). Reproduces the
@@ -36,6 +37,7 @@ import { useContainerWidth } from "@/lib/use-container-width";
 export function VirtualizedCardGrid({
   items,
   cardSize,
+  cardSizeKey,
   estimateTextHeight,
   hasNextPage,
   isFetchingNextPage,
@@ -45,6 +47,8 @@ export function VirtualizedCardGrid({
 }: {
   items: ReadonlyArray<{ id: string }>;
   cardSize: number;
+  /** The surface's card-size key, for the pre-measure grid. */
+  cardSizeKey?: string;
   /** Approximate fixed height (px) of the card's text block below the
    *  cover — used only for the initial row-height estimate. */
   estimateTextHeight: number;
@@ -124,10 +128,10 @@ export function VirtualizedCardGrid({
           role="list"
           className="grid gap-4"
           style={{
-            gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+            gridTemplateColumns: cardGridColumns(cardSizeKey, cardSize),
           }}
         >
-          {Array.from({ length: 12 }).map((_, i) => (
+          {Array.from({ length: 24 }).map((_, i) => (
             <li key={i}>
               <CoverSkeleton />
             </li>

@@ -2,6 +2,7 @@ import { LoadingWatchdog } from "@/components/LoadingWatchdog";
 import { IssueCardSkeleton } from "@/components/library/IssueCard";
 import { MorphCoverSlot } from "@/components/library/MorphCoverSlot";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 /**
  * Series-detail fallback. Renders inside `MainShell`, mirroring the real
@@ -81,10 +82,10 @@ export default function SeriesDetailLoading() {
         role="list"
         className="grid gap-4"
         style={{
-          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+          gridTemplateColumns: cardGridColumns(CARD_SIZE_KEYS.series),
         }}
       >
-        {Array.from({ length: 12 }, (_, i) => (
+        {Array.from({ length: 24 }, (_, i) => (
           <li key={i}>
             <IssueCardSkeleton />
           </li>

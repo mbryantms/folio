@@ -80,6 +80,7 @@ import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 
 import { ViewActionsMenu } from "./ViewActionsMenu";
 import { ViewHeader } from "./ViewHeader";
+import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 // Heavy archive-edit dialog (+dnd) — lazy so it stays out of the CBL view's
 // initial bundle; the chunk loads on first open (G6).
@@ -104,7 +105,7 @@ const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
 const CARD_SIZE_STEP = 20;
 const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = "folio.savedView.cardSize";
+const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 
 /** Read-first detail page for a CBL saved view. Mirrors filter views:
  *  the page is a consumption surface (issues in CBL position order),
@@ -349,7 +350,10 @@ function CblViewDetailInner({
     return (
       <LoadingRegion label="Loading view…" className="space-y-6">
         <PageHeaderSkeleton />
-        <CoverGridSkeleton label="Loading entries…" />
+        <CoverGridSkeleton
+          cardSizeKey={CARD_SIZE_STORAGE_KEY}
+          label="Loading entries…"
+        />
       </LoadingRegion>
     );
   }
@@ -417,7 +421,7 @@ function CblViewDetailInner({
     );
   };
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fill, minmax(min(${cardSize}px, calc(50% - 0.5rem)), 1fr))`,
+    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
   };
 
   // Jump the page to the Up Next anchor card.

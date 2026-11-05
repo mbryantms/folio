@@ -6,6 +6,11 @@ import { ProgressIssueCardSkeleton } from "@/components/library/ProgressIssueCar
 import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import {
+  cardGridColumns,
+  cardWidth,
+  DEFAULT_CARD_SIZE_PX,
+} from "@/lib/library/card-size";
 
 /**
  * Shaped loading stand-ins shared by the in-page loading branches and the
@@ -63,12 +68,17 @@ export function LoadingRegion({
 
 /** A grid of issue-card skeletons (cover + two caption lines). */
 export function CoverGridSkeleton({
-  count = 12,
+  count = 24,
+  cardSizeKey,
   style,
   className,
   label = "Loading…",
 }: {
+  /** Enough to fill a wide screen at the smallest size; rows past the
+   *  fold cost nothing. */
   count?: number;
+  /** The surface's card-size key, so the grid is the reader's size. */
+  cardSizeKey?: string;
   /** Grid template, usually the page's own `gridStyle` so columns match. */
   style?: React.CSSProperties;
   className?: string;
@@ -80,7 +90,7 @@ export function CoverGridSkeleton({
         className={cn("grid gap-4", className)}
         style={
           style ?? {
-            gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+            gridTemplateColumns: cardGridColumns(cardSizeKey),
           }
         }
       >
@@ -102,16 +112,20 @@ export function CoverGridSkeleton({
 export function RailsSkeleton({
   rails = 2,
   card = "issue",
-  cardSize = 160,
+  cardSize = DEFAULT_CARD_SIZE_PX,
+  cardSizeKey,
   label = "Loading…",
 }: {
   rails?: number;
   card?: "issue" | "series";
   /** Card width in px (the page's card-size preference; 160 default). */
   cardSize?: number;
+  /** The page's card-size key: the stored size wins over `cardSize`
+   *  from the first frame (lib/library/card-size.ts). */
+  cardSizeKey?: string;
   label?: string;
 }) {
-  const width = { width: `${cardSize}px` };
+  const width = { width: cardWidth(cardSizeKey, cardSize) };
   return (
     <LoadingRegion
       label={label}
@@ -132,7 +146,9 @@ export function RailsSkeleton({
             />
           </div>
           <RailTrackSkeleton>
-            {Array.from({ length: 8 }, (_, i) => (
+            {/* Enough to cross a wide screen at the smallest size; the
+                track clips the rest. */}
+            {Array.from({ length: 16 }, (_, i) => (
               <div key={i} style={width} className="shrink-0">
                 {card === "series" ? (
                   <SeriesCardSkeleton />
@@ -162,10 +178,13 @@ export function PageRailsSkeleton({
   rails = 3,
   card = "issue",
   phoneDescription = false,
+  cardSizeKey,
   label = "Loading…",
 }: {
   rails?: number;
   card?: "issue" | "series";
+  /** The page's card-size key (see `RailsSkeleton`). */
+  cardSizeKey?: string;
   /** Custom pages with a description repeat it under the phone bar. */
   phoneDescription?: boolean;
   label?: string;
@@ -206,7 +225,12 @@ export function PageRailsSkeleton({
           className="h-3 w-3/4"
         />
       ) : null}
-      <RailsSkeleton rails={rails} card={card} label="" />
+      <RailsSkeleton
+        rails={rails}
+        card={card}
+        cardSizeKey={cardSizeKey}
+        label=""
+      />
     </LoadingRegion>
   );
 }

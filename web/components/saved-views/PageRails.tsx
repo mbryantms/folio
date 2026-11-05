@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
+import * as React from "react";
 import { RailError } from "@/components/saved-views/RailError";
 import { RailsSkeleton } from "@/components/skeletons/LoadingShapes";
 import { FolderPlus, LibraryBig } from "lucide-react";
@@ -18,6 +20,11 @@ import { useLibraryList, useMe, useSavedViews } from "@/lib/api/queries";
 import { LazyRail } from "./LazyRail";
 import { PageActionsMenu } from "./PageActionsMenu";
 import { PageHeading } from "./PageHeading";
+import {
+  CARD_SIZE_KEYS,
+  PAGE_SLUG_ID_PREFIX,
+  syncCardSizeVars,
+} from "@/lib/library/card-size";
 
 /** Card-size bounds for the page rails. Mirrors the library-grid bounds
  *  so toggling between a page and a library grid feels consistent, but
@@ -64,14 +71,29 @@ export function PageRails({
   // vice versa). System page keeps the legacy global key so existing
   // users' Home density survives the M5 rename without a migration.
   const storageKey = isSystem
-    ? "folio.home.cardSize"
-    : `folio.page.cardSize.${pageId}`;
+    ? CARD_SIZE_KEYS.home
+    : CARD_SIZE_KEYS.page(pageId);
   const [cardSize, setCardSize] = useCardSize({
     storageKey,
     min: CARD_SIZE_MIN,
     max: CARD_SIZE_MAX,
     defaultSize: CARD_SIZE_DEFAULT,
   });
+
+  // `/pages/<slug>`'s skeleton only knows the slug: record which page it
+  // is, so its rails load at this page's size (lib/library/card-size.ts).
+  const slug = useParams<{ slug?: string }>()?.slug;
+  React.useEffect(() => {
+    if (isSystem || !slug) return;
+    try {
+      const key = PAGE_SLUG_ID_PREFIX + slug;
+      if (localStorage.getItem(key) === pageId) return;
+      localStorage.setItem(key, pageId);
+    } catch {
+      return;
+    }
+    syncCardSizeVars();
+  }, [isSystem, slug, pageId]);
 
   const items = pinnedQ.data?.items ?? [];
 
@@ -141,6 +163,7 @@ export function PageRails({
 
       {pinnedQ.isLoading ? (
         <RailsSkeleton
+          cardSizeKey={storageKey}
           rails={3}
           card={isSystem ? "issue" : "series"}
           label="Loading views…"
@@ -168,6 +191,7 @@ export function PageRails({
               key={view.id}
               view={view}
               cardSize={cardSize}
+              cardSizeKey={storageKey}
               // Prioritize the first (above-the-fold) rail's covers — the
               // LCP element lives there; the rest stay lazy.
               priority={idx === 0}
