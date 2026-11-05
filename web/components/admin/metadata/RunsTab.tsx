@@ -209,7 +209,7 @@ function RunDetailPanel({ id }: { id: string }) {
   if (q.isLoading) {
     return (
       <Card>
-        <CardContent className="text-muted-foreground flex items-center gap-2 py-12 text-sm">
+        <CardContent className="text-muted-foreground flex flex-row items-center gap-2 py-12 text-sm">
           <Loader2 className="size-4 animate-spin" /> Loading…
         </CardContent>
       </Card>

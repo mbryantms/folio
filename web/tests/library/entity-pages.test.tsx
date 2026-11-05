@@ -4,7 +4,13 @@
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Hover previews read the account (`useMe`); static markup doesn't need them.
+vi.mock("@/lib/visual-effects", () => ({
+  useVisualEffect: () => false,
+  useReducedMotion: () => true,
+}));
 
 import { ChipList } from "@/components/library/ChipList";
 import { entityNextPage } from "@/lib/api/queries";

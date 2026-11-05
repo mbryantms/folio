@@ -3,13 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
   type CoverMenuAction,
 } from "@/components/CoverMenuButton";
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { formatIssueHeading } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
@@ -122,31 +126,40 @@ export function OnDeckCard({
   // Cover/title click → issue detail page (matches every other cover-
   // bearing card). The yellow play overlay is the ONLY surface that
   // routes straight to the reader.
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   return (
     <>
       <Link
+        data-card=""
         href={issueUrl(issue, { cbl: cblParam })}
+        onClick={morph.onClick}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
           className,
         )}
       >
-        <div className="relative" {...longPress.wrapperProps}>
-          <Cover
-            src={issue.cover_url}
-            alt={heading}
-            fallback={numberLabel}
-            className="w-full transition group-hover:brightness-110"
-          />
+        <CoverTilt className="relative" {...longPress.wrapperProps}>
+          <CoverMorph name={morph.name}>
+            <Cover
+              src={issue.cover_url}
+              alt={heading}
+              fallback={numberLabel}
+              className="w-full transition group-hover:brightness-110"
+            />
+          </CoverMorph>
           <CoverMenuButton
             label={`Actions for ${heading}`}
             actions={menuActions}
           />
           <QuickReadOverlay
+            onActivate={morph.mark}
             readerHref={readerUrl(issue, { cbl: cblParam })}
             label={`Read ${heading}`}
           />
-        </div>
+        </CoverTilt>
         <div className="min-w-0 px-1">
           <div className="text-muted-foreground truncate text-xs" title={meta}>
             {meta}
@@ -167,11 +180,11 @@ export function OnDeckCard({
 export function OnDeckCardSkeleton({ className }: { className?: string }) {
   return (
     <div className={cn("flex flex-col gap-2 p-1", className)}>
-      <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+      <CoverSkeleton />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted h-2 w-1/2 animate-pulse rounded" />
-        <div className="bg-muted size-3/4 animate-pulse rounded" />
-        <div className="bg-muted h-2 w-1/4 animate-pulse rounded" />
+        <div className="skeleton-shimmer h-2 w-1/2 rounded" />
+        <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-2 w-1/4 rounded" />
       </div>
     </div>
   );

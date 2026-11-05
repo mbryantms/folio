@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { useCoverPriority } from "@/components/library/cover-priority";
+import { applyTint, getTone, rememberTone } from "@/lib/ui/cover-tone";
 import { coverThumbSrcSet } from "@/lib/urls";
 
 /**
@@ -16,6 +17,12 @@ import { coverThumbSrcSet } from "@/lib/urls";
  * `complete`), so it paints at full opacity on the first frame — no fade,
  * no flash. Mirrors the reader's `PageImage`.
  *
+ * Blur-up (folio-flair-1.0): while a cover loads, its box shows the
+ * cover's own average colour when we have seen it before (`cover-tone`),
+ * and the image resolves from a soft blur as it fades in. Once decoded,
+ * its colours are remembered and the card gets a `--cover-tint` for its
+ * hover wash.
+ *
  * Falls back to a placeholder tile (publisher / state) when `src` is null —
  * keeps the layout stable for issues with no cover (encrypted, malformed,
  * or thumbnail not yet generated).
@@ -24,7 +31,7 @@ import { coverThumbSrcSet } from "@/lib/urls";
 // neutral-900 fallback text measured ≈2.3:1 (WCAG 1.4.3 wants 4.5:1)
 // and painted a near-black tile on the light/amber themes.
 const BOX =
-  "aspect-[2/3] bg-muted rounded-md border border-border overflow-hidden";
+  "cover-box aspect-[2/3] bg-muted rounded-md border border-border overflow-hidden";
 
 export function Cover({
   src,
@@ -43,11 +50,34 @@ export function Cover({
   const priority = useCoverPriority();
   const [loaded, setLoaded] = useState(priority);
   const ref = useRef<HTMLImageElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el && el.complete && el.naturalWidth > 0) setLoaded(true);
+    if (el && el.complete && el.naturalWidth > 0) {
+      setLoaded(true);
+      if (src) rememberTone(src, el);
+    }
+    // Mount-only: `src` changes re-key the img via onLoad.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Before first paint: the remembered colour as the placeholder, and the
+  // card's tint (set on the DOM, so no extra render and no SSR mismatch).
+  useLayoutEffect(() => {
+    if (!src) return;
+    const tone = getTone(src);
+    if (!tone) return;
+    if (boxRef.current) {
+      boxRef.current.style.backgroundColor = `rgb(${tone.average})`;
+    }
+    applyTint(boxRef.current, tone);
+  }, [src]);
+
+  const onLoad = () => {
+    setLoaded(true);
+    if (src && ref.current) rememberTone(src, ref.current);
+  };
 
   if (src) {
     // Responsive cover (G9): lazy grid covers get a `srcset` + `sizes="auto"`
@@ -60,7 +90,7 @@ export function Cover({
       // The box owns the aspect-ratio + placeholder + caller classes
       // (sizing, hover brightness); the img fills it and fades in, so the
       // dark placeholder stays visible underneath until the cover decodes.
-      <div className={`${BOX} ${className ?? ""}`}>
+      <div ref={boxRef} className={`${BOX} ${className ?? ""}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           ref={ref}
@@ -71,10 +101,10 @@ export function Cover({
           loading={priority ? "eager" : "lazy"}
           fetchPriority={priority ? "high" : undefined}
           decoding="async"
-          onLoad={() => setLoaded(true)}
+          onLoad={onLoad}
           onError={() => setLoaded(true)}
-          className={`block h-full w-full object-cover transition-opacity duration-200 ease-out motion-reduce:transition-none ${
-            loaded ? "opacity-100" : "opacity-0"
+          className={`block h-full w-full object-cover transition-[opacity,filter,scale] duration-300 ease-out motion-reduce:transition-none ${
+            loaded ? "opacity-100" : "scale-[1.04] opacity-0 blur-md"
           }`}
         />
       </div>

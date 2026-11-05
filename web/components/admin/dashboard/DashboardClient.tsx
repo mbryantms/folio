@@ -22,9 +22,20 @@ import { StatCard } from "@/components/admin/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { sparklinePoints } from "@/lib/activity";
+import {
+  CompactRowsSkeleton,
+  EmptyNoteSkeleton,
+  HealthCountsSkeleton,
+  ServiceStatusSkeleton,
+  SparklineSkeleton,
+  StatBoxesSkeleton,
+  StatCardRowSkeleton,
+} from "@/components/skeletons/AdminShapes";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { BumpNumber } from "@/components/admin/BumpNumber";
+import { fillDayBuckets, lastUtcDays, sparklinePoints } from "@/lib/activity";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
+import { useHydrated } from "@/lib/ui/use-hydrated";
 import { cn } from "@/lib/utils";
 import {
   useAdminLatestScanPerLibrary,
@@ -87,11 +98,9 @@ function TotalsRow({
 }) {
   if (loading || !data) {
     return (
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-28 w-full" />
-        ))}
-      </div>
+      <LoadingRegion label="Loading totals…">
+        <StatCardRowSkeleton />
+      </LoadingRegion>
     );
   }
   return (
@@ -138,7 +147,9 @@ function HealthCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading health counts…">
+            <HealthCountsSkeleton />
+          </LoadingRegion>
         ) : (
           <ul className="space-y-1 text-sm">
             <SeverityRow
@@ -234,6 +245,11 @@ function ScansCard({
       return t > Date.parse(best.started_at) ? row : best;
     }, null);
   }, [latest.data]);
+  // The queue total comes from the depth query the admin top bar keeps
+  // warm: render nothing data-driven until hydrated so the server HTML and
+  // the first client render agree. The counts refresh on the admin event
+  // socket's scan and queue events (lib/api/scan-events), not just polls.
+  const hydrated = useHydrated();
 
   return (
     <Card>
@@ -249,8 +265,10 @@ function ScansCard({
         <ListChecks className="text-muted-foreground size-4" />
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
-        {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+        {!hydrated || loading || !data ? (
+          <LoadingRegion label="Loading scans">
+            <StatBoxesSkeleton count={3} />
+          </LoadingRegion>
         ) : (
           <div className="grid grid-cols-3 gap-3 text-sm">
             <Stat
@@ -266,7 +284,7 @@ function ScansCard({
             <Stat label="All jobs" value={queueTotal} live={queueTotal > 0} />
           </div>
         )}
-        {mostRecent ? (
+        {hydrated && mostRecent ? (
           <p className="text-muted-foreground text-xs">
             Last scan:{" "}
             <span className="text-foreground">{mostRecent.library_name}</span> ·{" "}
@@ -316,7 +334,9 @@ function RecentScanFailuresCard() {
       </CardHeader>
       <CardContent className="space-y-2 pt-2">
         {isLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading scan failures…">
+            <EmptyNoteSkeleton />
+          </LoadingRegion>
         ) : items.length === 0 ? (
           <p className="text-muted-foreground py-4 text-center text-xs">
             All scans green for the last 7 days.
@@ -382,7 +402,9 @@ function LatestScanPerLibraryCard() {
       </CardHeader>
       <CardContent className="space-y-2 pt-2">
         {isLoading ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading latest scans…">
+            <CompactRowsSkeleton />
+          </LoadingRegion>
         ) : items.length === 0 ? (
           <p className="text-muted-foreground py-4 text-center text-xs">
             No scans recorded yet.
@@ -450,7 +472,9 @@ function ReadersCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading readers…">
+            <StatBoxesSkeleton count={2} />
+          </LoadingRegion>
         ) : (
           <div className="grid grid-cols-2 gap-3 text-sm">
             <Stat
@@ -489,7 +513,9 @@ function Stat({
           />
         ) : null}
       </p>
-      <p className="text-foreground mt-1 text-xl font-semibold">{value}</p>
+      <p className="text-foreground mt-1 text-xl font-semibold">
+        <BumpNumber value={value} format={String} />
+      </p>
     </div>
   );
 }
@@ -516,14 +542,18 @@ function ReadsSparklineCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-16 w-full" />
+          <LoadingRegion label="Loading reads…">
+            <SparklineSkeleton />
+          </LoadingRegion>
         ) : data.reads_per_day.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             No reading recorded in the last 14 days.
           </p>
         ) : (
           <Sparkline
-            series={data.reads_per_day.map((d) => d.sessions)}
+            series={fillDayBuckets(data.reads_per_day, lastUtcDays(14)).map(
+              (d) => d.sessions,
+            )}
             ariaLabel="Sessions per day, last 14 days"
           />
         )}
@@ -587,7 +617,9 @@ function ServerHealthCard({
       </CardHeader>
       <CardContent className="space-y-3 pt-2">
         {loading || !data ? (
-          <Skeleton className="h-24 w-full" />
+          <LoadingRegion label="Loading service status…">
+            <ServiceStatusSkeleton />
+          </LoadingRegion>
         ) : (
           <ul className="space-y-1.5 text-sm">
             <Pill

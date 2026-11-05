@@ -33,5 +33,10 @@ describe("GlobalShortcutsSheet (lazy)", () => {
     expect(await screen.findByText("Keyboard shortcuts")).toBeTruthy();
     // In the reader, the Reader section leads.
     expect(screen.getAllByText("Reader").length).toBeGreaterThan(0);
+    // The issue page's bare keys come from the same table the handler
+    // uses (ISSUE_SHORTCUTS).
+    expect(screen.getAllByText("Issue page").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Mark as unread").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Edit issue (admin)").length).toBeGreaterThan(0);
   });
 });

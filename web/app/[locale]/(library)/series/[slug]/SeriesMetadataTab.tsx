@@ -29,7 +29,6 @@ import {
   ChevronDown,
   ChevronRight,
   ListChecks,
-  Loader2,
   Pin,
   Search,
   Sparkles,
@@ -41,6 +40,10 @@ import * as React from "react";
 import { toast } from "sonner";
 
 import { SeriesProviderRangesCard } from "@/components/library/SeriesProviderRangesCard";
+import {
+  RowsSkeleton,
+  TilesSkeleton,
+} from "@/components/skeletons/LoadingShapes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -226,9 +229,12 @@ function SummaryStrip({
   });
   if (loading && !overview) {
     return (
-      <div className="text-muted-foreground flex items-center gap-2 py-2 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading metadata…
-      </div>
+      <TilesSkeleton
+        count={4}
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        tileClassName="h-24"
+        label="Loading metadata…"
+      />
     );
   }
   if (!overview) return null;
@@ -1209,9 +1215,7 @@ function IssuesTable({
       ) : null}
 
       {q.isLoading && !q.data ? (
-        <div className="text-muted-foreground flex items-center gap-2 py-4 text-sm">
-          <Loader2 className="size-4 animate-spin" /> Loading issues…
-        </div>
+        <RowsSkeleton rows={8} label="Loading issues…" />
       ) : items.length === 0 ? (
         onlyAttentionFilter && q.data ? (
           <EmptyState

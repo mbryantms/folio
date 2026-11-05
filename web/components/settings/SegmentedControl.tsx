@@ -1,6 +1,18 @@
 "use client";
 
+import { useRef } from "react";
+
+import {
+  SLIDE_TRANSITION,
+  useSlidingIndicator,
+} from "@/lib/ui/use-sliding-indicator";
 import { cn } from "@/lib/utils";
+
+const THUMB = {
+  active: ':scope > button[aria-pressed="true"]',
+  items: ":scope > button",
+  attributes: ["aria-pressed"],
+};
 
 /**
  * Single-select pill group. Used by the settings forms in place of a
@@ -45,8 +57,15 @@ export function SegmentedControl<T extends string>({
    *  sits in a toolbar row beside `<Button>` / `<Input>` siblings. */
   className?: string;
 }) {
+  // The selected pill is one thumb that slides between the options
+  // (folio-flair), measured like the tab underline. Until it is measured
+  // (server render, first paint) the selected button paints its own fill.
+  const group = useRef<HTMLDivElement | null>(null);
+  const thumb = useSlidingIndicator(group, THUMB);
   return (
     <div
+      ref={group}
+      data-thumb={thumb ? "" : undefined}
       role="group"
       aria-label={ariaLabel}
       aria-describedby={ariaDescribedBy}
@@ -61,7 +80,7 @@ export function SegmentedControl<T extends string>({
       // equally (`flex-1 min-w-0`), so nothing can overflow and the group
       // needs no scroll container (which would clip the focus rings).
       className={cn(
-        "border-input bg-background rounded-md border p-0.5",
+        "group/seg border-input bg-background relative rounded-md border p-0.5",
         fill
           ? "flex w-full"
           : // `overflow-y-hidden`: see `TabsList` — the segments' touch tap
@@ -70,6 +89,22 @@ export function SegmentedControl<T extends string>({
         className,
       )}
     >
+      {thumb ? (
+        <span
+          aria-hidden
+          data-slot="segmented-thumb"
+          className={cn(
+            "bg-primary pointer-events-none absolute top-0 left-0 rounded shadow-sm",
+            disabled && "opacity-50",
+            thumb.animate && SLIDE_TRANSITION,
+          )}
+          style={{
+            width: thumb.width,
+            height: thumb.height,
+            translate: `${thumb.left}px ${thumb.top}px`,
+          }}
+        />
+      ) : null}
       {options.map((opt) => {
         const active = opt.value === value;
         return (
@@ -88,7 +123,7 @@ export function SegmentedControl<T extends string>({
               "focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none",
               "disabled:cursor-not-allowed disabled:opacity-50",
               active
-                ? "bg-primary text-primary-foreground shadow-sm"
+                ? "bg-primary text-primary-foreground shadow-sm group-data-[thumb]/seg:bg-transparent group-data-[thumb]/seg:shadow-none"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >

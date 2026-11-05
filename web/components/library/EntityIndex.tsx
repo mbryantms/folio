@@ -193,9 +193,15 @@ export function EntityGridSkeleton() {
     >
       {Array.from({ length: 12 }).map((_, i) => (
         <li key={i}>
-          <div className="border-border bg-card flex h-full flex-col gap-2 rounded-lg border p-3">
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-3 w-1/2" />
+          {/* Same line boxes as `EntityCard`: a snug name line (22px)
+              over a text-xs count line (16px). */}
+          <div className="border-border bg-card flex h-full flex-col gap-1 rounded-lg border p-3">
+            <div className="flex h-[1.375rem] items-center">
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+            <div className="flex h-4 items-center">
+              <Skeleton className="h-3 w-1/2" />
+            </div>
           </div>
         </li>
       ))}

@@ -9,8 +9,10 @@ import {
   useAddCollectionEntry,
   useRemoveCollectionEntry,
 } from "@/lib/api/mutations";
-import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { TOAST } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import type { CollectionEntryKind } from "@/lib/api/types";
+import { flyCoverToNav, trackCardOrigin } from "@/lib/ui/fly-to-nav";
 
 import {
   AddToCollectionDialog,
@@ -43,8 +45,9 @@ export function useCoverMenuCollectionActions(opts: {
   // The hook is always called — but `mutate` is no-op if the id is empty.
   // We block the action below until the WTR row resolves.
   const addToWtr = useAddCollectionEntry(wtrId);
-  const removeFromWtr = useRemoveCollectionEntry(wtrId);
+  const removeFromWtr = useRemoveCollectionEntry(wtrId, { silent: true });
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  React.useEffect(trackCardOrigin, []);
 
   const actions: CoverMenuAction[] = [
     {
@@ -66,17 +69,15 @@ export function useCoverMenuCollectionActions(opts: {
             // `useApiMutation` widens to `TData | null` — guard so we
             // never offer an Undo we can't fulfill.
             onSuccess: (entry) => {
+              flyCoverToNav("want_to_read");
               if (!entry) {
                 toast.success(`Added "${label}" to Want to Read`);
                 return;
               }
-              toast.success(`Added "${label}" to Want to Read`, {
-                duration: UNDO_TOAST_DURATION_MS,
-                action: {
-                  label: "Undo",
-                  onClick: () =>
-                    removeFromWtr.mutate({ entryId: entry.id }, {}),
-                },
+              showUndoToast({
+                message: `Added "${label}" to Want to Read`,
+                restoredMessage: "Removed from Want to Read",
+                onUndo: () => removeFromWtr.mutateAsync({ entryId: entry.id }),
               });
             },
           },

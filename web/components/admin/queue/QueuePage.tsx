@@ -24,20 +24,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "@/components/folio/tabs";
-import {
-  useAuditLog,
-  useDeadJobs,
-  useDeadLetters,
-  useQueueDepth,
-} from "@/lib/api/queries";
+import { useAuditLog, useDeadJobs, useDeadLetters } from "@/lib/api/queries";
 import { QUEUE_LABELS as QUEUE_LABELS_BY_KEY } from "@/lib/admin/background-work";
+import { QueueLanes } from "@/components/admin/queue/QueueLanes";
 import { usePurgeDeadJobs, useRetryDeadJob } from "@/lib/api/mutations";
 import type { AuditEntryView, DeadJob, WorkTargetView } from "@/lib/api/types";
 import { adminLibraryUrl, issueUrl, seriesUrl } from "@/lib/urls";
@@ -46,8 +41,8 @@ import { cn } from "@/lib/utils";
 /**
  * `/admin/queue` — background-job queue surface (archive-rewrite-1.0 M7).
  *
- *   - **Overview**: live pending-job depth per queue (polled), incl. the
- *     archive page-edit queue.
+ *   - **Overview**: queue lanes, every queue's jobs as cards moving
+ *     Queued → Running → Done (folio-flair phase 5, `QueueLanes`).
  *   - **Archive operations**: recent archive edits from the audit log
  *     (`admin.issue.archive_edit{,.bulk}`) with per-row drill-down. Apalis
  *     can't enumerate in-flight jobs individually, so "recent" = the audit
@@ -58,15 +53,16 @@ export function QueuePage() {
   const deepTab = useSearchParams().get("tab");
   const initialTab =
     deepTab === "failed" || deepTab === "archive" ? deepTab : "overview";
+  const [tab, setTab] = React.useState(initialTab);
   return (
-    <Tabs defaultValue={initialTab} className="mt-2">
+    <Tabs value={tab} onValueChange={setTab} className="mt-2">
       <TabsList>
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="failed">Failed jobs</TabsTrigger>
         <TabsTrigger value="archive">Archive operations</TabsTrigger>
       </TabsList>
       <TabsContent value="overview" className="mt-4">
-        <QueueOverview />
+        <QueueLanes onShowFailed={() => setTab("failed")} />
       </TabsContent>
       <TabsContent value="failed" className="mt-4">
         <FailedJobs />
@@ -78,29 +74,6 @@ export function QueuePage() {
   );
 }
 
-const QUEUE_LABELS: { key: string; label: string }[] = [
-  { key: "scan", label: "Library scans" },
-  { key: "scan_series", label: "Series scans" },
-  { key: "post_scan_thumbs", label: "Thumbnails" },
-  // `post_scan_search` / `post_scan_dictionary` are registered server-side
-  // but nothing enqueues them (their handlers are no-ops), so they get no
-  // card. They still count toward the total if anything ever lands there.
-  // Metadata + sidecar queues (audit UX-16): a wedged provider apply was
-  // previously invisible on this grid.
-  { key: "metadata_search_series", label: "Metadata search (series)" },
-  { key: "metadata_search_issue", label: "Metadata search (issue)" },
-  { key: "metadata_apply_series", label: "Metadata apply (series)" },
-  { key: "metadata_apply_issue", label: "Metadata apply (issue)" },
-  { key: "rewrite_issue_sidecars", label: "Sidecar rewrites" },
-  { key: "archive_edit", label: "Archive edits" },
-  { key: "backfill", label: "Backfills" },
-  { key: "hash_backfill", label: "Content hashing" },
-  { key: "relationship_suggest", label: "Relationship suggestions" },
-  { key: "provider_coverage", label: "Provider coverage" },
-  { key: "entity_enrich", label: "Entity profiles" },
-  { key: "sidecar_reemit", label: "Sidecar re-emit" },
-];
-
 function queueLabel(key: string): string {
   return QUEUE_LABELS_BY_KEY[key] ?? key;
 }
@@ -109,64 +82,6 @@ function LoaderRow({ label }: { label: string }) {
   return (
     <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
       <Loader2 className="size-4 animate-spin" /> {label}
-    </div>
-  );
-}
-
-function QueueOverview() {
-  const q = useQueueDepth();
-  if (q.isLoading) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading queue depth…
-      </div>
-    );
-  }
-  if (!q.data) {
-    return (
-      <p className="text-destructive text-sm">Failed to load queue depth.</p>
-    );
-  }
-  const view = q.data as unknown as Record<string, number>;
-  const running = new Map(q.data.queues.map((e) => [e.queue, e.in_flight]));
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {QUEUE_LABELS.map(({ key, label }) => (
-        <Card key={key}>
-          <CardHeader className="pb-1">
-            <CardTitle className="text-muted-foreground text-xs font-medium">
-              {label}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <span className="text-2xl font-semibold tabular-nums">
-              {view[key] ?? 0}
-            </span>
-            {(running.get(key) ?? 0) > 0 ? (
-              <p className="text-muted-foreground text-xs tabular-nums">
-                {running.get(key)} with workers
-              </p>
-            ) : null}
-          </CardContent>
-        </Card>
-      ))}
-      <Card className="border-primary/40">
-        <CardHeader className="pb-1">
-          <CardTitle className="text-muted-foreground text-xs font-medium">
-            Total pending
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <span className="text-2xl font-semibold tabular-nums">
-            {q.data.total}
-          </span>
-          {q.data.in_flight > 0 ? (
-            <p className="text-muted-foreground text-xs tabular-nums">
-              {q.data.in_flight} with workers
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
     </div>
   );
 }

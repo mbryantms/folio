@@ -5,7 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
+import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
+import { CoverTilt } from "@/components/library/CoverTilt";
+import { PageScrub } from "@/components/library/PageScrub";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -13,6 +18,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
@@ -104,6 +110,10 @@ function IssueCardImpl({
     label: `${heading}${issue.number ? ` ${numberLabel}` : ""}`,
   });
   const share = useShareLink();
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   // Same actions backing the desktop kebab — sharing the array means
   // touch (long-press sheet) and desktop (dropdown) can't drift.
   const menuActions: CoverMenuAction[] =
@@ -164,7 +174,10 @@ function IssueCardImpl({
       issue.state === "active"
         ? {
             label: `Read ${heading}`,
-            onSelect: () => router.push(readerUrl(issue)),
+            onSelect: () => {
+              morph.mark();
+              router.push(readerUrl(issue));
+            },
           }
         : undefined,
     actions: sheetActions,
@@ -205,7 +218,7 @@ function IssueCardImpl({
   );
   const innerCard = (
     <>
-      <div className="relative" {...coverWrapperProps}>
+      <CoverTilt className="relative" {...coverWrapperProps}>
         {selectMode && (
           <SelectionCheckbox
             isSelected={selectMode.isSelected}
@@ -214,12 +227,17 @@ function IssueCardImpl({
             label={heading}
           />
         )}
-        <Cover
-          src={issue.cover_url}
-          alt={heading}
-          fallback={numberLabel}
-          className="w-full transition group-hover:brightness-110"
-        />
+        <CoverMorph name={morph.name}>
+          <Cover
+            src={issue.cover_url}
+            alt={heading}
+            fallback={numberLabel}
+            className="w-full transition group-hover:brightness-110"
+          />
+        </CoverMorph>
+        {!inSelectMode && issue.state === "active" && (
+          <PageScrub issueId={issue.id} pageCount={issue.page_count} />
+        )}
         {/* Top-right priority cascade (the cover-card standard, see
          *  docs/dev/card-corner-conventions.md):
          *    1. match-status badge — CBL detail page only, doesn't apply here
@@ -252,10 +270,7 @@ function IssueCardImpl({
             className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
             aria-hidden="true"
           >
-            <div
-              className="bg-primary h-full transition-[width]"
-              style={{ width: `${percent}%` }}
-            />
+            <ProgressFill id={issue.id} percent={percent} />
           </div>
         )}
         {issue.state === "active" && !inSelectMode && (
@@ -265,12 +280,13 @@ function IssueCardImpl({
               actions={menuActions}
             />
             <QuickReadOverlay
+              onActivate={morph.mark}
               readerHref={readerUrl(issue)}
               label={`Read ${heading}`}
             />
           </>
         )}
-      </div>
+      </CoverTilt>
       <div className="min-w-0 px-1">
         <div className="text-muted-foreground text-xs font-medium">
           {numberLabel}
@@ -284,11 +300,16 @@ function IssueCardImpl({
   return (
     <>
       {cardOuterProps ? (
-        <button className={cardClassName} {...cardOuterProps}>
+        <button className={cardClassName} data-card="" {...cardOuterProps}>
           {innerCard}
         </button>
       ) : (
-        <Link href={issueUrl(issue)} className={cardClassName}>
+        <Link
+          href={issueUrl(issue)}
+          className={cardClassName}
+          data-card=""
+          onClick={morph.onClick}
+        >
           {innerCard}
         </Link>
       )}
@@ -307,10 +328,10 @@ export const IssueCard = memo(IssueCardImpl);
 export function IssueCardSkeleton({ className }: { className?: string }) {
   return (
     <div className={cn("flex flex-col gap-2 p-1", className)}>
-      <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+      <CoverSkeleton />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted h-2 w-1/3 animate-pulse rounded" />
-        <div className="bg-muted size-3/4 animate-pulse rounded" />
+        <div className="skeleton-shimmer h-2 w-1/3 rounded" />
+        <div className="skeleton-shimmer h-3 w-3/4 rounded" />
       </div>
     </div>
   );

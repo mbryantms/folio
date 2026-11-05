@@ -196,6 +196,30 @@ async fn full_scan_emits_planned_progress_before_file_processing() {
         planning_idx < first_series_idx,
         "planning totals should emit before series processing: {events:?}",
     );
+    // Flair phase 5 B2: a brand-new series is flagged and carries its cover
+    // (the event goes out once the folder's files are in).
+    let (created, cover_url) = events
+        .iter()
+        .find_map(|e| match e {
+            ScanEvent::SeriesUpdated {
+                created, cover_url, ..
+            } => Some((*created, cover_url.clone())),
+            _ => None,
+        })
+        .unwrap();
+    assert!(created, "first scan creates the series");
+    assert!(
+        cover_url.is_some_and(|u| u.starts_with("/issues/") && u.ends_with("/pages/0/thumb")),
+        "new series carries a cover url: {events:?}"
+    );
+    // B1: every progress event carries the phase clock.
+    assert!(events.iter().all(|e| !matches!(
+        e,
+        ScanEvent::Progress {
+            phase_elapsed_ms: None,
+            ..
+        }
+    )));
     let planning = events
         .iter()
         .find_map(|e| match e {

@@ -66,6 +66,7 @@ export function CoverStackPicker() {
                 urls={sample}
                 style={style}
                 Icon={Library}
+                spill={false}
                 className="w-full max-w-32"
               />
               <span className="space-y-0.5">

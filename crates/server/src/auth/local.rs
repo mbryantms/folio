@@ -46,8 +46,8 @@ use super::cookies::{
 use super::email_token::{self, TokenPurpose};
 use super::password;
 use super::preferences::{
-    AccentColor, CornerRadius, Density, FitMode, Motion, PageAnimation, ReadingDirection, Theme,
-    ViewMode, opt_from_db,
+    AccentColor, CornerRadius, Density, EffectPrefs, EffectPrefsPatch, FitMode, Motion,
+    PageAnimation, ReadingDirection, Theme, ViewMode, opt_from_db,
 };
 
 use entity::auth_session::{self, ActiveModel as SessionAM, Entity as SessionEntity};
@@ -207,6 +207,9 @@ pub struct MeResp {
     /// Cover stack style for reading-list and collection cards: one of
     /// `straight`, `hand`, `arc`, `pile`, `pickup`.
     pub cover_stack_style: String,
+    /// On/off switches for decorative effects; a missing key means the
+    /// web's built-in default.
+    pub effects: EffectPrefs,
     /// When the first-run tour was finished or skipped; `null` means the
     /// web shows it on the next visit to Home.
     pub onboarding_completed_at: Option<chrono::DateTime<chrono::FixedOffset>>,
@@ -293,6 +296,11 @@ pub struct PreferencesReq {
     /// One of `straight`, `hand`, `arc`, `pile`, `pickup`; anything else 422s.
     #[serde(default)]
     pub cover_stack_style: Option<String>,
+    /// Effect switches, merged into the stored object: `true`/`false`
+    /// overwrite, `null` resets that effect to its default, absent keys are
+    /// left alone. Unknown keys or non-boolean values 400.
+    #[serde(default)]
+    pub effects: Option<EffectPrefsPatch>,
     /// `true` marks the first-run tour finished (or skipped); `false`
     /// clears it so the tour runs again on the next visit to Home.
     #[serde(default)]
@@ -553,6 +561,7 @@ pub async fn register(
         opds_progress_glyphs: Set(true),
         max_rails_per_page: Set(12),
         cover_stack_style: Set("pickup".into()),
+        effects: Set(serde_json::json!({})),
         onboarding_completed_at: Set(None),
         reader_brightness: Set(None),
         reader_sepia: Set(None),
@@ -1243,6 +1252,10 @@ pub async fn update_preferences(
         Ok(Some(r)) => r,
         _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
+    let merged_effects = req
+        .effects
+        .as_ref()
+        .map(|patch| patch.apply(EffectPrefs::from_db(&row.effects)));
     let mut am: UserAM = row.into();
     // The typed-enum preference fields project back to DB-side `Option<String>`
     // via the enum's `as_str()` wire form. `Some(None)` clears the column
@@ -1312,6 +1325,9 @@ pub async fn update_preferences(
     }
     if let Some(v) = req.cover_stack_style.clone() {
         am.cover_stack_style = Set(v);
+    }
+    if let Some(merged) = merged_effects {
+        am.effects = Set(serde_json::to_value(merged).unwrap_or_else(|_| serde_json::json!({})));
     }
     if let Some(done) = req.onboarding_completed {
         am.onboarding_completed_at = Set(done.then(|| chrono::Utc::now().fixed_offset()));
@@ -1922,6 +1938,7 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         show_marker_count: row.show_marker_count,
         max_rails_per_page: row.max_rails_per_page,
         cover_stack_style: row.cover_stack_style.clone(),
+        effects: EffectPrefs::from_db(&row.effects),
         onboarding_completed_at: row.onboarding_completed_at,
         reader_brightness: row.reader_brightness,
         reader_sepia: row.reader_sepia,
@@ -1971,6 +1988,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             show_marker_count: false,
             max_rails_per_page: 12,
             cover_stack_style: "pickup".into(),
+            effects: EffectPrefs::default(),
             onboarding_completed_at: None,
             reader_brightness: None,
             reader_sepia: None,

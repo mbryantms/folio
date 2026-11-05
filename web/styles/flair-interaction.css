@@ -1,0 +1,11 @@
+/* Flair pre-merge polish, group "interaction" (2026-11-04). Owned by that group; keyframes and
+ * component classes only. Reduced motion is handled globally in globals.css. */
+
+/* Offline download toast (lib/pwa/download-toast.tsx): the bar sits
+ * above the "n of m issues · size" line, both full toast width. */
+.flair-download-toast {
+  display: grid;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
+  min-width: 12rem;
+}

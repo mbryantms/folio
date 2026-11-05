@@ -13,7 +13,10 @@ import { GithubIcon } from "@/components/icons/github";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  OcrModelsBodySkeleton,
+  ServerInfoSkeleton,
+} from "@/components/skeletons/AdminShapes";
 import {
   useLatestRelease,
   useOcrModels,
@@ -31,7 +34,7 @@ export function ServerInfoClient() {
   const info = useServerInfo({ intervalMs: 15_000 });
 
   if (info.isLoading || !info.data) {
-    return <Skeleton className="h-72 w-full" />;
+    return <ServerInfoSkeleton />;
   }
   if (info.error) {
     return (
@@ -67,7 +70,7 @@ function OcrModelsCard() {
       </CardHeader>
       <CardContent>
         {models.isLoading || !models.data ? (
-          <Skeleton className="h-24 w-full" />
+          <OcrModelsBodySkeleton />
         ) : models.error ? (
           <p className="text-destructive text-sm">
             Failed to load OCR model status.

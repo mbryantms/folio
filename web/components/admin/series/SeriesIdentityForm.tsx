@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SeriesIdentitySkeleton } from "@/components/skeletons/AdminShapes";
 import { useSeries } from "@/lib/api/queries";
 import { useTriggerSeriesScan, useUpdateSeries } from "@/lib/api/mutations";
 
@@ -19,7 +19,7 @@ export function SeriesIdentityForm({ id }: { id: string }) {
   // effect can land then.
   const [matchKey, setMatchKey] = React.useState("");
 
-  if (series.isLoading) return <Skeleton className="h-48 w-full" />;
+  if (series.isLoading) return <SeriesIdentitySkeleton />;
   if (series.error || !series.data) {
     return <p className="text-destructive text-sm">Series not found.</p>;
   }
@@ -68,7 +68,7 @@ export function SeriesIdentityForm({ id }: { id: string }) {
         </CardContent>
       </Card>
       <Card>
-        <CardContent className="flex items-center justify-between gap-4 p-5">
+        <CardContent className="flex flex-row items-center justify-between gap-4 p-5">
           <div className="space-y-1">
             <p className="text-foreground font-medium">Scan series</p>
             <p className="text-muted-foreground text-xs">

@@ -13,6 +13,8 @@
  * be mounted unconditionally without empty boxes.
  */
 
+import { ArrowUpRight } from "lucide-react";
+
 import type { ExternalIdRow } from "@/lib/api/types";
 
 const ATTRIBUTION_REQUIRED: ReadonlySet<string> = new Set([
@@ -34,14 +36,51 @@ const SHORT_LABELS: Record<string, string> = {
 export function ProviderBadges({
   rows,
   className,
+  variant = "chips",
 }: {
   rows: ExternalIdRow[] | undefined;
   className?: string;
+  /** `text`: muted inline links ("ComicVine · GCD", each with an out-arrow) for headers
+   *  that present facts as text rather than pills. */
+  variant?: "chips" | "text";
 }) {
   const visible = (rows ?? []).filter((r) =>
     ATTRIBUTION_REQUIRED.has(r.source),
   );
   if (visible.length === 0) return null;
+  if (variant === "text") {
+    return (
+      <ul
+        aria-label="Metadata sources"
+        className={`text-muted-foreground flex flex-wrap items-center gap-x-1.5 text-xs ${className ?? ""}`}
+      >
+        {visible.map((r, i) => (
+          <li key={r.source} className="flex items-center gap-1.5">
+            {i > 0 ? <span aria-hidden>·</span> : null}
+            {r.external_url ? (
+              <a
+                href={r.external_url}
+                target="_blank"
+                rel="noreferrer"
+                className="hover:text-foreground underline-offset-4 transition-colors hover:underline"
+                title={`${r.source_label} · ${r.external_id}`}
+              >
+                {r.source_label}
+                <ArrowUpRight
+                  aria-hidden
+                  className="ml-0.5 inline size-3 align-[-1px]"
+                />
+              </a>
+            ) : (
+              <span title={`${r.source_label} · ${r.external_id}`}>
+                {r.source_label}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
+  }
   return (
     <ul className={`flex flex-wrap items-center gap-1 ${className ?? ""}`}>
       {visible.map((r) => (
@@ -51,6 +90,7 @@ export function ProviderBadges({
               href={r.external_url}
               target="_blank"
               rel="noreferrer"
+              data-hero-chip=""
               className="border-border text-muted-foreground hover:bg-muted hover:text-foreground inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium uppercase transition-colors"
               title={`${r.source_label} · ${r.external_id}`}
             >
@@ -58,6 +98,7 @@ export function ProviderBadges({
             </a>
           ) : (
             <span
+              data-hero-chip=""
               className="border-border text-muted-foreground inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium uppercase"
               title={`${r.source_label} · ${r.external_id}`}
             >

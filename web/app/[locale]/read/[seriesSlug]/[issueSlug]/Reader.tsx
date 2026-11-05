@@ -38,6 +38,10 @@ import {
 import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 
+import {
+  type FinishScope,
+  seriesFinishProgress,
+} from "@/lib/reader/finish-progress";
 import { ProgressUnavailableBanner } from "./ProgressUnavailableBanner";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
@@ -59,7 +63,14 @@ import {
   zoomOriginPercent,
   type ZoomState,
 } from "@/lib/reader/zoom";
-import { useIssueMarkers, useNextUp, usePrevUp } from "@/lib/api/queries";
+import {
+  useCblList,
+  useIssueMarkers,
+  useNextUp,
+  usePrevUp,
+  useSavedView,
+  useSeries,
+} from "@/lib/api/queries";
 import {
   type AccountReaderPrefs,
   flushAccountPrefs,
@@ -93,11 +104,15 @@ import {
   usePageTransition,
   type PageTransitionResult,
 } from "@/lib/reader/use-page-transition";
+import { usePageCurl } from "@/lib/reader/use-page-curl";
+import { useReducedMotion, useVisualEffect } from "@/lib/visual-effects";
+import { useDragTurn } from "@/lib/reader/use-drag-turn";
 
 // Everything not needed to paint page one is code-split — see `./lazy`
 // for the pattern (WP-4.4 reader bundle budget). Import new overlays /
 // sheets / panels from there, not directly.
 import {
+  AmbientGlow,
   EndOfIssueCard,
   MarkerEditor,
   MarkerModePill,
@@ -119,6 +134,7 @@ import {
 import { apiMutate } from "@/lib/api/mutations/_core";
 import type { SeriesReaderPrefsView } from "@/lib/api/types";
 import { PageImage } from "./PageImage";
+import { DragTurnPeek, type DragPeekPages } from "./DragTurnPeek";
 
 const NO_NEXT_UP: NextUpView = { source: "none" };
 /** Pan offset + origin of a re-centred page — the identity zoom minus
@@ -166,6 +182,7 @@ export function Reader({
   seriesSlug = null,
   issueSlug = null,
   issueLabel = "This issue",
+  initiallyFinished = false,
   initialUserRating = null,
   initialUserNote = null,
   nextUpOverride,
@@ -181,6 +198,9 @@ export function Reader({
   issueSlug?: string | null;
   /** "Saga #11" — names the finished issue on the Wrap up pane. */
   issueLabel?: string;
+  /** The issue was already finished when the reader opened (a re-read):
+   *  finishing it again doesn't move the series' progress. */
+  initiallyFinished?: boolean;
   /** The caller's rating / closing note as of page load (from the
    *  issue detail the page already fetched). */
   initialUserRating?: number | null;
@@ -813,14 +833,18 @@ export function Reader({
     setEndCardArmed(true);
   }
 
-  // v0.3.44 / v0.3.45 page-turn animation. Webtoon mode skips
-  // entirely (continuous scroll is its own animation). The hook
-  // also gates on `prefers-reduced-motion` internally.
-  const pageTransition = usePageTransition({
-    currentPage,
+  // Optional visual effects (Settings → Theme → Effects). Page curl
+  // takes over adjacent key / click / tap-zone turns in paged mode on
+  // fine-pointer devices (`usePageCurl`); swipes, jumps and everything
+  // else keep the page-turn animation below, which steps aside via
+  // `skip` for the turns the curl animates.
+  const ambientGlowOn = useVisualEffect("ambient_glow");
+  const pageCurlOn = useVisualEffect("page_curl");
+  const pageCurl = usePageCurl({
+    enabled:
+      pageCurlOn && viewMode !== "webtoon" && markerModeForKeybinds === "idle",
+    position: viewMode === "double" ? currentGroupIdx : currentPage,
     direction,
-    mode:
-      viewMode === "webtoon" ? "off" : (userDefaultPageAnimation ?? "slide"),
   });
 
   // Direction-aware navigation. In RTL, "next" should respond to ← and the
@@ -869,8 +893,64 @@ export function Reader({
       prevPage();
     }
   }, [viewMode, groups, currentGroupIdx, setPage, prevPage]);
-  const onLeftZone = direction === "rtl" ? goNext : goPrev;
-  const onRightZone = direction === "rtl" ? goPrev : goNext;
+  // Non-swipe turns (keys, tap zones) arm the page curl first; the swipe
+  // gesture calls goNext / goPrev directly (animated by the drag itself
+  // under `useDragTurn`, or by the regular slide under reduced motion).
+  const { arm: armCurl } = pageCurl;
+  const turnNext = useCallback(() => {
+    armCurl(true);
+    goNext();
+  }, [armCurl, goNext]);
+  const turnPrev = useCallback(() => {
+    armCurl(false);
+    goPrev();
+  }, [armCurl, goPrev]);
+  const onLeftZone = direction === "rtl" ? turnNext : turnPrev;
+  const onRightZone = direction === "rtl" ? turnPrev : turnNext;
+
+  // Drag-to-turn with momentum (single / double view): the page follows
+  // the finger, a flick or a drag past ~30% of the width turns, anything
+  // else springs back. The gesture stays in `useReaderGestures` below;
+  // this hook owns the motion of `dragTrackRef` (see use-drag-turn.ts).
+  // Off under reduced motion — swipes then just turn.
+  const reducedMotion = useReducedMotion();
+  const dragTrackRef = useRef<HTMLDivElement>(null);
+  const dragPosition = viewMode === "double" ? currentGroupIdx : currentPage;
+  const dragTurn = useDragTurn({
+    enabled:
+      viewMode !== "webtoon" &&
+      !reducedMotion &&
+      markerModeForKeybinds === "idle" &&
+      pendingMarkerForKeybinds === null,
+    position: dragPosition,
+    canNext:
+      viewMode === "double"
+        ? currentGroupIdx < groups.length - 1
+        : currentPage < totalPages - 1,
+    canPrev: dragPosition > 0,
+    direction,
+    onNext: goNext,
+    onPrev: goPrev,
+    trackRef: dragTrackRef,
+  });
+
+  // v0.3.44 / v0.3.45 page-turn animation. Webtoon mode skips
+  // entirely (continuous scroll is its own animation). The hook
+  // also gates on `prefers-reduced-motion` internally. Turns the page
+  // curl or a drag already animated skip it.
+  const { skipTransition: curlSkip } = pageCurl;
+  const { consumeSkip: dragSkip } = dragTurn;
+  const skipTransition = useCallback(
+    () => curlSkip() || dragSkip(),
+    [curlSkip, dragSkip],
+  );
+  const pageTransition = usePageTransition({
+    currentPage,
+    direction,
+    mode:
+      viewMode === "webtoon" ? "off" : (userDefaultPageAnimation ?? "slide"),
+    skip: skipTransition,
+  });
 
   // Bookmark-page list precomputed for the keymap hook's
   // `nextBookmark` / `prevBookmark` jumps. Sorted ascending so the
@@ -1077,8 +1157,8 @@ export function Reader({
     chromeOrStripVisible: chromeVisible || pageStripVisible,
     bookmarkPages,
     setPage,
-    onNext: goNext,
-    onPrev: goPrev,
+    onNext: turnNext,
+    onPrev: turnPrev,
     onNextIssue: goNextIssue,
     onPrevIssue: goPrevIssue,
     toggleChrome,
@@ -1123,6 +1203,87 @@ export function Reader({
     }
   }, [router]);
   const suppressWrites = incognito || peekActive;
+
+  // Finishing moment: the finished count, captured once per issue as the
+  // end nears (before this read's finishing write lands) — the ring
+  // animates from it to now. Reading through a reading list (CBL) it's
+  // the list's progress (read of the entries in your library), else the
+  // series'. Online only; the offline reader has neither endpoint.
+  const online = endCardArmed && nextUpOverride === undefined;
+  const cblListId =
+    nextUp.data?.source === "cbl" ? (nextUp.data.cbl_list_id ?? null) : null;
+  const listProgressQ = useCblList(online && cblListId ? cblListId : "");
+  // The list's own (renameable) name reads better than the imported CBL
+  // title ("[Marvel] … (WEB-CBRO)"); the CBL title is the fallback.
+  const listViewQ = useSavedView(
+    online && cblListId && cblSavedViewId ? cblSavedViewId : "",
+  );
+  // Reading through a collection, next-up carries the collection's own
+  // finished count (taken before this read's finishing write lands).
+  const collectionCounts =
+    nextUp.data?.source === "collection" &&
+    nextUp.data.collection_finished != null &&
+    nextUp.data.collection_total
+      ? {
+          name: nextUp.data.collection_name ?? "",
+          finished: nextUp.data.collection_finished,
+          total: nextUp.data.collection_total,
+        }
+      : null;
+  const seriesProgressQ = useSeries(
+    online && !cblListId && !collectionCounts && seriesId ? seriesId : "",
+  );
+  const [seriesSnap, setSeriesSnap] = useState<{
+    issueId: string;
+    scope: FinishScope;
+    name: string;
+    finished: number;
+    total: number;
+  } | null>(null);
+  // Opened from a list (`?cbl=`): wait for next-up to say whether the
+  // list applies before falling back to the series.
+  const listPending = (!!cblSavedViewId || !!collectionId) && !nextUp.data;
+  if (seriesSnap?.issueId !== issueId && !listPending) {
+    const list = cblListId ? listProgressQ.data : undefined;
+    const summary =
+      cblListId || collectionCounts
+        ? undefined
+        : seriesProgressQ.data?.progress_summary;
+    if (online && collectionCounts) {
+      setSeriesSnap({ issueId, scope: "collection", ...collectionCounts });
+    } else if (list && !listProgressQ.isFetching) {
+      setSeriesSnap({
+        issueId,
+        scope: "list",
+        name: nextUp.data?.cbl_list_name ?? list.parsed_name,
+        finished: list.stats.read_count,
+        total: list.stats.matched,
+      });
+    } else if (summary && !seriesProgressQ.isFetching) {
+      setSeriesSnap({
+        issueId,
+        scope: "series",
+        name: seriesProgressQ.data?.name ?? "",
+        finished: summary.finished,
+        total: summary.total,
+      });
+    }
+  }
+  const snap = seriesSnap?.issueId === issueId ? seriesSnap : null;
+  const finishedMoment = useMemo(
+    () => ({
+      issueLabel,
+      progress: seriesFinishProgress(
+        (snap?.scope === "list" ? listViewQ.data?.name : null) ??
+          snap?.name ??
+          "",
+        snap,
+        !initiallyFinished && !suppressWrites,
+        snap?.scope,
+      ),
+    }),
+    [issueLabel, snap, initiallyFinished, suppressWrites, listViewQ.data?.name],
+  );
 
   useReaderProgressWrite({
     issueId,
@@ -1220,11 +1381,13 @@ export function Reader({
   //               rendered art (marker overlay aligns). Double view caps
   //               each page of a pair at half the viewport; webtoon is
   //               width-fit by construction, so contain falls back to it.
-  const fitClass =
+  // `pairLen`: pages in the spread group being laid out (the current
+  // one, or a neighbour shown beside it during a drag-to-turn).
+  const fitClassFor = (pairLen: number) =>
     fitMode === "width" || (fitMode === "contain" && viewMode === "webtoon")
       ? "w-full h-auto max-w-none"
       : fitMode === "contain"
-        ? viewMode === "double" && visiblePages.length === 2
+        ? viewMode === "double" && pairLen === 2
           ? "h-auto max-w-none w-[min(calc(50vw_-_2px),calc((100dvh_-_var(--reader-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
           : viewMode === "double"
             ? "h-auto max-w-none w-[min(100vw,calc((100dvh_-_var(--reader-top)_-_var(--safe-bottom))*var(--page-ar,0.6667)))]"
@@ -1237,6 +1400,7 @@ export function Reader({
             // the art. Off-iOS the insets are 0, so this is exactly 100dvh.
             "h-[calc(100dvh_-_var(--reader-top)_-_var(--safe-bottom))] w-auto max-w-none"
           : "max-w-none w-auto h-auto";
+  const fitClass = fitClassFor(visiblePages.length);
   // Double-page panes need different wrapper sizing depending on fitMode.
   // In width mode each pane is forced to share the viewport row (flex-1
   // with min-w-0 so the inner img can shrink); in height/original modes
@@ -1254,6 +1418,60 @@ export function Reader({
     fitMode === "width" &&
     visiblePages.length === 1 &&
     !isEffectiveSpread(pages, visiblePages[0]!, spreadOverrides);
+
+  // Pages revealed beside the current one while a drag-to-turn is in
+  // progress, by visual side (LTR: next on the right; RTL: on the left).
+  // Mounted only during the drag.
+  let dragPeek: DragPeekPages | null = null;
+  if (dragTurn.dragging && viewMode !== "webtoon") {
+    const nextPages =
+      viewMode === "double"
+        ? (groups[currentGroupIdx + 1] ?? null)
+        : currentPage + 1 < totalPages
+          ? [currentPage + 1]
+          : null;
+    const prevPages =
+      viewMode === "double"
+        ? (groups[currentGroupIdx - 1] ?? null)
+        : currentPage > 0
+          ? [currentPage - 1]
+          : null;
+    dragPeek =
+      direction === "rtl"
+        ? { left: nextPages, right: prevPages }
+        : { left: prevPages, right: nextPages };
+  }
+  const peekPaneClass = (group: readonly number[]) =>
+    viewMode === "double" &&
+    fitMode === "width" &&
+    group.length === 1 &&
+    !isEffectiveSpread(pages, group[0]!, spreadOverrides)
+      ? "w-1/2 min-w-0"
+      : doublePaneClass;
+  const renderPeek = (side: "left" | "right") => {
+    const group = dragPeek?.[side];
+    if (!group || group.length === 0) return null;
+    return (
+      <DragTurnPeek
+        side={side}
+        pages={group}
+        issueId={issueId}
+        pageInfos={pages}
+        pageUrlVersion={pageUrlVersion}
+        direction={direction}
+        fitClass={fitClassFor(group.length)}
+        paneClass={viewMode === "double" ? peekPaneClass(group) : undefined}
+        sizes={viewMode === "double" ? "50vw" : "100vw"}
+        variants={fitMode !== "original"}
+      />
+    );
+  };
+  const dragPeekNode = dragPeek ? (
+    <>
+      {renderPeek("left")}
+      {renderPeek("right")}
+    </>
+  ) : null;
 
   // Gestures: horizontal drag (swipe) for page nav; a two-finger pinch
   // is the reader's transform zoom (audit N-R9, `use-pinch-zoom.ts`) in
@@ -1297,6 +1515,8 @@ export function Reader({
     onPanStart,
     onPan,
     isPinching,
+    onTurnDrag: reducedMotion ? undefined : dragTurn.onTurnDrag,
+    onTurnDragEnd: reducedMotion ? undefined : dragTurn.onTurnDragEnd,
   });
   useWheelZoom({
     target: gestureRef,
@@ -1334,6 +1554,24 @@ export function Reader({
       data-surface="reader"
       className="bg-reader-bg min-h-screen text-neutral-200"
     >
+      {ambientGlowOn && viewMode !== "webtoon" ? (
+        // Paged views only: in webtoon mode pages run edge to edge down a
+        // scrolling column, so there is no settled page to frame.
+        <AmbientGlow
+          urls={glowPages(
+            viewMode === "double" ? visiblePages : [currentPage],
+            direction,
+          ).map((p) => pageStripThumb(issueId, p, pageUrlVersion))}
+          preloadUrls={glowPages(
+            viewMode === "double"
+              ? (groups[currentGroupIdx + 1] ?? [])
+              : currentPage + 1 < totalPages
+                ? [currentPage + 1]
+                : [],
+            direction,
+          ).map((p) => pageStripThumb(issueId, p, pageUrlVersion))}
+        />
+      ) : null}
       <ReaderSkipLinks
         toggleChromeKey={bindings.toggleChrome}
         pageTextKey={bindings.togglePageText}
@@ -1347,6 +1585,7 @@ export function Reader({
         progressCurrent={viewMode === "double" ? currentGroupIdx : currentPage}
         progressTotal={viewMode === "double" ? groups.length : totalPages}
         incognito={incognito}
+        pageUrlVersion={pageUrlVersion}
       />
 
       {/* Status-bar backing for standalone PWA mode. Fitted pages sit
@@ -1458,6 +1697,8 @@ export function Reader({
             zoom={zoom}
             panMetricsRef={panMetricsRef}
             onZoomToggle={zoomToggleAt}
+            dragTrackRef={dragTrackRef}
+            dragPeek={dragPeekNode}
           />
         ) : (
           <SinglePageView
@@ -1477,6 +1718,8 @@ export function Reader({
             onOverflowChange={setOverflowing}
             panMetricsRef={panMetricsRef}
             onZoomToggle={zoomToggleAt}
+            dragTrackRef={dragTrackRef}
+            dragPeek={dragPeekNode}
           />
         )}
       </div>
@@ -1530,9 +1773,32 @@ export function Reader({
           onContinue={continueFromEndCard}
           onDismiss={dismissEndCard}
           wrapUp={wrapUp}
+          finished={finishedMoment}
         />
       ) : null}
     </div>
+  );
+}
+
+/** Page indices in visual (left-to-right) order for the ambient glow:
+ *  RTL spreads render right to left. */
+function glowPages(
+  pages: readonly number[],
+  direction: Direction,
+): readonly number[] {
+  return direction === "rtl" ? [...pages].reverse() : pages;
+}
+
+/** The strip-variant page thumbnail — the same URL `PageImage` uses for
+ *  its blur-up placeholder, so the glow samples an already-cached image. */
+function pageStripThumb(
+  issueId: string,
+  page: number,
+  version: string | null,
+): string {
+  return withContentVersion(
+    `/issues/${issueId}/pages/${page}/thumb?variant=strip`,
+    version,
   );
 }
 
@@ -1565,6 +1831,8 @@ function SinglePageView({
   onOverflowChange,
   panMetricsRef,
   onZoomToggle,
+  dragTrackRef,
+  dragPeek,
 }: {
   issueId: string;
   currentPage: number;
@@ -1597,6 +1865,10 @@ function SinglePageView({
     rectY: number,
     rect: { w: number; h: number },
   ) => void;
+  /** Drag-to-turn track (moved by `useDragTurn`) and the neighbouring
+   *  page slots it reveals while a drag is in progress. */
+  dragTrackRef: React.RefObject<HTMLDivElement | null>;
+  dragPeek: React.ReactNode;
 }) {
   // FEP-1: fit mode gates the variant srcSet (original-fit -> full-res).
   const singleFitMode = useReaderStore((s) => s.fitMode);
@@ -1665,101 +1937,106 @@ function SinglePageView({
         className="relative w-full overflow-hidden"
         data-testid="reader-page-wrapper"
       >
-        {transition.prevPage !== null && (
-          // v0.3.44 (extended v0.3.45 for fade + curl): outgoing
-          // page overlay. Absolute-positioned image of the previous
-          // page that animates off-screen via the CSS class the
-          // hook selected for the current mode. Keyed on prevPage
-          // so the animation restarts cleanly on rapid navigation.
-          // No MarkerOverlay on the outgoing layer — a sliding /
-          // curling marker would look broken; the overlay snaps to
-          // the new page below.
-          <div
-            key={`prev-${transition.prevPage}`}
-            aria-hidden="true"
-            className={`pointer-events-none absolute inset-0 flex w-full justify-center ${transition.exitAnimClass ?? ""}`}
-          >
-            {/* Raw <img>: reader page bytes are served by the Rust origin
+        {/* Drag-to-turn track: `useDragTurn` translates it with the
+         * pointer; the neighbour slots sit one width either side. */}
+        <div ref={dragTrackRef} data-drag-track="" className="relative">
+          {dragPeek}
+          {transition.prevPage !== null && (
+            // v0.3.44 (extended v0.3.45 for fade + curl): outgoing
+            // page overlay. Absolute-positioned image of the previous
+            // page that animates off-screen via the CSS class the
+            // hook selected for the current mode. Keyed on prevPage
+            // so the animation restarts cleanly on rapid navigation.
+            // No MarkerOverlay on the outgoing layer — a sliding /
+            // curling marker would look broken; the overlay snaps to
+            // the new page below.
+            <div
+              key={`prev-${transition.prevPage}`}
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-0 flex w-full justify-center ${transition.exitAnimClass ?? ""}`}
+            >
+              {/* Raw <img>: reader page bytes are served by the Rust origin
                 with their own cache headers; next/image's optimizer + URL
                 rewriting buys nothing here and pays a per-request CPU
                 cost. eslint-disable applies only to this element. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={withContentVersion(
-                `/issues/${issueId}/pages/${transition.prevPage}`,
-                pageUrlVersion,
-              )}
-              alt=""
-              className={`block ${fitClass}`}
-              style={{ filter: READER_FILTER_VAR }}
-              decoding="async"
-            />
-          </div>
-        )}
-        <div
-          ref={pageWrapRef}
-          className={transition.enterAnimClass ?? undefined}
-          key={`enter-${currentPage}`}
-          data-zoom-surface=""
-          // Transform zoom + pan (C4/C9). `translate` first (screen px)
-          // then `scale`, so the offset is in screen space and matches
-          // the clamp bounds. PageImage + MarkerOverlay transform together
-          // (visually locked). The pan/double-tap themselves are handled
-          // by the gesture hook + TapZones (which sit above this wrapper
-          // and so actually receive the pointers); this element only
-          // *renders* the resulting transform. `transition: none` so a
-          // pan tracks the pointer 1:1 (the page-turn anim class only
-          // matters at 1×).
-          style={
-            panActive
-              ? {
-                  transform: `translate(${zoom.offset.x}px, ${zoom.offset.y}px) scale(${zoom.scale})`,
-                  transformOrigin: `${zoom.origin.x}% ${zoom.origin.y}%`,
-                  transition: "none",
-                  willChange: "transform",
-                  cursor: zoom.scale > 1 ? "grab" : undefined,
-                }
-              : undefined
-          }
-        >
-          <PageImage
-            key={`${issueId}-${currentPage}`}
-            src={withContentVersion(
-              `/issues/${issueId}/pages/${currentPage}`,
-              pageUrlVersion,
-            )}
-            // FEP-1: sized variants — except original-fit and while
-            // zoomed, which always get full-res pixels.
-            srcSet={
-              singleFitMode !== "original" && zoom.scale === 1
-                ? pageBytesSrcSet(
-                    withContentVersion(
-                      `/issues/${issueId}/pages/${currentPage}`,
-                      pageUrlVersion,
-                    ),
-                    pageInfo?.image_width,
-                  )
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={withContentVersion(
+                  `/issues/${issueId}/pages/${transition.prevPage}`,
+                  pageUrlVersion,
+                )}
+                alt=""
+                className={`block ${fitClass}`}
+                style={{ filter: READER_FILTER_VAR }}
+                decoding="async"
+              />
+            </div>
+          )}
+          <div
+            ref={pageWrapRef}
+            className={transition.enterAnimClass ?? undefined}
+            key={`enter-${currentPage}`}
+            data-zoom-surface=""
+            // Transform zoom + pan (C4/C9). `translate` first (screen px)
+            // then `scale`, so the offset is in screen space and matches
+            // the clamp bounds. PageImage + MarkerOverlay transform together
+            // (visually locked). The pan/double-tap themselves are handled
+            // by the gesture hook + TapZones (which sit above this wrapper
+            // and so actually receive the pointers); this element only
+            // *renders* the resulting transform. `transition: none` so a
+            // pan tracks the pointer 1:1 (the page-turn anim class only
+            // matters at 1×).
+            style={
+              panActive
+                ? {
+                    transform: `translate(${zoom.offset.x}px, ${zoom.offset.y}px) scale(${zoom.scale})`,
+                    transformOrigin: `${zoom.origin.x}% ${zoom.origin.y}%`,
+                    transition: "none",
+                    willChange: "transform",
+                    cursor: zoom.scale > 1 ? "grab" : undefined,
+                  }
                 : undefined
             }
-            sizes="100vw"
-            thumbSrc={withContentVersion(
-              `/issues/${issueId}/pages/${currentPage}/thumb?variant=strip`,
-              pageUrlVersion,
-            )}
-            alt={pageAlt.alt}
-            lang={pageAlt.lang}
-            fitClass={fitClass}
-            fetchPriority="high"
-            onNaturalSize={onNaturalSize(currentPage)}
-            imgRef={imgRef}
-            dimensions={pageDimensions(pageInfo)}
-          />
-          <MarkerOverlay
-            issueId={issueId}
-            pageIndex={currentPage}
-            imgRef={imgRef}
-            naturalSize={natural}
-          />
+          >
+            <PageImage
+              key={`${issueId}-${currentPage}`}
+              src={withContentVersion(
+                `/issues/${issueId}/pages/${currentPage}`,
+                pageUrlVersion,
+              )}
+              // FEP-1: sized variants — except original-fit and while
+              // zoomed, which always get full-res pixels.
+              srcSet={
+                singleFitMode !== "original" && zoom.scale === 1
+                  ? pageBytesSrcSet(
+                      withContentVersion(
+                        `/issues/${issueId}/pages/${currentPage}`,
+                        pageUrlVersion,
+                      ),
+                      pageInfo?.image_width,
+                    )
+                  : undefined
+              }
+              sizes="100vw"
+              thumbSrc={withContentVersion(
+                `/issues/${issueId}/pages/${currentPage}/thumb?variant=strip`,
+                pageUrlVersion,
+              )}
+              alt={pageAlt.alt}
+              lang={pageAlt.lang}
+              fitClass={fitClass}
+              fetchPriority="high"
+              onNaturalSize={onNaturalSize(currentPage)}
+              imgRef={imgRef}
+              dimensions={pageDimensions(pageInfo)}
+            />
+            <MarkerOverlay
+              issueId={issueId}
+              pageIndex={currentPage}
+              imgRef={imgRef}
+              naturalSize={natural}
+            />
+          </div>
         </div>
       </div>
       {markerMode === "idle" ? (
@@ -1799,6 +2076,8 @@ function DoublePageView({
   zoom,
   panMetricsRef,
   onZoomToggle,
+  dragTrackRef,
+  dragPeek,
 }: {
   issueId: string;
   visiblePages: readonly number[];
@@ -1833,6 +2112,9 @@ function DoublePageView({
     rectY: number,
     rect: { w: number; h: number },
   ) => void;
+  /** Drag-to-turn track + neighbour slots (see SinglePageView). */
+  dragTrackRef: React.RefObject<HTMLDivElement | null>;
+  dragPeek: React.ReactNode;
 }) {
   // RTL pairs render right-to-left; reuse `flex-row-reverse` to flip ordering.
   const flexClass =
@@ -1875,40 +2157,43 @@ function DoublePageView({
   return (
     <main className="relative grid min-h-screen place-items-center pt-(--reader-top) pb-(--safe-bottom)">
       <div className="relative w-full overflow-hidden">
-        <div
-          ref={rowRef}
-          key={`enter-${visiblePages.join("-")}`}
-          data-zoom-surface=""
-          className={`${transition.enterAnimClass ?? ""} ${flexClass} ${containerWidthClass} items-center justify-center gap-1`}
-          style={
-            zoomed
-              ? {
-                  transform: `translate(${zoom.offset.x}px, ${zoom.offset.y}px) scale(${zoom.scale})`,
-                  transformOrigin: `${zoom.origin.x}% ${zoom.origin.y}%`,
-                  transition: "none",
-                  willChange: "transform",
-                  cursor: "grab",
-                }
-              : undefined
-          }
-        >
-          {visiblePages.map((p) => (
-            <DoublePagePane
-              key={`${issueId}-${p}`}
-              issueId={issueId}
-              page={p}
-              pageInfo={pages[p]}
-              fitClass={fitClass}
-              // Capped solo page: half the spread width (one page), centered
-              // by the container's `justify-center`, so the cover/last page
-              // sits at the same scale as the paired pages (C8).
-              paneClass={soloCapped ? "w-1/2 min-w-0" : paneClass}
-              pageUrlVersion={pageUrlVersion}
-              onNaturalSize={onNaturalSize(p)}
-              naturalSize={pageNaturalSize.current?.get(p) ?? null}
-              zoomed={zoomed}
-            />
-          ))}
+        <div ref={dragTrackRef} data-drag-track="" className="relative">
+          {dragPeek}
+          <div
+            ref={rowRef}
+            key={`enter-${visiblePages.join("-")}`}
+            data-zoom-surface=""
+            className={`${transition.enterAnimClass ?? ""} ${flexClass} ${containerWidthClass} items-center justify-center gap-1`}
+            style={
+              zoomed
+                ? {
+                    transform: `translate(${zoom.offset.x}px, ${zoom.offset.y}px) scale(${zoom.scale})`,
+                    transformOrigin: `${zoom.origin.x}% ${zoom.origin.y}%`,
+                    transition: "none",
+                    willChange: "transform",
+                    cursor: "grab",
+                  }
+                : undefined
+            }
+          >
+            {visiblePages.map((p) => (
+              <DoublePagePane
+                key={`${issueId}-${p}`}
+                issueId={issueId}
+                page={p}
+                pageInfo={pages[p]}
+                fitClass={fitClass}
+                // Capped solo page: half the spread width (one page), centered
+                // by the container's `justify-center`, so the cover/last page
+                // sits at the same scale as the paired pages (C8).
+                paneClass={soloCapped ? "w-1/2 min-w-0" : paneClass}
+                pageUrlVersion={pageUrlVersion}
+                onNaturalSize={onNaturalSize(p)}
+                naturalSize={pageNaturalSize.current?.get(p) ?? null}
+                zoomed={zoomed}
+              />
+            ))}
+          </div>
         </div>
       </div>
       {markerMode === "idle" ? (

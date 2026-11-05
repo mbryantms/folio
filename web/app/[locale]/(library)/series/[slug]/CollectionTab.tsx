@@ -21,10 +21,13 @@
  * metadata-complete) plus two sub-bars for ownership and metadata on their own.
  */
 
-import { AlertCircle, CheckCircle2, ChevronRight, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 
+import { EmptyState } from "@/components/folio/empty-state";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSeriesCollection } from "@/lib/api/queries";
 import type {
   CollectionIssueEntry,
@@ -94,10 +97,33 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
 
   if (isLoading) {
     return (
-      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" />
-        Loading collection…
-      </div>
+      <LoadingRegion label="Loading collection…" className="space-y-8">
+        <section className="space-y-3">
+          <div className="flex items-end justify-between gap-4">
+            <div className="flex items-baseline gap-3">
+              <Skeleton className="h-10 w-20" />
+              <Skeleton className="h-4 w-36" />
+            </div>
+            <Skeleton className="h-6 w-24 rounded-full" />
+          </div>
+          <Skeleton className="h-3 w-full rounded-full" />
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        </section>
+        <section className="space-y-3">
+          <Skeleton className="h-4 w-16" />
+          <div className={ISSUE_GRID_COLS}>
+            {Array.from({ length: 36 }, (_, i) => (
+              <Skeleton
+                key={i}
+                className={cn("aspect-square", ISSUE_GRID_CELL_RADIUS)}
+              />
+            ))}
+          </div>
+        </section>
+      </LoadingRegion>
     );
   }
   if (isError || !data) {
@@ -303,9 +329,11 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
           )}
         </section>
       ) : (
-        <p className="text-muted-foreground text-sm">
-          No numbered issues to chart yet.
-        </p>
+        <EmptyState
+          size="sm"
+          title="No numbered issues to chart yet"
+          description="The completeness grid fills in once this series has numbered main-run issues."
+        />
       )}
 
       {/* ── Specials / extras ── */}

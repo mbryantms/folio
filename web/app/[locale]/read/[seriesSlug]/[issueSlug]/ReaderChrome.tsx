@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -20,6 +20,14 @@ import {
   Type,
 } from "lucide-react";
 import { useReaderStore } from "@/lib/reader/store";
+import { useMe } from "@/lib/api/queries";
+import {
+  formatKey,
+  readMeKeybinds,
+  resolveKeybinds,
+  type KeybindAction,
+} from "@/lib/reader/keybinds";
+import { Kbd } from "@/components/folio/kbd";
 import type { Direction } from "@/lib/reader/detect";
 import { useFullscreen } from "@/lib/reader/fullscreen";
 import { statusTone } from "@/lib/ui/status-tone";
@@ -50,6 +58,7 @@ import { ReaderSettings, preloadReaderSettings } from "./lazy";
 import { useMarkerDrawer } from "@/lib/reader/marker-drawer";
 import { useIsPhone } from "@/lib/ui/use-is-phone";
 import { ReadingProgress } from "./ReadingProgress";
+import { PageScrubber } from "./PageScrubber";
 
 const AUTO_HIDE_MS = 4000;
 
@@ -67,6 +76,7 @@ export function ReaderChrome({
   progressCurrent,
   progressTotal,
   incognito = false,
+  pageUrlVersion = null,
 }: {
   seriesId: string | null;
   /** Issue id is needed for marker mutations / queries fired from the
@@ -90,6 +100,9 @@ export function ReaderChrome({
   /** When true, render an "Incognito" chip in the chrome so the user can
    *  see the read isn't being tracked. */
   incognito?: boolean;
+  /** Archive-content `?v=` stamp for the scrubber's thumbnail URLs, so
+   *  they hit the same cache entries as the page strip (see Reader). */
+  pageUrlVersion?: string | null;
 }) {
   useReaderWakeLock();
   const router = useRouter();
@@ -171,7 +184,10 @@ export function ReaderChrome({
               <ArrowLeft />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Exit reader</TooltipContent>
+          <TooltipContent side="bottom">
+            Exit reader
+            <ChromeShortcut action="quitReader" />
+          </TooltipContent>
         </Tooltip>
 
         <PageJumpDisplay
@@ -215,6 +231,14 @@ export function ReaderChrome({
           {narrow ? null : <FullscreenButton />}
         </span>
         <ReadingProgress current={progressCurrent} total={progressTotal} />
+        <PageScrubber
+          issueId={issueId}
+          totalPages={totalPages}
+          currentPage={currentPage}
+          visiblePages={visiblePages}
+          direction={direction}
+          urlVersion={pageUrlVersion}
+        />
       </header>
     </TooltipProvider>
   );
@@ -375,6 +399,7 @@ function BookmarkToggleButton({
       icon={existing ? <BookmarkCheck /> : <Bookmark />}
       onClick={() => toggle({ removed: "Bookmark removed" })}
       active={!!existing}
+      shortcut="bookmarkPage"
     />
   );
 }
@@ -406,6 +431,7 @@ function FavoriteToggleButton({
       icon={<Star className={starred ? "fill-current" : undefined} />}
       onClick={() => toggle({ removed: "Star removed" })}
       active={starred}
+      shortcut="favoritePage"
     />
   );
 }
@@ -477,6 +503,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
       <DropdownMenuItem onSelect={openNote} className="flex-col items-start">
         <span className="flex items-center font-medium">
           <StickyNote className="mr-2 size-4" /> Add note
+          <ChromeShortcut action="addNote" />
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Page-level markdown note. Optional panel selection.
@@ -489,6 +516,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
       >
         <span className="flex items-center font-medium">
           <Square className="mr-2 size-4" /> Highlight a region
+          <ChromeShortcut action="startHighlight" />
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Drag a rectangle. Saves just the box — fastest.
@@ -500,6 +528,7 @@ function MarkerMenuItems({ pageIndex }: { pageIndex: number }) {
       >
         <span className="flex items-center font-medium">
           <Type className="mr-2 size-4" /> Highlight + capture text
+          <ChromeShortcut action="captureText" />
         </span>
         <span className="text-muted-foreground ml-6 text-xs">
           Tap a speech bubble, or drag a box. Runs OCR so the text shows up in
@@ -574,6 +603,27 @@ function MoreMenuButton({ pageIndex }: { pageIndex: number }) {
   );
 }
 
+/** The signed-in user's reader keymap (overrides over defaults), so the
+ *  hints below show the key that actually fires — a remapped `b` reads
+ *  as its new key. */
+function useReaderBindings(): Record<KeybindAction, string> {
+  const me = useMe();
+  const overrides = readMeKeybinds(me);
+  return useMemo(() => resolveKeybinds(overrides), [overrides]);
+}
+
+/** The bound key for a reader action, as a keycap in a tooltip (or a
+ *  menu row). Nothing when the action is unbound. */
+function ChromeShortcut({ action }: { action: KeybindAction }) {
+  const spec = useReaderBindings()[action];
+  if (!spec) return null;
+  return (
+    <Kbd size="md" className="ml-1 min-w-5 px-1 py-0">
+      {formatKey(spec)}
+    </Kbd>
+  );
+}
+
 /** True below Tailwind's `sm` breakpoint (phones). SSR renders the wide
  *  bar; the swap happens on hydration. Shared with toasts and the grid
  *  controls via `useIsPhone`. */
@@ -584,10 +634,14 @@ function ChromeIconButton({
   icon,
   onClick,
   active,
+  shortcut,
 }: {
   label: string;
   icon: React.ReactNode;
   onClick: () => void;
+  /** Reader keybind that does the same thing; its (possibly remapped)
+   *  key shows in the tooltip. */
+  shortcut?: KeybindAction;
   /** When true, the button paints the accent color to signal an
    *  already-engaged state (e.g. page is currently bookmarked). */
   active?: boolean;
@@ -612,7 +666,10 @@ function ChromeIconButton({
           {icon}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{label}</TooltipContent>
+      <TooltipContent side="bottom">
+        {label}
+        {shortcut ? <ChromeShortcut action={shortcut} /> : null}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -628,6 +685,7 @@ function PageTextButton() {
       icon={<ScanText />}
       onClick={toggle}
       active={open}
+      shortcut="togglePageText"
     />
   );
 }
@@ -647,6 +705,7 @@ function MarkerDrawerButton() {
       icon={<ListOrdered />}
       onClick={toggle}
       active={open}
+      shortcut="toggleMarkerDrawer"
     />
   );
 }

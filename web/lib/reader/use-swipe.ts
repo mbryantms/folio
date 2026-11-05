@@ -162,6 +162,16 @@ type ReaderGestureOpts = {
    *  tracks the first finger through a pinch, so without this the lift
    *  would read the pinch as a swipe (or drag a stale pan). */
   isPinching?: () => boolean;
+  /** Drag-to-turn with momentum (`use-drag-turn.ts`). When set, a
+   *  page-turn drag reports its live horizontal movement here so the page
+   *  can follow the pointer… */
+  onTurnDrag?: (dx: number) => void;
+  /** …and its release here. Returns true when the follower handled the
+   *  release (turned or sprang back); false falls back to the plain
+   *  threshold swipe. `canceled` = the drag was taken away (pinch, native
+   *  scroll, pinch-zoomed viewport): spring back, never turn. Left unset
+   *  under reduced motion — swipes then just turn. */
+  onTurnDragEnd?: (dx: number, canceled: boolean) => boolean;
 };
 
 /**
@@ -199,6 +209,8 @@ export function useReaderGestures(opts: ReaderGestureOpts): void {
     onPanStart,
     onPan,
     isPinching,
+    onTurnDrag,
+    onTurnDragEnd,
   } = opts;
   // Standalone-PWA WebKit wedge: bind through touch events on
   // coarse-pointer devices (see lib/reader/coarse-pointer.ts). With
@@ -214,23 +226,48 @@ export function useReaderGestures(opts: ReaderGestureOpts): void {
         if (startedInIgnoredChrome(event)) return;
         if (panActive) onPanStart();
       },
-      onDrag: ({ event, movement: [mx, my] }) => {
+      onDrag: ({ event, movement: [mx, my], last }) => {
         // A pinch owns both fingers; its own pan is applied in
         // pinch-zoom.ts, and the drag's start offset is stale by now.
-        if (isPinching?.()) return;
-        if (panActive && !startedInIgnoredChrome(event)) onPan(mx, my);
+        if (isPinching?.()) {
+          onTurnDragEnd?.(0, true);
+          return;
+        }
+        if (startedInIgnoredChrome(event)) return;
+        if (panActive) {
+          onPan(mx, my);
+          return;
+        }
+        // Page-turn drag: the page follows the pointer. (The release is
+        // `onDragEnd`'s; `last` carries no new movement.)
+        if (last || !onTurnDrag || viewMode === "webtoon") return;
+        if (pinchZoomedNow()) {
+          onTurnDragEnd?.(0, true);
+          return;
+        }
+        onTurnDrag(mx);
       },
-      onDragEnd: ({ event, movement: [mx], cancel }) => {
+      onDragEnd: ({ event, movement: [mx], cancel, canceled }) => {
         if (startedInIgnoredChrome(event)) return;
         // The lift that ends a pinch is not a swipe.
-        if (isPinching?.()) return;
+        if (isPinching?.()) {
+          onTurnDragEnd?.(0, true);
+          return;
+        }
         // Panning consumed the drag; the offset is already applied.
         if (panActive) return;
         if (viewMode === "webtoon") {
           cancel();
           return;
         }
-        if (pinchZoomedNow()) return;
+        if (pinchZoomedNow()) {
+          onTurnDragEnd?.(0, true);
+          return;
+        }
+        // A pointercancel / touchcancel (native scroll claimed the
+        // touch) ends the drag like a lift; it must never turn.
+        const lost = canceled || event.type.endsWith("cancel");
+        if (onTurnDragEnd?.(mx, lost)) return;
         const action = swipeAction(mx, direction);
         if (action === "next") onNext();
         else if (action === "prev") onPrev();

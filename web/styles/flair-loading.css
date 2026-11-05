@@ -1,0 +1,142 @@
+/* Flair pre-merge polish, group "loading" (2026-11-04). Owned by that group; keyframes and
+ * component classes only. Reduced motion is handled globally in globals.css. */
+
+/* ── Library grid: stale results while a filter/sort change loads ──
+ * `LibraryGridView` keeps the previous page up (keepPreviousData) and
+ * marks it `data-stale`; it dims after a short delay so a fast response
+ * never flickers, and the new results fade in via the Web Animations API.
+ * `scroll-margin-top` keeps the first row clear of the sticky toolbar when
+ * the grid scrolls back to its top on landing. */
+.library-grid-results {
+  scroll-margin-top: calc(var(--topbar-h) + 4.5rem);
+  transition: opacity 160ms ease;
+}
+.library-grid-results[data-stale] {
+  opacity: 0.55;
+  transition: opacity 220ms ease 120ms;
+}
+
+/* ── Active filter chips: scale/fade in on add, out on removal ──
+ * `.filter-chip-leave` is held mounted for 240ms by ActiveChips'
+ * `useChipPresence`; it also collapses its width (and cancels the row's
+ * 0.375rem gap) so neighbours slide together instead of jumping. */
+.filter-chip {
+  animation: filter-chip-in 200ms cubic-bezier(0.2, 0, 0, 1.2) both;
+}
+.filter-chip-leave {
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: filter-chip-out 240ms ease-in forwards;
+}
+@keyframes filter-chip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+@keyframes filter-chip-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    max-width: 24rem;
+  }
+  55% {
+    opacity: 0;
+    transform: scale(0.8);
+    max-width: 24rem;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.8);
+    max-width: 0;
+    padding-inline: 0;
+    border-width: 0;
+    margin-inline-end: -0.375rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-grid-results,
+  .library-grid-results[data-stale] {
+    transition: none;
+  }
+  .filter-chip {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .library-grid-results,
+[data-motion="reduced"] .library-grid-results[data-stale] {
+  transition: none;
+}
+[data-motion="reduced"] .filter-chip {
+  animation: none;
+}
+
+/* ── Empty / 404 / error illustration (components/folio/cover-silhouettes) ──
+ * Three static cover silhouettes, fanned from the bottom: the loading
+ * skeleton's look (`.cover-skeleton` marks) without the shimmer. */
+.cover-silhouettes {
+  --silhouette-w: 2.25rem;
+  position: relative;
+  width: calc(var(--silhouette-w) * 2.6);
+  height: calc(var(--silhouette-w) * 1.75);
+  flex-shrink: 0;
+}
+.cover-silhouettes[data-size="lg"] {
+  --silhouette-w: 3.25rem;
+}
+.cover-silhouette {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: var(--silhouette-w);
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: var(--muted);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--foreground) 8%, transparent),
+    0 8px 16px -10px color-mix(in oklab, var(--foreground) 40%, transparent);
+  transform-origin: 50% 100%;
+  translate: -50% 0;
+}
+.cover-silhouette:nth-child(1) {
+  rotate: -14deg;
+  translate: -105% 0;
+  opacity: 0.75;
+}
+.cover-silhouette:nth-child(2) {
+  rotate: 14deg;
+  translate: 5% 0;
+  opacity: 0.75;
+}
+.cover-silhouette:nth-child(3) {
+  z-index: 1;
+  background-color: color-mix(in oklab, var(--muted) 85%, var(--foreground));
+}
+.cover-silhouettes__badge {
+  position: absolute;
+  z-index: 2;
+  right: 4%;
+  bottom: -0.35rem;
+  display: grid;
+  place-items: center;
+}
+.cover-silhouettes__badge--icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+/* A full status icon (e.g. StatusErrorIcon) shrinks to badge size. */
+.cover-silhouettes__badge:not(.cover-silhouettes__badge--icon) > * {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.cover-silhouettes__badge:not(.cover-silhouettes__badge--icon) svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}

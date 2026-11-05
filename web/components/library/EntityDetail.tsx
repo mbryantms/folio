@@ -2,7 +2,9 @@
 
 import * as React from "react";
 
-import { PageHeader } from "@/components/admin/PageHeader";
+import { CountUp } from "@/components/CountUp";
+import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
 import { EntityInsights } from "@/components/library/EntityInsights";
 import {
   EntityProfile,
@@ -55,26 +57,60 @@ export function EntityDetail({
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
   const refresh = useRefreshEntityProfile(kind, detail.slug);
-  const parts: string[] = [];
+  // Header facts; the counts count up like the series page's stats.
+  const parts: Array<{ key: string; node: React.ReactNode }> = [];
   if (meta.hasIssues) {
-    parts.push(
-      `${detail.issue_count} ${detail.issue_count === 1 ? "issue" : "issues"}`,
-    );
+    parts.push({
+      key: "issues",
+      node: (
+        <>
+          <CountUp value={detail.issue_count} className="tabular-nums" />{" "}
+          {detail.issue_count === 1 ? "issue" : "issues"}
+        </>
+      ),
+    });
   }
-  parts.push(`${detail.series_count} series`);
-  if (detail.real_name) parts.push(`Real name: ${detail.real_name}`);
-  if (detail.founded_year) parts.push(`Founded ${detail.founded_year}`);
+  parts.push({
+    key: "series",
+    node: (
+      <>
+        <CountUp value={detail.series_count} className="tabular-nums" /> series
+      </>
+    ),
+  });
+  if (detail.real_name)
+    parts.push({ key: "real", node: `Real name: ${detail.real_name}` });
+  if (detail.founded_year)
+    parts.push({ key: "founded", node: `Founded ${detail.founded_year}` });
   const firstAppearance = detail.profile?.facts.first_appearance?.label;
-  if (firstAppearance) parts.push(`First appeared in ${firstAppearance}`);
+  if (firstAppearance)
+    parts.push({ key: "first", node: `First appeared in ${firstAppearance}` });
   const sections = detail.profile?.sections ?? [];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title={detail.name}
-        description={parts.join(" · ")}
-        breadcrumbs={[{ label: meta.plural, href: `/${kind}` }]}
-      />
+    // `relative isolate`: the tinted backdrop (Optional effect, same as
+    // the series page) sits behind the header from the entity's image.
+    <div className="relative isolate space-y-6">
+      <HeroBackdrop src={detail.image_url} />
+      {/* PageHeader's markup, with the facts line as nodes so the counts
+          can animate (PageHeader takes a plain-string description). */}
+      <header className="border-border mb-6 border-b pb-4 max-sm:mb-4 max-sm:pb-3">
+        <Breadcrumbs
+          items={[{ label: meta.plural, href: `/${kind}` }]}
+          className="mb-1.5"
+        />
+        <h1 className="text-foreground text-2xl font-semibold tracking-tight max-sm:text-xl">
+          {detail.name}
+        </h1>
+        <p className="text-muted-foreground mt-1 text-sm max-sm:line-clamp-2 max-sm:text-xs">
+          {parts.map((p, i) => (
+            <React.Fragment key={p.key}>
+              {i > 0 ? " · " : null}
+              {p.node}
+            </React.Fragment>
+          ))}
+        </p>
+      </header>
       {kind === "publishers" ? (
         <PublisherBlurb detail={detail} />
       ) : (

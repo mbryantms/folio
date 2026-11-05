@@ -293,3 +293,58 @@ function addDays(d: Date, n: number): Date {
   out.setDate(d.getDate() + n);
   return out;
 }
+
+/**
+ * Per-day buckets with the quiet days filled in. The stats endpoints
+ * return only days that had a session, so a chart drawn straight from them
+ * puts Monday next to Thursday as if they were consecutive. Fills every
+ * missing `YYYY-MM-DD` with a zero bucket, from the first bucket (or
+ * `from`) through the last (or `to`). Dates are calendar dates, stepped in
+ * UTC so DST can't skip or repeat one.
+ */
+export function fillDayBuckets<
+  T extends {
+    date: string;
+    sessions: number;
+    active_ms: number;
+    pages: number;
+  },
+>(data: readonly T[], range?: { from?: string; to?: string }): T[] {
+  const sorted = [...data].sort((a, b) => a.date.localeCompare(b.date));
+  const from = range?.from ?? sorted[0]?.date;
+  const to = range?.to ?? sorted.at(-1)?.date;
+  if (!from || !to || from > to) return sorted;
+  const byDate = new Map(sorted.map((d) => [d.date, d]));
+  const out: T[] = [];
+  const day = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  // Guard against a malformed date looping forever.
+  for (let i = 0; day <= end && i < 4000; i++) {
+    const key = day.toISOString().slice(0, 10);
+    out.push(
+      byDate.get(key) ??
+        ({ date: key, sessions: 0, active_ms: 0, pages: 0 } as T),
+    );
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  return out;
+}
+
+/** `{from, to}` for the last `days` UTC calendar days, ending today. */
+export function lastUtcDays(
+  days: number,
+  now = new Date(),
+): {
+  from: string;
+  to: string;
+} {
+  const to = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  const from = new Date(to);
+  from.setUTCDate(from.getUTCDate() - (days - 1));
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+  };
+}

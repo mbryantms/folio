@@ -12,7 +12,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useMe } from "@/lib/api/queries";
 import { useUpdatePreferences } from "@/lib/api/mutations";
 import {
@@ -28,6 +27,8 @@ import {
 } from "@/lib/reader/keybinds";
 
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { KeybindsBodySkeleton } from "@/components/skeletons/SettingsShapes";
 
 interface PendingCapture {
   action: KeybindAction;
@@ -43,7 +44,13 @@ export function KeybindEditor() {
   // the user picks Save Anyway / Cancel. Cleared on commit or dismiss.
   const [pending, setPending] = useState<PendingCapture | null>(null);
 
-  if (me.isLoading) return <Skeleton className="h-72 w-full" />;
+  if (me.isLoading) {
+    return (
+      <LoadingRegion label="Loading keyboard shortcuts…">
+        <KeybindsBodySkeleton />
+      </LoadingRegion>
+    );
+  }
   if (me.error || !me.data) {
     return (
       <p className="text-destructive text-sm">Failed to load preferences.</p>

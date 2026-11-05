@@ -12,19 +12,30 @@
 import { ProviderBadges } from "@/components/library/ProviderBadges";
 import { useExternalIdsIssue, useExternalIdsSeries } from "@/lib/api/queries";
 
+type Variant = "chips" | "text";
 type Props =
-  | { scope: "series"; seriesSlug: string; className?: string }
+  | {
+      scope: "series";
+      seriesSlug: string;
+      className?: string;
+      variant?: Variant;
+    }
   | {
       scope: "issue";
       seriesSlug: string;
       issueSlug: string;
       className?: string;
+      variant?: Variant;
     };
 
 export function ProviderBadgesRow(props: Props) {
   if (props.scope === "series") {
     return (
-      <SeriesBadges seriesSlug={props.seriesSlug} className={props.className} />
+      <SeriesBadges
+        seriesSlug={props.seriesSlug}
+        className={props.className}
+        variant={props.variant}
+      />
     );
   }
   return (
@@ -32,6 +43,7 @@ export function ProviderBadgesRow(props: Props) {
       seriesSlug={props.seriesSlug}
       issueSlug={props.issueSlug}
       className={props.className}
+      variant={props.variant}
     />
   );
 }
@@ -39,23 +51,31 @@ export function ProviderBadgesRow(props: Props) {
 function SeriesBadges({
   seriesSlug,
   className,
+  variant,
 }: {
   seriesSlug: string;
   className?: string;
+  variant?: Variant;
 }) {
   const { data } = useExternalIdsSeries(seriesSlug);
-  return <ProviderBadges rows={data?.rows} className={className} />;
+  return (
+    <ProviderBadges rows={data?.rows} className={className} variant={variant} />
+  );
 }
 
 function IssueBadges({
   seriesSlug,
   issueSlug,
   className,
+  variant,
 }: {
   seriesSlug: string;
   issueSlug: string;
   className?: string;
+  variant?: Variant;
 }) {
   const { data } = useExternalIdsIssue(seriesSlug, issueSlug);
-  return <ProviderBadges rows={data?.rows} className={className} />;
+  return (
+    <ProviderBadges rows={data?.rows} className={className} variant={variant} />
+  );
 }

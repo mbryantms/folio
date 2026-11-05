@@ -3,7 +3,6 @@
 import * as React from "react";
 import Link from "next/link";
 import {
-  ArrowLeft,
   BookOpen,
   Check,
   ChevronDown,
@@ -13,8 +12,14 @@ import {
   Timer,
 } from "lucide-react";
 
+import {
+  FinishedFeedSkeleton,
+  FinishedStatsSkeleton,
+} from "@/components/log/LogSkeletons";
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
-import { Button } from "@/components/ui/button";
+import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select,
@@ -23,11 +28,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/folio/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { useReadingLogInfinite, useReadingStats } from "@/lib/api/queries";
 import { formatTotalHours } from "@/lib/activity";
 import { formatRelativeDate } from "@/lib/format";
 import { issueUrl, seriesUrl } from "@/lib/urls";
+import {
+  issueCoverName,
+  seriesCoverName,
+  useCoverMorph,
+} from "@/lib/ui/cover-morph";
 import { statusTone } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type {
@@ -74,9 +84,8 @@ function rangeToFrom(range: ReadingStatsRange): string | undefined {
   return cutoff.toISOString();
 }
 
-/** Full activity report — the rich counterpart to the `/log` page's
- *  Activity widget. Reached by clicking the widget's title.
- *  Headline stats sit at the top; below, every event in the
+/** The reading log's Finished tab (`/log/activity`): headline stats for
+ *  the window at the top; below, every event in the
  *  selected range renders as a large cover-first card grid grouped
  *  by day / week / month. */
 export function ActivityReportPage() {
@@ -139,7 +148,9 @@ export function ActivityReportPage() {
       />
       <StatsRow stats={stats.data} loading={stats.isLoading} />
       {query.isLoading ? (
-        <FeedSkeleton />
+        <LoadingRegion label="Loading finished issues…">
+          <FinishedFeedSkeleton />
+        </LoadingRegion>
       ) : events.length === 0 ? (
         <EmptyState range={range} />
       ) : (
@@ -168,7 +179,7 @@ export function ActivityReportPage() {
         </div>
       )}
       {!query.hasNextPage && events.length > 0 && (
-        <p className="text-muted-foreground/70 text-center text-xs">
+        <p className="text-muted-foreground text-center text-xs">
           End of activity for this range.
         </p>
       )}
@@ -188,42 +199,25 @@ function ReportHeader({
   onGroupByChange: (next: GroupBy) => void;
 }) {
   return (
-    <header className="flex flex-col gap-3">
-      <Button asChild variant="ghost" size="sm" className="-ml-2 w-fit">
-        <Link href="/log">
-          <ArrowLeft aria-hidden="true" className="mr-1 size-4" />
-          Back to reading log
-        </Link>
-      </Button>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <ScrollText className="text-muted-foreground size-5" />
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Activity report
-            </h1>
-            <p className="text-muted-foreground text-sm">
-              Everything you&rsquo;ve finished in the selected window — full
-              covers, credits, and read dates.
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ActivityRangeSelector value={range} onChange={onRangeChange} />
-          <Select
-            value={groupBy}
-            onValueChange={(v) => onGroupByChange(v as GroupBy)}
-          >
-            <SelectTrigger className="w-32" aria-label="Group events by">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="day">By day</SelectItem>
-              <SelectItem value="week">By week</SelectItem>
-              <SelectItem value="month">By month</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <p className="text-muted-foreground max-w-prose text-sm">
+        Every issue you&rsquo;ve finished, grouped by {groupBy}.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <ActivityRangeSelector value={range} onChange={onRangeChange} />
+        <Select
+          value={groupBy}
+          onValueChange={(v) => onGroupByChange(v as GroupBy)}
+        >
+          <SelectTrigger className="w-32" aria-label="Group events by">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="day">By day</SelectItem>
+            <SelectItem value="week">By week</SelectItem>
+            <SelectItem value="month">By month</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
     </header>
   );
@@ -238,11 +232,9 @@ function StatsRow({
 }) {
   if (loading) {
     return (
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-24" />
-        ))}
-      </div>
+      <LoadingRegion label="">
+        <FinishedStatsSkeleton />
+      </LoadingRegion>
     );
   }
   if (!stats) return null;
@@ -282,13 +274,13 @@ function StatTile({
   Icon: typeof BookOpen;
 }) {
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-1.5 p-4">
+    <Card className="rounded-xl py-0">
+      <CardContent className="flex flex-col gap-1.5 p-5">
         <Icon aria-hidden="true" className="text-muted-foreground size-4" />
-        <div className="text-2xl leading-tight font-semibold tabular-nums">
+        <div className="text-3xl leading-tight font-semibold tabular-nums">
           {value}
         </div>
-        <div className="text-muted-foreground text-[11px] tracking-wider uppercase">
+        <div className="text-muted-foreground text-xs tracking-wide uppercase">
           {label}
         </div>
       </CardContent>
@@ -308,7 +300,7 @@ function SectionHeader({
   return (
     <div className="border-border/40 mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b pb-2">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">{label}</h2>
+        <h2 className="text-lg font-semibold">{label}</h2>
         {subtitle ? (
           <p className="text-muted-foreground text-sm">{subtitle}</p>
         ) : null}
@@ -335,33 +327,36 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
       : event.series
         ? seriesUrl(event.series.slug)
         : null;
+  // Cover flair as on library cards: tone wash (`data-card` on the link),
+  // the optional tilt, and the morph into the issue / series page.
+  const morph = useCoverMorph(
+    event.series && event.issue
+      ? issueCoverName(event.series.slug, event.issue.slug)
+      : seriesCoverName(event.series?.slug ?? ""),
+    cover,
+  );
 
   const card = (
     <Card className="group/card hover:border-primary/40 flex h-full flex-col overflow-hidden transition-colors">
-      <div className="bg-muted relative aspect-2/3 w-full overflow-hidden">
-        {cover ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+      <CoverTilt className="event-card-cover relative w-full">
+        <CoverMorph name={href ? morph.name : undefined}>
+          <Cover
             src={cover}
-            alt={`${seriesName} ${number ? `#${number}` : ""} cover`}
-            className="h-full w-full object-cover transition-transform duration-200 group-hover/card:scale-[1.02]"
-            loading="lazy"
+            alt={`${seriesName}${number ? ` #${number}` : ""} cover`}
+            fallback="No cover"
+            className="w-full transition group-hover/card:brightness-110"
           />
-        ) : (
-          <div className="text-muted-foreground/60 flex h-full w-full items-center justify-center text-xs">
-            No cover
-          </div>
-        )}
+        </CoverMorph>
         <span
           className={cn(
-            "absolute top-2 left-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium tracking-wide uppercase backdrop-blur",
+            "absolute top-2 left-2 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium tracking-wide uppercase backdrop-blur",
             KIND_TINT[event.kind as ReadingLogEventKind],
           )}
         >
           <Icon aria-hidden="true" className="size-3.5" />
           {KIND_LABEL[event.kind as ReadingLogEventKind]}
         </span>
-      </div>
+      </CoverTilt>
       <CardContent className="flex flex-1 flex-col gap-1.5 p-3.5">
         <div className="line-clamp-2 text-base leading-tight font-semibold">
           {seriesName}
@@ -381,12 +376,12 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
         ) : null}
         <div className="mt-auto pt-1.5">
           {pageCount != null ? (
-            <p className="text-muted-foreground/80 text-xs">
+            <p className="text-muted-foreground text-xs">
               {pageCount} page{pageCount === 1 ? "" : "s"}
             </p>
           ) : null}
           <p
-            className="text-muted-foreground/70 text-xs"
+            className="text-muted-foreground text-xs"
             title={new Date(readAt).toLocaleString()}
           >
             Read: {formatRelativeDate(readAt)}
@@ -398,7 +393,12 @@ function EventCard({ event }: { event: ReadingLogEventView }) {
 
   if (href) {
     return (
-      <Link href={href} className="block focus:outline-none">
+      <Link
+        href={href}
+        className="block focus:outline-none"
+        data-card=""
+        onClick={morph.onClick}
+      >
         {card}
       </Link>
     );
@@ -473,23 +473,6 @@ function buildGroups(events: ReadingLogEventView[], groupBy: GroupBy): Group[] {
     }
   }
   return groups;
-}
-
-function FeedSkeleton() {
-  return (
-    <div className="flex flex-col gap-10">
-      {Array.from({ length: 2 }).map((_, i) => (
-        <section key={i}>
-          <Skeleton className="mb-4 h-8 w-48" />
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
-            {Array.from({ length: 6 }).map((_, j) => (
-              <Skeleton key={j} className="aspect-2/3.5 w-full" />
-            ))}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
 }
 
 function EmptyState({ range }: { range: ReadingStatsRange }) {

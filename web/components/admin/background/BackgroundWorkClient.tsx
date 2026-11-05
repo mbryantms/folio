@@ -24,6 +24,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { BackgroundWorkSkeleton } from "@/components/skeletons/AdminShapes";
+import { BumpNumber } from "@/components/admin/BumpNumber";
 import { useCancelMetadataBatch, useCancelScanRun } from "@/lib/api/mutations";
 import { useBackgroundWork } from "@/lib/api/queries";
 import {
@@ -36,6 +38,7 @@ import {
   thumbPace,
 } from "@/lib/admin/background-work";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
+import { useHydrated } from "@/lib/ui/use-hydrated";
 import { cn } from "@/lib/utils";
 import type {
   BackgroundWorkView,
@@ -87,14 +90,11 @@ function StaleSnapshotNotice({
 export function BackgroundWorkClient() {
   const { data, isLoading, isError, dataUpdatedAt, refetch } =
     useBackgroundWork();
+  // The snapshot can already be warm (the live scan panel shares it), so
+  // nothing data-driven renders until hydrated.
+  const hydrated = useHydrated();
 
-  if (isLoading) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading background work…
-      </div>
-    );
-  }
+  if (!hydrated || isLoading) return <BackgroundWorkSkeleton />;
   if (!data) {
     return (
       <div className="flex flex-wrap items-center gap-3 py-8">
@@ -147,12 +147,12 @@ function Summary({ view }: { view: BackgroundWorkView }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile
           label="Scans"
-          value={n(t.scans_running + t.scans_queued)}
+          value={t.scans_running + t.scans_queued}
           detail={`${n(t.scans_running)} running · ${n(t.scans_queued)} queued`}
         />
         <Tile
           label="Covers to generate"
-          value={n(t.covers_remaining)}
+          value={t.covers_remaining}
           detail={
             thumbPace(t) ??
             (t.thumbs_outstanding > 0
@@ -164,13 +164,13 @@ function Summary({ view }: { view: BackgroundWorkView }) {
         />
         <Tile
           label="Jobs pending"
-          value={n(t.jobs_outstanding)}
+          value={t.jobs_outstanding}
           detail={`${n(t.jobs_in_flight)} with workers`}
           href="/admin/queue"
         />
         <Tile
           label="Failed jobs"
-          value={n(t.jobs_dead)}
+          value={t.jobs_dead}
           detail={t.jobs_dead > 0 ? "Review and retry" : "None"}
           href="/admin/queue?tab=failed"
           tone={t.jobs_dead > 0 ? "error" : undefined}
@@ -188,7 +188,7 @@ function Tile({
   tone,
 }: {
   label: string;
-  value: string;
+  value: number;
   detail: string;
   href?: string;
   tone?: "error";
@@ -213,7 +213,7 @@ function Tile({
             tone === "error" && "text-destructive",
           )}
         >
-          {value}
+          <BumpNumber value={value} format={n} />
         </div>
         <p className="text-muted-foreground mt-0.5 text-xs tabular-nums">
           {detail}
@@ -290,6 +290,7 @@ function LibraryRow({ lib }: { lib: LibraryWorkView }) {
             </span>
           </div>
           <Progress
+            className="live-progress"
             value={
               lib.issues_total === 0 ? 100 : pct(coversDone, lib.issues_total)
             }
@@ -403,6 +404,7 @@ function ScanCell({ lib }: { lib: LibraryWorkView }) {
       </div>
       {running ? (
         <Progress
+          className="live-progress"
           value={pct(completed, total)}
           aria-label={`${lib.name} scan progress`}
         />
@@ -642,6 +644,7 @@ function ReemitRow({ reemit }: { reemit: SidecarReemitWorkView }) {
       </div>
       {live ? (
         <Progress
+          className="live-progress"
           value={pct(done, r.total)}
           aria-label="Metadata file rewrite progress"
         />
@@ -690,6 +693,7 @@ function BatchRow({ batch }: { batch: MetadataBatchWorkView }) {
           </span>
         </div>
         <Progress
+          className="live-progress"
           value={pct(batch.items_finished, batch.items_total)}
           aria-label="Metadata batch progress"
         />

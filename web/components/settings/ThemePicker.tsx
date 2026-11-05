@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useTheme } from "next-themes";
 
-import { Skeleton } from "@/components/ui/skeleton";
 import { useMe } from "@/lib/api/queries";
 import { useUpdatePreferences } from "@/lib/api/mutations";
 import {
@@ -28,9 +27,17 @@ import {
   writeRadiusCookie,
   writeThemeCookie,
 } from "@/lib/theme";
+import { revealChange, revealTheme } from "@/lib/ui/theme-reveal";
+import {
+  SLIDE_TRANSITION,
+  useSlidingIndicator,
+} from "@/lib/ui/use-sliding-indicator";
+import { cn } from "@/lib/utils";
 
 import { SegmentedControl } from "./SegmentedControl";
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { ThemeBodySkeleton } from "@/components/skeletons/SettingsShapes";
 
 const themeOptions: ReadonlyArray<{ value: Theme; label: string }> = [
   { value: "system", label: "System" },
@@ -64,6 +71,81 @@ const ACCENT_DOTS: Record<Accent, string> = {
   emerald: "bg-emerald-500",
   rose: "bg-rose-500",
 };
+
+const ACCENT_THUMB = {
+  active: ':scope > [role="radio"][aria-checked="true"]',
+  items: ':scope > [role="radio"]',
+  attributes: ["aria-checked"],
+};
+
+/** The accent swatches: the selected outline is one frame that slides
+ *  between them (folio-flair), like the segmented controls' thumb. */
+function AccentGroup({
+  accent,
+  disabled,
+  onPick,
+}: {
+  accent: Accent;
+  disabled: boolean;
+  onPick: (next: Accent) => void;
+}) {
+  const group = useRef<HTMLDivElement | null>(null);
+  const thumb = useSlidingIndicator(group, ACCENT_THUMB);
+  return (
+    <div
+      ref={group}
+      role="radiogroup"
+      aria-label="Accent color"
+      data-thumb={thumb ? "" : undefined}
+      className="relative flex flex-wrap gap-3"
+    >
+      {thumb ? (
+        <span
+          aria-hidden
+          className={cn(
+            "border-primary bg-primary/10 pointer-events-none absolute top-0 left-0 rounded-md border",
+            disabled && "opacity-50",
+            thumb.animate && SLIDE_TRANSITION,
+          )}
+          style={{
+            width: thumb.width,
+            height: thumb.height,
+            translate: `${thumb.left}px ${thumb.top}px`,
+          }}
+        />
+      ) : null}
+      {ACCENTS.map((value) => {
+        const active = value === accent;
+        const label =
+          accentOptions.find((o) => o.value === value)?.label ?? value;
+        return (
+          <button
+            key={value}
+            role="radio"
+            aria-checked={active}
+            type="button"
+            disabled={disabled}
+            onClick={() => onPick(value)}
+            className={cn(
+              "focus-visible:ring-ring relative flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none disabled:opacity-50",
+              active
+                ? thumb
+                  ? "text-foreground border-transparent"
+                  : "border-primary bg-primary/10 text-foreground"
+                : "border-input bg-background text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <span
+              className={`size-3 rounded-full ${ACCENT_DOTS[value]}`}
+              aria-hidden
+            />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 export function ThemePicker() {
   const me = useMe();
@@ -99,7 +181,13 @@ export function ThemePicker() {
     }
   }, [me.data, setTheme]);
 
-  if (me.isLoading) return <Skeleton className="h-72 w-full" />;
+  if (me.isLoading) {
+    return (
+      <LoadingRegion label="Loading theme settings…">
+        <ThemeBodySkeleton />
+      </LoadingRegion>
+    );
+  }
   if (me.error || !me.data) {
     return (
       <p className="text-destructive text-sm">Failed to load preferences.</p>
@@ -118,28 +206,31 @@ export function ThemePicker() {
 
   function pickTheme(next: Theme) {
     writeThemeCookie(next);
-    setTheme(next);
+    revealTheme(next, setTheme);
     update.mutate({ theme: next });
   }
   function pickAccent(next: Accent) {
     writeAccentCookie(next);
-    if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("data-accent", next);
-    }
+    // The new look spreads from the control like a theme switch.
+    revealChange(() =>
+      document.documentElement.setAttribute("data-accent", next),
+    );
     update.mutate({ accent_color: next });
   }
   function pickDensity(next: Density) {
     writeDensityCookie(next);
-    if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("data-density", next);
-    }
+    // The new look spreads from the control like a theme switch.
+    revealChange(() =>
+      document.documentElement.setAttribute("data-density", next),
+    );
     update.mutate({ density: next });
   }
   function pickRadius(next: Radius) {
     writeRadiusCookie(next);
-    if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("data-radius", next);
-    }
+    // The new look spreads from the control like a theme switch.
+    revealChange(() =>
+      document.documentElement.setAttribute("data-radius", next),
+    );
     update.mutate({ corner_radius: next });
   }
   function pickMotion(next: Motion) {
@@ -169,38 +260,11 @@ export function ThemePicker() {
         title="Accent color"
         description="The CTA / focus tint applied across the admin and settings surfaces."
       >
-        <div
-          role="radiogroup"
-          aria-label="Accent color"
-          className="flex flex-wrap gap-3"
-        >
-          {ACCENTS.map((value) => {
-            const active = value === accent;
-            const label =
-              accentOptions.find((o) => o.value === value)?.label ?? value;
-            return (
-              <button
-                key={value}
-                role="radio"
-                aria-checked={active}
-                type="button"
-                disabled={update.isPending}
-                onClick={() => pickAccent(value)}
-                className={`focus-visible:ring-ring flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:outline-none disabled:opacity-50 ${
-                  active
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-input bg-background text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <span
-                  className={`size-3 rounded-full ${ACCENT_DOTS[value]}`}
-                  aria-hidden
-                />
-                {label}
-              </button>
-            );
-          })}
-        </div>
+        <AccentGroup
+          accent={accent}
+          disabled={update.isPending}
+          onPick={pickAccent}
+        />
       </SettingsSection>
 
       <SettingsSection

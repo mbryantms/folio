@@ -143,6 +143,11 @@ pub struct NextUpView {
     /// collection's reading order (series entries expanded).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection_total: Option<i32>,
+    /// Set by the next-up resolver when `source == "collection"`: how many
+    /// issues of the collection's reading order the caller has finished,
+    /// for the end card's progress ring. `None` from prev-up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_finished: Option<i32>,
     /// `true` when the caller passed `?collection=<id>` for one of their
     /// collections but the current issue is no longer in it (the
     /// collection was edited mid-read). The resolver fell back to series
@@ -308,6 +313,7 @@ pub async fn next_up(
                 collection_name: None,
                 collection_position: None,
                 collection_total: None,
+                collection_finished: None,
                 collection_param_was_stale,
             })
             .into_response()
@@ -377,6 +383,7 @@ fn none_view(cbl_param_was_stale: bool, collection_param_was_stale: bool) -> Nex
         collection_name: None,
         collection_position: None,
         collection_total: None,
+        collection_finished: None,
         collection_param_was_stale,
     }
 }
@@ -542,6 +549,7 @@ async fn resolve_cbl_next(
         collection_name: None,
         collection_position: None,
         collection_total: None,
+        collection_finished: None,
         collection_param_was_stale: false,
     }))
 }
@@ -570,7 +578,16 @@ async fn resolve_collection_next(
     let Some(idx) = seq.first_unfinished_after(acl, &progress, Some(current_idx)) else {
         return Ok(CblBranchOutcome::NoMatch);
     };
-    Ok(CblBranchOutcome::Resolved(collection_view(&seq, idx)))
+    let finished = seq
+        .items
+        .iter()
+        .filter(|i| progress.get(&i.id).is_some_and(|p| p.finished))
+        .count();
+    Ok(CblBranchOutcome::Resolved(collection_view(
+        &seq,
+        idx,
+        Some(i32::try_from(finished).unwrap_or(i32::MAX)),
+    )))
 }
 
 /// Collection branch of the prev-up resolver: the closest openable issue
@@ -592,13 +609,17 @@ async fn resolve_collection_prev(
     let Some(idx) = seq.prev_visible_before(acl, current_idx) else {
         return Ok(CblBranchOutcome::NoMatch);
     };
-    Ok(CblBranchOutcome::Resolved(collection_view(&seq, idx)))
+    Ok(CblBranchOutcome::Resolved(collection_view(&seq, idx, None)))
 }
 
 /// `source: "collection"` response for the item at `idx`. The walks only
 /// return indices whose parent series resolved, so the lookup cannot
 /// miss; the empty-string fallback is belt and braces.
-fn collection_view(seq: &collection_sequence::CollectionSequence, idx: usize) -> NextUpView {
+fn collection_view(
+    seq: &collection_sequence::CollectionSequence,
+    idx: usize,
+    finished: Option<i32>,
+) -> NextUpView {
     let item = seq.items[idx].clone();
     let (slug, name) = seq
         .series_of(idx)
@@ -618,6 +639,7 @@ fn collection_view(seq: &collection_sequence::CollectionSequence, idx: usize) ->
         collection_name: Some(seq.view.name.clone()),
         collection_position: Some(i32::try_from(idx + 1).unwrap_or(i32::MAX)),
         collection_total: Some(seq.total()),
+        collection_finished: finished,
         collection_param_was_stale: false,
     }
 }
@@ -1311,6 +1333,7 @@ pub async fn prev_up(
                 collection_name: None,
                 collection_position: None,
                 collection_total: None,
+                collection_finished: None,
                 collection_param_was_stale,
             })
             .into_response()
@@ -1432,6 +1455,7 @@ async fn resolve_cbl_prev(
         collection_name: None,
         collection_position: None,
         collection_total: None,
+        collection_finished: None,
         collection_param_was_stale: false,
     }))
 }

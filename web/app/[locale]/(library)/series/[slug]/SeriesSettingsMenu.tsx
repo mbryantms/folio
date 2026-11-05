@@ -53,7 +53,8 @@ import {
 // carry this (bundle budget).
 import { useSetSeriesSpecialsCompletion } from "@/lib/api/mutations/completion";
 import { useCollections, useMe } from "@/lib/api/queries";
-import { TOAST, UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { TOAST } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import type { IssueSummaryView, SpecialsCompletion } from "@/lib/api/types";
 import { readerUrl, seriesUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
@@ -138,7 +139,7 @@ export function SeriesSettingsMenu({
   );
   const wtrId = wantToRead?.id ?? "";
   const addToWtr = useAddCollectionEntry(wtrId);
-  const removeFromWtr = useRemoveCollectionEntry(wtrId);
+  const removeFromWtr = useRemoveCollectionEntry(wtrId, { silent: true });
   const [collectionDialogOpen, setCollectionDialogOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [offlineOpen, setOfflineOpen] = useState(false);
@@ -158,12 +159,10 @@ export function SeriesSettingsMenu({
             toast.success(`Added "${seriesName}" to Want to Read`);
             return;
           }
-          toast.success(`Added "${seriesName}" to Want to Read`, {
-            duration: UNDO_TOAST_DURATION_MS,
-            action: {
-              label: "Undo",
-              onClick: () => removeFromWtr.mutate({ entryId: entry.id }, {}),
-            },
+          showUndoToast({
+            message: `Added "${seriesName}" to Want to Read`,
+            restoredMessage: "Removed from Want to Read",
+            onUndo: () => removeFromWtr.mutateAsync({ entryId: entry.id }),
           });
         },
       },

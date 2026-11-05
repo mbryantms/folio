@@ -7,7 +7,6 @@ import { Cover } from "@/components/Cover";
 import { EmptyState } from "@/components/folio/empty-state";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { useRestoreRailItem } from "@/lib/api/mutations";
 import { useRailDismissals } from "@/lib/api/queries";
 import type { DismissalRail, RailDismissalView } from "@/lib/api/types";
@@ -15,6 +14,8 @@ import { timeAgo } from "@/lib/sessions";
 import { issueUrl, seriesUrl } from "@/lib/urls";
 
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { HiddenRailItemsSkeleton } from "@/components/skeletons/SettingsShapes";
 
 const TITLE = "Hidden from rails";
 const DESCRIPTION =
@@ -61,9 +62,9 @@ export function HiddenRailItems() {
 
   if (query.isLoading) {
     return (
-      <SettingsSection title={TITLE} description={DESCRIPTION}>
-        <Skeleton className="h-24 w-full" />
-      </SettingsSection>
+      <LoadingRegion label="Loading hidden items…">
+        <HiddenRailItemsSkeleton />
+      </LoadingRegion>
     );
   }
   // A failed *next* page keeps the loaded rows (v5 keeps `data`); only a

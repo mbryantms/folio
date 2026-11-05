@@ -147,6 +147,7 @@ mod m20271101_000003_specials_completeness_pref;
 mod m20271102_000001_library_sidebar_default;
 mod m20271103_000001_user_cover_stack_style;
 mod m20271104_000001_onboarding_starter_lists;
+mod m20271105_000001_user_effects;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -302,6 +303,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271102_000001_library_sidebar_default::Migration),
             Box::new(m20271103_000001_user_cover_stack_style::Migration),
             Box::new(m20271104_000001_onboarding_starter_lists::Migration),
+            Box::new(m20271105_000001_user_effects::Migration),
         ]
     }
 }

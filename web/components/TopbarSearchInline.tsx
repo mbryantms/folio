@@ -1,20 +1,26 @@
 "use client";
 
-import { Bookmark, ChevronRight, Clock, Search, X } from "lucide-react";
+import { ChevronRight, Clock, Search, X } from "lucide-react";
+import { ActionRowContent } from "@/components/search/ActionRowContent";
+import {
+  RecentVisitsHeader,
+  SearchHitRowContent,
+  VisitRowContent,
+} from "@/components/search/SearchResultRow";
 import { Kbd } from "@/components/folio/kbd";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 
-import { useMe } from "@/lib/api/queries";
 import {
-  SEARCH_ACTIONS_CAP,
+  groupSearchActions,
   parseCommandPrefix,
-  rankSearchActions,
   type SearchAction,
 } from "@/lib/search/actions-registry";
-import { renderSearchSnippet } from "@/lib/search/render-snippet";
 import { useGlobalSearch } from "@/lib/search/use-search";
 import { useRecentSearches } from "@/lib/search/use-recent-searches";
+import { useRecentVisits } from "@/lib/search/use-recent-visits";
+import type { RecentVisit } from "@/lib/search/recent-visits";
+import { useSearchActions } from "@/lib/search/use-search-actions";
 import {
   SEARCH_CATEGORIES,
   flattenGroups,
@@ -51,8 +57,8 @@ const QUERY_DEBOUNCE_MS = 200;
  */
 export function TopbarSearchInline({ className }: { className?: string }) {
   const router = useRouter();
-  const me = useMe();
   const recents = useRecentSearches();
+  const recentVisits = useRecentVisits();
   const [raw, setRaw] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
   const [open, setOpen] = React.useState(false);
@@ -75,15 +81,46 @@ export function TopbarSearchInline({ className }: { className?: string }) {
   const { enabled, isLoading, groups, total } = useGlobalSearch(contentQuery, {
     perCategory: MAX_PER_CATEGORY,
   });
-  const actions = React.useMemo<readonly SearchAction[]>(() => {
-    const ranked = rankSearchActions(rawForActions, me.data?.role);
-    return ranked.slice(0, SEARCH_ACTIONS_CAP);
-  }, [rawForActions, me.data?.role]);
+  // Shared with the ⌘K dialog: suggested commands on an empty field,
+  // up to six matches ahead of content hits, the full grouped list in
+  // command mode.
+  const {
+    actions: rankedActions,
+    run: runAction,
+    detailFor,
+    keyHintFor,
+  } = useSearchActions({ needle: rawForActions, commandMode, active: open });
+  const suggesting = !commandMode && rawForActions.trim().length === 0;
+  const actionSections = React.useMemo(
+    () =>
+      commandMode
+        ? groupSearchActions(rankedActions).map((g) => ({
+            heading: g.group as string,
+            actions: g.actions,
+          }))
+        : rankedActions.length > 0
+          ? [
+              {
+                heading: suggesting ? "Suggested" : "Jump to…",
+                actions: [...rankedActions],
+              },
+            ]
+          : [],
+    [commandMode, rankedActions, suggesting],
+  );
+  // Flat, in rendered order, so the highlight index walks the sections.
+  const actions = React.useMemo(
+    () => actionSections.flatMap((sec) => sec.actions),
+    [actionSections],
+  );
 
+  // Recently visited pages lead the empty-field state, as navigable
+  // rows ahead of the suggested commands.
+  const visits: readonly RecentVisit[] =
+    suggesting && !enabled ? recentVisits.visits : [];
   const contentFlat = flattenGroups(groups, MAX_PER_CATEGORY);
-  const flat: ReadonlyArray<SearchHit | SearchAction> = commandMode
-    ? actions
-    : [...actions, ...contentFlat];
+  const flat: ReadonlyArray<RecentVisit | SearchHit | SearchAction> =
+    commandMode ? actions : [...visits, ...actions, ...contentFlat];
   const safeHighlighted =
     flat.length === 0 ? 0 : Math.min(highlighted, flat.length - 1);
   const fullSearchHref = enabled
@@ -112,15 +149,25 @@ export function TopbarSearchInline({ className }: { className?: string }) {
     setHighlighted(0);
   }, [debounced, commandMode]);
 
-  function isAction(row: SearchHit | SearchAction): row is SearchAction {
+  function isAction(
+    row: RecentVisit | SearchHit | SearchAction,
+  ): row is SearchAction {
     return "group" in row;
   }
 
-  function commitRow(row: SearchHit | SearchAction | undefined) {
+  function commitRow(
+    row: RecentVisit | SearchHit | SearchAction | undefined,
+    index: number,
+  ) {
     if (!row) return;
     setOpen(false);
+    const visit = index < visits.length ? visits[index] : undefined;
+    if (visit) {
+      router.push(visit.href);
+      return;
+    }
     if (isAction(row)) {
-      router.push(row.href);
+      runAction(row);
       return;
     }
     if (contentQuery) recents.add(contentQuery);
@@ -150,7 +197,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
       if (!commandMode && (e.metaKey || e.ctrlKey)) {
         commitFullSearch();
       } else if (flat.length > 0) {
-        commitRow(flat[safeHighlighted]);
+        commitRow(flat[safeHighlighted], safeHighlighted);
       } else if (!commandMode && enabled) {
         commitFullSearch();
       }
@@ -164,16 +211,8 @@ export function TopbarSearchInline({ className }: { className?: string }) {
     }
   }
 
-  const showRecentsRow =
-    !enabled &&
-    !commandMode &&
-    actions.length === 0 &&
-    recents.recents.length > 0;
-  const showEmptyHint =
-    !enabled &&
-    !commandMode &&
-    actions.length === 0 &&
-    recents.recents.length === 0;
+  const showRecentsRow = suggesting && !enabled && recents.recents.length > 0;
+  const showEmptyHint = suggesting && !enabled && recents.recents.length === 0;
   const showLoading =
     isLoading && !commandMode && total === 0 && actions.length === 0;
   const showNoMatch = enabled && flat.length === 0;
@@ -236,14 +275,11 @@ export function TopbarSearchInline({ className }: { className?: string }) {
           className="border-border bg-popover text-popover-foreground absolute top-[calc(100%+0.25rem)] right-0 left-0 z-40 max-h-[70vh] overflow-y-auto rounded-md border shadow-xl"
         >
           {showEmptyHint ? (
-            <div className="text-muted-foreground space-y-2 px-4 py-6 text-center text-xs">
-              <p>Type at least 2 characters to search.</p>
-              <p>
-                <Kbd className="mx-1">↵</Kbd>
-                opens · type <Kbd className="mx-1">&gt;</Kbd>
-                for commands
-              </p>
-            </div>
+            <p className="text-muted-foreground border-border border-b px-4 py-2.5 text-center text-xs">
+              Type 2+ characters to search · <Kbd className="mx-1">↵</Kbd>
+              opens · <Kbd className="mx-1">&gt;</Kbd>
+              for commands
+            </p>
           ) : null}
 
           {showRecentsRow ? (
@@ -306,47 +342,56 @@ export function TopbarSearchInline({ className }: { className?: string }) {
             </p>
           ) : null}
 
-          {actions.length > 0 ? (
-            <ResultSection title={commandMode ? "Commands" : "Jump to…"}>
-              {actions.map((action, i) => {
-                const idx = i;
-                const Icon = action.icon;
-                return (
+          {visits.length > 0 ? (
+            <section className="pb-1" aria-label="Recently visited">
+              <RecentVisitsHeader onClear={recentVisits.clear} />
+              <ul>
+                {visits.map((visit, idx) => (
                   <ResultRow
-                    key={action.id}
+                    key={`${visit.kind}:${visit.id}`}
                     selected={idx === safeHighlighted}
                     onHover={() => setHighlighted(idx)}
-                    onSelect={() => commitRow(action)}
+                    onSelect={() => commitRow(visit, idx)}
                   >
-                    <span
-                      aria-hidden="true"
-                      className="border-border bg-muted text-muted-foreground inline-flex h-9 w-9 shrink-0 items-center justify-center rounded border"
-                    >
-                      <Icon className="size-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">
-                        {action.label}
-                      </span>
-                      <span className="block truncate text-xs opacity-70">
-                        {action.group}
-                      </span>
-                    </span>
-                    <ChevronRight
-                      className="size-3.5 opacity-50"
-                      aria-hidden="true"
-                    />
+                    <VisitRowContent visit={visit} />
                   </ResultRow>
-                );
-              })}
-            </ResultSection>
+                ))}
+              </ul>
+            </section>
           ) : null}
+
+          {actionSections.map((section) => {
+            const sectionStart =
+              visits.length + actions.indexOf(section.actions[0]!);
+            return (
+              <ResultSection key={section.heading} title={section.heading}>
+                {section.actions.map((action, i) => {
+                  const idx = sectionStart + i;
+                  return (
+                    <ResultRow
+                      key={action.id}
+                      selected={idx === safeHighlighted}
+                      onHover={() => setHighlighted(idx)}
+                      onSelect={() => commitRow(action, idx)}
+                    >
+                      <ActionRowContent
+                        action={action}
+                        detail={detailFor(action)}
+                        keyHint={keyHintFor(action)}
+                      />
+                    </ResultRow>
+                  );
+                })}
+              </ResultSection>
+            );
+          })}
 
           {!commandMode
             ? SEARCH_CATEGORIES.map((def) => {
                 const hits = groups[def.key].slice(0, MAX_PER_CATEGORY);
                 if (hits.length === 0) return null;
                 const sectionStart =
+                  visits.length +
                   actions.length +
                   SEARCH_CATEGORIES.slice(0, SEARCH_CATEGORIES.indexOf(def))
                     .map((d) => groups[d.key].slice(0, MAX_PER_CATEGORY).length)
@@ -360,26 +405,9 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                           key={hit.id}
                           selected={idx === safeHighlighted}
                           onHover={() => setHighlighted(idx)}
-                          onSelect={() => commitRow(hit)}
+                          onSelect={() => commitRow(hit, idx)}
                         >
-                          <Thumb hit={hit} />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate font-medium">
-                              {hit.title}
-                            </span>
-                            {hit.snippet ? (
-                              <span
-                                className="[&_mark]:bg-primary/30 block truncate text-xs opacity-70 [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark]:text-current"
-                                dangerouslySetInnerHTML={{
-                                  __html: renderSearchSnippet(hit.snippet),
-                                }}
-                              />
-                            ) : hit.subtitle ? (
-                              <span className="block truncate text-xs opacity-70">
-                                {hit.subtitle}
-                              </span>
-                            ) : null}
-                          </span>
+                          <SearchHitRowContent hit={hit} query={contentQuery} />
                         </ResultRow>
                       );
                     })}
@@ -438,9 +466,16 @@ function ResultRow({
   onSelect: () => void;
   children: React.ReactNode;
 }) {
+  // Keep the keyboard-highlighted row in view as ↑/↓ walk past the
+  // panel's scroll edge.
+  const ref = React.useRef<HTMLButtonElement | null>(null);
+  React.useEffect(() => {
+    if (selected) ref.current?.scrollIntoView?.({ block: "nearest" });
+  }, [selected]);
   return (
     <li>
       <button
+        ref={ref}
         type="button"
         role="option"
         aria-selected={selected}
@@ -454,56 +489,5 @@ function ResultRow({
         {children}
       </button>
     </li>
-  );
-}
-
-/** Cover thumbnail for content hits. Falls back to the bookmark glyph
- *  on coverless or icon-only hits. */
-function Thumb({ hit }: { hit: SearchHit }) {
-  const cls =
-    "border-border bg-muted h-12 w-9 shrink-0 overflow-hidden rounded border";
-  if (hit.thumbUrl) {
-    if (hit.region) {
-      const scaleW = Math.min(100, 100 / Math.max(hit.region.w, 1));
-      const scaleH = Math.min(100, 100 / Math.max(hit.region.h, 1));
-      return (
-        <div className={cn(cls, "relative")}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={hit.thumbUrl}
-            alt={hit.title}
-            loading="lazy"
-            decoding="async"
-            className="max-w-none"
-            style={{
-              position: "absolute",
-              width: `${scaleW * 100}%`,
-              height: `${scaleH * 100}%`,
-              left: `${-hit.region.x * scaleW}%`,
-              top: `${-hit.region.y * scaleH}%`,
-            }}
-          />
-        </div>
-      );
-    }
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={hit.thumbUrl}
-        alt={hit.title}
-        loading="lazy"
-        decoding="async"
-        className={cn(cls, "object-cover")}
-      />
-    );
-  }
-  const Icon = hit.icon ?? Bookmark;
-  return (
-    <div
-      aria-hidden="true"
-      className={cn(cls, "text-muted-foreground grid place-items-center")}
-    >
-      <Icon className="size-4" />
-    </div>
   );
 }

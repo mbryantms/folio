@@ -66,6 +66,7 @@ use redis::aio::ConnectionManager;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use uuid::Uuid;
 
+pub mod activity;
 pub mod archive_edit;
 pub mod archive_transforms;
 pub mod audit_log_retention;
@@ -378,10 +379,16 @@ impl JobRuntime {
                 return;
             }
 
+            let started = std::time::Instant::now();
             let outcome = self
                 .clone()
                 .run_monitor_once(state.clone(), &shutdown)
                 .await;
+            // A monitor that ran healthily for a while earns a fresh backoff;
+            // only back-to-back failures should climb toward the 30s cap.
+            if started.elapsed() >= std::time::Duration::from_secs(60) {
+                delay = std::time::Duration::from_secs(1);
+            }
             if shutdown.is_cancelled() {
                 // The monitor has drained its in-flight jobs; write the
                 // cover stamps they left buffered so a restart does not
@@ -426,6 +433,29 @@ impl JobRuntime {
         let scan_concurrency = state.cfg().scan_worker_count;
         let post_concurrency = state.cfg().post_scan_worker_count;
 
+        // Free our worker names before registering them. apalis-redis refuses
+        // to register a worker whose name was seen within the orphan window,
+        // so a restart inside that window used to leave those workers dead
+        // (scans stuck "queued") until the next restart. Best effort: on a
+        // Redis error the monitor still starts, and apalis's own orphan
+        // recovery takes over once the window passes.
+        match self.release_stale_workers().await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(
+                requeued = n,
+                "apalis: released stale worker registrations; re-enqueued their in-flight jobs"
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, "apalis: could not release stale worker registrations")
+            }
+        }
+
+        // A worker whose future fails (a Redis outage, a registration
+        // refusal) is not restarted in place: apalis would retry it in a hot
+        // loop with no delay. Instead the failure stops this monitor
+        // gracefully and [`Self::run`] starts a fresh one after its backoff.
+        let worker_failed = shutdown.child_token();
+
         // apalis 1.0 registers a worker *factory*: the monitor rebuilds the
         // worker on every (re)start, so each registration captures its
         // storage + state and builds the chain inside the closure. Builder
@@ -455,13 +485,27 @@ impl JobRuntime {
                         .backend(storage.clone().poll_with_interval(JOB_POLL_INTERVAL))
                         .concurrency($concurrency)
                         .data(state.clone())
-                        .layer(metrics_layer::JobMetricsLayer::new($name))
+                        .layer(
+                            metrics_layer::JobMetricsLayer::new($name)
+                                .with_activity(state.job_activity.clone()),
+                        )
                         .build($wrapped)
                 })
             }};
         }
 
-        let monitor = Monitor::new();
+        let monitor = Monitor::new().should_restart({
+            let worker_failed = worker_failed.clone();
+            move |worker, error| {
+                tracing::error!(
+                    worker = %worker.name(),
+                    error = ?error,
+                    "apalis worker failed; restarting the job monitor"
+                );
+                worker_failed.cancel();
+                false
+            }
+        });
         let monitor = register!(
             monitor,
             "scan",
@@ -616,8 +660,10 @@ impl JobRuntime {
             sidecar_reemit::handle
         );
 
+        // Process shutdown, or a failed worker (`worker_failed` is a child
+        // of `shutdown`, so it fires for both).
         let shutdown_fut = {
-            let token = shutdown.clone();
+            let token = worker_failed.clone();
             async move {
                 token.cancelled().await;
                 Ok(())
@@ -904,6 +950,24 @@ fn storage<T>(conn: ConnectionManager) -> RedisStorage<T> {
     RedisStorage::new(conn).with_config(storage_config::<T>())
 }
 
+/// [`JobRuntime::release_stale_workers`]: apalis-redis's
+/// `reenqueue_orphaned.lua` for one named worker, minus the "has it
+/// expired" check. KEYS: workers zset, active list, signal list, in-flight
+/// set prefix. ARGV[1]: worker name. Returns the jobs re-enqueued.
+const RELEASE_WORKER_LUA: &str = r#"
+local inflight = KEYS[4] .. ":" .. ARGV[1]
+local jobs = redis.call("smembers", inflight)
+local n = #jobs
+if n > 0 then
+    redis.call("rpush", KEYS[2], unpack(jobs))
+    redis.call("del", inflight)
+    redis.call("del", KEYS[3])
+    redis.call("lpush", KEYS[3], 1)
+end
+redis.call("zrem", KEYS[1], ARGV[1])
+return n
+"#;
+
 /// Max seconds the apalis monitor waits for in-flight jobs to drain on shutdown
 /// before exiting anyway (OPS-3). Kept under a typical container stop grace
 /// period (~30s) so the process exits on its own rather than being SIGKILLed
@@ -998,6 +1062,40 @@ impl JobRuntime {
         Ok(total)
     }
 
+    /// Release the apalis worker registrations this process is about to
+    /// claim, re-enqueueing whatever jobs they still held.
+    ///
+    /// Each queue has one worker, named after the queue, and apalis-redis
+    /// keys its liveness (`{queue}:workers` zset) and in-flight set
+    /// (`{queue}:inflight:{name}`) by that name. Any registration found
+    /// before our monitor starts is left over from a previous process (or a
+    /// previous monitor in this one) and is dead, but apalis only treats it
+    /// as dead once the orphan window passes; until then it refuses to
+    /// register a worker with that name. This does what apalis's orphan
+    /// recovery would (move the in-flight jobs back onto `{queue}:active`,
+    /// wake fetchers, drop the registration) without waiting.
+    ///
+    /// Assumes one server process per Redis namespace, which the scan
+    /// coalescing keys ([`Self::clear_stale_scan_keys`]) already do. Returns
+    /// the number of jobs re-enqueued.
+    pub async fn release_stale_workers(&self) -> redis::RedisResult<usize> {
+        let script = redis::Script::new(RELEASE_WORKER_LUA);
+        let mut conn = self.redis.clone();
+        let mut total = 0usize;
+        for (name, cfg) in self.queue_configs() {
+            let n: usize = script
+                .key(cfg.workers_set())
+                .key(cfg.active_jobs_list())
+                .key(cfg.signal_list())
+                .key(cfg.inflight_jobs_set())
+                .arg(name)
+                .invoke_async(&mut conn)
+                .await?;
+            total += n;
+        }
+        Ok(total)
+    }
+
     /// Jobs waiting for a worker — what apalis 0.7's `Storage::len()`
     /// reported (apalis 1.0 has no equivalent). apalis-redis 1.0 pushes
     /// every task into `{queue}:scheduled` stamped `run_at = now`, and a
@@ -1077,7 +1175,7 @@ impl JobRuntime {
     /// Every apalis queue, by its admin label, with the storage config that
     /// names its Redis keys. One list so the depth, dead-letter and gauge
     /// readers can never disagree about which queues exist.
-    fn queue_configs(&self) -> [(&'static str, &RedisConfig); QUEUE_COUNT] {
+    pub(crate) fn queue_configs(&self) -> [(&'static str, &RedisConfig); QUEUE_COUNT] {
         [
             ("scan", self.scan_storage.get_config()),
             ("scan_series", self.scan_series_storage.get_config()),
@@ -1206,6 +1304,80 @@ impl JobRuntime {
         Ok(out)
     }
 
+    /// Lane totals for the named queues, in the order given (unknown labels
+    /// are skipped): `waiting` = the `active` list plus `scheduled` entries
+    /// already due (apalis-redis 1.0 pushes every new job into `scheduled`
+    /// stamped `run_at = now`; a fetch promotes it), `scheduled` = entries
+    /// with a future `run_at` (retry-delayed), `running` = the worker
+    /// in-flight sets. Two pipelined round-trips however many queues.
+    pub async fn lane_counts(
+        &self,
+        labels: &[&str],
+    ) -> redis::RedisResult<Vec<(&'static str, activity::LaneCounts)>> {
+        let all = self.queue_configs();
+        let queues: Vec<(&'static str, &RedisConfig)> = labels
+            .iter()
+            .filter_map(|l| all.iter().find(|(q, _)| q == l).copied())
+            .collect();
+        if queues.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.redis.clone();
+        let now = unix_now_secs();
+        let mut pipe = redis::pipe();
+        for (_, cfg) in &queues {
+            pipe.llen(cfg.active_jobs_list())
+                .zcount(cfg.scheduled_jobs_set(), "-inf", now)
+                .zcount(cfg.scheduled_jobs_set(), format!("({now}"), "+inf")
+                .zrange(cfg.workers_set(), 0, -1);
+        }
+        type Row = (i64, i64, i64, Vec<String>);
+        let rows: Vec<Row> = {
+            let flat: Vec<redis::Value> = pipe.query_async(&mut conn).await?;
+            let mut it = flat.into_iter();
+            let mut rows = Vec::with_capacity(queues.len());
+            while let (Some(a), Some(d), Some(f), Some(w)) =
+                (it.next(), it.next(), it.next(), it.next())
+            {
+                rows.push((
+                    redis::from_redis_value(a)?,
+                    redis::from_redis_value(d)?,
+                    redis::from_redis_value(f)?,
+                    redis::from_redis_value(w)?,
+                ));
+            }
+            rows
+        };
+        let mut pipe = redis::pipe();
+        let mut any = false;
+        for ((_, cfg), (_, _, _, workers)) in queues.iter().zip(&rows) {
+            for w in workers {
+                pipe.scard(inflight_set_key(cfg, w));
+                any = true;
+            }
+        }
+        let sizes: Vec<i64> = if any {
+            pipe.query_async(&mut conn).await?
+        } else {
+            Vec::new()
+        };
+        let mut sizes = sizes.into_iter();
+        Ok(queues
+            .iter()
+            .zip(rows)
+            .map(|((label, _), (active, due, future, workers))| {
+                (
+                    *label,
+                    activity::LaneCounts {
+                        waiting: active + due,
+                        scheduled: future,
+                        running: sizes.by_ref().take(workers.len()).sum(),
+                    },
+                )
+            })
+            .collect())
+    }
+
     /// The thumbnail jobs Redis still holds (waiting, retry-delayed or
     /// fetched by a worker), decoded from the queue's job-data hash. Read
     /// once at boot to re-seed the process-local dedupe set
@@ -1273,7 +1445,7 @@ fn decode_job_args<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Option<T> {
 }
 
 /// Unix seconds, the clock apalis-redis stamps `run_at` with.
-fn unix_now_secs() -> u64 {
+pub(crate) fn unix_now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1283,7 +1455,7 @@ fn unix_now_secs() -> u64 {
 /// A worker's in-flight SET (`{queue}:inflight:{worker}`) — the key
 /// `Config::inflight_set_for` derives, for a worker name read back from
 /// the `{queue}:workers` ZSET rather than a live `WorkerContext`.
-fn inflight_set_key(cfg: &RedisConfig, worker: &str) -> String {
+pub(crate) fn inflight_set_key(cfg: &RedisConfig, worker: &str) -> String {
     format!("{}:{worker}", cfg.inflight_jobs_set())
 }
 

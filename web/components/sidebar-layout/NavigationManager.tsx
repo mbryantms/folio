@@ -17,7 +17,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
   ChevronDown,
   ChevronUp,
@@ -32,27 +31,18 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { mainNavIcons } from "@/components/library/main-nav-icons";
 import { railIconByKey } from "@/components/library/rail-icons";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { SidebarLayoutSkeleton } from "@/components/skeletons/SettingsShapes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CollapsiblePickerSection } from "@/components/folio/CollapsiblePickerSection";
 import { Input } from "@/components/ui/input";
 import { useSidebarLayout } from "@/lib/api/queries";
 import { useUpdateSidebarLayout } from "@/lib/api/mutations";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import { cn } from "@/lib/utils";
 import type {
   SidebarEntryView,
@@ -206,12 +196,22 @@ function SidebarSection() {
     );
   }
 
+  /** Undo instead of confirm (folio-flair-1.0): the reset fires at once
+   *  and Undo re-PATCHes the full pre-reset list (order, hidden rows,
+   *  custom headers + spacers with their labels). */
   function resetToDefaults() {
+    const before = toPayload(entries);
     setOptimistic(null);
     update.mutate(
       { entries: [] },
       {
-        onSuccess: () => toast.success("Sidebar reset to defaults"),
+        onSuccess: () =>
+          showUndoToast({
+            message: "Sidebar reset to defaults",
+            restoredMessage: "Restored your sidebar",
+            failedMessage: "Couldn't restore your sidebar",
+            onUndo: () => update.mutateAsync({ entries: before }),
+          }),
       },
     );
   }
@@ -275,15 +275,36 @@ function SidebarSection() {
    *  override so they can be re-added from the picker. */
   function removeRow(target: SidebarEntryView) {
     if (target.kind !== "header" && target.kind !== "spacer") return;
+    // A custom row (and a header's label) is gone for good once removed,
+    // so offer the same Undo the reset gets.
+    const before = toPayload(entries);
     const nextVisible = visibleEntries.filter(
       (e) => !(e.kind === target.kind && e.ref_id === target.ref_id),
     );
-    commitMutation(nextVisible);
+    setOptimistic([...nextVisible, ...hiddenEntries]);
+    update.mutate(
+      { entries: buildPayload(nextVisible) },
+      {
+        onSuccess: () =>
+          showUndoToast({
+            message:
+              target.kind === "header"
+                ? `Removed header "${target.label}"`
+                : "Removed spacer",
+            failedMessage: "Couldn't restore the row",
+            onUndo: () => update.mutateAsync({ entries: before }),
+          }),
+        onError: () => setOptimistic(null),
+        onSettled: () => setOptimistic(null),
+      },
+    );
   }
 
   if (layoutQ.isLoading) {
     return (
-      <div className="text-muted-foreground py-6 text-sm">Loading layout…</div>
+      <LoadingRegion label="Loading layout…">
+        <SidebarLayoutSkeleton />
+      </LoadingRegion>
     );
   }
   if (layoutQ.isError || !layout) {
@@ -327,30 +348,16 @@ function SidebarSection() {
           <Rows3 className="mr-1.5 size-4" />
           Spacer
         </Button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="outline" size="sm" type="button">
-              <RotateCcw className="mr-1.5 size-4" />
-              Reset
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Reset sidebar to defaults?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Every customization here — removed rows, reorders, custom
-                headers + spacers — gets cleared. New libraries and saved views
-                you add later will automatically appear.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={resetToDefaults}>
-                Reset
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          onClick={resetToDefaults}
+          disabled={update.isPending}
+        >
+          <RotateCcw className="mr-1.5 size-4" />
+          Reset
+        </Button>
       </div>
       <DndContext
         sensors={sensors}
@@ -482,11 +489,8 @@ function SidebarRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id });
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
+  } = useSortable({ id, transition: useSpringSort() });
+  const style = sortableStyle({ transform, transition, isDragging });
 
   const isHeader = entry.kind === "header";
   const isSpacer = entry.kind === "spacer";
@@ -528,9 +532,10 @@ function SidebarRow({
     <li
       ref={setNodeRef}
       style={style}
+      {...(editing ? {} : grabAnywhere(listeners))}
       className={cn(
         "bg-background flex items-center gap-3 px-3 py-2",
-        isDragging && "opacity-60",
+        isDragging && DRAG_LIFT_CLASS,
         !entry.visible && "opacity-50",
         isHeader && "bg-muted/30",
         isSpacer && "bg-muted/10 py-1",
@@ -653,6 +658,12 @@ import {
 } from "@/components/ui/dialog";
 import { useSavedViews } from "@/lib/api/queries";
 import { useSidebarSavedView } from "@/lib/api/mutations";
+import {
+  DRAG_LIFT_CLASS,
+  grabAnywhere,
+  sortableStyle,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
 
 /** Picker for the Sidebar settings page. Surfaces things the user
  *  can bring INTO the sidebar:

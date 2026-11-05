@@ -18,7 +18,10 @@ import { NativeSelect } from "@/components/folio/native-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/folio/filter-pill";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  HealthIssueCardsSkeleton,
+  ScanRunsCardSkeleton,
+} from "@/components/skeletons/AdminShapes";
 import {
   Table,
   TableBody,
@@ -271,7 +274,7 @@ function HealthIssuesRail({
   const query = useAdminHealthIssues(filters);
   const { data, isLoading, error } = query;
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (isLoading) return <HealthIssueCardsSkeleton />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
   const items = data?.pages.flatMap((p) => p.items) ?? [];
   if (items.length === 0) {
@@ -304,7 +307,7 @@ function HealthIssueRow({ row }: { row: CrossLibHealthIssueView }) {
 
   return (
     <Card>
-      <CardContent className="flex items-start gap-3 py-3">
+      <CardContent className="flex flex-row items-start gap-3 py-3">
         <SeverityIcon severity={row.severity} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -383,7 +386,7 @@ function ScanRunsRail({
   const query = useAdminScanRunsInfinite(filters);
   const { data, isLoading, error } = query;
 
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (isLoading) return <ScanRunsCardSkeleton />;
   if (error) return <p className="text-destructive text-sm">{error.message}</p>;
   const items = data?.pages.flatMap((p) => p.items) ?? [];
   if (items.length === 0) {

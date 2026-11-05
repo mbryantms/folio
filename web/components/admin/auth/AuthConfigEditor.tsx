@@ -1,6 +1,6 @@
 "use client";
 
-import { Skeleton } from "@/components/ui/skeleton";
+import { AuthConfigSkeleton } from "@/components/skeletons/AdminShapes";
 import { useAdminSettings } from "@/lib/api/queries";
 
 import { AuthConfigForm, type AuthConfigInitial } from "./AuthConfigForm";
@@ -9,7 +9,7 @@ import { TokensCard } from "./TokensCard";
 export function AuthConfigEditor() {
   const settings = useAdminSettings();
 
-  if (settings.isLoading) return <Skeleton className="h-96 w-full" />;
+  if (settings.isLoading) return <AuthConfigSkeleton />;
   if (settings.error || !settings.data) {
     return (
       <p className="text-destructive text-sm">Failed to load auth settings.</p>

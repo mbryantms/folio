@@ -66,6 +66,7 @@ import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
+import { useReducedMotion } from "@/lib/visual-effects";
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
@@ -301,6 +302,36 @@ export function LibraryGridView({
     }
     wasSelectModeRef.current = selection.selectMode;
   }, [selection.selectMode]);
+
+  // Filter/sort changes keep the previous results up (`keepPreviousData`
+  // on both infinite queries): they dim while the new first page loads,
+  // then the new results fade in. The skeleton is for the first load only.
+  // While stale, don't page further into the old result set.
+  const showingStale = query.isPlaceholderData;
+  const reduceMotion = useReducedMotion();
+  const resultsRef = React.useRef<HTMLDivElement | null>(null);
+  const wasStaleRef = React.useRef(false);
+  React.useEffect(() => {
+    const el = resultsRef.current;
+    if (wasStaleRef.current && !showingStale && el) {
+      // A filter changed from deep in the grid: bring the new first row
+      // into view (under the sticky toolbar), hidden by the fade.
+      const margin = parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+      if (el.getBoundingClientRect().top < margin) {
+        el.scrollIntoView({ block: "start", behavior: "auto" });
+      }
+      if (!reduceMotion && typeof el.animate === "function") {
+        el.animate(
+          [
+            { opacity: 0.35, transform: "translateY(4px)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { duration: 260, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+        );
+      }
+    }
+    wasStaleRef.current = showingStale;
+  }, [showingStale, reduceMotion]);
 
   // Infinite fetch is driven from inside `VirtualizedCardGrid` (last
   // virtual row nearing the loaded end) — the windowed DOM makes a
@@ -544,70 +575,66 @@ export function LibraryGridView({
         isPending={isMarkPending}
       />
 
-      {facetCount > 0 ? (
-        <ActiveChips
-          className={isSeriesMode ? "max-sm:pr-6" : undefined}
-          status={status}
-          metadataCompleteness={metadataCompleteness}
-          providerMatch={providerMatch}
-          providerSource={providerSource}
-          readStatus={readStatus}
-          yearFrom={yearFrom}
-          yearTo={yearTo}
-          ratingRange={ratingRange}
-          publishers={publishers}
-          languages={languages}
-          ageRatings={ageRatings}
-          genres={genres}
-          tags={tags}
-          credits={credits}
-          anyCredits={anyCredits}
-          characters={characters}
-          teams={teams}
-          locations={locations}
-          onClearStatus={() => setStatus("any")}
-          onClearMetadataCompleteness={() => setMetadataCompleteness(undefined)}
-          onClearProviderMatch={() => {
-            setProviderMatch(undefined);
-            setProviderSource(undefined);
-          }}
-          onRemoveReadStatus={(v) =>
-            setReadStatus(readStatus.filter((x) => x !== v))
-          }
-          onClearYear={() => {
-            setYearFrom("");
-            setYearTo("");
-          }}
-          onClearRating={() => setRatingRange(null)}
-          onRemovePublisher={(v) =>
-            setPublishers(publishers.filter((x) => x !== v))
-          }
-          onRemoveLanguage={(v) =>
-            setLanguages(languages.filter((x) => x !== v))
-          }
-          onRemoveAgeRating={(v) =>
-            setAgeRatings(ageRatings.filter((x) => x !== v))
-          }
-          onRemoveGenre={(v) => setGenres(genres.filter((x) => x !== v))}
-          onRemoveTag={(v) => setTags(tags.filter((x) => x !== v))}
-          onRemoveCredit={(role, v) =>
-            setCreditRole(
-              role,
-              credits[role].filter((x) => x !== v),
-            )
-          }
-          onRemoveAnyCredit={(v) =>
-            setAnyCredits(anyCredits.filter((x) => x !== v))
-          }
-          onRemoveCharacter={(v) =>
-            setCharacters(characters.filter((x) => x !== v))
-          }
-          onRemoveTeam={(v) => setTeams(teams.filter((x) => x !== v))}
-          onRemoveLocation={(v) =>
-            setLocations(locations.filter((x) => x !== v))
-          }
-        />
-      ) : null}
+      {/* Always mounted (renders nothing when no facet is active) so the
+          last removed chip can still animate out. */}
+      <ActiveChips
+        className={isSeriesMode ? "max-sm:pr-6" : undefined}
+        status={status}
+        metadataCompleteness={metadataCompleteness}
+        providerMatch={providerMatch}
+        providerSource={providerSource}
+        readStatus={readStatus}
+        yearFrom={yearFrom}
+        yearTo={yearTo}
+        ratingRange={ratingRange}
+        publishers={publishers}
+        languages={languages}
+        ageRatings={ageRatings}
+        genres={genres}
+        tags={tags}
+        credits={credits}
+        anyCredits={anyCredits}
+        characters={characters}
+        teams={teams}
+        locations={locations}
+        onClearStatus={() => setStatus("any")}
+        onClearMetadataCompleteness={() => setMetadataCompleteness(undefined)}
+        onClearProviderMatch={() => {
+          setProviderMatch(undefined);
+          setProviderSource(undefined);
+        }}
+        onRemoveReadStatus={(v) =>
+          setReadStatus(readStatus.filter((x) => x !== v))
+        }
+        onClearYear={() => {
+          setYearFrom("");
+          setYearTo("");
+        }}
+        onClearRating={() => setRatingRange(null)}
+        onRemovePublisher={(v) =>
+          setPublishers(publishers.filter((x) => x !== v))
+        }
+        onRemoveLanguage={(v) => setLanguages(languages.filter((x) => x !== v))}
+        onRemoveAgeRating={(v) =>
+          setAgeRatings(ageRatings.filter((x) => x !== v))
+        }
+        onRemoveGenre={(v) => setGenres(genres.filter((x) => x !== v))}
+        onRemoveTag={(v) => setTags(tags.filter((x) => x !== v))}
+        onRemoveCredit={(role, v) =>
+          setCreditRole(
+            role,
+            credits[role].filter((x) => x !== v),
+          )
+        }
+        onRemoveAnyCredit={(v) =>
+          setAnyCredits(anyCredits.filter((x) => x !== v))
+        }
+        onRemoveCharacter={(v) =>
+          setCharacters(characters.filter((x) => x !== v))
+        }
+        onRemoveTeam={(v) => setTeams(teams.filter((x) => x !== v))}
+        onRemoveLocation={(v) => setLocations(locations.filter((x) => x !== v))}
+      />
 
       {/* A–Z jump rail (B9): series mode only — maps to the server
           `starts_with` filter on normalized_name. Issues sort by number,
@@ -638,81 +665,88 @@ export function LibraryGridView({
         </div>
       ) : null}
 
-      {query.isError ? (
-        // Recoverable error state (audit UX-6): a transient fetch failure
-        // gets a one-click retry instead of a dead-end paragraph — and we
-        // never interpolate the raw error object at the user.
-        <EmptyState
-          size="sm"
-          title={`Couldn't load ${mode === "series" ? "series" : "issues"}`}
-          description="Something went wrong while fetching. Check your connection and try again."
-          action={
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void query.refetch()}
-            >
-              Retry
-            </Button>
-          }
-        />
-      ) : query.isLoading ? (
-        <GridSkeleton mode={mode} style={gridStyle} />
-      ) : items.length === 0 ? (
-        <GridEmptyState
-          mode={mode}
-          facetCount={facetCount}
-          hasQuery={!!trimmedQ}
-          onClearFacets={clearFacets}
-          isAllLibraries={libraryId === null}
-          libraryCount={libraryCount}
-        />
-      ) : (
-        <div className={isSeriesMode ? "max-sm:pr-2" : undefined}>
-          <VirtualizedCardGrid
-            items={items}
-            cardSize={cardSize}
-            estimateTextHeight={isSeriesMode ? SERIES_TEXT_H : ISSUE_TEXT_H}
-            hasNextPage={!!query.hasNextPage}
-            isFetchingNextPage={query.isFetchingNextPage}
-            fetchNextPage={() => void query.fetchNextPage()}
-            enableScrollRestore
-            renderCard={(item) =>
-              isSeriesMode ? (
-                <SeriesCard
-                  series={item as (typeof seriesItems)[number]}
-                  size="md"
-                  selectMode={
-                    selection.selectMode
-                      ? {
-                          isActive: true,
-                          isSelected: selection.isSelected(item.id),
-                          onToggle: (ev) => selection.toggle(item.id, ev),
-                        }
-                      : undefined
-                  }
-                  onEnterSelectMode={(id) => selection.toggle(id)}
-                />
-              ) : (
-                <IssueCard
-                  issue={item as (typeof issueItems)[number]}
-                  selectMode={
-                    selection.selectMode
-                      ? {
-                          isActive: true,
-                          isSelected: selection.isSelected(item.id),
-                          onToggle: (ev) => selection.toggle(item.id, ev),
-                        }
-                      : undefined
-                  }
-                  onEnterSelectMode={(id) => selection.toggle(id)}
-                />
-              )
+      <div
+        ref={resultsRef}
+        className="library-grid-results"
+        data-stale={showingStale ? "" : undefined}
+        aria-busy={showingStale || undefined}
+      >
+        {query.isError ? (
+          // Recoverable error state (audit UX-6): a transient fetch failure
+          // gets a one-click retry instead of a dead-end paragraph — and we
+          // never interpolate the raw error object at the user.
+          <EmptyState
+            size="sm"
+            title={`Couldn't load ${mode === "series" ? "series" : "issues"}`}
+            description="Something went wrong while fetching. Check your connection and try again."
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void query.refetch()}
+              >
+                Retry
+              </Button>
             }
           />
-        </div>
-      )}
+        ) : query.isLoading && !query.data ? (
+          <GridSkeleton mode={mode} style={gridStyle} />
+        ) : items.length === 0 ? (
+          <GridEmptyState
+            mode={mode}
+            facetCount={facetCount}
+            hasQuery={!!trimmedQ}
+            onClearFacets={clearFacets}
+            isAllLibraries={libraryId === null}
+            libraryCount={libraryCount}
+          />
+        ) : (
+          <div className={isSeriesMode ? "max-sm:pr-2" : undefined}>
+            <VirtualizedCardGrid
+              items={items}
+              cardSize={cardSize}
+              estimateTextHeight={isSeriesMode ? SERIES_TEXT_H : ISSUE_TEXT_H}
+              hasNextPage={!!query.hasNextPage && !showingStale}
+              isFetchingNextPage={query.isFetchingNextPage}
+              fetchNextPage={() => void query.fetchNextPage()}
+              enableScrollRestore
+              renderCard={(item) =>
+                isSeriesMode ? (
+                  <SeriesCard
+                    series={item as (typeof seriesItems)[number]}
+                    size="md"
+                    selectMode={
+                      selection.selectMode
+                        ? {
+                            isActive: true,
+                            isSelected: selection.isSelected(item.id),
+                            onToggle: (ev) => selection.toggle(item.id, ev),
+                          }
+                        : undefined
+                    }
+                    onEnterSelectMode={(id) => selection.toggle(id)}
+                  />
+                ) : (
+                  <IssueCard
+                    issue={item as (typeof issueItems)[number]}
+                    selectMode={
+                      selection.selectMode
+                        ? {
+                            isActive: true,
+                            isSelected: selection.isSelected(item.id),
+                            onToggle: (ev) => selection.toggle(item.id, ev),
+                          }
+                        : undefined
+                    }
+                    onEnterSelectMode={(id) => selection.toggle(id)}
+                  />
+                )
+              }
+            />
+          </div>
+        )}
+      </div>
 
       <FilterSheet
         open={filterOpen}

@@ -110,6 +110,7 @@ import type {
   BackgroundWorkView,
   DeadLetterView,
   DeadJobsView,
+  QueueJobsView,
   LogWidgetListView,
   ReadingLogFilters,
   ReadingLogPageView,
@@ -1120,6 +1121,29 @@ export function useDeadJobs(
 }
 
 /**
+ * Per-queue job lanes (waiting / scheduled / running / recent cards) for the
+ * Queue page. `queue = null` lists every queue. The scan-events WS
+ * invalidates this on every `queue.activity` (coalesced), so the poll is only
+ * a fallback for a dropped socket. Admin-only; callers gate on
+ * `me.role === "admin"`.
+ */
+export function useQueueJobs(
+  queue: string | null,
+  opts?: { limit?: number; enabled?: boolean; intervalMs?: number },
+) {
+  const { limit = 20, enabled = true, intervalMs = 10_000 } = opts ?? {};
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (queue) params.set("queue", queue);
+  return useQuery({
+    queryKey: queryKeys.queueJobs(queue, limit),
+    queryFn: () => jsonFetch<QueueJobsView>(`/admin/queue/jobs?${params}`),
+    enabled,
+    refetchInterval: intervalMs,
+    staleTime: 1_000,
+  });
+}
+
+/**
  * Library thumbnail-pipeline status (M3). Polled at 5s while the queue is
  * draining (i.e. `in_flight > 0`); otherwise refreshes on tab focus or
  * manual revalidation. Called from the library overview card.
@@ -1635,6 +1659,10 @@ export function useSeriesListInfinite(
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: options.enabled ?? true,
+    // A filter/sort change keeps the previous results on screen (dimmed
+    // by the grid) until the new first page lands, instead of dropping
+    // back to the skeleton (flair pre-merge polish).
+    placeholderData: keepPreviousData,
     // Keep loaded pages cached longer than the 5-min default so a
     // browse → open → back round-trip restores the full windowed grid
     // (and its scroll position) from cache instead of refetching page 1
@@ -1661,6 +1689,9 @@ export function useIssuesCrossListInfinite(
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: options.enabled ?? true,
+    // See `useSeriesListInfinite`: previous results stay up while the
+    // next filter's first page loads.
+    placeholderData: keepPreviousData,
     // See `useSeriesListInfinite` — keep pages cached for back-nav grid
     // + scroll restoration (audit B15 / G1).
     gcTime: 30 * 60_000,

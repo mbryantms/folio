@@ -12,6 +12,7 @@ import { DOUBLE_TAP_MS } from "@/lib/reader/zoom";
 import {
   initialChromeVisible,
   loadChromeDismissed,
+  resetSessionPageStrip,
   useReaderStore,
 } from "@/lib/reader/store";
 
@@ -42,6 +43,7 @@ function open(issueId = "issue-1") {
 }
 
 beforeEach(() => {
+  resetSessionPageStrip();
   window.localStorage.clear();
   vi.useFakeTimers();
 });

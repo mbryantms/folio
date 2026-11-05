@@ -18,7 +18,7 @@ type Common = {
    *  - `compact` — vertical stack with small stars, fits in a stats card.
    *  - `inline`  — outline-pill that visually matches `<Badge variant="outline">`,
    *    so the widget can sit alongside status badges. */
-  variant?: "default" | "compact" | "inline";
+  variant?: "default" | "compact" | "inline" | "bare";
   className?: string;
 };
 
@@ -95,6 +95,7 @@ export function UserRating(props: IssueProps | SeriesProps) {
     // so the row stays compact.
     return (
       <div
+        data-hero-chip=""
         className={cn(
           "border-border text-foreground inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5",
           props.className,
@@ -113,6 +114,26 @@ export function UserRating(props: IssueProps | SeriesProps) {
               ? `${rating}.0`
               : `${rating}`}
         </span>
+      </div>
+    );
+  }
+
+  if (variant === "bare") {
+    // Stars and value with no container — the header's text treatment,
+    // where the stars themselves are the affordance.
+    return (
+      <div className={cn("inline-flex items-center gap-1.5", props.className)}>
+        <RatingStars
+          value={rating}
+          onChange={onChange}
+          size="sm"
+          label={label}
+        />
+        {rating != null ? (
+          <span className="text-muted-foreground text-xs leading-none tabular-nums">
+            {rating === Math.floor(rating) ? `${rating}.0` : `${rating}`}
+          </span>
+        ) : null}
       </div>
     );
   }

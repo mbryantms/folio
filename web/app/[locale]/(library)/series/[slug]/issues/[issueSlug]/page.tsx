@@ -14,12 +14,20 @@ import {
   Languages,
 } from "lucide-react";
 import Link from "next/link";
+import { ViewTransition } from "react";
+
+import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { RecordVisit } from "@/components/search/RecordVisit";
+import { issueVisit } from "@/lib/search/recent-visits";
+import { issueCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
 
 import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
 import { issueUrl, readerUrl, seriesUrl } from "@/lib/urls";
 import { IssueActivityTab } from "@/components/activity/IssueActivityTab";
 import { Cover } from "@/components/Cover";
+import { MorphLink } from "@/components/library/MorphLink";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import { ChipList } from "@/components/library/ChipList";
 import {
   DetailSection,
@@ -45,6 +53,7 @@ import {
   type InlineIssueField,
 } from "@/components/library/InlineIssueFieldEdit";
 import { Stat } from "@/components/library/Stat";
+import { HeroFactsLine } from "@/components/library/HeroFactsLine";
 import { UserRating } from "@/components/library/UserRating";
 import { IssueClosingNote } from "@/components/library/IssueClosingNote";
 import { Badge } from "@/components/ui/badge";
@@ -76,12 +85,12 @@ import { statusTone } from "@/lib/ui/status-tone";
 import {
   type ProgressLike,
   type ReadState,
-  readButtonLabel,
   readStateFor,
 } from "@/lib/reading-state";
 
 import { InlineNotesEditor } from "./InlineNotesEditor";
 import { IssueActions } from "./IssueActions";
+import { IssueReadLabel } from "./IssueReadLabel";
 import { IssueMetadataTab } from "./IssueMetadataTab";
 
 export default async function IssuePage({
@@ -177,7 +186,6 @@ export default async function IssuePage({
       0;
 
   const readState: ReadState = readStateFor(issue, issueProgress);
-  const readLabel = readButtonLabel(readState);
 
   const heading =
     issue.title ??
@@ -226,7 +234,13 @@ export default async function IssuePage({
     ) : null;
 
   return (
-    <div className="space-y-10">
+    <div className="relative isolate space-y-10">
+      <RecordVisit visit={issueVisit(issue)} />
+      <HeroBackdrop
+        src={
+          issue.state === "active" ? `/issues/${issue.id}/pages/0/thumb` : null
+        }
+      />
       <nav aria-label="Breadcrumb" className="text-muted-foreground text-xs">
         {/* Mobile: a back chevron + parent series name only. The H1
             already announces the issue title, so the breadcrumb's
@@ -276,19 +290,25 @@ export default async function IssuePage({
             below). */}
         <div className="flex flex-col gap-3 sm:gap-4">
           <div className="mx-auto w-4/5 max-w-full sm:w-56 lg:mx-0 lg:w-72">
-            <Cover
-              src={
-                issue.state === "active"
-                  ? `/issues/${issue.id}/pages/0/thumb`
-                  : null
-              }
-              alt={heading}
-              fallback={
-                issue.state === "active"
-                  ? "Cover"
-                  : issueStateLabel(issue.state)
-              }
-            />
+            <ViewTransition
+              name={issueCoverName(issue.series_slug, issue.slug)}
+              share="morph"
+              default="none"
+            >
+              <Cover
+                src={
+                  issue.state === "active"
+                    ? `/issues/${issue.id}/pages/0/thumb`
+                    : null
+                }
+                alt={heading}
+                fallback={
+                  issue.state === "active"
+                    ? "Cover"
+                    : issueStateLabel(issue.state)
+                }
+              />
+            </ViewTransition>
           </div>
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon
@@ -296,9 +316,13 @@ export default async function IssuePage({
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 sm:max-w-sm lg:mx-0 lg:max-w-72">
             {issue.state === "active" ? (
               <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
-                <Link href={readerUrl(issue, { cbl: cblSavedViewId })}>
-                  {readLabel}
-                </Link>
+                <MorphLink
+                  href={readerUrl(issue, { cbl: cblSavedViewId })}
+                  morphName={issueCoverName(issue.series_slug, issue.slug)}
+                  morphSrc={`/issues/${issue.id}/pages/0/thumb`}
+                >
+                  <IssueReadLabel issue={issue} readState={readState} />
+                </MorphLink>
               </Button>
             ) : (
               <p
@@ -317,7 +341,9 @@ export default async function IssuePage({
           </div>
         </div>
 
-        <div className="min-w-0 space-y-5">
+        {/* `hero-chips`: every pill in the header shares one surface that
+            stays legible over the tinted backdrop (globals.css). */}
+        <div className="hero-chips min-w-0 space-y-5">
           <div>
             <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               {series && (
@@ -329,10 +355,7 @@ export default async function IssuePage({
                 </Link>
               )}
               {issue.number && (
-                <span
-                  aria-label={`Issue number ${issue.number}`}
-                  className="border-primary/50 bg-primary/10 text-primary inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-sm font-semibold tabular-nums"
-                >
+                <span className="text-foreground font-mono font-semibold tabular-nums">
                   #{issue.number}
                 </span>
               )}
@@ -357,18 +380,32 @@ export default async function IssuePage({
               lastReadAt={activityStats?.last_read_at ?? null}
               timesRead={activityStats?.totals.sessions ?? 0}
             />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {seriesStatus && <Badge variant="outline">{seriesStatus}</Badge>}
-              {issue.age_rating && (
-                <Badge variant="secondary">{issue.age_rating}</Badge>
-              )}
-              {issue.format && (
-                <Badge variant="secondary">{issue.format}</Badge>
-              )}
-              {issue.manga && issue.manga !== "No" && (
-                <Badge variant="secondary">Manga</Badge>
-              )}
-              {issue.black_and_white && <Badge variant="secondary">B/W</Badge>}
+            {/* Facts as words, one line with the rating and source links;
+                badges only for warnings. */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <HeroFactsLine
+                facts={[
+                  seriesStatus,
+                  issue.age_rating,
+                  issue.format,
+                  issue.manga && issue.manga !== "No" ? "Manga" : null,
+                  issue.black_and_white ? "B/W" : null,
+                ]}
+              />
+              <UserRating
+                scope="issue"
+                seriesSlug={issue.series_slug}
+                issueSlug={issue.slug}
+                initial={issue.user_rating ?? null}
+                label="Your rating"
+                variant="bare"
+              />
+              <ProviderBadgesRow
+                scope="issue"
+                seriesSlug={issue.series_slug}
+                issueSlug={issue.slug}
+                variant="text"
+              />
               {issue.state !== "active" && (
                 <Badge
                   variant="destructive"
@@ -398,19 +435,6 @@ export default async function IssuePage({
                       : "Partial metadata"}
                   </Badge>
                 )}
-              <UserRating
-                scope="issue"
-                seriesSlug={issue.series_slug}
-                issueSlug={issue.slug}
-                initial={issue.user_rating ?? null}
-                label="Your rating"
-                variant="inline"
-              />
-              <ProviderBadgesRow
-                scope="issue"
-                seriesSlug={issue.series_slug}
-                issueSlug={issue.slug}
-              />
             </div>
             {/* "Sidecar metadata refreshed N ago" badge moved into the
                 Edit sheet header — it's operator-facing context that
@@ -1230,16 +1254,21 @@ function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
   return (
     <Link
       href={issueUrl(issue)}
+      // `data-card`: same cover-colour hover glow as every other card.
+      data-card=""
       className="group block min-w-0 space-y-1.5 rounded-md focus-visible:outline-none"
     >
-      <Cover
-        src={issue.cover_url}
-        alt={issue.title ?? `Issue ${issue.number ?? ""}`}
-        fallback={
-          issue.state === "active" ? "Cover" : issueStateLabel(issue.state)
-        }
-        className="group-focus-visible:ring-ring transition duration-200 group-hover:scale-[1.02] group-focus-visible:ring-2"
-      />
+      {/* Same tilt + sheen as the library cards (when that effect is on). */}
+      <CoverTilt className="relative">
+        <Cover
+          src={issue.cover_url}
+          alt={issue.title ?? `Issue ${issue.number ?? ""}`}
+          fallback={
+            issue.state === "active" ? "Cover" : issueStateLabel(issue.state)
+          }
+          className="group-focus-visible:ring-ring transition duration-200 group-hover:brightness-110 group-focus-visible:ring-2"
+        />
+      </CoverTilt>
       <div className="min-w-0">
         <p className="text-foreground truncate text-xs font-medium">
           {issue.number ? `#${issue.number}` : "—"}

@@ -18,7 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FilterPill } from "@/components/folio/filter-pill";
-import { Skeleton } from "@/components/ui/skeleton";
+import { DuplicateGroupsSkeleton } from "@/components/skeletons/AdminShapes";
 import {
   useClearDuplicateDecision,
   useSetDuplicateDecision,
@@ -125,7 +125,7 @@ export function DuplicatesPanel({ libraryId }: { libraryId: string }) {
       </div>
 
       {isLoading ? (
-        <Skeleton className="h-64 w-full" />
+        <DuplicateGroupsSkeleton />
       ) : error ? (
         <p className="text-destructive text-sm">{error.message}</p>
       ) : groups.length === 0 ? (

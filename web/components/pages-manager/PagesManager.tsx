@@ -18,7 +18,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
   ExternalLink,
   GripVertical,
@@ -36,16 +35,11 @@ import {
 import { NewPageButton } from "@/components/library/NewPageButton";
 import { EditDescriptionDialog } from "@/components/saved-views/EditDescriptionDialog";
 import { ManagePinsDialog } from "@/components/saved-views/ManagePinsDialog";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  PagesManagerSkeleton,
+  RailRowsSkeleton,
+} from "@/components/skeletons/SettingsShapes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,7 +57,6 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import {
-  useDeletePage,
   useReorderSavedViews,
   useTogglePageSidebar,
   useTogglePinOnPage,
@@ -74,6 +67,14 @@ import { useMe, useMePages, useSavedViews } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 import type { PageView, SavedViewView } from "@/lib/api/types";
 import { Label } from "@/components/ui/label";
+import { useDeletePageWithUndo } from "@/lib/pages/use-delete-page-undo";
+import { useHeldOrder } from "@/lib/ui/held-order";
+import {
+  DRAG_LIFT_CLASS,
+  grabAnywhere,
+  sortableStyle,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
 
 /** Server-side fallback when the `/auth/me` lookup hasn't resolved
  *  yet. Matches the column default in
@@ -121,7 +122,9 @@ export function PagesManager() {
 
   if (pagesQ.isLoading) {
     return (
-      <div className="text-muted-foreground py-12 text-sm">Loading pages…</div>
+      <LoadingRegion label="Loading pages…">
+        <PagesManagerSkeleton />
+      </LoadingRegion>
     );
   }
   if (sortedPages.length === 0 || activeTab === null) {
@@ -188,7 +191,7 @@ function PageTabContent({ page }: { page: PageView }) {
 function PageHeader({ page }: { page: PageView }) {
   const updatePage = useUpdatePage(page.id);
   const toggleSidebar = useTogglePageSidebar(page.id);
-  const del = useDeletePage(page.id);
+  const del = useDeletePageWithUndo(page.id, { leaveRoute: false });
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(page.name);
   const [lastSeen, setLastSeen] = React.useState(page.name);
@@ -197,7 +200,6 @@ function PageHeader({ page }: { page: PageView }) {
     setDraft(page.name);
   }
   const [descOpen, setDescOpen] = React.useState(false);
-  const [confirmOpen, setConfirmOpen] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   React.useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -325,13 +327,11 @@ function PageHeader({ page }: { page: PageView }) {
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  setConfirmOpen(true);
-                }}
+                disabled={del.isPending}
+                onSelect={() => void del.run()}
                 className="text-destructive focus:text-destructive"
               >
-                <Trash2 className="mr-2 size-4" /> Delete page…
+                <Trash2 className="mr-2 size-4" /> Delete page
               </DropdownMenuItem>
             </>
           )}
@@ -343,30 +343,6 @@ function PageHeader({ page }: { page: PageView }) {
         pageId={page.id}
         initial={page.description ?? ""}
       />
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this page?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Pins on this page will be removed. The saved views themselves stay
-              — you can pin them to other pages from Saved views.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                del.mutate();
-                setConfirmOpen(false);
-              }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete page
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </header>
   );
 }
@@ -385,7 +361,6 @@ function PageRailsList({
   const reorder = useReorderSavedViews();
   const toggle = useTogglePinOnPage();
   const [pinOpen, setPinOpen] = React.useState(false);
-  const [optimistic, setOptimistic] = React.useState<string[] | null>(null);
 
   const pinned = React.useMemo(
     () => railsQ.data?.items ?? [],
@@ -395,7 +370,8 @@ function PageRailsList({
   // response is currently pinned here; preserve the server order until
   // an active drag-end overrides it.
   const pinnedIds = React.useMemo(() => pinned.map((v) => v.id), [pinned]);
-  const renderIds = optimistic ?? pinnedIds;
+  const held = useHeldOrder(pinnedIds);
+  const renderIds = held.order;
   const viewById = React.useMemo(() => {
     const m = new Map<string, SavedViewView>();
     for (const v of pinned) m.set(v.id, v);
@@ -419,12 +395,12 @@ function PageRailsList({
     const newIdx = renderIds.indexOf(String(over.id));
     if (oldIdx < 0 || newIdx < 0) return;
     const next = arrayMove(renderIds, oldIdx, newIdx);
-    setOptimistic(next);
+    held.hold(next);
     reorder.mutate(
       { page_id: pageId, view_ids: next },
       {
-        onError: () => setOptimistic(null),
-        onSettled: () => setOptimistic(null),
+        onError: held.release,
+        onSuccess: () => held.releaseLater(next),
       },
     );
   };
@@ -449,9 +425,9 @@ function PageRailsList({
         </Button>
       </div>
       {railsQ.isLoading ? (
-        <div className="text-muted-foreground p-6 text-center text-sm">
-          Loading…
-        </div>
+        <LoadingRegion label="Loading rails…">
+          <RailRowsSkeleton />
+        </LoadingRegion>
       ) : ordered.length === 0 ? (
         <div className="text-muted-foreground border-border/60 m-3 mt-0 flex flex-col items-center gap-2 rounded-md border border-dashed p-6 text-center text-sm">
           <ListPlus className="text-muted-foreground/60 size-5" />
@@ -524,17 +500,17 @@ function RailRow({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: view.id });
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : undefined,
-  };
+  } = useSortable({ id: view.id, transition: useSpringSort() });
+  const style = sortableStyle({ transform, transition, isDragging });
   return (
     <li
       ref={setNodeRef}
       style={style}
-      className="bg-background flex items-center gap-3 px-3 py-2"
+      {...grabAnywhere(listeners)}
+      className={cn(
+        "bg-background flex items-center gap-3 px-3 py-2",
+        isDragging && DRAG_LIFT_CLASS,
+      )}
     >
       <button
         type="button"

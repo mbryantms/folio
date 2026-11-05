@@ -342,3 +342,45 @@ async fn cover_stack_style_round_trip_and_validation() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(get_me(&app, &auth).await["cover_stack_style"], "arc");
 }
+
+/// Effect switches: start empty (web defaults apply), merge per key across
+/// PATCHes, `null` clears one back to its default, and an unknown key or a
+/// non-boolean value 400s (serde rejection) without touching the stored object.
+#[tokio::test]
+async fn effects_merge_clear_and_validation() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "effects@example.com").await;
+    assert_eq!(get_me(&app, &auth).await["effects"], serde_json::json!({}));
+
+    let (status, body) = patch_pref(&app, &auth, r#"{"effects":{"cover_tilt":true}}"#).await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["effects"], serde_json::json!({"cover_tilt": true}));
+
+    // A second PATCH with a different key keeps the first.
+    let (status, _) = patch_pref(&app, &auth, r#"{"effects":{"page_curl":false}}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        get_me(&app, &auth).await["effects"],
+        serde_json::json!({"cover_tilt": true, "page_curl": false})
+    );
+
+    // null resets one effect to its default.
+    let (status, _) = patch_pref(&app, &auth, r#"{"effects":{"cover_tilt":null}}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        get_me(&app, &auth).await["effects"],
+        serde_json::json!({"page_curl": false})
+    );
+
+    for bad in [
+        r#"{"effects":{"sparkles":true}}"#,
+        r#"{"effects":{"page_curl":"yes"}}"#,
+    ] {
+        let (status, _) = patch_pref(&app, &auth, bad).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert_eq!(
+        get_me(&app, &auth).await["effects"],
+        serde_json::json!({"page_curl": false})
+    );
+}

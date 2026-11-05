@@ -8,6 +8,12 @@
 /* Variants (`data-open:`, `data-checked:`, …) and utilities the current
  * shadcn registry components are written against; same package as the CLI. */
 @import "shadcn/tailwind.css";
+/* Flair pre-merge polish: one file per work group so parallel edits never
+ * touch this file. Tokens and the reduced-motion reset stay here. */
+@import "./flair-cards.css";
+@import "./flair-loading.css";
+@import "./flair-interaction.css";
+@import "./flair-motion.css";
 
 @variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -1025,9 +1031,705 @@ body {
   .cover-stack-host:focus-visible .cover-stack__layer {
     transform: var(--cs-fan);
   }
+  /* Spill: while fanned the whole stack grows past its card, from the
+   * bottom edge and the side `CoverStack` picked (see `spillOrigin`), and
+   * the card rises above its neighbours so nothing covers the spill. */
+  .cover-stack--spill {
+    transform-origin: 50% 100%;
+    transition: scale 380ms cubic-bezier(0.34, 1.3, 0.64, 1);
+  }
+  .cover-stack--spill[data-spill="left"] {
+    transform-origin: 0% 100%;
+  }
+  .cover-stack--spill[data-spill="right"] {
+    transform-origin: 100% 100%;
+  }
+  .cover-stack-host:has(.cover-stack--spill) {
+    position: relative;
+  }
+  .cover-stack-host:hover:has(.cover-stack--spill),
+  .cover-stack-host:has(.cover-stack--spill):has(:focus-visible),
+  .cover-stack-host:has(.cover-stack--spill):focus-visible {
+    z-index: 10;
+  }
+  .cover-stack-host:hover .cover-stack--spill,
+  .cover-stack-host:has(:focus-visible) .cover-stack--spill,
+  .cover-stack-host:focus-visible .cover-stack--spill {
+    scale: var(--cs-spill);
+  }
   .cover-stack-host:hover .cover-stack__layer[data-front],
   .cover-stack-host:has(:focus-visible) .cover-stack__layer[data-front],
   .cover-stack-host:focus-visible .cover-stack__layer[data-front] {
     filter: brightness(1.08);
   }
+}
+
+/* ── Cover tilt and sheen (optional effect, components/library/CoverTilt) ──
+ * The cover box leans toward the pointer; a soft highlight follows it.
+ * Variables are written per frame by CoverTilt, so this stays pure CSS.
+ * Only rendered with the effect on; the reduced-motion rule above also
+ * zeroes the transitions. */
+.cover-tilt {
+  transform: perspective(700px) rotateX(var(--tilt-x, 0deg))
+    rotateY(var(--tilt-y, 0deg));
+  /* Flat (no preserve-3d): the box tilts as one picture, so its buttons
+   * keep normal z-index stacking and hit-testing instead of sharing a 3D
+   * plane with the cover image (clicks on ⋯ used to land on the cover). */
+  transition: transform 450ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+/* The cover tilts only while you're looking at the art: it levels out
+ * when the pointer is on one of its controls (⋯ menu, play, badges), so
+ * the control holds still under the pointer, and stays level while a
+ * menu it opened is up. */
+.cover-tilt:has(:is(button, [role="button"], a):hover),
+.cover-tilt:has([data-state="open"]) {
+  transform: none;
+}
+.cover-tilt:has(:is(button, [role="button"], a):hover) .cover-tilt-sheen,
+.cover-tilt:has([data-state="open"]) .cover-tilt-sheen {
+  opacity: 0;
+}
+.cover-tilt[data-tilting] {
+  transition-duration: 90ms;
+}
+.cover-tilt-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  border-radius: var(--radius-md, 0.375rem);
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: soft-light;
+  background: radial-gradient(
+    circle at var(--sheen-x, 50%) var(--sheen-y, 50%),
+    rgb(255 255 255 / 0.55),
+    rgb(255 255 255 / 0.08) 45%,
+    transparent 70%
+  );
+  transition: opacity 300ms ease-out;
+}
+.cover-tilt[data-tilting] .cover-tilt-sheen {
+  opacity: 1;
+}
+
+/* ── Tinted hero backdrop (optional effect, components/library/HeroBackdrop) ──
+ * A blurred cover under a veil of the page background, fading out to the
+ * page colour so header text keeps its normal contrast in every theme. */
+.hero-backdrop-img {
+  filter: blur(40px) saturate(1.5);
+  opacity: 0.75;
+}
+.hero-backdrop-fade {
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, var(--background) 28%, transparent) 0%,
+    color-mix(in oklab, var(--background) 55%, transparent) 55%,
+    var(--background) 100%
+  );
+}
+
+/* ── Series thickness (optional effect, components/library/SpineStack) ──
+ * Alternating page-edge tones, mixed from the theme so they read as paper
+ * edges on dark, light and amber backgrounds alike. */
+.spine-stack {
+  --spine-a: color-mix(in oklab, var(--foreground) 55%, var(--background));
+  --spine-b: color-mix(in oklab, var(--foreground) 25%, var(--background));
+  background: var(--spine-b);
+}
+
+/* ── Cover morph (standard, lib/ui/cover-morph.ts) ──
+ * The clicked card cover flies into the destination page's cover slot.
+ * A brief blur mid-flight hides scaling artefacts. Reduced motion (OS or
+ * the account's Motion setting) turns the flight off. */
+::view-transition-group(.morph) {
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-image-pair(.morph) {
+  animation-name: cover-morph-blur;
+}
+@keyframes cover-morph-blur {
+  35% {
+    filter: blur(2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(.morph),
+  ::view-transition-image-pair(.morph),
+  ::view-transition-old(.morph),
+  ::view-transition-new(.morph) {
+    animation: none !important;
+  }
+}
+[data-motion="reduced"]::view-transition-group(.morph),
+[data-motion="reduced"]::view-transition-image-pair(.morph),
+[data-motion="reduced"]::view-transition-old(.morph),
+[data-motion="reduced"]::view-transition-new(.morph) {
+  animation: none !important;
+}
+
+/* ── Skeletons (folio-flair "cover-shaped skeletons") ──
+ * One light band sweeps across every placeholder on screen at once
+ * (`background-attachment: fixed` puts all of them on the viewport's
+ * gradient), instead of each box pulsing on its own. Cover placeholders
+ * (`components/CoverSkeleton.tsx`) add a cover silhouette. */
+.skeleton-shimmer {
+  background-color: var(--muted);
+  background-image: linear-gradient(
+    100deg,
+    transparent 40%,
+    color-mix(in oklab, var(--foreground) 7%, transparent) 50%,
+    transparent 60%
+  );
+  background-size: 200vw 100%;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  animation: skeleton-sweep 1.8s ease-in-out infinite;
+}
+@keyframes skeleton-sweep {
+  from {
+    background-position: -140vw 0;
+  }
+  to {
+    background-position: 40vw 0;
+  }
+}
+.cover-skeleton > span {
+  position: absolute;
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+.cover-skeleton__masthead {
+  inset: 7% 9% auto 9%;
+  height: 13%;
+  border-radius: 3px;
+}
+.cover-skeleton__number {
+  top: 23%;
+  right: 9%;
+  width: 16%;
+  aspect-ratio: 1;
+  border-radius: 999px;
+}
+.cover-skeleton__spine {
+  inset: 0 auto 0 0;
+  width: 5%;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--foreground) 9%, transparent),
+    transparent
+  ) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-shimmer {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .skeleton-shimmer {
+  animation: none;
+}
+
+/* ── Cover colour on cards (folio-flair, lib/ui/cover-tone.ts) ──
+ * A card whose cover colours are known carries `--cover-tint` (the
+ * cover's most vibrant colour). Hovering washes the card in it and gives
+ * the cover a matching glow, so each card answers in its own colour. */
+@media (hover: hover) and (pointer: fine) {
+  /* A card whose clickable surface is an inner element (Continue
+   * reading's ProgressIssueCard marks it `data-tint-target`) washes that
+   * element instead of the whole wrapper, replacing its accent hover. */
+  [data-card][style*="--cover-tint"]:not(:has([data-tint-target])):hover,
+  [data-card][style*="--cover-tint"] [data-tint-target]:hover {
+    background-color: color-mix(in oklab, var(--cover-tint) 16%, transparent);
+  }
+  [data-card][style*="--cover-tint"]:hover .cover-box {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--cover-tint) 45%, transparent),
+      0 12px 28px -10px color-mix(in oklab, var(--cover-tint) 70%, transparent);
+  }
+}
+.cover-box {
+  transition: box-shadow 260ms ease-out;
+}
+
+/* ── Springy drag and drop (folio-flair) ──
+ * The item being dragged gets `.drag-lift` (lib/ui/springy-drag.ts).
+ * `scale` / `rotate` are separate from the inline `transform` dnd-kit
+ * writes, so both apply; the matching transitions live in the inline
+ * style built by `sortableStyle()`, so dropping springs the item back. */
+.drag-lift {
+  scale: 1.04;
+  rotate: -1.25deg;
+  box-shadow:
+    0 18px 40px -12px rgb(0 0 0 / 0.45),
+    0 4px 12px -4px rgb(0 0 0 / 0.25);
+  cursor: grabbing;
+}
+[data-motion="reduced"] .drag-lift {
+  rotate: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .drag-lift {
+    rotate: none;
+  }
+}
+
+/* ── Shell motion (folio-flair) ──
+ * Page cross-fade (components/shell/RouteFade.tsx): the content column
+ * fades between top-level pages. The topbar and phone tab bar carry
+ * static view-transition names and are held still (old snapshot hidden,
+ * new one live), and the root snapshot doesn't cross-fade either, so the
+ * sidebar and its sliding highlight update live instead of ghosting.
+ * Named cover-morph groups (.morph) keep their own animation above this.
+ * Reduced motion (OS or the account's Motion setting) swaps instantly. */
+::view-transition {
+  /* Clicks during the short fade reach the live page. */
+  pointer-events: none;
+}
+::view-transition-old(root) {
+  display: none;
+}
+::view-transition-group(root),
+::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-group(shell-topbar),
+::view-transition-group(shell-tabbar) {
+  animation: none;
+  z-index: 50;
+}
+::view-transition-old(shell-topbar),
+::view-transition-old(shell-tabbar) {
+  display: none;
+}
+::view-transition-new(shell-topbar),
+::view-transition-new(shell-tabbar) {
+  animation: none;
+}
+::view-transition-group(.route-fade) {
+  animation-duration: 180ms;
+  animation-timing-function: ease-out;
+}
+::view-transition-old(.route-fade) {
+  animation: 180ms ease-out both shell-route-fade-out;
+}
+::view-transition-new(.route-fade) {
+  animation: 180ms ease-out both shell-route-fade-in;
+}
+@keyframes shell-route-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes shell-route-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Reduced: no fade. The old snapshot is dropped rather than left at full
+ * opacity, which the pair's plus-lighter blend would brighten. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(.route-fade),
+  ::view-transition-new(.route-fade) {
+    animation: none !important;
+  }
+  ::view-transition-old(.route-fade) {
+    display: none;
+  }
+}
+[data-motion="reduced"]::view-transition-group(.route-fade),
+[data-motion="reduced"]::view-transition-new(.route-fade) {
+  animation: none !important;
+}
+[data-motion="reduced"]::view-transition-old(.route-fade) {
+  display: none;
+}
+
+/* ── Theme switch reveal (folio-flair, lib/ui/theme-reveal.ts) ──
+ * While `html.theme-reveal` is set, the root snapshot is the whole story:
+ * named groups (topbar, tab bar, cover morphs) are dissolved into it so
+ * the circle reveals them too, and the shell's "no root cross-fade" rules
+ * are overridden — the old page holds still and the new one is clipped to
+ * the growing circle by JS. */
+html.theme-reveal * {
+  view-transition-name: none !important;
+}
+html.theme-reveal::view-transition-old(root) {
+  display: block;
+  animation: none;
+}
+html.theme-reveal::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+html.theme-reveal::view-transition-group(root) {
+  animation: none;
+}
+
+/* ── Animated tour spotlight (folio-flair, onboarding/TourOverlay.tsx) ──
+ * The hole and the card glide together between steps; the hole's accent
+ * ring pulses outward so the eye finds it; centered steps close the hole
+ * to a point. Reduced motion: no glide, no pulse. */
+.tour-hole {
+  box-shadow: 0 0 0 200vmax rgb(0 0 0 / 0.62);
+  transition-property: top, left, width, height;
+  transition-duration: 500ms;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: tour-scrim-in 300ms ease-out;
+}
+.tour-hole::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: calc(var(--radius-lg, 0.5rem) + 3px);
+  border: 2px solid var(--primary);
+  animation: tour-pulse 1.9s ease-out infinite;
+}
+.tour-hole[data-closed]::after {
+  display: none;
+}
+.tour-card {
+  transition-property: top, left;
+  transition-duration: 500ms;
+  transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes tour-scrim-in {
+  from {
+    box-shadow: 0 0 0 200vmax rgb(0 0 0 / 0);
+  }
+}
+@keyframes tour-pulse {
+  0% {
+    opacity: 0.9;
+    scale: 1;
+  }
+  70%,
+  100% {
+    opacity: 0;
+    scale: 1.06;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-hole,
+  .tour-card {
+    transition: none;
+  }
+  .tour-hole,
+  .tour-hole::after {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .tour-hole,
+[data-motion="reduced"] .tour-card {
+  transition: none;
+}
+[data-motion="reduced"] .tour-hole,
+[data-motion="reduced"] .tour-hole::after {
+  animation: none;
+}
+
+/* ── Live setting previews (folio-flair, settings/ReaderPreview.tsx) ──
+ * The miniature reader replays the chosen page-turn animation each time
+ * it turns, and webtoon view scrolls its strip on a loop. */
+.reader-preview-slide {
+  animation: reader-preview-in-l 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.reader-preview-slide-rtl {
+  animation: reader-preview-in-r 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.reader-preview-fade {
+  animation: reader-preview-fade 380ms ease-out;
+}
+.reader-preview-scroll {
+  animation: reader-preview-scroll 14s linear infinite;
+}
+@keyframes reader-preview-in-l {
+  from {
+    translate: 100% 0;
+  }
+}
+@keyframes reader-preview-in-r {
+  from {
+    translate: -100% 0;
+  }
+}
+@keyframes reader-preview-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes reader-preview-scroll {
+  to {
+    translate: 0 -50%;
+  }
+}
+
+/* ── Header chips over the tint (series / issue pages) ──
+ * Every pill in the header (badges, writer chips, rating pill, provider
+ * IDs, issue number) looks like the chips in the tabs below — the filled
+ * `--secondary` surface, no border, the badge's rounded corners — so the two areas read as
+ * one set. Over the tinted backdrop the surface is 82% opaque with a blur
+ * behind it: enough for the cover's hue to warm it slightly, too little
+ * for any tint to pull the text's contrast down. Coloured text (status
+ * tones, the issue number) is pulled 30% toward the foreground so it
+ * clears contrast on that surface in every theme. */
+.hero-chips :is([data-slot="badge"], [data-hero-chip]) {
+  background-color: color-mix(in oklab, var(--secondary) 82%, transparent);
+  border-color: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.hero-chips
+  :is([data-slot="badge"], [data-hero-chip]):is(
+    .text-muted-foreground,
+    .text-foreground
+  ) {
+  color: var(--secondary-foreground);
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-success {
+  color: color-mix(in oklab, var(--success) 70%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-warning {
+  color: color-mix(in oklab, var(--warning) 70%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-info {
+  color: color-mix(in oklab, var(--info) 70%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-primary {
+  /* The accents are light (amber L≈0.77): pulled well toward the
+   * foreground so it clears 4.5:1 on the chip in every theme. */
+  color: color-mix(in oklab, var(--primary) 42%, var(--foreground));
+}
+.hero-chips :is([data-slot="badge"], [data-hero-chip]).text-destructive {
+  color: color-mix(in oklab, var(--destructive) 70%, var(--foreground));
+}
+.hero-chips :is(a, button):hover > [data-slot="badge"],
+.hero-chips a[data-hero-chip]:hover {
+  background-color: color-mix(
+    in oklab,
+    var(--secondary) 70%,
+    var(--foreground) 12%
+  );
+}
+
+/* Linked fact values (writers, genres, tags in the series header): no
+ * underline; on hover / focus the name eases toward the accent, pulled
+ * toward the foreground so it keeps text contrast in every theme. */
+.fact-link {
+  transition: color 150ms ease-out;
+}
+:is(a:hover, a:focus-visible) > .fact-link,
+.fact-link:hover {
+  color: color-mix(in oklab, var(--primary) 60%, var(--foreground));
+}
+
+/* ===== folio-flair: finishing moment (reader end card) =====
+ * The next issue's cover slides in from the page-turn edge a beat after
+ * the card and tilts into place; finishing a series pops the ring. */
+.end-card-next {
+  opacity: 0;
+  transition:
+    transform 700ms cubic-bezier(0.34, 1.45, 0.64, 1) 250ms,
+    opacity 400ms ease-out 250ms;
+}
+.end-card-next.from-right {
+  transform: translateX(2.5rem) rotate(4deg);
+}
+.end-card-next.from-left {
+  transform: translateX(-2.5rem) rotate(-4deg);
+}
+.end-card-next.is-open {
+  opacity: 1;
+  transform: none;
+}
+.end-card-next > * {
+  box-shadow: 0 12px 26px -12px rgb(0 0 0 / 0.55);
+}
+/* Up Next ⇄ Wrap up: the incoming pane slides a short way in from the
+ * side it is "on" and fades up while the card eases to its height. */
+@keyframes end-pane-fwd {
+  from {
+    opacity: 0;
+    translate: 1.5rem 0;
+  }
+}
+@keyframes end-pane-back {
+  from {
+    opacity: 0;
+    translate: -1.5rem 0;
+  }
+}
+.end-pane-fwd {
+  animation: end-pane-fwd 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.end-pane-back {
+  animation: end-pane-back 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes finish-ring-pop {
+  0% {
+    scale: 1;
+  }
+  40% {
+    scale: 1.14;
+  }
+  100% {
+    scale: 1;
+  }
+}
+.finish-ring-pop {
+  animation: finish-ring-pop 600ms cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .end-pane-fwd,
+  .end-pane-back {
+    animation-name: page-fade-in;
+  }
+  .end-card-next {
+    transition: opacity 200ms ease-out;
+  }
+  .end-card-next.from-right,
+  .end-card-next.from-left {
+    transform: none;
+  }
+}
+
+/* Reader page strip: the row fades out at both ends, so it reads as a
+ * strip that scrolls on rather than one cut off by the screen edge. */
+.page-strip-fade {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 1.75rem,
+    #000 calc(100% - 1.75rem),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 1.75rem,
+    #000 calc(100% - 1.75rem),
+    transparent
+  );
+}
+
+/* ===== folio-flair: milestone celebration (reading log) =====
+ * Covers fly out from behind the card and settle at a tilt; the card
+ * springs in. Leaving fades everything. */
+@keyframes celebrate-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes celebrate-card-in {
+  from {
+    opacity: 0;
+    scale: 0.85;
+  }
+}
+@keyframes celebrate-burst {
+  from {
+    opacity: 0;
+    translate: -50% -50%;
+    rotate: 0deg;
+    scale: 0.3;
+  }
+  to {
+    opacity: 1;
+    translate: calc(-50% + var(--dx)) calc(-50% + var(--dy));
+    rotate: var(--r);
+    scale: 1;
+  }
+}
+.celebrate {
+  animation: celebrate-in 200ms ease-out;
+}
+.celebrate-card {
+  animation: celebrate-card-in 450ms cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+.celebrate-cover {
+  opacity: 0;
+  animation: celebrate-burst 800ms cubic-bezier(0.22, 1.2, 0.36, 1) forwards;
+}
+.celebrate.is-leaving {
+  opacity: 0;
+  transition: opacity 200ms ease-in;
+}
+@media (prefers-reduced-motion: reduce) {
+  .celebrate,
+  .celebrate-card {
+    animation: none;
+  }
+}
+
+/* ===== folio-flair: tab transitions =====
+ * One underline glides between tabs (TabsList's `tabs-indicator`), so the
+ * triggers' own `::after` underline stays hidden while it is shown. The
+ * incoming panel enters from the side its tab sits on; only the panels
+ * that belong to the root that changed animate (`:scope`-like via the
+ * direct `data-tab-motion` root). Reduced motion: the global reset. */
+[data-slot="tabs-list"][data-indicator]
+  > [data-slot="tabs-trigger"][data-slot="tabs-trigger"]::after {
+  opacity: 0;
+}
+@keyframes tab-panel-fwd {
+  from {
+    opacity: 0;
+    translate: 24px 0;
+  }
+}
+@keyframes tab-panel-back {
+  from {
+    opacity: 0;
+    translate: -24px 0;
+  }
+}
+[data-tab-motion="fwd"] [data-slot="tabs-content"][data-state="active"] {
+  animation: tab-panel-fwd 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+[data-tab-motion="back"] [data-slot="tabs-content"][data-state="active"] {
+  animation: tab-panel-back 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ===== folio-flair: live scan dashboard (components/admin/library/LiveScanPanel.tsx) =====
+ * Counters bump when they tick up, newly found series covers pop in, log
+ * lines slide in. Reduced motion: the global reset makes them instant. */
+@keyframes count-bump {
+  40% {
+    scale: 1.18;
+  }
+}
+.count-bump {
+  animation: count-bump 350ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes discover-pop {
+  from {
+    opacity: 0;
+    scale: 0.6;
+    translate: 0 10px;
+  }
+}
+.discover-pop {
+  animation: discover-pop 550ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes log-line-in {
+  from {
+    opacity: 0;
+    translate: -6px 0;
+  }
+}
+.log-line-in {
+  animation: log-line-in 300ms ease both;
+}
+
+/* Queue lanes (folio-flair phase 5): running jobs' indeterminate bar. */
+@keyframes queue-indeterminate {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 300% 0;
+  }
+}
+.queue-indeterminate {
+  animation: queue-indeterminate 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }

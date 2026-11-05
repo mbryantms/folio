@@ -2,6 +2,8 @@ import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 
 import { PageRails } from "@/components/saved-views/PageRails";
+import { RecordVisit } from "@/components/search/RecordVisit";
+import { pageVisit } from "@/lib/search/recent-visits";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { PageListView } from "@/lib/api/types";
 
@@ -37,12 +39,15 @@ export default async function PageDetailRoute({
   if (page.is_system) redirect("/");
 
   return (
-    <PageRails
-      pageId={page.id}
-      pageName={page.name}
-      pageDescription={page.description ?? null}
-      isSystem={page.is_system}
-      showInSidebar={page.show_in_sidebar}
-    />
+    <>
+      <RecordVisit visit={pageVisit(page)} />
+      <PageRails
+        pageId={page.id}
+        pageName={page.name}
+        pageDescription={page.description ?? null}
+        isSystem={page.is_system}
+        showInSidebar={page.show_in_sidebar}
+      />
+    </>
   );
 }

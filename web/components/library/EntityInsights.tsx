@@ -3,8 +3,8 @@
 import Link from "next/link";
 import * as React from "react";
 
-import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
-import { Skeleton } from "@/components/ui/skeleton";
+import { IssueCard } from "@/components/library/IssueCard";
+import { EntityInsightsSkeleton } from "@/components/skeletons/LoadingShapes";
 import { useEntityInsights, type EntityKindPath } from "@/lib/api/queries";
 import type { EntityInsightsView } from "@/lib/api/types";
 import { entityUrl } from "@/lib/entities";
@@ -327,20 +327,13 @@ function CountList({
 
 function InsightsSkeleton() {
   return (
-    <section className="space-y-4" aria-busy="true">
-      <Skeleton className="h-6 w-40" />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-20" />
-        ))}
+    <section aria-busy="true">
+      <div aria-hidden>
+        <EntityInsightsSkeleton />
       </div>
-      <ul role="list" className="flex gap-3 overflow-hidden">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <li key={i} className="w-[120px] shrink-0">
-            <IssueCardSkeleton />
-          </li>
-        ))}
-      </ul>
+      <span className="sr-only" role="status">
+        Loading library statistics…
+      </span>
     </section>
   );
 }

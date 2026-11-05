@@ -10,6 +10,15 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import Link from "next/link";
+import { ViewTransition } from "react";
+
+import { CountUp } from "@/components/CountUp";
+import { FillProgress } from "@/components/FillProgress";
+import { HeroBackdrop } from "@/components/library/HeroBackdrop";
+import { MorphLink } from "@/components/library/MorphLink";
+import { RecordVisit } from "@/components/search/RecordVisit";
+import { seriesVisit } from "@/lib/search/recent-visits";
+import { seriesCoverName } from "@/lib/ui/cover-morph-names";
 import { notFound, redirect } from "next/navigation";
 
 import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
@@ -29,10 +38,10 @@ import {
   StableTabsPanelStack,
   StackedTabsPanel,
 } from "@/components/library/StableTabsPanelStack";
+import { HeroFactsLine } from "@/components/library/HeroFactsLine";
 import { UserRating } from "@/components/library/UserRating";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { SeriesActivityTab } from "@/components/activity/SeriesActivityTab";
 import { MarkersList } from "@/components/markers/MarkersList";
 import { apiGet, ApiError } from "@/lib/api/fetch";
@@ -45,7 +54,6 @@ import type {
   SeriesView,
 } from "@/lib/api/types";
 import {
-  formatCompactPages,
   formatPageCount,
   formatPublicationStatus,
   formatReadingTime,
@@ -198,7 +206,9 @@ export default async function SeriesPage({
   return (
     // A flex column (not `space-y`) so phones can reorder children with
     // `order`: the issue list moves above the metadata tabs there.
-    <div className="flex flex-col gap-6 sm:gap-10">
+    <div className="relative isolate flex flex-col gap-6 sm:gap-10">
+      <HeroBackdrop src={series.cover_url} />
+      <RecordVisit visit={seriesVisit(series)} />
       {/* Only admins reach a soft-deleted series (the API 404s everyone
           else, and no list surface shows it). Say so up front and point at
           the Removed tab, which holds Restore / Confirm removal. */}
@@ -255,11 +265,17 @@ export default async function SeriesPage({
             icon-only kebab. sm+ keeps the prior stacked sidebar layout. */}
         <div className="flex flex-col gap-3 max-sm:contents sm:gap-4">
           <div className="mx-auto w-full max-w-full max-sm:order-1 sm:w-56 lg:mx-0 lg:w-72">
-            <Cover
-              src={series.cover_url}
-              alt={`Cover of ${series.name}`}
-              fallback={series.publisher ?? "—"}
-            />
+            <ViewTransition
+              name={seriesCoverName(series.slug)}
+              share="morph"
+              default="none"
+            >
+              <Cover
+                src={series.cover_url}
+                alt={`Cover of ${series.name}`}
+                fallback={series.publisher ?? "—"}
+              />
+            </ViewTransition>
           </div>
           {/* Read CTA + a small gear for actions, always side by side —
               the Read button is the focus, so actions stay a compact icon
@@ -267,7 +283,17 @@ export default async function SeriesPage({
           <div className="mx-auto flex w-full max-w-xs flex-row gap-2 max-sm:order-3 max-sm:col-span-full max-sm:max-w-none sm:max-w-sm lg:mx-0 lg:max-w-72">
             {nextHref ? (
               <Button asChild size="lg" className="h-12 flex-1 sm:h-10">
-                <Link href={nextHref}>{readButtonLabel(nextState)}</Link>
+                <MorphLink
+                  href={nextHref}
+                  morphName={seriesCoverName(series.slug)}
+                  morphSrc={
+                    resume.issue_id
+                      ? `/issues/${resume.issue_id}/pages/0/thumb`
+                      : series.cover_url
+                  }
+                >
+                  {readButtonLabel(nextState)}
+                </MorphLink>
               </Button>
             ) : (
               <p className="border-border text-muted-foreground flex h-12 flex-1 items-center justify-center rounded-md border border-dashed px-4 text-center text-xs sm:h-10">
@@ -296,7 +322,9 @@ export default async function SeriesPage({
             chips. Per the user's request, series-level data (publisher,
             year, reading time, etc.) is surfaced front and center rather
             than buried under a tab. */}
-        <div className="min-w-0 max-sm:contents sm:space-y-5">
+        {/* `hero-chips`: every pill in the header shares one surface that
+            stays legible over the tinted backdrop (globals.css). */}
+        <div className="hero-chips min-w-0 max-sm:contents sm:space-y-5">
           <div className="min-w-0 max-sm:order-2">
             {/* Prominent volume caption above the H1 — mirrors the
                 issue page's `Vol. N` badge so the multi-volume signal
@@ -312,20 +340,23 @@ export default async function SeriesPage({
               {series.name}
             </h1>
             <SeriesFactRow series={series} readingTime={readingTime} />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {status && <Badge variant="outline">{status}</Badge>}
-              <CollectionBadge series={series} />
-              {series.age_rating && (
-                <Badge variant="secondary">{series.age_rating}</Badge>
-              )}
+            {/* Facts as words, one line with the rating and source links;
+                badges only for collection status. */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <HeroFactsLine facts={[status, series.age_rating]} />
               <UserRating
                 scope="series"
                 seriesSlug={series.slug}
                 initial={series.user_rating ?? null}
                 label="Series rating"
-                variant="inline"
+                variant="bare"
               />
-              <ProviderBadgesRow scope="series" seriesSlug={series.slug} />
+              <ProviderBadgesRow
+                scope="series"
+                seriesSlug={series.slug}
+                variant="text"
+              />
+              <CollectionBadge series={series} />
             </div>
           </div>
           <div className="min-w-0 max-sm:order-3 max-sm:col-span-full">
@@ -339,6 +370,7 @@ export default async function SeriesPage({
             <FactBlock label="Writers" className="max-sm:hidden">
               {series.writers && series.writers.length > 0 ? (
                 <ChipList
+                  display="text"
                   items={series.writers}
                   filterField="writer"
                   creatorSlugs={series.creator_slugs}
@@ -352,12 +384,20 @@ export default async function SeriesPage({
             </FactBlock>
             {hasGenres && (
               <FactBlock label="Genres">
-                <ChipList items={series.genres} filterField="genres" />
+                <ChipList
+                  display="text"
+                  items={series.genres}
+                  filterField="genres"
+                />
               </FactBlock>
             )}
             {hasTags && (
               <FactBlock label="Tags">
-                <ChipList items={series.tags} filterField="tags" />
+                <ChipList
+                  display="text"
+                  items={series.tags}
+                  filterField="tags"
+                />
               </FactBlock>
             )}
           </div>
@@ -745,7 +785,7 @@ function SeriesFactRow({
   series: SeriesView;
   readingTime: string | null;
 }) {
-  const facts: { icon: React.ReactNode; label: string }[] = [];
+  const facts: { icon: React.ReactNode; label: React.ReactNode }[] = [];
   if (series.publisher) {
     facts.push({
       icon: <Building2 className="size-4" />,
@@ -755,7 +795,12 @@ function SeriesFactRow({
   if (series.total_page_count) {
     facts.push({
       icon: <FileStack className="size-4" />,
-      label: `${formatCompactPages(series.total_page_count)} pages`,
+      label: (
+        <>
+          <CountUp value={series.total_page_count} format="compactPages" />{" "}
+          pages
+        </>
+      ),
     });
   }
   if (readingTime) {
@@ -913,13 +958,19 @@ function ReadProgressStat({ read, total }: { read: number; total: number }) {
           Read progress
         </span>
         <span className="text-muted-foreground text-xs">
-          {total > 0 ? `${pct}%` : "—"}
+          {total > 0 ? <CountUp value={pct} format="percent" /> : "—"}
         </span>
       </div>
       <span className="text-lg leading-tight font-semibold">
-        {total > 0 ? `${read} / ${total}` : "—"}
+        {total > 0 ? (
+          <>
+            <CountUp value={read} /> / {total}
+          </>
+        ) : (
+          "—"
+        )}
       </span>
-      <Progress value={pct} aria-label={`Read ${read} of ${total} issues`} />
+      <FillProgress value={pct} label={`Read ${read} of ${total} issues`} />
       <span
         className={
           complete
@@ -981,10 +1032,10 @@ function ReadingLoadStat({
         ) : null}
       </div>
       <span className="text-lg leading-tight font-semibold tabular-nums">
-        {time ?? "—"}
+        {time ? <CountUp value={pagesShown} format="readingTime" /> : "—"}
       </span>
       <span className="text-muted-foreground text-xs">
-        {formatCompactPages(pagesShown)} pages
+        <CountUp value={pagesShown} format="compactPages" /> pages
       </span>
     </div>
   );

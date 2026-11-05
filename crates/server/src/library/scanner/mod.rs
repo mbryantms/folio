@@ -19,6 +19,7 @@ pub mod cbr_convert;
 pub mod enumerate;
 pub mod folder_checks;
 pub mod metadata_rollup;
+pub mod pacer;
 pub mod process;
 pub mod reconcile_status;
 pub mod stats;
@@ -635,6 +636,7 @@ async fn open_scan_run(
             am.error = Set(None);
             am.update(&state.db).await?;
         }
+        state.scan_progress.register(scan_id, batch_id);
         return Ok((scan_id, batch_id));
     }
     let am = ScanRunAM {
@@ -653,6 +655,7 @@ async fn open_scan_run(
         batch_id: Set(None),
     };
     am.insert(&state.db).await?;
+    state.scan_progress.register(scan_id, None);
     Ok((scan_id, None))
 }
 
@@ -687,6 +690,7 @@ async fn finalize_run(
     stats.finalize_rates();
     let stats_json = serde_json::to_value(&stats)?;
     let library_id = lib.id;
+    state.scan_progress.finish(scan_id);
 
     let health_count = health.count();
     if let Err(e) = health.finalize(&state.db).await {
@@ -1026,21 +1030,26 @@ pub async fn cancel_queued_runs(
     Ok(closed.len() as u64)
 }
 
+/// The `scan_runs.stats` snapshot a running scan persists: the stats plus a
+/// `progress` object shaped like the `scan.progress` event, so a page that
+/// loads mid-scan hydrates the same view the live events drive.
 fn stats_json_with_progress(
     stats: &ScanStats,
-    progress: Option<(&ProgressState, &'static str, &'static str, Option<&str>)>,
+    progress: &ProgressState,
+    phase: &'static str,
+    unit: &'static str,
+    current_label: Option<&str>,
+    frame: &pacer::Frame,
 ) -> anyhow::Result<serde_json::Value> {
     let mut json = serde_json::to_value(stats)?;
-    if let Some((progress, phase, unit, current_label)) = progress
-        && let Some(obj) = json.as_object_mut()
-    {
+    if let Some(obj) = json.as_object_mut() {
         obj.insert(
             "progress".to_owned(),
             serde_json::json!({
                 "kind": progress.kind,
                 "phase": phase,
                 "unit": unit,
-                "completed": progress.completed,
+                "completed": progress.completed.min(progress.total),
                 "total": progress.total,
                 "current_label": current_label,
                 "health_issues": progress.health_issues,
@@ -1050,9 +1059,11 @@ fn stats_json_with_progress(
                 "files_total": progress.files_total,
                 "root_files": progress.root_files,
                 "empty_folders": progress.empty_folders,
-                "phase_elapsed_ms": stats.phase_timings_ms.get(phase).copied(),
-                "files_per_sec": stats.files_per_sec,
-                "bytes_per_sec": stats.bytes_per_sec,
+                "phase_elapsed_ms": frame.phase_elapsed_ms,
+                "files_per_sec": frame.files_per_sec.or(stats.files_per_sec),
+                "bytes_per_sec": frame.bytes_per_sec.or(stats.bytes_per_sec),
+                "eta_ms": frame.eta_ms,
+                "batch_id": frame.batch_id,
                 "skipped_folders": progress.series_skipped_unchanged,
             }),
         );
@@ -1060,8 +1071,21 @@ fn stats_json_with_progress(
     Ok(json)
 }
 
+/// Outcome of [`broadcast_progress`].
+enum ProgressEmit {
+    /// Inside the per-scan throttle window: nothing was sent.
+    Throttled,
+    /// The event went out; `persist` is the snapshot to write, when due.
+    Sent { persist: Option<serde_json::Value> },
+}
+
+/// Pace one progress report through [`AppState::scan_progress`] and, unless
+/// throttled, broadcast `scan.progress`. Synchronous: the DB snapshot write
+/// is the caller's (see [`persist_progress`]) so event cadence never waits
+/// on the database. `persist_allowed = false` while a previous write is
+/// still in flight.
 #[expect(clippy::too_many_arguments)]
-async fn emit_progress(
+fn broadcast_progress(
     state: &AppState,
     library_id: Uuid,
     scan_id: Uuid,
@@ -1070,16 +1094,53 @@ async fn emit_progress(
     unit: &'static str,
     current_label: Option<String>,
     stats: &ScanStats,
-) {
+    persist_allowed: bool,
+) -> ProgressEmit {
+    let completed = progress.completed.min(progress.total);
+    let sample = pacer::Sample {
+        completed,
+        files: stats
+            .files_added
+            .saturating_add(stats.files_updated)
+            .saturating_add(stats.files_unchanged)
+            .saturating_add(stats.files_skipped)
+            .saturating_add(stats.files_duplicate),
+        bytes: stats.bytes_hashed,
+    };
+    let Some(frame) =
+        state
+            .scan_progress
+            .observe(scan_id, phase, sample, progress.total, persist_allowed)
+    else {
+        return ProgressEmit::Throttled;
+    };
+    let persist = if frame.persist {
+        match stats_json_with_progress(
+            stats,
+            progress,
+            phase,
+            unit,
+            current_label.as_deref(),
+            &frame,
+        ) {
+            Ok(json) => Some(json),
+            Err(e) => {
+                tracing::warn!(scan_id = %scan_id, error = %e, "scanner: progress snapshot encode failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
     state.events.emit(ScanEvent::Progress {
         library_id,
         scan_id,
         kind: progress.kind,
         phase,
         unit,
-        completed: progress.completed.min(progress.total),
+        completed,
         total: progress.total,
-        current_label: current_label.clone(),
+        current_label,
         files_seen: stats.files_seen,
         files_added: stats.files_added,
         files_updated: stats.files_updated,
@@ -1095,33 +1156,64 @@ async fn emit_progress(
         root_files: progress.root_files,
         empty_folders: progress.empty_folders,
         elapsed_ms: (stats.elapsed_ms > 0).then_some(stats.elapsed_ms),
-        phase_elapsed_ms: stats.phase_timings_ms.get(phase).copied(),
-        files_per_sec: stats.files_per_sec,
-        bytes_per_sec: stats.bytes_per_sec,
+        phase_elapsed_ms: Some(frame.phase_elapsed_ms),
+        // The recent-window rate once it has a second of samples; before
+        // that (and for narrow scans that finish sooner) the run average.
+        files_per_sec: frame.files_per_sec.or(stats.files_per_sec),
+        bytes_per_sec: frame.bytes_per_sec.or(stats.bytes_per_sec),
         active_workers: (phase == "scanning")
             .then_some(state.cfg().scan_folder_concurrency.max(1) as u64),
         dirty_folders: None,
         skipped_folders: Some(progress.series_skipped_unchanged),
-        eta_ms: None,
+        eta_ms: frame.eta_ms,
+        batch_id: frame.batch_id,
     });
+    ProgressEmit::Sent { persist }
+}
 
-    let stats_json = match stats_json_with_progress(
+/// Write a progress snapshot into `scan_runs.stats` (one UPDATE).
+async fn persist_progress(state: &AppState, scan_id: Uuid, stats_json: serde_json::Value) {
+    if let Err(e) = ScanRunEntity::update_many()
+        .col_expr(
+            entity::scan_run::Column::Stats,
+            sea_orm::sea_query::Expr::value(stats_json),
+        )
+        .filter(entity::scan_run::Column::Id.eq(scan_id))
+        .exec(&state.db)
+        .await
+    {
+        tracing::warn!(scan_id = %scan_id, error = %e, "scanner: progress snapshot persist failed");
+    }
+}
+
+/// [`broadcast_progress`] plus an inline snapshot write when one is due.
+/// For the phase-boundary reports outside the folder loop. Nearly all are
+/// phase changes, which are never throttled and always persist.
+#[expect(clippy::too_many_arguments)]
+async fn emit_progress(
+    state: &AppState,
+    library_id: Uuid,
+    scan_id: Uuid,
+    progress: &ProgressState,
+    phase: &'static str,
+    unit: &'static str,
+    current_label: Option<String>,
+    stats: &ScanStats,
+) {
+    if let ProgressEmit::Sent {
+        persist: Some(json),
+    } = broadcast_progress(
+        state,
+        library_id,
+        scan_id,
+        progress,
+        phase,
+        unit,
+        current_label,
         stats,
-        Some((progress, phase, unit, current_label.as_deref())),
+        true,
     ) {
-        Ok(json) => json,
-        Err(e) => {
-            tracing::warn!(scan_id = %scan_id, error = %e, "scanner: progress snapshot encode failed");
-            return;
-        }
-    };
-
-    if let Ok(Some(row)) = ScanRunEntity::find_by_id(scan_id).one(&state.db).await {
-        let mut am: ScanRunAM = row.into();
-        am.stats = Set(stats_json);
-        if let Err(e) = am.update(&state.db).await {
-            tracing::warn!(scan_id = %scan_id, error = %e, "scanner: progress snapshot persist failed");
-        }
+        persist_progress(state, scan_id, json).await;
     }
 }
 
@@ -1942,34 +2034,44 @@ async fn run_phases(
     // and a folder holding a transaction could not release its connection
     // — with a small pool the write's own acquire then waited on exactly
     // those connections (a self-deadlock until the acquire timeout).
-    // Every DB-touching side effect of the loop is spawned instead, and
-    // coalesced: a snapshot write is skipped while the previous one is
-    // still in flight (the next tick carries the newer numbers; finalize
-    // writes the authoritative end state).
+    // Every DB-touching side effect of the loop is spawned instead.
+    //
+    // Flair phase 5 B1: the `scan.progress` broadcast itself is synchronous
+    // and paced by `state.scan_progress` (≤ 1 per 400 ms), so event cadence
+    // no longer follows DB latency. The `scan_runs.stats` snapshot write is
+    // separate: due every ~2 s, spawned, and deferred (not stacked) while
+    // the previous one is still in flight. Finalize writes the
+    // authoritative end state.
     let mut progress_write: Option<tokio::task::JoinHandle<()>> = None;
     let mut cancel_poll: Option<tokio::task::JoinHandle<()>> = None;
-    let spawn_progress = |slot: &mut Option<tokio::task::JoinHandle<()>>,
-                          progress: ProgressState,
-                          label: Option<String>,
-                          live_stats: ScanStats| {
-        if slot.as_ref().is_some_and(|h| !h.is_finished()) {
-            return;
+    // `true` when the report went out (not throttled).
+    let report = |slot: &mut Option<tokio::task::JoinHandle<()>>,
+                  progress: &ProgressState,
+                  label: Option<String>,
+                  live_stats: &ScanStats| {
+        let persist_allowed = !slot.as_ref().is_some_and(|h| !h.is_finished());
+        match broadcast_progress(
+            state,
+            lib.id,
+            scan_id,
+            progress,
+            "scanning",
+            "work",
+            label,
+            live_stats,
+            persist_allowed,
+        ) {
+            ProgressEmit::Throttled => false,
+            ProgressEmit::Sent { persist } => {
+                if let Some(json) = persist {
+                    let state = state.clone();
+                    *slot = Some(tokio::spawn(async move {
+                        persist_progress(&state, scan_id, json).await;
+                    }));
+                }
+                true
+            }
         }
-        let state = state.clone();
-        let library_id = lib.id;
-        *slot = Some(tokio::spawn(async move {
-            emit_progress(
-                &state,
-                library_id,
-                scan_id,
-                &progress,
-                "scanning",
-                "work",
-                label,
-                &live_stats,
-            )
-            .await;
-        }));
     };
 
     loop {
@@ -2019,9 +2121,12 @@ async fn run_phases(
         progress = live_tracker.progress_snapshot(&progress);
         progress.health_issues = health.count() as u64;
         let live_stats = live_tracker.stats_snapshot();
-        last_live_completed = progress.completed;
-        last_live_seen = live_stats.files_seen;
-        spawn_progress(&mut progress_write, progress.clone(), Some(label), live_stats);
+        // Only a report that went out moves the heartbeat's baseline, so a
+        // throttled one is re-sent by the next tick.
+        if report(&mut progress_write, &progress, Some(label), &live_stats) {
+            last_live_completed = progress.completed;
+            last_live_seen = live_stats.files_seen;
+        }
             }
             _ = heartbeat.tick() => {
                 // Cooperative cancel poll (D8): the cancel endpoint flips the
@@ -2052,15 +2157,17 @@ async fn run_phases(
                 let mut live_progress = live_tracker.progress_snapshot(&progress);
                 live_progress.health_issues = progress.health_issues;
                 let live_stats = live_tracker.stats_snapshot();
-                if live_progress.completed != last_live_completed || live_stats.files_seen != last_live_seen {
+                if (live_progress.completed != last_live_completed
+                    || live_stats.files_seen != last_live_seen)
+                    && report(
+                        &mut progress_write,
+                        &live_progress,
+                        Some("Scanning files".to_owned()),
+                        &live_stats,
+                    )
+                {
                     last_live_completed = live_progress.completed;
                     last_live_seen = live_stats.files_seen;
-                    spawn_progress(
-                        &mut progress_write,
-                        live_progress,
-                        Some("Scanning files".to_owned()),
-                        live_stats,
-                    );
                 }
             }
         }
@@ -2301,8 +2408,7 @@ async fn process_planned_folder(
         });
     }
 
-    // Emit a SeriesUpdated event for the live-progress overlay. Throttled
-    // per-library by the broadcaster (spec §14.3).
+    // Names the folder in the manifest and the `scan.series_updated` event.
     let folder_label = folder
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -2320,6 +2426,7 @@ async fn process_planned_folder(
     // (below) where it takes priority over the per-issue ComicInfo
     // `<Count>` MAX-reduction for status/total_issues/summary.
     let identity_started = Instant::now();
+    let mut series_created = false;
     let series_id = if let Some(series_id) = known_series_id {
         series_id
     } else {
@@ -2421,6 +2528,7 @@ async fn process_planned_folder(
         )
         .await?;
         if resolved.was_created() {
+            series_created = true;
             stats.series_created += 1;
             stats.created_series_ids.push(resolved.id());
             let e = events
@@ -2463,12 +2571,6 @@ async fn process_planned_folder(
             }
         }
     }
-
-    state.events.emit(ScanEvent::SeriesUpdated {
-        library_id: lib.id,
-        series_id,
-        name: folder_label,
-    });
 
     // Spec §9: one transaction per series, batched at `scan_batch_size` so
     // very large series don't hold a single giant transaction. Per-batch
@@ -2735,6 +2837,24 @@ async fn process_planned_folder(
                 .await
     {
         tracing::warn!(error = %e, "scanner: reconcile_series_status failed");
+    }
+
+    // The live view's "Discovered" feed (Flair phase 5 B2). Sent after the
+    // folder's files are in so a new series already has a cover. Throttled
+    // per library by the broadcaster (spec §14.3); the cover lookup (one
+    // indexed query) only runs for an event that will go out.
+    if state.events.series_updated_due(lib.id, series_created) {
+        let cover_url = crate::api::series::series_cover_issue_ids(&state.db, &[series_id])
+            .await
+            .remove(&series_id)
+            .map(|issue_id| format!("/issues/{issue_id}/pages/0/thumb"));
+        state.events.emit(ScanEvent::SeriesUpdated {
+            library_id: lib.id,
+            series_id,
+            name: folder_label,
+            created: series_created,
+            cover_url,
+        });
     }
 
     Ok(ProcessFolderOutcome {

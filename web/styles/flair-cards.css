@@ -1,0 +1,9 @@
+/* Flair pre-merge polish, group "cards" (2026-11-04). Owned by that group; keyframes and
+ * component classes only. Reduced motion is handled globally in globals.css. */
+
+/* Reading-log event cards (ActivityReportPage EventCard): the cover is the
+ * card's full-bleed top, so it drops the stand-alone cover's frame. */
+.event-card-cover > .cover-box {
+  border-width: 0;
+  border-radius: 0;
+}

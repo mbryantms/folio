@@ -9,7 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { NativeSelect } from "@/components/folio/native-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  LogCountBadgeSkeleton,
+  LogRowsSkeleton,
+} from "@/components/skeletons/AdminShapes";
 import { useAdminLogs, useLibraryList } from "@/lib/api/queries";
 import type { LogEntryView, LogLevel } from "@/lib/api/types";
 import { statusTone } from "@/lib/ui/status-tone";
@@ -133,13 +136,15 @@ export function LogsClient() {
             <Badge variant="outline" className="font-mono text-xs">
               {logs.data.entries.length} of {logs.data.capacity}
             </Badge>
+          ) : logs.isLoading ? (
+            <LogCountBadgeSkeleton />
           ) : null}
         </div>
       </div>
 
       <div className="border-border bg-card rounded-md border">
         {logs.isLoading ? (
-          <Skeleton className="h-96 w-full" />
+          <LogRowsSkeleton />
         ) : logs.error ? (
           <p className="text-destructive p-4 text-sm">Failed to load logs.</p>
         ) : logs.data && logs.data.entries.length > 0 ? (

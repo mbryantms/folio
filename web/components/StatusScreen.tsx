@@ -1,13 +1,16 @@
 import * as React from "react";
 import { AlertCircle } from "lucide-react";
 
+import { CoverSilhouettes } from "@/components/folio/cover-silhouettes";
+
 /**
  * Shared building blocks for every error / not-found surface, so they
  * stay visually consistent and theme-aware (replaces the legacy
  * [`Chrome`](./Chrome.tsx) shell those pages used to wrap themselves in).
  *
- * - [`StatusCard`] — the centered content block (optional code/icon,
- *   title, description, digest ref, action row). Rendered on its own
+ * - [`StatusCard`] — the centered content block (cover-silhouette
+ *   illustration with the icon in its corner, optional code, title,
+ *   description, digest ref, action row). Rendered on its own
  *   inside the route-group error boundaries, which already sit within
  *   `MainShell` / `AdminShell`.
  * - [`StatusScreen`] — a minimal full-screen brand frame wrapping a
@@ -22,10 +25,14 @@ export function StatusCard({
   description,
   digest,
   actions,
+  illustration = true,
 }: {
   /** Short status code shown above the title, e.g. "404". */
   code?: string;
   icon?: React.ReactNode;
+  /** The empty-shelf cover silhouettes shared with `EmptyState` (static);
+   *  the icon, if any, becomes their corner badge. */
+  illustration?: boolean;
   title: string;
   description: React.ReactNode;
   /** Next.js error digest — correlates to the server-side log row. */
@@ -34,12 +41,19 @@ export function StatusCard({
 }) {
   return (
     <div className="mx-auto max-w-md py-12 text-center">
+      {illustration ? (
+        <div className="mb-6 flex justify-center">
+          <CoverSilhouettes size="lg" badge={icon} />
+        </div>
+      ) : null}
       {code ? (
         <p className="text-muted-foreground text-xs font-medium tracking-widest uppercase">
           {code}
         </p>
       ) : null}
-      {icon ? <div className="mt-3 flex justify-center">{icon}</div> : null}
+      {icon && !illustration ? (
+        <div className="mt-3 flex justify-center">{icon}</div>
+      ) : null}
       <h1 className="mt-3 text-2xl font-semibold tracking-tight">{title}</h1>
       <div className="text-muted-foreground mt-3 text-sm text-pretty">
         {description}

@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
+import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -100,10 +105,20 @@ export function ProgressIssueCard({
     },
     ...collectionActions.actions,
   ];
+  // Cover morph: into the issue page's header cover, or — on a resume
+  // tap — into the reader's loading slot, where it stands in for the
+  // first page until that page has decoded (ReaderCoverMorph.tsx).
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   const longPress = useCoverLongPressActions({
     primary: {
       label: `Continue reading ${headerTitle}`,
-      onSelect: () => router.push(resumeHref),
+      onSelect: () => {
+        morph.mark();
+        router.push(resumeHref);
+      },
     },
     actions: menuActions,
     label: `${card.series_name} · ${numberLabel}`,
@@ -119,9 +134,11 @@ export function ProgressIssueCard({
   // across portals, so a click inside the dialog would otherwise
   // propagate to the Link and route away.
   return (
-    <div className={cn("flex flex-col", className)}>
+    <div className={cn("flex flex-col", className)} data-card="">
       <Link
         href={resumesOnTap ? resumeHref : detailsHref}
+        onClick={morph.onClick}
+        data-tint-target=""
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
         )}
@@ -132,13 +149,15 @@ export function ProgressIssueCard({
         {resumesOnTap ? (
           <span className="sr-only">Continue reading </span>
         ) : null}
-        <div className="relative" {...longPress.wrapperProps}>
-          <Cover
-            src={issue.cover_url}
-            alt={headerTitle}
-            fallback={numberLabel}
-            className="w-full transition group-hover:brightness-110"
-          />
+        <CoverTilt className="relative" {...longPress.wrapperProps}>
+          <CoverMorph name={morph.name}>
+            <Cover
+              src={issue.cover_url}
+              alt={headerTitle}
+              fallback={numberLabel}
+              className="w-full transition group-hover:brightness-110"
+            />
+          </CoverMorph>
           {/* Progress overlay: thin bar at the bottom of the cover. The
            *  bar always shows (not hover-gated) since it's a key signal
            *  for this rail's purpose. */}
@@ -146,10 +165,7 @@ export function ProgressIssueCard({
             className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
             aria-hidden="true"
           >
-            <div
-              className="bg-primary h-full transition-[width]"
-              style={{ width: `${percent}%` }}
-            />
+            <ProgressFill id={issue.id} percent={percent} />
           </div>
           <CoverMenuButton
             label={`Actions for ${headerTitle}`}
@@ -158,8 +174,9 @@ export function ProgressIssueCard({
           <QuickReadOverlay
             readerHref={resumeHref}
             label={`Continue reading ${headerTitle}`}
+            onActivate={morph.mark}
           />
-        </div>
+        </CoverTilt>
         <div className="min-w-0 px-1">
           <div
             className="text-muted-foreground truncate text-xs"
@@ -199,11 +216,11 @@ export function ProgressIssueCardSkeleton({
 }) {
   return (
     <div className={cn("flex flex-col gap-2 p-1", className)}>
-      <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+      <CoverSkeleton />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted h-2 w-1/2 animate-pulse rounded" />
-        <div className="bg-muted size-3/4 animate-pulse rounded" />
-        <div className="bg-muted h-2 w-1/3 animate-pulse rounded" />
+        <div className="skeleton-shimmer h-2 w-1/2 rounded" />
+        <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-2 w-1/3 rounded" />
       </div>
     </div>
   );

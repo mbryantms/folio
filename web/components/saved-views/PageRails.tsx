@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { RailError } from "@/components/saved-views/RailError";
+import { RailsSkeleton } from "@/components/skeletons/LoadingShapes";
 import { FolderPlus, LibraryBig } from "lucide-react";
 
 import {
@@ -139,9 +140,11 @@ export function PageRails({
       ) : null}
 
       {pinnedQ.isLoading ? (
-        <div className="text-muted-foreground py-12 text-sm">
-          Loading views…
-        </div>
+        <RailsSkeleton
+          rails={3}
+          card={isSystem ? "issue" : "series"}
+          label="Loading views…"
+        />
       ) : pinnedQ.isError && !pinnedQ.data ? (
         // A failed fetch is not "nothing pinned" (post-audit T2.4).
         <RailError

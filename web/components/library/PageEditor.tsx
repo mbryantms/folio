@@ -17,7 +17,6 @@ import {
   sortableKeyboardCoordinates,
   useSortable,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
   GripVertical,
   ImageUp,
@@ -63,6 +62,12 @@ import {
 } from "@/lib/archive-edit";
 import { cn } from "@/lib/utils";
 import type { IssueDetailView, TransformStep } from "@/lib/api/types";
+import {
+  DRAG_LIFT_CLASS,
+  grabAnywhere,
+  sortableStyle,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
 
 /**
  * Page-byte editor (`archive-rewrite-1.0` M3). A grid of the issue's
@@ -377,21 +382,19 @@ function PageCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: slot.orig });
+  } = useSortable({ id: slot.orig, transition: useSpringSort() });
   const fileRef = React.useRef<HTMLInputElement | null>(null);
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : undefined,
-  };
+  const style = sortableStyle({ transform, transition, isDragging });
 
   return (
     <li
       ref={setNodeRef}
       style={style}
+      {...grabAnywhere(listeners)}
       className={cn(
         "border-border bg-card relative flex flex-col overflow-hidden rounded-md border",
         slot.removed && "opacity-50",
+        isDragging && DRAG_LIFT_CLASS,
       )}
     >
       <div className="bg-muted relative aspect-[2/3] overflow-hidden">

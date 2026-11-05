@@ -187,6 +187,11 @@ pub struct Model {
     /// `{ action_name: key_string }`. Empty object means "use defaults".
     pub keybinds: Json,
 
+    /// Per-account on/off switches for decorative effects, keyed by effect
+    /// (`cover_tilt`, `page_curl`, ...). A missing key means the web's
+    /// built-in default. Validated by `auth::preferences::EffectPrefs`.
+    pub effects: Json,
+
     /// M6a: opt-out kill switch for reading-activity capture. When false the
     /// client tracker hook short-circuits and no `reading_sessions` rows are
     /// written. Default true.

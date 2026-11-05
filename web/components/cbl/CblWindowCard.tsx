@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 
+import { ProgressFill } from "@/components/library/ProgressFill";
 import { Cover } from "@/components/Cover";
+import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -12,6 +14,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import type { CblWindowEntry } from "@/lib/api/types";
@@ -112,10 +115,16 @@ export function CblWindowCard({
   });
 
   // Dialog must render outside <Link> — see SeriesCard for why.
+  const morph = useCoverMorph(
+    issueCoverName(issue.series_slug, issue.slug),
+    issue.cover_url,
+  );
   return (
     <>
       <Link
+        data-card=""
         href={issueUrl(issue, { cbl: cblSavedViewId })}
+        onClick={morph.onClick}
         className={cn(
           "group hover:bg-accent/40 focus-visible:ring-ring flex flex-col gap-2 rounded-md p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none",
           className,
@@ -131,15 +140,17 @@ export function CblWindowCard({
           )}
           {...longPress.wrapperProps}
         >
-          <Cover
-            src={issue.cover_url}
-            alt={heading}
-            fallback={numberLabel}
-            className={cn(
-              "w-full transition group-hover:brightness-110",
-              entry.finished && "opacity-50",
-            )}
-          />
+          <CoverMorph name={morph.name}>
+            <Cover
+              src={issue.cover_url}
+              alt={heading}
+              fallback={numberLabel}
+              className={cn(
+                "w-full transition group-hover:brightness-110",
+                entry.finished && "opacity-50",
+              )}
+            />
+          </CoverMorph>
           <Badge
             variant="secondary"
             className="bg-background/80 absolute bottom-2 left-2 backdrop-blur"
@@ -160,10 +171,7 @@ export function CblWindowCard({
               className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
               aria-hidden="true"
             >
-              <div
-                className="bg-primary h-full transition-[width]"
-                style={{ width: `${percent}%` }}
-              />
+              <ProgressFill id={issue.id} percent={percent} />
             </div>
           )}
           {issue.state === "active" && (
@@ -173,6 +181,7 @@ export function CblWindowCard({
                 actions={menuActions}
               />
               <QuickReadOverlay
+                onActivate={morph.mark}
                 readerHref={readerUrl(issue, { cbl: cblSavedViewId })}
                 label={primaryLabel}
               />

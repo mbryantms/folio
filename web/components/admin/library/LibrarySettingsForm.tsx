@@ -19,7 +19,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/folio/slider";
 import { Switch } from "@/components/ui/switch";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  LibrarySettingsSkeleton,
+  ThumbnailSettingsSkeleton,
+} from "@/components/skeletons/AdminShapes";
 import { TagInput } from "./TagInput";
 import { HashBackfillProgress } from "./HashBackfillProgress";
 import { CronInput } from "./CronInput";
@@ -164,7 +167,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
   }, [lib.data, form]);
   useUnsavedChangesGuard(form.formState.isDirty);
 
-  if (lib.isLoading) return <Skeleton className="h-72 w-full" />;
+  if (lib.isLoading) return <LibrarySettingsSkeleton />;
   if (lib.error || !lib.data) {
     return <p className="text-destructive text-sm">Failed to load library.</p>;
   }
@@ -885,7 +888,7 @@ function ThumbnailSettingsCard({
   onPageQualityChange: (quality: number) => void;
 }) {
   const enabledLabelId = useId();
-  if (loading) return <Skeleton className="h-48 w-full" />;
+  if (loading) return <ThumbnailSettingsSkeleton />;
 
   return (
     <Card>

@@ -13,9 +13,12 @@ import type { SeriesView } from "@/lib/api/types";
 import { useUpdatePreferences } from "@/lib/api/mutations";
 import type { PreferencesReq } from "@/lib/api/types";
 
+import { ReaderPreview } from "./ReaderPreview";
 import { SegmentedControl } from "./SegmentedControl";
 import { SeriesCompletionPref } from "./SeriesCompletionPref";
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { ReadingBodySkeleton } from "@/components/skeletons/SettingsShapes";
 
 type DirectionPref = "auto" | "ltr" | "rtl";
 type FitPref = "auto" | "width" | "height" | "original" | "contain";
@@ -80,7 +83,13 @@ export function ReadingPrefs() {
     update.mutate(body);
   }
 
-  if (me.isLoading) return <Skeleton className="h-72 w-full" />;
+  if (me.isLoading) {
+    return (
+      <LoadingRegion label="Loading reading settings…">
+        <ReadingBodySkeleton />
+      </LoadingRegion>
+    );
+  }
   if (me.error || !me.data) {
     return (
       <p className="text-destructive text-sm">Failed to load preferences.</p>
@@ -89,133 +98,149 @@ export function ReadingPrefs() {
   const data = me.data;
 
   return (
-    <div className="space-y-6">
-      <SettingsSection
-        title="Reading direction"
-        description="Default for new series. Per-series overrides and the ComicInfo Manga flag still take precedence."
-      >
-        <SegmentedControl
-          value={directionFromMe(data.default_reading_direction)}
-          onChange={(next) =>
-            patch({
-              default_reading_direction: toReq(
-                next,
-              ) as PreferencesReq["default_reading_direction"],
-            })
-          }
-          options={directionOptions}
-          ariaLabel="Default reading direction"
-          disabled={update.isPending}
+    <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start lg:gap-8">
+      {/* Live preview of the reader defaults below: first on phones,
+          a sticky side panel on wide screens. */}
+      <aside className="mb-6 lg:sticky lg:top-24 lg:order-2 lg:mb-0">
+        <ReaderPreview
+          prefs={{
+            direction: directionFromMe(data.default_reading_direction),
+            fit: fitFromMe(data.default_fit_mode),
+            view: viewFromMe(data.default_view_mode),
+            animation: animationFromMe(data.default_page_animation),
+            strip: data.default_page_strip === true,
+            coverSolo: data.default_cover_solo !== false,
+          }}
         />
-      </SettingsSection>
-
-      <SettingsSection
-        title="Fit mode"
-        description="How a single page sizes inside the viewport."
-      >
-        <SegmentedControl
-          value={fitFromMe(data.default_fit_mode)}
-          onChange={(next) =>
-            patch({
-              default_fit_mode: toReq(
-                next,
-              ) as PreferencesReq["default_fit_mode"],
-            })
-          }
-          options={fitOptions}
-          ariaLabel="Default fit mode"
-          disabled={update.isPending}
-        />
-      </SettingsSection>
-
-      <SettingsSection
-        title="View mode"
-        description="Default layout. Auto picks single, double, or webtoon based on the series' page metadata."
-      >
-        <SegmentedControl
-          value={viewFromMe(data.default_view_mode)}
-          onChange={(next) =>
-            patch({
-              default_view_mode: toReq(
-                next,
-              ) as PreferencesReq["default_view_mode"],
-            })
-          }
-          options={viewOptions}
-          ariaLabel="Default view mode"
-          disabled={update.isPending}
-        />
-      </SettingsSection>
-
-      <SettingsSection
-        title="Page-turn animation"
-        description="The transition that plays when you navigate to the next or previous page. Webtoon view ignores this (the continuous scroll is its own animation). Honors prefers-reduced-motion."
-      >
-        <SegmentedControl
-          value={animationFromMe(data.default_page_animation)}
-          onChange={(next) =>
-            patch({
-              default_page_animation: toReq(
-                next,
-              ) as PreferencesReq["default_page_animation"],
-            })
-          }
-          options={animationOptions}
-          ariaLabel="Default page-turn animation"
-          disabled={update.isPending}
-        />
-      </SettingsSection>
-
-      <SettingsSection
-        title="Page strip"
-        description="Open the reader with the page-thumbnail strip already visible."
-      >
-        <div className="flex items-center justify-between gap-6">
-          <div className="space-y-0.5">
-            <p className="text-foreground text-sm font-medium">
-              Show page strip on open
-            </p>
-            <p className="text-muted-foreground text-sm">
-              You can always toggle the strip with M while reading.
-            </p>
-          </div>
-          <Switch
-            checked={data.default_page_strip === true}
-            onCheckedChange={(v) => patch({ default_page_strip: v })}
+      </aside>
+      <div className="min-w-0 space-y-6">
+        <SettingsSection
+          title="Reading direction"
+          description="Default for new series. Per-series overrides and the ComicInfo Manga flag still take precedence."
+        >
+          <SegmentedControl
+            value={directionFromMe(data.default_reading_direction)}
+            onChange={(next) =>
+              patch({
+                default_reading_direction: toReq(
+                  next,
+                ) as PreferencesReq["default_reading_direction"],
+              })
+            }
+            options={directionOptions}
+            ariaLabel="Default reading direction"
             disabled={update.isPending}
-            aria-label="Show page strip by default"
           />
-        </div>
-      </SettingsSection>
+        </SettingsSection>
 
-      <SettingsSection
-        title="Spreads"
-        description="How double-page view aligns pairs around the cover and any inline spreads."
-      >
-        <div className="flex items-center justify-between gap-6">
-          <div className="space-y-0.5">
-            <p className="text-foreground text-sm font-medium">
-              First page is cover (always solo)
-            </p>
-            <p className="text-muted-foreground text-sm">
-              Aligns pairs around the cover, like a printed comic. Per-series
-              overrides still win.
-            </p>
-          </div>
-          <Switch
-            checked={data.default_cover_solo !== false}
-            onCheckedChange={(v) => patch({ default_cover_solo: v })}
+        <SettingsSection
+          title="Fit mode"
+          description="How a single page sizes inside the viewport."
+        >
+          <SegmentedControl
+            value={fitFromMe(data.default_fit_mode)}
+            onChange={(next) =>
+              patch({
+                default_fit_mode: toReq(
+                  next,
+                ) as PreferencesReq["default_fit_mode"],
+              })
+            }
+            options={fitOptions}
+            ariaLabel="Default fit mode"
             disabled={update.isPending}
-            aria-label="First page is cover by default"
           />
-        </div>
-      </SettingsSection>
+        </SettingsSection>
 
-      <SeriesCompletionPref />
+        <SettingsSection
+          title="View mode"
+          description="Default layout. Auto picks single, double, or webtoon based on the series' page metadata."
+        >
+          <SegmentedControl
+            value={viewFromMe(data.default_view_mode)}
+            onChange={(next) =>
+              patch({
+                default_view_mode: toReq(
+                  next,
+                ) as PreferencesReq["default_view_mode"],
+              })
+            }
+            options={viewOptions}
+            ariaLabel="Default view mode"
+            disabled={update.isPending}
+          />
+        </SettingsSection>
 
-      <ActivityThresholdsCard />
+        <SettingsSection
+          title="Page-turn animation"
+          description="The transition that plays when you navigate to the next or previous page. Webtoon view ignores this (the continuous scroll is its own animation). Honors prefers-reduced-motion."
+        >
+          <SegmentedControl
+            value={animationFromMe(data.default_page_animation)}
+            onChange={(next) =>
+              patch({
+                default_page_animation: toReq(
+                  next,
+                ) as PreferencesReq["default_page_animation"],
+              })
+            }
+            options={animationOptions}
+            ariaLabel="Default page-turn animation"
+            disabled={update.isPending}
+          />
+        </SettingsSection>
 
-      <SeriesOverridesCard />
+        <SettingsSection
+          title="Page strip"
+          description="Open the reader with the page-thumbnail strip already visible."
+        >
+          <div className="flex items-center justify-between gap-6">
+            <div className="space-y-0.5">
+              <p className="text-foreground text-sm font-medium">
+                Show page strip on open
+              </p>
+              <p className="text-muted-foreground text-sm">
+                You can always toggle the strip with M while reading.
+              </p>
+            </div>
+            <Switch
+              checked={data.default_page_strip === true}
+              onCheckedChange={(v) => patch({ default_page_strip: v })}
+              disabled={update.isPending}
+              aria-label="Show page strip by default"
+            />
+          </div>
+        </SettingsSection>
+
+        <SettingsSection
+          title="Spreads"
+          description="How double-page view aligns pairs around the cover and any inline spreads."
+        >
+          <div className="flex items-center justify-between gap-6">
+            <div className="space-y-0.5">
+              <p className="text-foreground text-sm font-medium">
+                First page is cover (always solo)
+              </p>
+              <p className="text-muted-foreground text-sm">
+                Aligns pairs around the cover, like a printed comic. Per-series
+                overrides still win.
+              </p>
+            </div>
+            <Switch
+              checked={data.default_cover_solo !== false}
+              onCheckedChange={(v) => patch({ default_cover_solo: v })}
+              disabled={update.isPending}
+              aria-label="First page is cover by default"
+            />
+          </div>
+        </SettingsSection>
+
+        <SeriesCompletionPref />
+
+        <ActivityThresholdsCard />
+
+        <SeriesOverridesCard />
+      </div>
     </div>
   );
 }

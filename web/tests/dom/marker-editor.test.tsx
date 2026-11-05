@@ -60,10 +60,18 @@ vi.mock("@/lib/api/queries", async (importOriginal) => ({
 }));
 vi.mock("@/lib/api/mutations/markers", async (importOriginal) => ({
   ...(await importOriginal<typeof Mutations>()),
-  useCreateMarker: () => ({ mutate: createMutate, isPending: false }),
+  useCreateMarker: () => ({
+    mutate: createMutate,
+    mutateAsync: createMutate,
+    isPending: false,
+  }),
   useUpdateMarker: () => ({ mutate: updateMutate, isPending: false }),
   useDeleteMarker: () => ({ mutate: deleteMutate, isPending: false }),
-  useRestoreMarkers: () => ({ mutate: restoreMutate, isPending: false }),
+  useRestoreMarkers: () => ({
+    mutate: restoreMutate,
+    mutateAsync: restoreMutate,
+    isPending: false,
+  }),
 }));
 
 import { MarkerEditor } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/MarkerEditor";

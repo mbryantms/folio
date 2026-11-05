@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import { UserRowsSkeleton } from "@/components/skeletons/AdminShapes";
 import { CreateUserDialog } from "@/components/admin/users/CreateUserDialog";
 import { useUserList, type UserListFilters } from "@/lib/api/queries";
 import type { AdminUserView, UserRole, UserState } from "@/lib/api/types";
@@ -195,7 +195,7 @@ export function UserTable() {
       ) : null}
 
       {isLoading ? (
-        <Skeleton className="h-64 w-full" />
+        <UserRowsSkeleton />
       ) : error ? (
         <p className="text-destructive text-sm">{error.message}</p>
       ) : (

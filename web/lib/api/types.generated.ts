@@ -742,6 +742,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/queue/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_queue_jobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/relationship-suggestions": {
         parameters: {
             query?: never;
@@ -9407,6 +9423,47 @@ export interface components {
             /** @enum {string} */
             status: "queued";
         };
+        /**
+         * @description Per-account on/off switches for decorative effects (folio-flair-1.0).
+         *
+         *     Stored as the `users.effects` JSON object. Every field is optional: an
+         *     absent key means "use the web's built-in default" (the defaults live in
+         *     `web/lib/effects.ts`, so they can change without a migration). Unknown
+         *     keys are rejected so a typo can't be stored silently.
+         *
+         *     On `PATCH /me/preferences` the object is **merged** into the stored one:
+         *     a key set to `true`/`false` overwrites, a key set to `null` clears it back
+         *     to the default, and absent keys are left alone.
+         */
+        EffectPrefs: {
+            /** @description The reader's background glows with the current page's edge colours. */
+            ambient_glow?: boolean | null;
+            /** @description Library cards tilt toward the pointer with a light sheen. */
+            cover_tilt?: boolean | null;
+            /** @description Series and issue pages get a blurred, cover-tinted backdrop. */
+            hero_backdrop?: boolean | null;
+            /** @description Creator and character chips open a preview card on hover / long-press. */
+            hover_cards?: boolean | null;
+            /** @description Paged-mode page turns animate as a page curl (fine pointer only). */
+            page_curl?: boolean | null;
+            /** @description Moving across a cover flips through a few of its pages. */
+            page_scrub?: boolean | null;
+            /** @description Series cards show stacked page edges that grow with the issue count. */
+            spine_stack?: boolean | null;
+        };
+        /**
+         * @description `PATCH` body for [`EffectPrefs`]: same keys, but each one distinguishes
+         *     absent (leave alone) from `null` (clear to default).
+         */
+        EffectPrefsPatch: {
+            ambient_glow?: boolean | null;
+            cover_tilt?: boolean | null;
+            hero_backdrop?: boolean | null;
+            hover_cards?: boolean | null;
+            page_curl?: boolean | null;
+            page_scrub?: boolean | null;
+            spine_stack?: boolean | null;
+        };
         EmailStatusView: {
             /**
              * @description `true` when the live sender is a real transport (Lettre or Mock),
@@ -10856,6 +10913,67 @@ export interface components {
              */
             thumbnail_enqueued: boolean;
         };
+        /** @description One job in a lane. */
+        JobCard: {
+            /**
+             * Format: int32
+             * @description Attempts so far (the running one included), when known.
+             */
+            attempt?: number | null;
+            /** Format: int64 */
+            duration_ms?: number | null;
+            /** @description Done jobs that failed: the handler's error. */
+            error?: string | null;
+            /**
+             * Format: date-time
+             * @description Done jobs.
+             */
+            finished_at?: string | null;
+            /** @description What the job does, e.g. `"Cover thumbnail"`, `"Library scan"`. */
+            label: string;
+            /**
+             * Format: date-time
+             * @description Scheduled jobs: when the retry is due.
+             */
+            next_run_at?: string | null;
+            /** @description Done jobs: `true` on success. */
+            ok?: boolean | null;
+            queue: string;
+            /**
+             * Format: date-time
+             * @description Running and done jobs: when execution started.
+             */
+            started_at?: string | null;
+            state: components["schemas"]["JobCardState"];
+            target?: components["schemas"]["JobTarget"] | null;
+            /** @description apalis task id (ULID); stable across lanes, so it keys the card. */
+            task_id: string;
+        };
+        /**
+         * @description Where a job card sits.
+         * @enum {string}
+         */
+        JobCardState: "waiting" | "scheduled" | "running" | "done";
+        /** @description The entity a job works on, resolved for display. */
+        JobTarget: {
+            /** @description Thumbnail URL: the issue's cover, or the series cover. */
+            cover_url?: string | null;
+            id: string;
+            issue_slug?: string | null;
+            /** @description `issue` | `series` | `library`. */
+            kind: string;
+            library?: components["schemas"]["JobTargetLibrary"] | null;
+            /** @description Slugs for links (issue and series targets). */
+            series_slug?: string | null;
+            /** @description `"The Flash #12 — Learning Curve"`, `"The Flash (1987)"`, `"DC"`. */
+            title: string;
+        };
+        /** @description The library a job's target belongs to. */
+        JobTargetLibrary: {
+            id: string;
+            name: string;
+            slug: string;
+        };
         LatestReleaseView: {
             /** @description Browse URL on the host's release page. */
             html_url: string;
@@ -11658,6 +11776,11 @@ export interface components {
             default_view_mode?: components["schemas"]["ViewMode"] | null;
             density?: components["schemas"]["Density"] | null;
             display_name: string;
+            /**
+             * @description On/off switches for decorative effects; a missing key means the
+             *     web's built-in default.
+             */
+            effects: components["schemas"]["EffectPrefs"];
             email?: string | null;
             /** @description True when `/me/account` accepts email edits for this user. */
             email_editable: boolean;
@@ -11938,6 +12061,13 @@ export interface components {
              * @description Set when `source == "cbl"`. Total matched entries in the CBL.
              */
             cbl_total?: number | null;
+            /**
+             * Format: int32
+             * @description Set by the next-up resolver when `source == "collection"`: how many
+             *     issues of the collection's reading order the caller has finished,
+             *     for the end card's progress ring. `None` from prev-up.
+             */
+            collection_finished?: number | null;
             /**
              * @description Set when `source == "collection"`. The collection's saved-view id
              *     (the same id the caller sent), for deep links to the collection.
@@ -12511,6 +12641,7 @@ export interface components {
             default_reading_direction?: components["schemas"]["ReadingDirection"] | null;
             default_view_mode?: components["schemas"]["ViewMode"] | null;
             density?: components["schemas"]["Density"] | null;
+            effects?: components["schemas"]["EffectPrefsPatch"] | null;
             /**
              * @description Stats v2: privacy toggle. When true, admin server-wide aggregates
              *     exclude this user's sessions.
@@ -13005,6 +13136,35 @@ export interface components {
              * @description Sum across all queues — convenient for the topbar pill.
              */
             total: number;
+        };
+        /**
+         * @description One queue's lanes. Each list is capped at the request's `limit`; the
+         *     `*_count` fields are exact.
+         */
+        QueueJobsLane: {
+            queue: string;
+            /** @description Newest first. Process-local: empty after a restart. */
+            recent: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            recent_count: number;
+            /** @description Longest-running first; prefetched (not yet started) jobs last. */
+            running: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            running_count: number;
+            /** @description Soonest retry first. */
+            scheduled: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            scheduled_count: number;
+            /** @description Next to run first. */
+            waiting: components["schemas"]["JobCard"][];
+            /** Format: int64 */
+            waiting_count: number;
+        };
+        QueueJobsView: {
+            /** Format: date-time */
+            generated_at: string;
+            /** @description One entry per queue (or just the requested one), in a stable order. */
+            queues: components["schemas"]["QueueJobsLane"][];
         };
         /** @description One queue's jobs by where they are held. */
         QueueWorkView: {
@@ -17980,6 +18140,44 @@ export interface operations {
             };
         };
     };
+    admin_queue_jobs: {
+        parameters: {
+            query?: {
+                /** @description Queue label; omit for every queue. */
+                queue?: string | null;
+                /** @description Cards per lane (default 20, max 100). */
+                limit?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueueJobsView"];
+                };
+            };
+            /** @description admin only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unknown queue */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     relationship_suggestions_list: {
         parameters: {
             query?: {
@@ -19531,7 +19729,7 @@ export interface operations {
     admin_stats_user_reading_stats: {
         parameters: {
             query?: {
-                /** @description '7d', '30d', '90d', 'all' */
+                /** @description '7d', '30d', '60d', '90d', '1y', 'all', or a four-digit calendar year 'YYYY' (1970-2100, e.g. '2026') bounded to Jan 1 - Dec 31 in the target user's timezone. Defaults to '30d'. */
                 range?: string;
             };
             header?: never;
@@ -24825,7 +25023,7 @@ export interface operations {
     reading_sessions_stats: {
         parameters: {
             query?: {
-                /** @description '7d', '30d', '90d', 'all' */
+                /** @description '7d', '30d', '60d', '90d', '1y', 'all', or a four-digit calendar year 'YYYY' (1970-2100, e.g. '2026') bounded to Jan 1 - Dec 31 in the user's timezone. Defaults to '30d'. */
                 range?: string;
                 issue_id?: string;
                 series_id?: string;

@@ -1,5 +1,6 @@
 "use client";
 
+import { MarkerGroupsSkeleton } from "@/components/markers/MarkerGroupsSkeleton";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -57,7 +58,7 @@ import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useContainerWidth } from "@/lib/use-container-width";
 import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
-import { UNDO_TOAST_DURATION_MS } from "@/lib/api/toast-strings";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import type {
   MarkerKind,
   MarkerRegion,
@@ -271,13 +272,10 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
       onSuccess: (resp) => {
         selection.exit();
         const n = resp?.deleted ?? ids.length;
-        toast.success(`Deleted ${n} marker${n === 1 ? "" : "s"}`, {
-          duration: UNDO_TOAST_DURATION_MS,
-          action: {
-            label: "Undo",
-            // One request for the whole selection (WP-8.4).
-            onClick: () => restoreMarkers.mutate(snapshots),
-          },
+        showUndoToast({
+          message: `Deleted ${n} marker${n === 1 ? "" : "s"}`,
+          // One request for the whole selection (WP-8.4).
+          onUndo: () => restoreMarkers.mutateAsync(snapshots),
         });
       },
     });
@@ -696,8 +694,13 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
       ) : null}
 
       {query.isLoading ? (
-        <div className="text-muted-foreground py-12 text-center text-sm">
-          Loading markers…
+        // Same marker rows the /bookmarks route fallback draws, so the
+        // in-place load (filter / scope change) holds the page's shape.
+        <div role="status">
+          <div aria-hidden>
+            <MarkerGroupsSkeleton groups={embedded ? [2] : [3, 2]} />
+          </div>
+          <span className="sr-only">Loading markers…</span>
         </div>
       ) : query.isError ? (
         <div className="text-destructive rounded-md border p-4 text-sm">
@@ -1591,12 +1594,9 @@ function useMarkerActions(
         const snapshot = marker;
         del.mutate(undefined, {
           onSuccess: () =>
-            toast.success("Removed", {
-              duration: UNDO_TOAST_DURATION_MS,
-              action: {
-                label: "Undo",
-                onClick: () => restore.mutate([snapshot]),
-              },
+            showUndoToast({
+              message: "Removed",
+              onUndo: () => restore.mutateAsync([snapshot]),
             }),
         });
       },

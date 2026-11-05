@@ -87,6 +87,9 @@ export function CoverMenuButton({
             "group-hover:scale-100 group-hover:opacity-100",
             "group-focus-within:scale-100 group-focus-within:opacity-100",
             "focus-visible:scale-100 focus-visible:opacity-100 focus-visible:outline-none",
+            // Stays visible while its menu is open (the pointer has left
+            // the card for the menu, so group-hover no longer holds it).
+            "data-[state=open]:scale-100 data-[state=open]:opacity-100",
             className,
           )}
         >

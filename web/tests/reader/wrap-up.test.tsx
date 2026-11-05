@@ -119,8 +119,9 @@ describe("<EndOfIssueCard> wrap up", () => {
     const { container } = renderCard({ wrapUp: wrapUp() });
     const card = container.querySelector('[role="dialog"]')!;
     const strip = card.querySelector("[data-wrap-up-strip]")!;
-    // Last child of the card: below Read and the issue-page links.
-    expect(card.lastElementChild).toBe(strip);
+    // Last in the Up Next pane: below Read and the issue-page links.
+    const pane = card.querySelector('[data-end-pane="next"]')!;
+    expect(pane.lastElementChild).toBe(strip);
     expect(screen.getByRole("button", { name: "Read" })).toBeTruthy();
     expect(screen.getByText("Rate")).toBeTruthy();
     expect(screen.getByLabelText("3 markers in this issue")).toBeTruthy();

@@ -8,7 +8,6 @@ import { CopyButton } from "@/components/folio/copy-button";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,6 +39,8 @@ import type {
 } from "@/lib/api/types";
 
 import { SettingsSection } from "./SettingsSection";
+import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
+import { ApiTokensBodySkeleton } from "@/components/skeletons/SettingsShapes";
 
 export function AppPasswordsCard() {
   const list = useAppPasswords();
@@ -69,12 +70,9 @@ export function AppPasswordsCard() {
 
   if (list.isLoading) {
     return (
-      <SettingsSection
-        title="Existing passwords"
-        description="Active Bearer credentials issued to your account. Use them as `Authorization: Bearer <token>` from OPDS readers or scripts."
-      >
-        <Skeleton className="h-24 w-full" />
-      </SettingsSection>
+      <LoadingRegion label="Loading app passwords…">
+        <ApiTokensBodySkeleton />
+      </LoadingRegion>
     );
   }
   if (list.error || !list.data) {

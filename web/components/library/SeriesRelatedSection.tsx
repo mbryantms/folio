@@ -43,8 +43,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
+import { toast } from "sonner";
 
+import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { Cover } from "@/components/Cover";
+import { CoverMorph } from "@/components/library/CoverMorph";
+import { CoverTilt } from "@/components/library/CoverTilt";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import {
   RelationshipFormDialog,
@@ -65,6 +69,8 @@ import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  useCreateExternalRelationship,
+  useCreateSeriesRelationship,
   useDeleteExternalRelationship,
   useDeleteSeriesRelationship,
 } from "@/lib/api/mutations";
@@ -75,6 +81,7 @@ import {
 } from "@/lib/api/queries";
 import type {
   ChainSplitView,
+  CreateSeriesRelationshipReq,
   RelationshipCatalogue,
   RelationshipGroup,
   RelationshipKind,
@@ -86,6 +93,8 @@ import type {
 } from "@/lib/api/types";
 import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
 import { kindOrder, scopeCaption } from "@/lib/relationships";
+import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 import { useReturnFocus } from "@/lib/ui/use-return-focus";
 import { seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
@@ -261,32 +270,93 @@ export function SeriesRelatedSection({
   const me = useMe();
   const isAdmin = me.data?.role === "admin";
   const query = useSeriesRelationships(seriesSlug);
-  const remove = useDeleteSeriesRelationship(seriesSlug);
-  const removeExternal = useDeleteExternalRelationship(seriesSlug);
+  // Silent: removals raise their own Undo toast, and the Undo re-create
+  // is confirmed by that toast's "Restored" follow-up.
+  const remove = useDeleteSeriesRelationship(seriesSlug, { silent: true });
+  const recreate = useCreateSeriesRelationship(seriesSlug, { silent: true });
+  const removeExternal = useDeleteExternalRelationship(seriesSlug, {
+    silent: true,
+  });
+  const recreateExternal = useCreateExternalRelationship(seriesSlug, {
+    silent: true,
+  });
   const catalogue = useRelationshipKinds();
   const [formOpen, setFormOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<EditableRelationship | null>(
     null,
   );
-  const [confirmRemove, setConfirmRemove] = React.useState<RemoveTarget | null>(
-    null,
-  );
   // The dialogs are controlled (opened from per-card buttons), so focus
   // has to be handed back to the opener explicitly on close.
   const returnFocus = useReturnFocus();
-  const askRemove = (t: RemoveTarget) => {
-    returnFocus.capture();
-    setConfirmRemove(t);
-  };
-  const [confirmRemoveExternal, setConfirmRemoveExternal] =
-    React.useState<SeriesExternalRelationshipView | null>(null);
-  const askRemoveExternal = (row: SeriesExternalRelationshipView) => {
-    returnFocus.capture();
-    setConfirmRemoveExternal(row);
-  };
 
   const rels = query.data?.relationships ?? [];
   const arcs = query.data?.arcs ?? [];
+
+  // Undo instead of confirm: a relationship removes at once (with its
+  // inverse) and Undo re-creates the pair from the row's own kind, scope
+  // and note — the server writes the inverse again. Only provenance
+  // (`suggested` → `manual`) and the row id change.
+  const askRemove = (t: RemoveTarget) => {
+    const series = rels.find((r) => r.id === t.id);
+    const arc = series ? undefined : arcs.find((a) => a.id === t.id);
+    const row = series ?? arc;
+    if (!row) return;
+    const restore: CreateSeriesRelationshipReq = {
+      kind: row.kind,
+      ...(series ? { target: series.series.id } : {}),
+      ...(arc ? { target_arc: arc.arc.slug } : {}),
+      qualifier: row.qualifier ?? null,
+      coverage: series?.coverage ?? null,
+      from_range: row.from_range ?? null,
+      to_range: row.to_range ?? null,
+      note: row.note ?? null,
+    };
+    remove.mutate(
+      { id: t.id, otherSlug: t.otherSlug, arcSlug: t.arcSlug },
+      {
+        onSuccess: () =>
+          showUndoToast({
+            message: `Removed “${t.label}”`,
+            failedMessage: "Couldn't restore the relationship",
+            onUndo: () => recreate.mutateAsync(restore),
+          }),
+      },
+    );
+  };
+  // An admin's own external link is deleted outright, so Undo re-adds it
+  // as the same user link. A provider link is *dismissed* instead (a
+  // later metadata apply won't bring it back), and re-adding it would
+  // turn it into an admin link that provider syncs no longer refresh —
+  // not a faithful restore, so that path keeps its confirm dialog.
+  const [confirmRemoveExternal, setConfirmRemoveExternal] =
+    React.useState<SeriesExternalRelationshipView | null>(null);
+  const askRemoveExternal = (row: SeriesExternalRelationshipView) => {
+    if (row.set_by !== "user") {
+      returnFocus.capture();
+      setConfirmRemoveExternal(row);
+      return;
+    }
+    const label = `${row.kind_label} ${externalName(row)}`;
+    removeExternal.mutate(
+      { id: row.id },
+      {
+        onSuccess: () =>
+          showUndoToast({
+            message: `Removed “${label}”`,
+            failedMessage: "Couldn't restore the external link",
+            onUndo: () =>
+              recreateExternal.mutateAsync({
+                kind: row.kind,
+                name: row.name,
+                provider_series_id: row.provider_series_id,
+                qualifier: row.qualifier ?? null,
+                source: row.source,
+                year: row.year ?? null,
+              }),
+          }),
+      },
+    );
+  };
   const chain = query.data?.chain ?? [];
   const externals = query.data?.external ?? [];
   const { shown: shownRels, hidden: chainEdges } = splitChainDuplicates(
@@ -477,52 +547,6 @@ export function SeriesRelatedSection({
       )}
 
       <AlertDialog
-        open={confirmRemove !== null}
-        onOpenChange={(o) => {
-          if (!o) setConfirmRemove(null);
-        }}
-      >
-        <AlertDialogContent onCloseAutoFocus={returnFocus.onCloseAutoFocus}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove relationship?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Removes &ldquo;{confirmRemove?.label}&rdquo;
-              {confirmRemove?.arcSlug
-                ? ""
-                : " and its reverse link on the other series"}
-              .
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={remove.isPending}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={remove.isPending}
-              onClick={() => {
-                if (!confirmRemove) return;
-                remove.mutate(
-                  {
-                    id: confirmRemove.id,
-                    otherSlug: confirmRemove.otherSlug,
-                    arcSlug: confirmRemove.arcSlug,
-                  },
-                  { onSuccess: () => setConfirmRemove(null) },
-                );
-              }}
-            >
-              {remove.isPending ? (
-                <>
-                  <Loader2 className="mr-1 size-3 animate-spin" /> Removing
-                </>
-              ) : (
-                "Remove"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog
         open={confirmRemoveExternal !== null}
         onOpenChange={(o) => {
           if (!o) setConfirmRemoveExternal(null);
@@ -530,7 +554,7 @@ export function SeriesRelatedSection({
       >
         <AlertDialogContent onCloseAutoFocus={returnFocus.onCloseAutoFocus}>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove external link?</AlertDialogTitle>
+            <AlertDialogTitle>Dismiss provider link?</AlertDialogTitle>
             <AlertDialogDescription>
               Removes &ldquo;{confirmRemoveExternal?.kind_label}{" "}
               {confirmRemoveExternal ? externalName(confirmRemoveExternal) : ""}
@@ -550,7 +574,12 @@ export function SeriesRelatedSection({
                 if (!confirmRemoveExternal) return;
                 removeExternal.mutate(
                   { id: confirmRemoveExternal.id },
-                  { onSuccess: () => setConfirmRemoveExternal(null) },
+                  {
+                    onSuccess: () => {
+                      setConfirmRemoveExternal(null);
+                      toast.success("Provider link dismissed");
+                    },
+                  },
                 );
               }}
             >
@@ -977,24 +1006,33 @@ function RelatedCard({
   caption?: string;
   children?: React.ReactNode;
 }) {
+  // Same cover flair as SeriesCard: a `data-card` for the cover-tone
+  // wash, the optional tilt, and the morph into the series page.
+  const morph = useCoverMorph(seriesCoverName(series.slug), series.cover_url);
   return (
     <Link
       href={seriesUrl(series)}
+      onClick={morph.onClick}
+      data-card=""
       // Focus ring sits outside the card (offset) so the cover keeps the
       // grid's exact width; every container of these cards leaves ring room.
       className="group ring-offset-background focus-visible:ring-ring flex flex-col gap-1.5 rounded-md focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
       style={{ width: `${width}px` }}
       data-testid="related-card"
     >
-      <Cover
-        src={series.cover_url}
-        alt={series.name}
-        fallback={series.publisher}
-        className={cn(
-          "transition-opacity group-hover:opacity-90",
-          highlight && "ring-primary ring-2",
-        )}
-      />
+      <CoverTilt className="relative">
+        <CoverMorph name={morph.name}>
+          <Cover
+            src={series.cover_url}
+            alt={series.name}
+            fallback={series.publisher}
+            className={cn(
+              "transition group-hover:brightness-110",
+              highlight && "ring-primary ring-2",
+            )}
+          />
+        </CoverMorph>
+      </CoverTilt>
       <div className="space-y-0.5 px-0.5">
         {caption && (
           <p
@@ -1027,7 +1065,7 @@ function RelatedSkeleton({ coverWidth }: { coverWidth: number }) {
       <div className="flex gap-4 overflow-hidden">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} style={{ width: coverWidth }} className="shrink-0">
-            <Skeleton className="aspect-[2/3] w-full" />
+            <CoverSkeleton />
             <Skeleton className="mt-2 h-4 w-3/4" />
           </div>
         ))}

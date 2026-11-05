@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { Eye, Loader2 } from "lucide-react";
+import { Eye } from "lucide-react";
 
+import { WatcherRowsSkeleton } from "@/components/skeletons/AdminShapes";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useWatchers } from "@/lib/api/queries";
@@ -54,9 +55,7 @@ export function WatchersCard() {
       </CardHeader>
       <CardContent>
         {isLoading ? (
-          <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Loader2 className="size-4 animate-spin" /> Loading watchers…
-          </div>
+          <WatcherRowsSkeleton />
         ) : error || !data ? (
           <p className="text-destructive text-sm">
             Failed to load watcher status.

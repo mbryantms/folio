@@ -22,6 +22,8 @@ import * as React from "react";
 import {
   DndContext,
   DragOverlay,
+  defaultDropAnimationSideEffects,
+  type DropAnimation,
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
@@ -59,16 +61,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { CollectionCardSkeleton } from "@/components/collections/CollectionCardSkeleton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,15 +87,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/folio/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  BoardToolbarControlsSkeleton,
+  ViewCardsSkeleton,
+} from "@/components/skeletons/SettingsShapes";
+import { useQueryClient } from "@tanstack/react-query";
+
 import {
   useCreateViewGroup,
-  useDeleteViewGroup,
   useReplaceViewGroupLayout,
   useUpdateViewGroup,
 } from "@/lib/api/mutations";
-import { useViewGroups } from "@/lib/api/queries";
-import type { SavedViewView, ViewGroupScope } from "@/lib/api/types";
+import { apiMutate, useApiMutation } from "@/lib/api/mutations/_core";
+import { jsonFetch, queryKeys, useViewGroups } from "@/lib/api/queries";
+import type {
+  ReplaceLayoutReq,
+  SavedViewView,
+  ViewGroupListView,
+  ViewGroupScope,
+  ViewGroupView,
+} from "@/lib/api/types";
 import {
   UNGROUPED_ID,
   VIEW_SORT_OPTIONS,
@@ -118,6 +122,132 @@ import {
   type ViewSort,
 } from "@/lib/saved-views/view-board";
 import { cn } from "@/lib/utils";
+import {
+  DRAG_LIFT_CLASS,
+  LIFT_TRANSITION,
+  SPRING_EASING,
+  useSpringSort,
+} from "@/lib/ui/springy-drag";
+import { useReducedMotion } from "@/lib/visual-effects";
+import { showUndoToast } from "@/lib/ui/undo-toast";
+
+// ──────────────────── delete + undo ────────────────────
+
+/** The layout PUT that puts a re-created group back where the deleted
+ *  one sat. `before` is the scope's layout captured just before the
+ *  delete; `current` is the server's list after the group was re-created
+ *  under `newId`. Group order follows `before` (old id swapped for the
+ *  new one); groups made since trail it. Members come from `current`, so
+ *  moves made in the meantime aren't clobbered, and the ungrouped order
+ *  is the pre-delete one minus anything that has joined a group since.
+ *  Exported for tests. */
+export function restoredGroupLayout(
+  scope: ViewGroupScope,
+  before: ReturnType<typeof boardToLayout>,
+  oldId: string,
+  newId: string,
+  current: ViewGroupListView,
+): ReplaceLayoutReq {
+  const byId = new Map(current.groups.map((g) => [g.id, g]));
+  const order = before.groups.map((g) => (g.id === oldId ? newId : g.id));
+  for (const g of current.groups) if (!order.includes(g.id)) order.push(g.id);
+  const groups = order.flatMap((id) => {
+    const g = byId.get(id);
+    return g ? [{ id, view_ids: g.view_ids }] : [];
+  });
+  const grouped = new Set(groups.flatMap((g) => g.view_ids));
+  return {
+    scope,
+    groups,
+    ungrouped: before.ungrouped.filter((id) => !grouped.has(id)),
+  };
+}
+
+/** Delete a group immediately (optimistically dropped from the cache) and
+ *  offer Undo, which re-creates it with the same name, members, collapsed
+ *  state and slot. Only the grouping is ever lost — the views themselves
+ *  just fall back to Ungrouped — so no confirm is needed. */
+function useDeleteGroupWithUndo(scope: ViewGroupScope) {
+  const qc = useQueryClient();
+  const key = queryKeys.viewGroups(scope);
+  const del = useApiMutation<unknown, string>(
+    (id) => ({ path: `/me/view-groups/${id}`, method: "DELETE" }),
+    {
+      onMutate: async (id) => {
+        await qc.cancelQueries({ queryKey: key });
+        const snapshot = qc.getQueryData<ViewGroupListView>(key);
+        if (snapshot) {
+          qc.setQueryData<ViewGroupListView>(key, {
+            ...snapshot,
+            groups: snapshot.groups.filter((g) => g.id !== id),
+          });
+        }
+        return { snapshot };
+      },
+      onError: (_err, _id, ctx) => {
+        const c = ctx as { snapshot?: ViewGroupListView } | undefined;
+        if (c?.snapshot) qc.setQueryData(key, c.snapshot);
+      },
+      onSettled: () => {
+        qc.invalidateQueries({ queryKey: key });
+      },
+    },
+  );
+  const mutate = del.mutate;
+
+  return React.useCallback(
+    (group: BoardGroup, board: ViewBoard) => {
+      const before = boardToLayout(board);
+      const viewIds = group.views.map((v) => v.id);
+      mutate(group.id, {
+        onSuccess: () =>
+          showUndoToast({
+            message: `Deleted group "${group.name}"`,
+            description:
+              viewIds.length > 0 ? "Its views moved to Ungrouped." : undefined,
+            restoredMessage: `Restored group "${group.name}"`,
+            failedMessage: "Couldn't restore the group",
+            onUndo: async () => {
+              try {
+                const created = await apiMutate<ViewGroupView>({
+                  path: "/me/view-groups",
+                  method: "POST",
+                  body: { scope, name: group.name, view_ids: viewIds },
+                });
+                if (!created) throw new Error("create returned null");
+                if (group.collapsed) {
+                  await apiMutate({
+                    path: `/me/view-groups/${created.id}`,
+                    method: "PATCH",
+                    body: { collapsed: true },
+                  });
+                }
+                const current = await jsonFetch<ViewGroupListView>(
+                  `/me/view-groups?scope=${encodeURIComponent(scope)}`,
+                );
+                await apiMutate({
+                  path: "/me/view-groups/layout",
+                  method: "PUT",
+                  body: restoredGroupLayout(
+                    scope,
+                    before,
+                    group.id,
+                    created.id,
+                    current,
+                  ),
+                });
+              } finally {
+                qc.invalidateQueries({
+                  queryKey: queryKeys.viewGroups(scope),
+                });
+              }
+            },
+          }),
+      });
+    },
+    [mutate, qc, scope],
+  );
+}
 
 // ──────────────────── ids ────────────────────
 
@@ -181,6 +311,39 @@ export type GroupedViewsBoardProps = {
   /** Optional panel rendered between the toolbar and the board (the
    *  reading-lists tab mounts its updates panel here). */
   panel?: React.ReactNode;
+  /** Card grid density: `compact` (Settings → Views, many small cards)
+   *  or `large` (the `/collections` page: fixed 15rem cards, big covers). */
+  size?: "compact" | "large";
+};
+
+const CARD_GRID_CLASS = {
+  compact:
+    "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6",
+  // Fixed-width cards, so a wide screen adds cards per row instead of
+  // blowing each one up; phones keep two flexible columns.
+  large:
+    "grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,15rem)] sm:gap-4",
+} as const;
+const CardGridClassContext = React.createContext<string>(
+  CARD_GRID_CLASS.compact,
+);
+
+/** The held card springs into its slot on drop and settles flat as it
+ *  lands (its lift class comes off, and `LIFT_TRANSITION` springs the
+ *  scale / tilt / shadow back), like the Want to Read grid's in-place
+ *  drag. The slot (the real card, hidden while held) shows once it's
+ *  down. */
+const DROP_ANIMATION: DropAnimation = {
+  duration: 280,
+  easing: SPRING_EASING,
+  sideEffects: (args) => {
+    args.dragOverlay.node
+      .querySelector(`.${DRAG_LIFT_CLASS}`)
+      ?.classList.remove(DRAG_LIFT_CLASS);
+    return defaultDropAnimationSideEffects({
+      styles: { active: { opacity: "0" } },
+    })(args);
+  },
 };
 
 export function GroupedViewsBoard({
@@ -195,12 +358,13 @@ export function GroupedViewsBoard({
   renderCard,
   groupMenuExtra,
   panel,
+  size = "compact",
 }: GroupedViewsBoardProps) {
   const groupsQ = useViewGroups(scope);
   const replaceLayout = useReplaceViewGroupLayout(scope);
   const createGroup = useCreateViewGroup();
   const updateGroup = useUpdateViewGroup(scope);
-  const deleteGroup = useDeleteViewGroup(scope);
+  const deleteGroup = useDeleteGroupWithUndo(scope);
 
   const [sort, setSort] = React.useState<ViewSort>("custom");
   const [query, setQuery] = React.useState("");
@@ -226,6 +390,10 @@ export function GroupedViewsBoard({
   const searching = query.trim().length > 0;
 
   const [activeId, setActiveId] = React.useState<UniqueIdentifier | null>(null);
+  const reduced = useReducedMotion();
+  // Where the held card started, so the section it is moving into (and
+  // only that one) can light up as the drop target.
+  const [dragFrom, setDragFrom] = React.useState<string | null>(null);
   const [newGroupOpen, setNewGroupOpen] = React.useState(false);
   const [newGroupSeedView, setNewGroupSeedView] = React.useState<string | null>(
     null,
@@ -312,6 +480,8 @@ export function GroupedViewsBoard({
   }, []);
 
   function onDragStart(ev: DragStartEvent) {
+    const a = parseDndId(ev.active.id);
+    setDragFrom(a?.type === "view" ? containerOf(board, a.id) : null);
     setActiveId(ev.active.id);
     setDraft(board);
   }
@@ -413,6 +583,10 @@ export function GroupedViewsBoard({
   }
 
   const activeParsed = activeId ? parseDndId(activeId) : null;
+  // The section a held card will land in when it's leaving its own.
+  const heldIn =
+    activeParsed?.type === "view" ? containerOf(board, activeParsed.id) : null;
+  const dropTarget = heldIn && heldIn !== dragFrom ? heldIn : null;
   const activeView =
     activeParsed?.type === "view"
       ? (views.find((v) => v.id === activeParsed.id) ?? null)
@@ -427,159 +601,194 @@ export function GroupedViewsBoard({
 
   return (
     <ViewBoardActionsContext.Provider value={actions}>
-      <div className="space-y-4">
-        {/* Toolbar: blurb + search + sort + new group + primary action */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-muted-foreground text-sm">{blurb}</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {total > 0 ? (
-              <>
-                <div className="relative">
-                  <Search
-                    aria-hidden="true"
-                    className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-                  />
-                  <Input
-                    type="search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={`Search ${noun}s…`}
-                    aria-label={`Search ${noun}s`}
-                    className="h-9 w-44 pl-8 sm:w-56"
-                  />
-                </div>
-                <Select
-                  value={sort}
-                  onValueChange={(v) => setSort(v as ViewSort)}
-                >
-                  <SelectTrigger
-                    className="h-9 w-[11.5rem]"
-                    aria-label="Sort ungrouped"
-                    title="Order of the ungrouped section. Dragging a card pins the custom order."
+      <CardGridClassContext.Provider value={CARD_GRID_CLASS[size]}>
+        <div className="space-y-4">
+          {/* Toolbar: blurb + search + sort + new group + primary action */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-muted-foreground text-sm">{blurb}</p>
+            <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
+              {total > 0 ? (
+                <>
+                  <div className="relative max-sm:basis-full">
+                    <Search
+                      aria-hidden="true"
+                      className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                    />
+                    <Input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder={`Search ${noun}s…`}
+                      aria-label={`Search ${noun}s`}
+                      className="h-9 w-full pl-8 sm:w-56"
+                    />
+                  </div>
+                  <Select
+                    value={sort}
+                    onValueChange={(v) => setSort(v as ViewSort)}
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    {VIEW_SORT_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-9"
-                  onClick={() => {
-                    setNewGroupSeedView(null);
-                    setNewGroupOpen(true);
-                  }}
-                >
-                  <FolderPlus className="mr-1.5 size-4" /> New group
-                </Button>
-              </>
-            ) : null}
-            {action}
+                    <SelectTrigger
+                      className="h-9 w-[11.5rem]"
+                      aria-label="Sort ungrouped"
+                      title="Order of the ungrouped section. Dragging a card pins the custom order."
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent align="end">
+                      {VIEW_SORT_OPTIONS.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9"
+                    onClick={() => {
+                      setNewGroupSeedView(null);
+                      setNewGroupOpen(true);
+                    }}
+                  >
+                    <FolderPlus className="mr-1.5 size-4" /> New group
+                  </Button>
+                </>
+              ) : loading || groupsQ.isLoading ? (
+                // Hold the controls' room while the board loads, so the
+                // primary action doesn't jump left once cards arrive.
+                <div aria-hidden className="contents">
+                  <BoardToolbarControlsSkeleton />
+                </div>
+              ) : null}
+              {action}
+            </div>
           </div>
+
+          {panel}
+
+          {loading || groupsQ.isLoading ? (
+            <BoardSkeleton />
+          ) : total === 0 ? (
+            <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-6 text-sm">
+              {empty}
+            </div>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={collisionDetection}
+              onDragStart={onDragStart}
+              onDragOver={onDragOver}
+              onDragEnd={onDragEnd}
+              onDragCancel={onDragCancel}
+            >
+              {/* While dragging, cards under the pointer must not react
+                (hover wash, cover fan, tint): the slot and the target
+                group's ring are the only feedback. Collision detection
+                uses rects, not pointer events. */}
+              <div
+                className={cn(
+                  "space-y-4",
+                  activeId &&
+                    "select-none [&_[data-board-card]]:pointer-events-none",
+                )}
+              >
+                <SortableContext
+                  items={board.groups.map((g) => groupDndId(g.id))}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {visibleBoard.groups.map((group, idx) => (
+                    <GroupSection
+                      key={group.id}
+                      group={group}
+                      totalInGroup={board.groups[idx]?.views.length ?? 0}
+                      forceOpen={searching}
+                      noun={noun}
+                      isFirst={idx === 0}
+                      isLast={idx === board.groups.length - 1}
+                      dragActive={activeId !== null}
+                      isDropTarget={dropTarget === group.id}
+                      suppressClickUntil={suppressClickUntil}
+                      renderCard={renderCard}
+                      onRename={(name) =>
+                        updateGroup.mutate({ id: group.id, name })
+                      }
+                      onToggleCollapsed={() =>
+                        updateGroup.mutate({
+                          id: group.id,
+                          collapsed: !group.collapsed,
+                        })
+                      }
+                      onMove={(dir) => {
+                        const next = moveGroup(board, idx, idx + dir);
+                        if (next !== board) commit(next);
+                      }}
+                      onDelete={() =>
+                        deleteGroup(
+                          board.groups.find((g) => g.id === group.id) ?? group,
+                          board,
+                        )
+                      }
+                      menuExtra={groupMenuExtra?.(board.groups[idx] ?? group)}
+                    />
+                  ))}
+                </SortableContext>
+
+                <UngroupedSection
+                  views={visibleBoard.ungrouped}
+                  total={board.ungrouped.length}
+                  hasGroups={showGroups}
+                  noun={noun}
+                  icon={Icon}
+                  searching={searching}
+                  dragActive={activeId !== null}
+                  isDropTarget={dropTarget === UNGROUPED_ID}
+                  suppressClickUntil={suppressClickUntil}
+                  renderCard={renderCard}
+                />
+              </div>
+
+              <DragOverlay dropAnimation={reduced ? null : DROP_ANIMATION}>
+                {activeView ? (
+                  // A lifted copy of the card itself, at its own size, so
+                  // what you hold is what lands.
+                  <div
+                    className={cn(
+                      "pointer-events-none rounded-lg",
+                      DRAG_LIFT_CLASS,
+                    )}
+                    style={{ transition: LIFT_TRANSITION }}
+                  >
+                    {renderCard(activeView)}
+                  </div>
+                ) : activeGroup ? (
+                  <DragGhost
+                    icon={GripVertical}
+                    label={activeGroup.name}
+                    meta={`${activeGroup.views.length} ${plural(noun, activeGroup.views.length)}`}
+                  />
+                ) : null}
+              </DragOverlay>
+            </DndContext>
+          )}
         </div>
 
-        {panel}
-
-        {loading || groupsQ.isLoading ? (
-          <BoardSkeleton />
-        ) : total === 0 ? (
-          <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-6 text-sm">
-            {empty}
-          </div>
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collisionDetection}
-            onDragStart={onDragStart}
-            onDragOver={onDragOver}
-            onDragEnd={onDragEnd}
-            onDragCancel={onDragCancel}
-          >
-            <div className={cn("space-y-4", activeId && "select-none")}>
-              <SortableContext
-                items={board.groups.map((g) => groupDndId(g.id))}
-                strategy={verticalListSortingStrategy}
-              >
-                {visibleBoard.groups.map((group, idx) => (
-                  <GroupSection
-                    key={group.id}
-                    group={group}
-                    totalInGroup={board.groups[idx]?.views.length ?? 0}
-                    forceOpen={searching}
-                    noun={noun}
-                    isFirst={idx === 0}
-                    isLast={idx === board.groups.length - 1}
-                    dragActive={activeId !== null}
-                    suppressClickUntil={suppressClickUntil}
-                    renderCard={renderCard}
-                    onRename={(name) =>
-                      updateGroup.mutate({ id: group.id, name })
-                    }
-                    onToggleCollapsed={() =>
-                      updateGroup.mutate({
-                        id: group.id,
-                        collapsed: !group.collapsed,
-                      })
-                    }
-                    onMove={(dir) => {
-                      const next = moveGroup(board, idx, idx + dir);
-                      if (next !== board) commit(next);
-                    }}
-                    onDelete={() => deleteGroup.mutate(group.id)}
-                    menuExtra={groupMenuExtra?.(board.groups[idx] ?? group)}
-                  />
-                ))}
-              </SortableContext>
-
-              <UngroupedSection
-                views={visibleBoard.ungrouped}
-                total={board.ungrouped.length}
-                hasGroups={showGroups}
-                noun={noun}
-                icon={Icon}
-                searching={searching}
-                dragActive={activeId !== null}
-                suppressClickUntil={suppressClickUntil}
-                renderCard={renderCard}
-              />
-            </div>
-
-            <DragOverlay dropAnimation={null}>
-              {activeView ? (
-                <DragGhost icon={Icon} label={activeView.name} />
-              ) : activeGroup ? (
-                <DragGhost
-                  icon={GripVertical}
-                  label={activeGroup.name}
-                  meta={`${activeGroup.views.length} ${plural(noun, activeGroup.views.length)}`}
-                />
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-        )}
-      </div>
-
-      <NewGroupDialog
-        open={newGroupOpen}
-        onOpenChange={(o) => {
-          setNewGroupOpen(o);
-          if (!o) setNewGroupSeedView(null);
-        }}
-        seedViewName={
-          newGroupSeedView
-            ? views.find((v) => v.id === newGroupSeedView)?.name
-            : undefined
-        }
-        pending={createGroup.isPending}
-        onSubmit={submitNewGroup}
-        noun={noun}
-      />
+        <NewGroupDialog
+          open={newGroupOpen}
+          onOpenChange={(o) => {
+            setNewGroupOpen(o);
+            if (!o) setNewGroupSeedView(null);
+          }}
+          seedViewName={
+            newGroupSeedView
+              ? views.find((v) => v.id === newGroupSeedView)?.name
+              : undefined
+          }
+          pending={createGroup.isPending}
+          onSubmit={submitNewGroup}
+          noun={noun}
+        />
+      </CardGridClassContext.Provider>
     </ViewBoardActionsContext.Provider>
   );
 }
@@ -608,6 +817,7 @@ function GroupSection({
   isFirst,
   isLast,
   dragActive,
+  isDropTarget,
   suppressClickUntil,
   renderCard,
   onRename,
@@ -625,6 +835,8 @@ function GroupSection({
   isFirst: boolean;
   isLast: boolean;
   dragActive: boolean;
+  /** A held card from another section will land here. */
+  isDropTarget: boolean;
   suppressClickUntil: React.MutableRefObject<number>;
   renderCard: (view: SavedViewView) => React.ReactNode;
   onRename: (name: string) => void;
@@ -641,19 +853,15 @@ function GroupSection({
     transform,
     transition,
     isDragging,
-    isOver,
-    active,
   } = useSortable({
     id: groupDndId(group.id),
     data: { type: "group" },
+    transition: useSpringSort(),
   });
   const [editing, setEditing] = React.useState(false);
-  const [confirmDelete, setConfirmDelete] = React.useState(false);
   const open = forceOpen || !group.collapsed;
   const panelId = React.useId();
   // Highlight when a *card* hovers this section (not another group).
-  const cardOver = isOver && parseDndId(active?.id ?? "")?.type === "view";
-
   return (
     <section
       ref={setNodeRef}
@@ -662,7 +870,7 @@ function GroupSection({
       className={cn(
         "border-border/60 bg-card/40 rounded-xl border transition-shadow",
         isDragging && "opacity-50",
-        cardOver && "ring-primary/60 bg-primary/5 ring-2",
+        isDropTarget && "ring-primary/60 bg-primary/5 ring-2",
       )}
     >
       <header className="flex items-center gap-1.5 px-2 py-1.5 sm:px-3">
@@ -760,7 +968,7 @@ function GroupSection({
             ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onSelect={() => setConfirmDelete(true)}
+              onSelect={onDelete}
               className="text-destructive focus:text-destructive"
             >
               <Trash2 className="size-4" /> Delete group
@@ -797,25 +1005,6 @@ function GroupSection({
           )}
         </div>
       </SortableContext>
-
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete group “{group.name}”?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Only the grouping goes away. Its {totalInGroup}{" "}
-              {plural(noun, totalInGroup)} move back to Ungrouped and keep their
-              pins, sidebar placement, and data.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={onDelete}>
-              Delete group
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   );
 }
@@ -886,6 +1075,7 @@ function UngroupedSection({
   icon: Icon,
   searching,
   dragActive,
+  isDropTarget,
   suppressClickUntil,
   renderCard,
 }: {
@@ -896,11 +1086,12 @@ function UngroupedSection({
   icon: LucideIcon;
   searching: boolean;
   dragActive: boolean;
+  /** A held card from another section will land here. */
+  isDropTarget: boolean;
   suppressClickUntil: React.MutableRefObject<number>;
   renderCard: (view: SavedViewView) => React.ReactNode;
 }) {
-  const { setNodeRef, isOver, active } = useDroppable({ id: UNGROUPED_ID });
-  const cardOver = isOver && parseDndId(active?.id ?? "")?.type === "view";
+  const { setNodeRef } = useDroppable({ id: UNGROUPED_ID });
   // Without any groups the "Ungrouped" framing is noise — render a plain
   // grid. Once a group exists the remainder needs a labelled home.
   const framed = hasGroups;
@@ -912,8 +1103,8 @@ function UngroupedSection({
       className={cn(
         framed &&
           "rounded-xl border border-dashed border-transparent p-2 transition-colors sm:p-3",
-        framed && cardOver && "border-primary/60 bg-primary/5",
-        framed && dragActive && !cardOver && "border-border/60",
+        framed && isDropTarget && "border-primary/60 bg-primary/5",
+        framed && dragActive && !isDropTarget && "border-border/60",
       )}
     >
       {framed ? (
@@ -974,10 +1165,7 @@ function CardGrid({
   renderCard: (view: SavedViewView) => React.ReactNode;
 }) {
   return (
-    <ul
-      role="list"
-      className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-    >
+    <ul role="list" className={React.useContext(CardGridClassContext)}>
       {views.map((view) => (
         <BoardCard
           key={view.id}
@@ -1018,6 +1206,7 @@ function BoardCard({
   } = useSortable({
     id: viewDndId(view.id),
     data: { type: "view", container },
+    transition: useSpringSort(),
   });
   const { onKeyDown, ...pointerListeners } = (listeners ?? {}) as Record<
     string,
@@ -1028,7 +1217,13 @@ function BoardCard({
     <li
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className={cn("group/card relative", isDragging && "opacity-40")}
+      data-board-card=""
+      className={cn(
+        "group/card relative rounded-lg",
+        // The card's slot while it's held: an empty gap the other cards
+        // spring around (no outline), as on the Want to Read grid.
+        isDragging && "[&>*]:invisible",
+      )}
     >
       {/* The whole card is a pointer drag surface (the grip button is the
           keyboard / AT path, `attributes` + `onKeyDown` below). The
@@ -1097,7 +1292,12 @@ function DragGhost({
   meta?: string;
 }) {
   return (
-    <div className="bg-popover text-popover-foreground border-border flex max-w-xs items-center gap-2 rounded-lg border px-3 py-2 shadow-xl">
+    <div
+      className={cn(
+        "bg-popover text-popover-foreground border-border flex max-w-xs items-center gap-2 rounded-lg border px-3 py-2 shadow-xl",
+        DRAG_LIFT_CLASS,
+      )}
+    >
       <Icon
         className="text-muted-foreground size-4 shrink-0"
         aria-hidden="true"
@@ -1111,16 +1311,25 @@ function DragGhost({
 }
 
 function BoardSkeleton() {
+  const grid = React.useContext(CardGridClassContext);
+  const large = grid === CARD_GRID_CLASS.large;
   return (
     <div className="space-y-4" aria-busy="true" aria-label="Loading">
-      <Skeleton className="h-10 w-full rounded-xl" />
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <li key={i}>
-            <Skeleton className="h-28 w-full rounded-lg" />
-          </li>
-        ))}
-      </ul>
+      {large ? (
+        // Large (/collections): ungrouped collection cards, the same
+        // card the route fallback draws.
+        <ul className={grid}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <li key={i}>
+              <CollectionCardSkeleton />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        // Compact (Settings → Views): ungrouped cards straight under the
+        // toolbar, in the compact grid.
+        <ViewCardsSkeleton />
+      )}
     </div>
   );
 }

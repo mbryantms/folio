@@ -154,7 +154,9 @@ pub struct ReadingSessionListView {
 
 #[derive(Debug, Deserialize)]
 pub struct StatsQuery {
-    /// `'7d' | '30d' | '90d' | 'all'`. Defaults to `'30d'`.
+    /// `'7d' | '30d' | '60d' | '90d' | '1y' | 'all'`, or a four-digit
+    /// calendar year (`'2026'`, 1970..=2100) bounded to Jan 1 – Dec 31 in
+    /// the user's timezone. Defaults to `'30d'`.
     pub range: Option<String>,
     pub issue_id: Option<String>,
     pub series_id: Option<String>,
@@ -728,7 +730,7 @@ pub async fn list(
     operation_id = "reading_sessions_stats",    get,
     path = "/me/reading-stats",
     params(
-        ("range" = Option<String>, Query, description = "'7d', '30d', '90d', 'all'"),
+        ("range" = Option<String>, Query, description = "'7d', '30d', '60d', '90d', '1y', 'all', or a four-digit calendar year 'YYYY' (1970-2100, e.g. '2026') bounded to Jan 1 - Dec 31 in the user's timezone. Defaults to '30d'."),
         ("issue_id" = Option<String>, Query),
         ("series_id" = Option<String>, Query),
     ),
@@ -810,19 +812,22 @@ pub(crate) async fn compute_stats_for_user(
     q: StatsQuery,
 ) -> Result<ReadingStatsView, StatsError> {
     let range = q.range.as_deref().unwrap_or("30d").to_string();
-    let lookback = match range.as_str() {
-        "7d" => Some(Duration::days(7)),
-        "30d" => Some(Duration::days(30)),
-        "60d" => Some(Duration::days(60)),
-        "90d" => Some(Duration::days(90)),
-        "1y" => Some(Duration::days(365)),
-        "all" => None,
-        _ => {
-            return Err(StatsError::bad(
-                "validation",
-                "range must be '7d', '30d', '60d', '90d', '1y', or 'all'",
-            ));
-        }
+    let window = match range.as_str() {
+        "7d" => StatsWindow::Lookback(Duration::days(7)),
+        "30d" => StatsWindow::Lookback(Duration::days(30)),
+        "60d" => StatsWindow::Lookback(Duration::days(60)),
+        "90d" => StatsWindow::Lookback(Duration::days(90)),
+        "1y" => StatsWindow::Lookback(Duration::days(365)),
+        "all" => StatsWindow::All,
+        other => match parse_calendar_year(other) {
+            Some(y) => StatsWindow::Year(y),
+            None => {
+                return Err(StatsError::bad(
+                    "validation",
+                    "range must be '7d', '30d', '60d', '90d', '1y', 'all', or a year 'YYYY' (1970-2100)",
+                ));
+            }
+        },
     };
 
     let user_row = match UserEntity::find_by_id(user_id).one(&app.db).await {
@@ -839,13 +844,22 @@ pub(crate) async fn compute_stats_for_user(
         },
         None => None,
     };
-    let since: Option<DateTime<FixedOffset>> = lookback.map(|d| (Utc::now() - d).fixed_offset());
+    let (since, until): (Option<DateTime<FixedOffset>>, Option<DateTime<FixedOffset>>) =
+        match window {
+            StatsWindow::All => (None, None),
+            StatsWindow::Lookback(d) => (Some((Utc::now() - d).fixed_offset()), None),
+            StatsWindow::Year(y) => {
+                let (s, u) = year_bounds(y, tz).ok_or_else(StatsError::internal)?;
+                (Some(s), Some(u))
+            }
+        };
 
     let backend = app.db.get_database_backend();
     let filter = StatsFilter {
         backend,
         user_id,
         since: since.as_ref(),
+        until: until.as_ref(),
         issue_filter: issue_filter.as_deref(),
         series_filter: series_filter.as_ref(),
         acl,
@@ -1220,7 +1234,43 @@ struct StreakRow {
 
 // ────────────── Helpers ──────────────
 
-/// Append the standard scope filter (visibility, since / issue / series)
+/// Time window selected by `?range=`.
+enum StatsWindow {
+    All,
+    Lookback(Duration),
+    Year(i32),
+}
+
+/// A `range` value that is exactly four ASCII digits in 1970..=2100.
+fn parse_calendar_year(s: &str) -> Option<i32> {
+    if s.len() != 4 || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let y: i32 = s.parse().ok()?;
+    (1970..=2100).contains(&y).then_some(y)
+}
+
+/// `[Jan 1 year 00:00 local, Jan 1 year+1 00:00 local)` in `tz`, as
+/// fixed-offset instants. Midnight that falls in a DST gap resolves to the
+/// first valid instant after it; an ambiguous midnight takes the earlier one.
+fn year_bounds(year: i32, tz: Tz) -> Option<(DateTime<FixedOffset>, DateTime<FixedOffset>)> {
+    Some((local_midnight(year, tz)?, local_midnight(year + 1, tz)?))
+}
+
+fn local_midnight(year: i32, tz: Tz) -> Option<DateTime<FixedOffset>> {
+    use chrono::TimeZone;
+    let date = NaiveDate::from_ymd_opt(year, 1, 1)?;
+    // Walk forward an hour at a time out of a DST gap (no zone skips more).
+    for h in 0..3 {
+        let naive = date.and_hms_opt(h, 0, 0)?;
+        if let Some(dt) = tz.from_local_datetime(&naive).earliest() {
+            return Some(dt.fixed_offset());
+        }
+    }
+    None
+}
+
+/// Append the standard scope filter (visibility, since / until / issue / series)
 /// to a SQL builder, mutating `params` to include any newly-bound values.
 /// `prefix` is the table alias to prepend to the column references — `""`
 /// for the non-joined queries (totals + per-day) and `"rs."` for the top-N
@@ -1231,6 +1281,10 @@ fn append_scope(sql: &mut String, params: &mut Vec<Value>, prefix: &str, filter:
     if let Some(s) = filter.since {
         params.push((*s).into());
         sql.push_str(&format!(" AND {prefix}started_at >= ${}", params.len()));
+    }
+    if let Some(u) = filter.until {
+        params.push((*u).into());
+        sql.push_str(&format!(" AND {prefix}started_at < ${}", params.len()));
     }
     if let Some(iss) = filter.issue_filter {
         params.push(iss.to_string().into());
@@ -1273,6 +1327,8 @@ struct StatsFilter<'a> {
     backend: sea_orm::DbBackend,
     user_id: Uuid,
     since: Option<&'a DateTime<FixedOffset>>,
+    /// Exclusive upper bound on `started_at`; set only for calendar-year ranges.
+    until: Option<&'a DateTime<FixedOffset>>,
     issue_filter: Option<&'a str>,
     series_filter: Option<&'a Uuid>,
     acl: &'a access::VisibleLibraries,
@@ -1864,5 +1920,30 @@ mod tests {
         let (back_ts, back_id) = decode_cursor(&s).unwrap();
         assert_eq!(back_id, id);
         assert_eq!(back_ts.timestamp_millis(), now.timestamp_millis());
+    }
+
+    #[test]
+    fn calendar_year_parsing() {
+        assert_eq!(parse_calendar_year("2026"), Some(2026));
+        assert_eq!(parse_calendar_year("1970"), Some(1970));
+        assert_eq!(parse_calendar_year("2100"), Some(2100));
+        for bad in [
+            "999", "20x6", "1969", "2101", "+202", "02026", " 2026", "", "30d",
+        ] {
+            assert_eq!(parse_calendar_year(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn year_bounds_are_local_midnights() {
+        let tz: Tz = "America/New_York".parse().unwrap();
+        let (s, u) = year_bounds(2026, tz).unwrap();
+        assert_eq!(s.to_rfc3339(), "2026-01-01T00:00:00-05:00");
+        assert_eq!(u.to_rfc3339(), "2027-01-01T00:00:00-05:00");
+        let (s, _) = year_bounds(2026, chrono_tz::Asia::Tokyo).unwrap();
+        assert_eq!(
+            s.with_timezone(&Utc).to_rfc3339(),
+            "2025-12-31T15:00:00+00:00"
+        );
     }
 }

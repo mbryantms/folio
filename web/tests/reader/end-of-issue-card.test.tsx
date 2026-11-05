@@ -5,11 +5,16 @@
  * inspection reaches sub-component output without needing a DOM
  * environment, QueryClient, or router.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 
+// The finishing moment reads the account's motion preference (a query);
+// the static render has no QueryClient.
+vi.mock("@/lib/visual-effects", () => ({ useReducedMotion: () => false }));
+
 import { EndOfIssueCard } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/EndOfIssueCard";
+import { displayListName } from "@/lib/reader/list-context";
 import type { IssueSummaryView, NextUpView } from "@/lib/api/types";
 
 function issue(overrides: Partial<IssueSummaryView> = {}): IssueSummaryView {
@@ -197,6 +202,111 @@ describe("<EndOfIssueCard>", () => {
     expect(html).toMatch(/Invincible #2/);
   });
 
+  it("leads with the finishing moment: the issue and the series ring", () => {
+    const data: NextUpView = { source: "series", target: issue() };
+    const html = render({
+      data,
+      finished: {
+        issueLabel: "Invincible #1",
+        progress: {
+          scope: "series",
+          seriesName: "Invincible",
+          total: 4,
+          before: 1,
+          after: 2,
+        },
+      },
+    });
+    expect(html).toMatch(/Finished/);
+    expect(html).toMatch(/Invincible #1/);
+    expect(html).toMatch(/Series: <\/span>Invincible/);
+    expect(html).toMatch(/2 of 4 issues read/);
+    // Finishing always adds this issue, so it isn't called out.
+    expect(html).not.toMatch(/this issue/);
+    // Still the full Up Next flow, with one Close button.
+    expect(html).toMatch(/Next up/);
+    expect(html).toMatch(/Eight Is Enough/);
+    expect(html.match(/aria-label="Close"/g)).toHaveLength(1);
+  });
+
+  it("calls out a completed series", () => {
+    const html = render({
+      data: { source: "none" },
+      finished: {
+        issueLabel: "Invincible #4",
+        progress: {
+          scope: "series",
+          seriesName: "Invincible",
+          total: 4,
+          before: 3,
+          after: 4,
+        },
+      },
+    });
+    // The static render shows the start of the ring animation; the
+    // label flips once it reaches the end (covered by the `done` check).
+    expect(html).toMatch(/4 of 4 issues read/);
+    expect(html).toMatch(/caught up/i);
+  });
+
+  it("measures the reading list when reading through one", () => {
+    const html = render({
+      data: {
+        source: "cbl",
+        target: issue(),
+        cbl_list_name: "Civil War",
+        cbl_position: 3,
+        cbl_total: 10,
+      } as NextUpView,
+      finished: {
+        issueLabel: "Invincible #1",
+        progress: {
+          scope: "list",
+          seriesName: "Civil War",
+          total: 10,
+          before: 2,
+          after: 3,
+        },
+      },
+    });
+    expect(html).toMatch(/Reading list: <\/span>Civil War/);
+    expect(html).toMatch(/3 of 10 issues read/);
+  });
+
+  it("measures the collection when reading through one", () => {
+    const html = render({
+      data: {
+        source: "collection",
+        target: issue(),
+        collection_name: "Summer pile",
+        collection_position: 4,
+        collection_total: 9,
+        collection_finished: 2,
+      } as NextUpView,
+      finished: {
+        issueLabel: "Invincible #1",
+        progress: {
+          scope: "collection",
+          seriesName: "Summer pile",
+          total: 9,
+          before: 2,
+          after: 3,
+        },
+      },
+    });
+    expect(html).toMatch(/Collection: <\/span>Summer pile/);
+    expect(html).toMatch(/3 of 9 issues read/);
+  });
+
+  it("omits the ring while the series progress is unknown", () => {
+    const html = render({
+      data: { source: "series", target: issue() },
+      finished: { issueLabel: "Invincible #1", progress: null },
+    });
+    expect(html).toMatch(/Invincible #1/);
+    expect(html).not.toMatch(/issues read/);
+  });
+
   it("anchors to the right edge in LTR mode", () => {
     const data: NextUpView = { source: "series", target: issue() };
     const html = render({ data, direction: "ltr" });
@@ -215,5 +325,15 @@ describe("<EndOfIssueCard>", () => {
     const html = render({ open: false });
     expect(html).toMatch(/translate-x-\[calc/);
     expect(html).toMatch(/pointer-events-none/);
+  });
+});
+
+describe("displayListName", () => {
+  it("drops curation tags but keeps years", () => {
+    expect(
+      displayListName("[Marvel] Marvel NOW!- Marvel NOW! Part #1 (WEB-CBRO)"),
+    ).toBe("Marvel NOW!- Marvel NOW! Part #1");
+    expect(displayListName("Civil War (2006)")).toBe("Civil War (2006)");
+    expect(displayListName("[DC]")).toBe("[DC]");
   });
 });

@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { useMemo } from "react";
 
+import { History } from "lucide-react";
+
+import { EmptyState } from "@/components/folio/empty-state";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SessionsTimelineSkeleton } from "@/components/log/LogSkeletons";
 import {
   formatDayLabel,
   formatDurationMs,
@@ -40,7 +43,15 @@ export function ActivityTimeline({
 
   const sessions = useReadingSessions(filters);
 
-  if (sessions.isLoading) return <Skeleton className="h-32 w-full" />;
+  if (sessions.isLoading) {
+    // The full reading log (`/log/sessions`) matches its route skeleton;
+    // the series / issue Activity tabs hold a shorter list.
+    return (
+      <SessionsTimelineSkeleton
+        groups={scope.type === "all" ? undefined : [3, 2]}
+      />
+    );
+  }
   if (sessions.error) {
     return <p className="text-destructive text-sm">Failed to load sessions.</p>;
   }
@@ -48,10 +59,14 @@ export function ActivityTimeline({
 
   if (records.length === 0) {
     return (
-      <p className="text-muted-foreground text-sm">
-        {emptyHint ??
-          "No reading sessions yet — open an issue and read for at least 30 seconds."}
-      </p>
+      <EmptyState
+        size="sm"
+        icon={History}
+        description={
+          emptyHint ??
+          "No reading sessions yet — open an issue and read for at least 30 seconds."
+        }
+      />
     );
   }
 

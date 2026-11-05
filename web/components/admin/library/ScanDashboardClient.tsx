@@ -8,8 +8,12 @@ import { Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { BatchListSkeleton } from "@/components/skeletons/AdminShapes";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BumpNumber } from "@/components/admin/BumpNumber";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
+import { LiveScanPanel } from "@/components/admin/library/LiveScanPanel";
 import { WatchersCard } from "@/components/admin/library/WatchersCard";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
@@ -104,9 +108,13 @@ export function ScanDashboardClient() {
 
   if (!batchId) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-8">
+        <LiveScanPanel />
         <WatchersCard />
-        <BatchPicker />
+        <section className="space-y-3" aria-label="Scan-all history">
+          <h2 className="text-lg font-semibold">Scan-all history</h2>
+          <BatchPicker />
+        </section>
       </div>
     );
   }
@@ -120,13 +128,7 @@ export function ScanDashboardClient() {
 export function BatchPicker() {
   const query = useScanBatches();
   const { data, isLoading } = query;
-  if (isLoading) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading scan batches…
-      </div>
-    );
-  }
+  if (isLoading) return <BatchListSkeleton />;
   const batches = data?.pages.flatMap((p) => p.items) ?? [];
   if (batches.length === 0) {
     return (
@@ -178,13 +180,7 @@ function BatchView({ batchId }: { batchId: string }) {
     [batch, events, batchId],
   );
 
-  if (isLoading) {
-    return (
-      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" /> Loading batch…
-      </div>
-    );
-  }
+  if (isLoading) return <BatchSkeleton />;
   if (!batch) {
     return <p className="text-destructive text-sm">Scan batch not found.</p>;
   }
@@ -207,7 +203,9 @@ function BatchView({ batchId }: { batchId: string }) {
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
             <BatchStateBadge state={batch.state} />
-            {done}/{rows.length} libraries done
+            <span>
+              <BumpNumber value={done} on="up" />/{rows.length} libraries done
+            </span>
           </CardTitle>
           <span className="text-muted-foreground text-xs">
             {status === "open" ? "live" : status}
@@ -216,7 +214,7 @@ function BatchView({ batchId }: { batchId: string }) {
         <CardContent>
           <Progress
             value={overall}
-            className="h-2"
+            className="live-progress h-2"
             aria-label="Overall scan progress"
           />
         </CardContent>
@@ -311,7 +309,10 @@ function BatchView({ batchId }: { batchId: string }) {
             </div>
             {r.state === "running" && (
               <div className="mt-1.5 flex items-center gap-2">
-                <Progress value={pct(r.completed, r.total)} className="h-1" />
+                <Progress
+                  value={pct(r.completed, r.total)}
+                  className="live-progress h-1"
+                />
               </div>
             )}
             {r.state === "running" && r.label && (
@@ -352,7 +353,7 @@ function Stat({
       <div
         className={`text-2xl font-semibold tabular-nums ${warn ? "text-destructive" : ""}`}
       >
-        {value}
+        <BumpNumber value={value} format={String} />
       </div>
       <div className="text-muted-foreground text-xs">{label}</div>
     </div>
@@ -391,5 +392,27 @@ function BatchStateBadge({ state }: { state: ScanBatchView["state"] }) {
     <Badge variant="outline" className={cn("capitalize", tone)}>
       {label}
     </Badge>
+  );
+}
+
+/** One batch's shape (back link, overall progress, library rows) while it
+ *  loads. */
+function BatchSkeleton() {
+  return (
+    <div className="space-y-4" role="status" aria-label="Loading batch">
+      <Skeleton className="h-4 w-24" />
+      <div className="border-border space-y-3 rounded-xl border p-6">
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-2 w-full rounded-full" />
+      </div>
+      <ul className="divide-border border-border bg-card divide-y rounded-md border">
+        {Array.from({ length: 3 }, (_, i) => (
+          <li key={i} className="flex items-center gap-2 px-4 py-3">
+            <Skeleton className="size-4 rounded-full" />
+            <Skeleton className="h-4 w-40" />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

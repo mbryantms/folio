@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
+import { useRef } from "react";
 
 import {
   SidebarContent,
@@ -15,6 +16,7 @@ import {
   SidebarMenuItem,
   useSidebarCollapsed,
 } from "@/components/folio/sidebar";
+import { SlidingNavHighlight } from "@/components/shell/SlidingNavHighlight";
 import { UserFooter } from "@/components/shell/UserFooter";
 
 import { MetadataUnmatchedBadge } from "./MetadataUnmatchedBadge";
@@ -49,10 +51,20 @@ export function AdminSidebar({
 }) {
   const pathname = usePathname() ?? "";
   const collapsed = useSidebarCollapsed();
+  const navRef = useRef<HTMLElement | null>(null);
   return (
     <>
       <SidebarContent>
-        <nav aria-label={`${title} navigation`} className="flex flex-col gap-2">
+        {/* Sliding active highlight: see MainSidebar. */}
+        <nav
+          ref={navRef}
+          aria-label={`${title} navigation`}
+          className="relative isolate flex flex-col gap-2 data-[nav-pill=ready]:[&_[data-sidebar=menu-button][data-active=true]]:bg-transparent"
+        >
+          <SlidingNavHighlight
+            containerRef={navRef}
+            className="bg-sidebar-accent rounded-md"
+          />
           {/* Wayfinding back to the main library app — admin/settings are
               secondary surfaces reached from the library, so the return
               trip is a first-class row at the top of the nav. */}

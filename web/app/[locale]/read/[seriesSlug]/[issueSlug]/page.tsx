@@ -2,6 +2,7 @@ import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
 import { ReaderHealthToast } from "./ReaderHealthToast";
+import { ReaderCoverHandoff } from "./ReaderCoverMorph";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
   IssueDetailView,
@@ -191,6 +192,10 @@ export default async function ReadPage({
     }
   }
 
+  // Finishing it again won't move the series' progress (end card ring).
+  const initiallyFinished =
+    delta?.records.find((r) => r.issue_id === issue.id)?.finished === true;
+
   // Series + library reading-direction layers of the resolution chain
   // (see `manga-and-bulk-metadata-1.0`). Both surfaced on
   // IssueDetailView so the read page doesn't need a second fetch. The
@@ -283,6 +288,7 @@ export default async function ReadPage({
   return (
     <>
       <ReaderHealthToast seriesSlug={seriesSlug} issueSlug={issueSlug} />
+      <ReaderCoverHandoff />
       <Reader
         issueId={issue.id}
         seriesId={issue.series_id}
@@ -294,6 +300,7 @@ export default async function ReadPage({
         initialPage={initialPage}
         initialRun={initialRun}
         restartRun={restartRun}
+        initiallyFinished={initiallyFinished}
         pages={pages}
         pageUrlVersion={issue.last_rewrite_at ?? null}
         manga={issue.manga ?? null}

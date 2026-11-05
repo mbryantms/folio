@@ -111,7 +111,7 @@ export function useCoverLongPressActions({
         side="bottom"
         className="max-h-[80vh] gap-0 overflow-y-auto p-0"
       >
-        <SheetHeader className="px-4 pt-4">
+        <SheetHeader className="px-4 pt-6">
           <SheetTitle className="text-base">{label}</SheetTitle>
         </SheetHeader>
         <ul className="flex flex-col gap-1 p-2" role="menu">

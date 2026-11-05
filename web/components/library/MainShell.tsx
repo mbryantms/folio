@@ -15,6 +15,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/folio/sidebar";
+import { RouteFade } from "@/components/shell/RouteFade";
 import { SkipToContent } from "@/components/shell/SkipToContent";
 import { CHROME_BAND_CLASS } from "@/lib/ui/chrome-band";
 import { cn } from "@/lib/utils";
@@ -67,7 +68,7 @@ export function MainShell({
       <header
         className={cn(
           CHROME_BAND_CLASS,
-          "sticky top-0 z-30 hidden h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1.5rem,var(--safe-right))] pl-[max(1.5rem,var(--safe-left))] md:flex",
+          "sticky top-0 z-30 hidden h-(--topbar-h) items-center gap-3 border-b pt-(--safe-top) pr-[max(1.5rem,var(--safe-right))] pl-[max(1.5rem,var(--safe-left))] [view-transition-name:shell-topbar] md:flex",
         )}
       >
         {/* Desktop collapse toggle; on phones the bottom bar's "More" tab
@@ -104,7 +105,8 @@ export function MainShell({
           tabIndex={-1}
           className="min-w-0 px-4 py-6 pt-[calc(var(--safe-top)+1.5rem)] pb-[calc(var(--bottom-tab-h)+var(--safe-bottom)+1.5rem)] md:px-8 md:py-8"
         >
-          {children}
+          {/* Cross-fades the content column between top-level pages. */}
+          <RouteFade>{children}</RouteFade>
         </SidebarInset>
       </div>
       {/* Mobile bottom tab bar. Reads `?library=all` (Suspense-gated) to

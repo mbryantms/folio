@@ -19,7 +19,6 @@ import {
   Check,
   CheckCircle2,
   HelpCircle,
-  Loader2,
   MinusCircle,
   RotateCcw,
   Sparkles,
@@ -28,6 +27,11 @@ import dynamic from "next/dynamic";
 import * as React from "react";
 
 import { ExternalIdsCard } from "@/components/library/ExternalIdsCard";
+import {
+  LoadingRegion,
+  RowsSkeleton,
+  TilesSkeleton,
+} from "@/components/skeletons/LoadingShapes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useIssueMetadataOverview, useMe } from "@/lib/api/queries";
@@ -73,10 +77,15 @@ export function IssueMetadataTab({
 
   if (isLoading) {
     return (
-      <div className="text-muted-foreground flex items-center gap-2 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" />
-        Loading metadata…
-      </div>
+      <LoadingRegion label="Loading metadata…" className="space-y-6">
+        <TilesSkeleton
+          count={3}
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          tileClassName="h-32"
+          label=""
+        />
+        <RowsSkeleton rows={6} label="" />
+      </LoadingRegion>
     );
   }
   if (isError || !data) {

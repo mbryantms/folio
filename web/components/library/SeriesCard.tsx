@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { CoverSkeleton } from "@/components/CoverSkeleton";
+import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { useRouter } from "next/navigation";
 import { memo, useState } from "react";
 
 import { Cover } from "@/components/Cover";
+import { CoverTilt } from "@/components/library/CoverTilt";
+import { SpineStack } from "@/components/library/SpineStack";
+import { PageScrub, issueIdFromCoverUrl } from "@/components/library/PageScrub";
 import {
   CoverMenuButton,
   type CoverMenuAction,
@@ -12,6 +17,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
+import { CoverMorph } from "@/components/library/CoverMorph";
 import { BulkMarkReadDialog } from "@/components/library/BulkMarkReadDialog";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SeriesHoverPreview } from "@/components/library/CardHoverPreview";
@@ -101,6 +107,7 @@ function SeriesCardImpl({
     label: series.name,
   });
   const share = useShareLink();
+  const morph = useCoverMorph(seriesCoverName(series.slug), series.cover_url);
   const menuActions: CoverMenuAction[] = [
     {
       label: "Mark all read",
@@ -155,6 +162,7 @@ function SeriesCardImpl({
             `/series/${encodeURIComponent(series.slug)}/resume`,
           );
           if (!resume.issue_slug) return;
+          morph.mark();
           router.push(
             `/read/${encodeURIComponent(resume.series_slug)}/${encodeURIComponent(resume.issue_slug)}`,
           );
@@ -199,7 +207,8 @@ function SeriesCardImpl({
   );
   const innerCard = (
     <>
-      <div className="relative" {...coverWrapperProps}>
+      <CoverTilt className="relative isolate" {...coverWrapperProps}>
+        <SpineStack count={issueCount} />
         {selectMode && (
           <SelectionCheckbox
             isSelected={selectMode.isSelected}
@@ -208,12 +217,24 @@ function SeriesCardImpl({
             label={series.name}
           />
         )}
-        <Cover
-          src={series.cover_url}
-          alt={series.name}
-          fallback={series.publisher ?? series.name}
-          className="w-full transition group-hover:brightness-110"
-        />
+        <CoverMorph name={morph.name}>
+          <Cover
+            src={series.cover_url}
+            alt={series.name}
+            fallback={series.publisher ?? series.name}
+            className="w-full transition group-hover:brightness-110"
+          />
+        </CoverMorph>
+        {!inSelectMode && (
+          <PageScrub
+            issueId={issueIdFromCoverUrl(series.cover_url)}
+            pageCount={
+              series.total_page_count && series.issue_count
+                ? series.total_page_count / series.issue_count
+                : null
+            }
+          />
+        )}
         {/* Top-right indicator stack: publication status + the
          *  metadata-needs chip. Both live here (not top-left) so the
          *  kebab affordance owns the canonical top-left across all card
@@ -239,12 +260,13 @@ function SeriesCardImpl({
               actions={menuActions}
             />
             <SeriesPlayOverlay
+              onActivate={morph.mark}
               seriesSlug={series.slug}
               seriesName={series.name}
             />
           </>
         )}
-      </div>
+      </CoverTilt>
       <div className="min-w-0 px-1">
         <div
           className={cn("truncate font-medium", c.title)}
@@ -268,7 +290,7 @@ function SeriesCardImpl({
   return (
     <>
       {cardOuterProps ? (
-        <button className={cardClassName} {...cardOuterProps}>
+        <button className={cardClassName} data-card="" {...cardOuterProps}>
           {innerCard}
         </button>
       ) : (
@@ -277,7 +299,12 @@ function SeriesCardImpl({
         // untouched; the peek only layers on for pointer hover.
         <HoverCard openDelay={400} closeDelay={120}>
           <HoverCardTrigger asChild>
-            <Link href={link} className={cardClassName}>
+            <Link
+              href={link}
+              className={cardClassName}
+              data-card=""
+              onClick={morph.onClick}
+            >
               {innerCard}
             </Link>
           </HoverCardTrigger>
@@ -315,10 +342,10 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
   const c = sizeClasses[size];
   return (
     <div className={cn("flex shrink-0 flex-col gap-2 p-1", c.wrap)}>
-      <div className="bg-muted aspect-[2/3] w-full animate-pulse rounded-md" />
+      <CoverSkeleton />
       <div className="space-y-1.5 px-1">
-        <div className="bg-muted size-3/4 animate-pulse rounded" />
-        <div className="bg-muted h-2 w-1/2 animate-pulse rounded" />
+        <div className="skeleton-shimmer h-3 w-3/4 rounded" />
+        <div className="skeleton-shimmer h-2 w-1/2 rounded" />
       </div>
     </div>
   );

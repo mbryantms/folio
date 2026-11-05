@@ -12,7 +12,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * feel as the system one: a finger drag down at the top of the
  * scroll surface, springy resistance past the threshold, and a
  * visual indicator that's driven from the returned `distance` /
- * `state` values.
+ * `state` values (see `computePullLayout` for how the indicator and
+ * the page content share that distance).
  *
  * Activation rules:
  * - Only enables itself when the viewport is in standalone display
@@ -24,8 +25,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * - Only initiates on touch input. Mouse / trackpad users can use
  *   the browser's reload button or `Cmd+R`; pull-to-refresh on a
  *   trackpad would conflict with two-finger scrolling.
- * - Disables itself when `prefers-reduced-motion: reduce` is set,
- *   because the gesture is movement-heavy by definition.
+ * - Stays on under `prefers-reduced-motion: reduce`: the movement is
+ *   direct manipulation (it tracks the finger 1:1), so it is not the
+ *   kind of unrequested motion the preference guards against. The
+ *   indicator component drops its decorative motion (bob, spring
+ *   overshoot, fan) instead.
  */
 
 export type PullState = "idle" | "pulling" | "armed" | "refreshing";
@@ -94,6 +98,44 @@ export function isStandaloneDisplay(): boolean {
   return nav.standalone === true;
 }
 
+/**
+ * Pure layout for the indicator + page content at a given pull
+ * distance. Exposed for unit testing.
+ *
+ * - The page content translates down by the full `distance`, opening a
+ *   gap at the top of the scroll surface. The indicator lives inside
+ *   that gap (its wrapper is clipped to `gap`), so it never draws over
+ *   content.
+ * - While the gap is shorter than the indicator, the indicator rides
+ *   the gap's bottom edge (sliding in from above). Once the gap is
+ *   taller, it stays centred in it. Both branches meet at
+ *   `distance === indicatorHeight`, so the motion is continuous.
+ * - `progress` (0..1, reaching 1 at the threshold) drives the fan-out
+ *   of the covers, the opacity and the scale-in.
+ */
+export interface PullLayout {
+  /** Pixels the page content is translated down. */
+  contentOffset: number;
+  /** Height of the clipped gap the indicator sits in. */
+  gap: number;
+  /** Indicator top within the gap (negative = partly above it). */
+  indicatorY: number;
+  /** 0 at rest, 1 at (and past) the threshold. */
+  progress: number;
+}
+
+export function computePullLayout(
+  distance: number,
+  threshold: number,
+  indicatorHeight: number,
+): PullLayout {
+  const d = Math.max(0, distance);
+  const progress = threshold > 0 ? Math.min(1, d / threshold) : 1;
+  const indicatorY =
+    d >= indicatorHeight ? (d - indicatorHeight) / 2 : d - indicatorHeight;
+  return { contentOffset: d, gap: d, indicatorY, progress };
+}
+
 export interface UsePullToRefreshReturn {
   state: PullState;
   distance: number;
@@ -115,6 +157,15 @@ export function usePullToRefresh(
   const [distance, setDistance] = useState(0);
 
   const startYRef = useRef<number | null>(null);
+  // Mirrors `state` for the touch listeners. A fast flick can deliver
+  // `touchend` before React re-renders with the last `touchmove`'s
+  // state, so the listeners must not rely on the render closure.
+  const stateRef = useRef<PullState>("idle");
+  const update = useCallback((next: PullState, d: number) => {
+    stateRef.current = next;
+    setState(next);
+    setDistance(d);
+  }, []);
   const onRefreshRef = useRef(onRefresh);
   useEffect(() => {
     onRefreshRef.current = onRefresh;
@@ -124,10 +175,9 @@ export function usePullToRefresh(
   // every render. The state setter chain is the only place this
   // hook touches React state.
   const finishRefresh = useCallback(() => {
-    setState("idle");
-    setDistance(0);
+    update("idle", 0);
     startYRef.current = null;
-  }, []);
+  }, [update]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof document === "undefined") {
@@ -136,13 +186,8 @@ export function usePullToRefresh(
     if (!enabled) return;
     if (!isStandaloneDisplay()) return;
 
-    const reducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    if (reducedMotion) return;
-
     const onTouchStart = (e: TouchEvent) => {
-      if (state === "refreshing") return;
+      if (stateRef.current === "refreshing") return;
       if (window.scrollY > 0) return;
       if (e.touches.length !== 1) return;
       startYRef.current = e.touches[0]?.clientY ?? null;
@@ -151,35 +196,32 @@ export function usePullToRefresh(
     const onTouchMove = (e: TouchEvent) => {
       const startY = startYRef.current;
       if (startY === null) return;
-      if (state === "refreshing") return;
+      if (stateRef.current === "refreshing") return;
       if (window.scrollY > 0) {
         startYRef.current = null;
-        setDistance(0);
-        setState("idle");
+        update("idle", 0);
         return;
       }
       const currentY = e.touches[0]?.clientY ?? startY;
       const delta = currentY - startY;
       if (delta <= 0) {
-        setDistance(0);
-        setState("idle");
+        update("idle", 0);
         return;
       }
       const d = computePullDistance(delta, threshold, maxDistance);
-      setDistance(d);
-      setState(d >= threshold ? "armed" : "pulling");
+      update(d >= threshold ? "armed" : "pulling", d);
     };
 
     const onTouchEnd = () => {
-      const armed = state === "armed";
+      if (startYRef.current === null) return;
+      const armed = stateRef.current === "armed";
       startYRef.current = null;
       if (!armed) {
-        setDistance(0);
-        setState("idle");
+        update("idle", 0);
         return;
       }
-      setState("refreshing");
-      setDistance(threshold);
+      // Hold the content open at the threshold while refreshing.
+      update("refreshing", threshold);
 
       let settled = false;
       const settle = () => {
@@ -203,10 +245,7 @@ export function usePullToRefresh(
 
     const onTouchCancel = () => {
       startYRef.current = null;
-      if (state !== "refreshing") {
-        setDistance(0);
-        setState("idle");
-      }
+      if (stateRef.current !== "refreshing") update("idle", 0);
     };
 
     window.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -220,7 +259,7 @@ export function usePullToRefresh(
       window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("touchcancel", onTouchCancel);
     };
-  }, [enabled, finishRefresh, maxDistance, state, threshold]);
+  }, [enabled, finishRefresh, maxDistance, threshold, update]);
 
   return { state, distance, armed: state === "armed" };
 }

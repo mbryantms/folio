@@ -9,12 +9,23 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
+import { toast } from "sonner";
 
 import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
+import { showUndoToast } from "@/lib/ui/undo-toast";
 
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
 import { getCsrfToken, useApiMutation } from "./_core";
+import {
+  applyOptimisticProgress,
+  capturePriorProgress,
+  issueProgressKey,
+  restoreProgress,
+  rollbackProgress,
+  type PriorProgress,
+  type ProgressWrite,
+} from "./progress";
 import { invalidateRails } from "./rails";
 
 // Re-exports kept stable across the M5 directory split so callers
@@ -32,6 +43,11 @@ export * from "./hash-backfill";
 export * from "./sidecar-reemit";
 export * from "./markers";
 export { invalidateRails } from "./rails";
+export {
+  issueProgressKey,
+  restoreProgress,
+  useIssueReadState,
+} from "./progress";
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
 export * from "./shared-lists";
@@ -565,15 +581,38 @@ export function useBulkMarkProgress() {
       body: input,
     }),
     {
-      successMessage: (data, input) =>
-        summarizeBulkProgress(data, input.finished),
       // Stable id so rapid mark-read → mark-unread toggles update the
       // same toast in place instead of stacking. Sonner reuses the
       // element when the id repeats.
       toastId: "bulk-progress",
-      onSuccess: () => {
+      // Optimistic like the single mark (`./progress.ts`); the summary
+      // toast carries Undo, restoring each issue's previous progress.
+      onMutate: (input) =>
+        beginMark(
+          qc,
+          input.issue_ids.map((id) => ({
+            issue_id: id,
+            page: 0,
+            finished: input.finished,
+          })),
+        ),
+      onError: (_err, _input, ctx) =>
+        rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
+      onSuccess: (data, input, ctx) => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        const message = summarizeBulkProgress(data, input.finished);
+        const prior = (ctx as MarkProgressCtx | undefined)?.prior;
+        if (!prior || data?.updated === 0) {
+          toast.success(message, { id: "bulk-progress" });
+          return;
+        }
+        showUndoToast({
+          id: "bulk-progress",
+          message,
+          failedMessage: "Couldn't restore the reading progress",
+          onUndo: () => restoreProgress(qc, prior),
+        });
       },
     },
   );
@@ -1057,7 +1096,11 @@ export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
  * clears it. Written from the reader's end-of-issue Wrap up pane and
  * the issue page; the response echoes the stored body.
  */
-export function useSetIssueNote(seriesSlug: string, issueSlug: string) {
+export function useSetIssueNote(
+  seriesSlug: string,
+  issueSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<IssueNoteView, SetIssueNoteReq>(
     (body) => ({
@@ -1066,8 +1109,13 @@ export function useSetIssueNote(seriesSlug: string, issueSlug: string) {
       body,
     }),
     {
-      successMessage: (view) =>
-        view?.body ? "Closing note saved" : "Closing note cleared",
+      // `silent`: the caller raises its own (Undo) toast.
+      ...(opts?.silent
+        ? {}
+        : {
+            successMessage: (view: IssueNoteView | null) =>
+              view?.body ? "Closing note saved" : "Closing note cleared",
+          }),
       // The /bookmarks feed, its counts and series list carry closing
       // notes (`["markers", "feed…"]` keys).
       onSuccess: () => {
@@ -1411,19 +1459,66 @@ export function useSetIssueMetadataAccepted(
 
 // ---------- Reading progress ----------
 
+type MarkProgressCtx = {
+  snap: Awaited<ReturnType<typeof applyOptimisticProgress>>;
+  prior: PriorProgress | null;
+};
+
+/** Run inside a mark's `onMutate`: capture each issue's prior record
+ *  (for Undo) and write the new state into the caches. The prior read
+ *  starts first — its cache reads are synchronous, so they see the
+ *  pre-mark state — and the optimistic write lands before any network
+ *  round-trip the capture may need. */
+async function beginMark(
+  qc: ReturnType<typeof useQueryClient>,
+  writes: ProgressWrite[],
+): Promise<MarkProgressCtx> {
+  const priorP = capturePriorProgress(
+    qc,
+    writes.map((w) => w.issue_id),
+  ).catch(() => null);
+  const snap = await applyOptimisticProgress(qc, writes);
+  return { snap, prior: await priorP };
+}
+
 /**
  * `POST /progress` — write or update the calling user's progress record for
- * a single issue. Used by the issue page settings menu's "Mark as
- * read/unread" actions.
+ * a single issue. Every caller is a "Mark as read / unread" (issue page
+ * menu + `r`/`u` keys, cover menus, Continue Reading, CBL cards).
+ *
+ * Optimistic (`./progress.ts`): the finished badge, `ProgressFill` and the
+ * issue page's read state flip on the click and roll back on error. A
+ * mark (explicit `finished`) raises an Undo toast restoring the issue's
+ * previous progress; one toast id per issue, so r → u → r updates the
+ * same toast.
  */
 export function useUpsertIssueProgress() {
   const qc = useQueryClient();
   return useApiMutation<ProgressView, UpsertProgressReq>(
     (body) => ({ path: "/progress", method: "POST", body }),
     {
-      onSuccess: () => {
+      onMutate: (input) =>
+        beginMark(qc, [
+          {
+            issue_id: input.issue_id,
+            page: input.page,
+            finished: input.finished ?? false,
+          },
+        ]),
+      onError: (_err, _input, ctx) =>
+        rollbackProgress(qc, (ctx as MarkProgressCtx | undefined)?.snap),
+      onSuccess: (data, input, ctx) => {
+        if (data) qc.setQueryData(issueProgressKey(input.issue_id), data);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        const prior = (ctx as MarkProgressCtx | undefined)?.prior;
+        if (typeof input.finished !== "boolean" || !prior) return;
+        showUndoToast({
+          id: `progress-${input.issue_id}`,
+          message: input.finished ? "Marked as read" : "Marked as unread",
+          failedMessage: "Couldn't restore the reading progress",
+          onUndo: () => restoreProgress(qc, prior),
+        });
       },
     },
   );
@@ -2395,8 +2490,13 @@ export function useAddCollectionEntry(collectionId: string) {
   );
 }
 
-/** Remove a single entry from a collection. */
-export function useRemoveCollectionEntry(collectionId: string) {
+/** Remove a single entry from a collection. `silent` drops the
+ *  "Removed" toast — for Undo-of-add, where the shared undo toast's
+ *  follow-up is the only feedback. */
+export function useRemoveCollectionEntry(
+  collectionId: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<unknown, { entryId: string }>(
     ({ entryId }) => ({
@@ -2404,7 +2504,7 @@ export function useRemoveCollectionEntry(collectionId: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "Removed",
+      ...(opts?.silent ? {} : { successMessage: "Removed" }),
       onSuccess: () => {
         invalidateCollectionEntries(qc, collectionId);
       },
@@ -2602,19 +2702,29 @@ export function useTogglePageSidebar(id: string) {
 }
 
 /** `DELETE /me/pages/{id}`. 409s on the system page. FK cascade tears
- *  down pin rows and any explicit `kind='page'` sidebar overrides. */
-export function useDeletePage(id: string) {
+ *  down pin rows and any explicit `kind='page'` sidebar overrides.
+ *
+ *  `silent` drops the success toast (the caller raises an Undo toast —
+ *  see `lib/pages/use-delete-page-undo.ts`); `leaveRoute: false` skips
+ *  the bounce home for callers that aren't on the page being deleted
+ *  (Settings → Pages). */
+export function useDeletePage(
+  id: string,
+  opts?: { silent?: boolean; leaveRoute?: boolean },
+) {
   const qc = useQueryClient();
   const router = useRouter();
+  const leaveRoute = opts?.leaveRoute ?? true;
   return useApiMutation<void, void>(
     () => ({ path: `/me/pages/${id}`, method: "DELETE" }),
     {
-      successMessage: TOAST.PAGE_DELETED,
+      ...(opts?.silent ? {} : { successMessage: TOAST.PAGE_DELETED }),
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.mePages });
         qc.invalidateQueries({ queryKey: queryKeys.sidebarLayout });
+        qc.invalidateQueries({ queryKey: ["saved-views"] });
         // The current route may *be* the deleted page; bounce home.
-        router.push("/");
+        if (leaveRoute) router.push("/");
         router.refresh();
       },
     },
@@ -3271,7 +3381,12 @@ export function useResumeMetadataSync(seriesSlug: string) {
   );
 }
 
-export function useAddExternalIdSeries(seriesSlug: string) {
+/** `silent` (here and on the three siblings below) drops the success
+ *  toast — for the external-ids editor's immediate unlink + Undo. */
+export function useAddExternalIdSeries(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<ExternalIdRow, AddExternalIdReq>(
     (input) => ({
@@ -3280,7 +3395,7 @@ export function useAddExternalIdSeries(seriesSlug: string) {
       body: input,
     }),
     {
-      successMessage: "Identifier added",
+      ...(opts?.silent ? {} : { successMessage: "Identifier added" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "external-ids"],
@@ -3293,7 +3408,10 @@ export function useAddExternalIdSeries(seriesSlug: string) {
   );
 }
 
-export function useDeleteExternalIdSeries(seriesSlug: string) {
+export function useDeleteExternalIdSeries(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<null, { source: string }>(
     (input) => ({
@@ -3301,7 +3419,7 @@ export function useDeleteExternalIdSeries(seriesSlug: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "Identifier removed",
+      ...(opts?.silent ? {} : { successMessage: "Identifier removed" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "external-ids"],
@@ -3389,7 +3507,10 @@ function invalidateRelationshipViews(
   }
 }
 
-export function useCreateSeriesRelationship(seriesSlug: string) {
+export function useCreateSeriesRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<
     SeriesRelationshipView | SeriesArcRelationshipView,
@@ -3401,14 +3522,19 @@ export function useCreateSeriesRelationship(seriesSlug: string) {
       body: input,
     }),
     {
-      successMessage: "Relationship added",
+      // `silent`: an Undo re-create — the undo toast's follow-up says it.
+      ...(opts?.silent ? {} : { successMessage: "Relationship added" }),
       onSuccess: (row) => invalidateRelationshipViews(qc, seriesSlug, row),
     },
   );
 }
 
-/** WP-7.1: remove a relationship (and its inverse) by row id (admin). */
-export function useDeleteSeriesRelationship(seriesSlug: string) {
+/** WP-7.1: remove a relationship (and its inverse) by row id (admin).
+ *  `silent` drops the success toast for callers raising an Undo toast. */
+export function useDeleteSeriesRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<
     null,
@@ -3419,7 +3545,7 @@ export function useDeleteSeriesRelationship(seriesSlug: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "Relationship removed",
+      ...(opts?.silent ? {} : { successMessage: "Relationship removed" }),
       onSuccess: (_data, input) => {
         invalidateRelationshipViews(qc, seriesSlug, null, input.otherSlug);
         if (input.arcSlug) {
@@ -3457,7 +3583,10 @@ export function useUpdateSeriesRelationship(seriesSlug: string) {
  *  library (admin). When the provider series is already matched locally
  *  the server creates an ordinary relationship pair instead
  *  (`relationship` set), so the other series' list is invalidated too. */
-export function useCreateExternalRelationship(seriesSlug: string) {
+export function useCreateExternalRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<
     CreateExternalRelationshipResp,
@@ -3469,10 +3598,14 @@ export function useCreateExternalRelationship(seriesSlug: string) {
       body: input,
     }),
     {
-      successMessage: (data) =>
-        data?.relationship
-          ? `Already in your library — linked to ${data.relationship.series.name}`
-          : "External link added",
+      ...(opts?.silent
+        ? {}
+        : {
+            successMessage: (data: CreateExternalRelationshipResp | null) =>
+              data?.relationship
+                ? `Already in your library — linked to ${data.relationship.series.name}`
+                : "External link added",
+          }),
       onSuccess: (data) =>
         invalidateRelationshipViews(qc, seriesSlug, data?.relationship ?? null),
     },
@@ -3480,8 +3613,12 @@ export function useCreateExternalRelationship(seriesSlug: string) {
 }
 
 /** WP-7.8: remove an external link (admin). A provider link is dismissed
- *  server-side so a later metadata apply doesn't bring it back. */
-export function useDeleteExternalRelationship(seriesSlug: string) {
+ *  server-side so a later metadata apply doesn't bring it back. `silent`
+ *  drops the success toast for callers raising an Undo toast. */
+export function useDeleteExternalRelationship(
+  seriesSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<null, { id: string }>(
     (input) => ({
@@ -3489,7 +3626,7 @@ export function useDeleteExternalRelationship(seriesSlug: string) {
       method: "DELETE",
     }),
     {
-      successMessage: "External link removed",
+      ...(opts?.silent ? {} : { successMessage: "External link removed" }),
       onSuccess: () =>
         qc.invalidateQueries({
           queryKey: queryKeys.seriesRelationships(seriesSlug),
@@ -3560,7 +3697,11 @@ export function acceptSummary(data: AcceptOutcome | null): string {
   return removed ? `${head}. ${removed}` : head;
 }
 
-export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {
+export function useAddExternalIdIssue(
+  seriesSlug: string,
+  issueSlug: string,
+  opts?: { silent?: boolean },
+) {
   const qc = useQueryClient();
   return useApiMutation<ExternalIdRow, AddExternalIdReq>(
     (input) => ({
@@ -3569,7 +3710,7 @@ export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {
       body: input,
     }),
     {
-      successMessage: "Identifier added",
+      ...(opts?.silent ? {} : { successMessage: "Identifier added" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug, "external-ids"],
@@ -3582,6 +3723,7 @@ export function useAddExternalIdIssue(seriesSlug: string, issueSlug: string) {
 export function useDeleteExternalIdIssue(
   seriesSlug: string,
   issueSlug: string,
+  opts?: { silent?: boolean },
 ) {
   const qc = useQueryClient();
   return useApiMutation<null, { source: string }>(
@@ -3590,7 +3732,7 @@ export function useDeleteExternalIdIssue(
       method: "DELETE",
     }),
     {
-      successMessage: "Identifier removed",
+      ...(opts?.silent ? {} : { successMessage: "Identifier removed" }),
       onSuccess: () => {
         qc.invalidateQueries({
           queryKey: ["series", seriesSlug, "issues", issueSlug, "external-ids"],

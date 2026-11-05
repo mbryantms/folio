@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { PersonPreview } from "@/components/library/PersonPreview";
+
 import { Badge } from "@/components/ui/badge";
 import type { EntitySlugs } from "@/lib/api/types";
 import { entityHrefFor } from "@/lib/entities";
@@ -27,12 +29,16 @@ export function ChipList({
   entitySlugs,
   entityField,
   orientation = "vertical",
+  display = "chips",
   className,
 }: {
   label?: string;
   items: string[] | undefined;
   emptyLabel?: string;
   variant?: "secondary" | "outline" | "default";
+  /** `text`: the items as a comma-separated line of plain `text-sm`
+   *  links (accent colour on hover), like a fact value, instead of chips. */
+  display?: "chips" | "text";
   /** `"horizontal"` lays the label in a fixed-width column with the chips
    *  flowing in the remaining width (a definition-list row) instead of
    *  stacking label-over-chips. Lets long lists (e.g. a 16-character cast)
@@ -89,89 +95,109 @@ export function ChipList({
           {emptyLabel}
         </p>
       ) : (
-        <div className={cn("flex flex-wrap gap-1.5", horizontal && "flex-1")}>
-          {list.map((item) => {
-            const entityHref = entitySlugs
-              ? entityHrefFor(
-                  entityField ?? filterField ?? "",
-                  item,
-                  entitySlugs,
-                )
-              : null;
-            const chip = (
-              <Badge
-                key={item}
-                variant={variant}
-                className={cn(
-                  "font-normal",
-                  filterField || entityHref
-                    ? "hover:bg-secondary/80 cursor-pointer"
-                    : "cursor-default",
+        <div
+          className={cn(
+            display === "text" ? "text-sm" : "flex flex-wrap gap-1.5",
+            horizontal && "flex-1",
+          )}
+        >
+          {list.map((item, i) => {
+            const node = itemNode(item);
+            return display === "text" ? (
+              <span key={item}>
+                {node}
+                {i < list.length - 1 && (
+                  <span className="text-muted-foreground">, </span>
                 )}
-              >
-                {item}
-              </Badge>
-            );
-            if (entityHref) {
-              return (
-                <Link key={item} href={entityHref} title={`Open ${item}`}>
-                  {chip}
-                </Link>
-              );
-            }
-            if (!filterField) return chip;
-            // Credit-role chips link to `/creators/<slug>` when the
-            // parent surface (series / issue detail) hands us a slug
-            // for the chip's name in `creatorSlugs`. The slug is
-            // resolved server-side via the `series_credits.person_id`
-            // FK — same primary-key lookup every other detail-page
-            // chip uses. Names without a slug (a freshly-scanned
-            // credit between rollups) fall back to the legacy
-            // library-grid `?credits=<name>` filter.
-            if (isCreditRole(filterField)) {
-              const slug = creatorSlugs?.[item];
-              if (slug) {
-                return (
-                  <Link
-                    key={item}
-                    href={`/creators/${encodeURIComponent(slug)}`}
-                    title={`Open ${item}'s creator page`}
-                  >
-                    {chip}
-                  </Link>
-                );
-              }
-              return (
-                <Link
-                  key={item}
-                  href={`/?library=all&credits=${encodeURIComponent(item)}`}
-                  title={`View all "${item}" series`}
-                >
-                  {chip}
-                </Link>
-              );
-            }
-            const param = libraryParamFor(filterField);
-            const mode = libraryModeFor(filterField);
-            const href =
-              mode === "issues"
-                ? `/?library=all&mode=issues&${param}=${encodeURIComponent(item)}`
-                : `/?library=all&${param}=${encodeURIComponent(item)}`;
-            const titleNoun = mode === "issues" ? "issues" : "series";
-            return (
-              <Link
-                key={item}
-                href={href}
-                title={`View all "${item}" ${titleNoun}`}
-              >
-                {chip}
-              </Link>
+              </span>
+            ) : (
+              node
             );
           })}
         </div>
       )}
     </div>
   );
+
+  function itemNode(item: string) {
+    const entityHref = entitySlugs
+      ? entityHrefFor(entityField ?? filterField ?? "", item, entitySlugs)
+      : null;
+    const chip =
+      display === "text" ? (
+        <span
+          key={item}
+          className={cn(filterField || entityHref ? "fact-link" : undefined)}
+        >
+          {item}
+        </span>
+      ) : (
+        <Badge
+          key={item}
+          variant={variant}
+          className={cn(
+            "font-normal",
+            filterField || entityHref
+              ? "hover:bg-secondary/80 cursor-pointer"
+              : "cursor-default",
+          )}
+        >
+          {item}
+        </Badge>
+      );
+    if (entityHref) {
+      return (
+        <PersonPreview key={item} href={entityHref}>
+          <Link href={entityHref} title={`Open ${item}`}>
+            {chip}
+          </Link>
+        </PersonPreview>
+      );
+    }
+    if (!filterField) return chip;
+    // Credit-role chips link to `/creators/<slug>` when the
+    // parent surface (series / issue detail) hands us a slug
+    // for the chip's name in `creatorSlugs`. The slug is
+    // resolved server-side via the `series_credits.person_id`
+    // FK — same primary-key lookup every other detail-page
+    // chip uses. Names without a slug (a freshly-scanned
+    // credit between rollups) fall back to the legacy
+    // library-grid `?credits=<name>` filter.
+    if (isCreditRole(filterField)) {
+      const slug = creatorSlugs?.[item];
+      if (slug) {
+        const creatorHref = `/creators/${encodeURIComponent(slug)}`;
+        return (
+          <PersonPreview key={item} href={creatorHref}>
+            <Link href={creatorHref} title={`Open ${item}'s creator page`}>
+              {chip}
+            </Link>
+          </PersonPreview>
+        );
+      }
+      return (
+        <Link
+          key={item}
+          href={`/?library=all&credits=${encodeURIComponent(item)}`}
+          title={`View all "${item}" series`}
+        >
+          {chip}
+        </Link>
+      );
+    }
+    const param = libraryParamFor(filterField);
+    const mode = libraryModeFor(filterField);
+    const href =
+      mode === "issues"
+        ? `/?library=all&mode=issues&${param}=${encodeURIComponent(item)}`
+        : `/?library=all&${param}=${encodeURIComponent(item)}`;
+    const titleNoun = mode === "issues" ? "issues" : "series";
+    return (
+      <Link key={item} href={href} title={`View all "${item}" ${titleNoun}`}>
+        {chip}
+      </Link>
+    );
+  }
 }
 
 /** Saved-view field id → library-grid query param. Credit roles are

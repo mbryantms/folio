@@ -1,7 +1,10 @@
 import { notFound } from "next/navigation";
 
 import { Breadcrumbs } from "@/components/shell/Breadcrumbs";
-import { LibraryTabs } from "@/components/admin/library/LibraryTabs";
+import {
+  LibraryTabPanel,
+  LibraryTabs,
+} from "@/components/admin/library/LibraryTabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { LibraryView } from "@/lib/api/types";
 
@@ -39,7 +42,9 @@ export default async function LibraryDetailLayout({
         </p>
       </header>
       <LibraryTabs basePath={basePath} librarySlug={slug} />
-      <div className="pt-4">{children}</div>
+      <LibraryTabPanel basePath={basePath} className="pt-4">
+        {children}
+      </LibraryTabPanel>
     </div>
   );
 }

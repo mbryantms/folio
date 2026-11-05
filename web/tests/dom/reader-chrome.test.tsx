@@ -20,6 +20,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const push = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh: vi.fn() }),
+  // `useMe` (the chrome's keybind hints) reads the pathname.
+  usePathname: () => "/read/s/issue-1",
 }));
 vi.mock("next/link", () => ({
   default: ({ children, href }: { children: React.ReactNode; href: string }) =>
@@ -166,6 +168,8 @@ describe("ReaderChrome (jsdom)", () => {
       fireEvent.keyDown(trigger, { key: "Enter" });
     });
     const item = await screen.findByRole("menuitem", { name: /add note/i });
+    // The bound key (default `n`) rides along as a keycap hint.
+    expect(item.querySelector('[data-slot="kbd"]')?.textContent).toBe("N");
     await act(async () => {
       fireEvent.click(item);
     });

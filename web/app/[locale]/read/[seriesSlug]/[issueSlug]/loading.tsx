@@ -1,6 +1,6 @@
-import { Loader2 } from "lucide-react";
-
 import { LoadingWatchdog } from "@/components/LoadingWatchdog";
+
+import { ReaderCoverSlot } from "./ReaderCoverMorph";
 
 /**
  * Reader-route Suspense fallback. The reader's server component fans out
@@ -12,10 +12,10 @@ import { LoadingWatchdog } from "@/components/LoadingWatchdog";
  *
  * Instead, mirror the reader shell: the same `--reader-bg` surface, a
  * faux top-chrome silhouette (matching `ReaderChrome`'s safe-area
- * padding), and the same centered `Loader2` the per-page `PageImage`
- * shows — so the hand-off into the first page is continuous.
- *
- * Server component — pure markup.
+ * padding), and in the centre either the cover that was tapped to open
+ * the reader (it morphs in and stands in for the first page, then hands
+ * over to the reader; see ReaderCoverMorph.tsx) or, on a cold load, the
+ * same centered `Loader2` the per-page `PageImage` shows.
  */
 export default function ReaderLoading() {
   return (
@@ -33,10 +33,7 @@ export default function ReaderLoading() {
         <div className="ml-auto size-6 animate-pulse rounded bg-neutral-800" />
       </div>
       <div className="grid min-h-screen place-items-center">
-        <Loader2
-          aria-hidden
-          className="size-8 animate-spin text-neutral-600 motion-reduce:hidden"
-        />
+        <ReaderCoverSlot />
       </div>
       <span className="sr-only">Loading reader…</span>
     </div>

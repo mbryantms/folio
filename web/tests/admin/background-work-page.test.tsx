@@ -16,6 +16,8 @@ vi.mock("@/lib/api/mutations", () => ({
   useCancelMetadataBatch: () => ({ mutate: vi.fn(), isPending: false }),
   useCancelScanRun: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+// Static markup renders the server snapshot; the page waits for hydration.
+vi.mock("@/lib/ui/use-hydrated", () => ({ useHydrated: () => true }));
 vi.mock("@/lib/api/queries", () => ({
   useBackgroundWork: () => ({
     data: state.data,

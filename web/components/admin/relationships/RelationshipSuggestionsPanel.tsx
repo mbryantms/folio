@@ -71,7 +71,7 @@ import {
   PopoverPortalContainer,
   PopoverTrigger,
 } from "@/components/folio/popover";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SuggestionCardsSkeleton } from "@/components/skeletons/AdminShapes";
 import {
   useAcceptRelationshipSuggestion,
   useBulkAcceptRelationshipSuggestions,
@@ -378,7 +378,7 @@ export function RelationshipSuggestionsPanel() {
       />
 
       {isLoading ? (
-        <Skeleton className="h-64 w-full" />
+        <SuggestionCardsSkeleton />
       ) : error ? (
         <p className="text-destructive text-sm">{error.message}</p>
       ) : items.length === 0 ? (

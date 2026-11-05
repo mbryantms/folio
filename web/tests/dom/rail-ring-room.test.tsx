@@ -191,6 +191,27 @@ describe("Reading order strip", () => {
 
 describe("Controlled dialogs return focus", () => {
   it("restores focus to the Remove button when the AlertDialog closes", async () => {
+    // Only a provider link keeps a confirm (dismissal can't be undone
+    // faithfully); relationships and admin links remove with Undo.
+    data = {
+      ...data!,
+      external: [
+        {
+          id: "x1",
+          kind: "continued_by",
+          kind_label: "Continued by",
+          group: "publication",
+          name: "Saga",
+          year: 2018,
+          provider_series_id: "99",
+          source: "metron",
+          source_label: "Metron",
+          set_by: "provider",
+          confidence: null,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+    } as SeriesRelationshipsResp;
     render(
       <SeriesRelatedSection
         seriesSlug="saga-vol-2"
@@ -199,14 +220,14 @@ describe("Controlled dialogs return focus", () => {
       />,
     );
     const remove = screen.getByRole("button", {
-      name: "Remove continued by Saga Vol 3",
+      name: "Remove continued by Saga (2018)",
     });
     remove.focus();
     await act(async () => {
       fireEvent.click(remove);
     });
     expect(
-      screen.getByRole("alertdialog", { name: "Remove relationship?" }),
+      screen.getByRole("alertdialog", { name: "Dismiss provider link?" }),
     ).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Cancel" }));

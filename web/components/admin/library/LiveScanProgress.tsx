@@ -356,7 +356,7 @@ export function LiveScanProgress({ libraryId }: { libraryId: string }) {
   return (
     <div className="space-y-6">
       <Card>
-        <CardContent className="flex flex-wrap items-center gap-4 p-5">
+        <CardContent className="flex flex-row flex-wrap items-center gap-4 p-5">
           <StatusPill status={displayStatus} />
           <div className="text-muted-foreground ml-auto flex items-center gap-2 text-xs">
             <span
@@ -1309,7 +1309,7 @@ function Metric({
   return (
     <li>
       <Card>
-        <CardContent className="flex items-center gap-3 p-4">
+        <CardContent className="flex flex-row items-center gap-3 p-4">
           <Icon className="text-muted-foreground size-4 shrink-0" />
           <div className="min-w-0">
             <p className="text-muted-foreground truncate text-[10px] font-medium tracking-widest uppercase">
