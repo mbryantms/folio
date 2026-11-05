@@ -13,6 +13,13 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.75.0](https://github.com/mbryantms/folio/compare/v0.74.0...v0.75.0) (2026-11-05)
+
+
+### Added
+
+* Folio Flair 1.0 — motion, optional effects, reading log and live admin ([#1466](https://github.com/mbryantms/folio/issues/1466)) ([73a1671](https://github.com/mbryantms/folio/commit/73a16714f61213a19f340b8a44992f6bd46bac78))
+
 ## [0.74.0](https://github.com/mbryantms/folio/compare/v0.73.0...v0.74.0) (2026-11-03)
 
 
