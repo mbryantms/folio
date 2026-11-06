@@ -681,7 +681,7 @@ settles the row through the update path, which always hashes and sets
 it while `pending > 0` and offers a Resume button
 (`POST /api/libraries/{slug}/hash-backfill`, audited as
 `admin.library.hash_backfill.start`). The queue shows up as "Content
-hashing" on `/admin/queue`, and each drain writes one `library_events` row
+hashing" on Background work → Jobs (`/admin/background-work?view=jobs`), and each drain writes one `library_events` row
 (category `file`, action `completed`, `detail.kind = "hash_backfill"`).
 
 **Known limits.** A file moved *while its row is still pending* is not
@@ -1136,7 +1136,7 @@ watcher per library with `file_watch_enabled = true`, run in-process
 - **Status.** `GET /admin/server/watchers` returns each library's mode,
   filesystem, start time, last event, last trigger (time, dir count,
   scan id, whether it joined a running scan), trigger count and `detail`;
-  the admin scan dashboard (`/admin/scan-dashboard`) renders it.
+  the admin Scans page (`/admin/scans?batch=<id>`) renders it.
   `/admin/server/info` carries `watchers_enabled` (toggle count) and
   `watchers_running`. Metric: `folio_watcher_triggers_total{mode}`.
 

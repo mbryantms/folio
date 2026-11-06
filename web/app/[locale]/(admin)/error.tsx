@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 /**
  * Error boundary scoped to the (admin) route group: /admin/users,
- * /admin/libraries, /admin/audit, /admin/settings, etc. Admin pages are
+ * /admin/libraries, /admin/activity, /admin/settings, etc. Admin pages are
  * richer (charts, tables, mutation forms) so a localized boundary lets
  * the user retry one tab without leaving /admin entirely. Renders inside
  * `AdminShell`, so it uses the bare `StatusCard`.

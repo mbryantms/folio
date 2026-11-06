@@ -11,7 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
 
-import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
+import { libraryScanHref, scanBatchHref, SCANS_HREF } from "@/lib/admin/routes";
 import { showUndoToast } from "@/lib/ui/undo-toast";
 
 import { apiFetch } from "../auth-refresh";
@@ -252,9 +252,11 @@ export function useTriggerScan(libraryId: string) {
       };
     },
     {
+      // The library's own Scan tab is where a single-library scan is
+      // watched (scan-activity consolidation), not Background work.
       successAction: {
         label: "View progress",
-        href: BACKGROUND_WORK_HREF,
+        href: libraryScanHref(libraryId),
       },
       successMessage: (data, input) => {
         if (data?.coalesced) {
@@ -298,6 +300,12 @@ export function useScanAllLibraries() {
       body: input ?? { force: false },
     }),
     {
+      // Fallback link to the batch's live view (the Scan all button also
+      // navigates there on success).
+      successAction: (data) => ({
+        label: "Watch",
+        href: data?.batch_id ? scanBatchHref(data.batch_id) : SCANS_HREF,
+      }),
       successMessage: (data) => {
         if (!data) return "Scan-all enqueued";
         const { newly_enqueued, already_running, failed, total, force } = data;

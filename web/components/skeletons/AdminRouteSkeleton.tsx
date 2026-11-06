@@ -1,7 +1,7 @@
 "use client";
 
 import type * as React from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import {
   ActivityFeedSkeleton,
@@ -15,6 +15,7 @@ import {
   LibraryDetailSkeleton,
   LibraryListSkeleton,
   LogsSkeleton,
+  LineTabsSkeleton,
   MetadataTabsSkeleton,
   QueuePageSkeleton,
   RelationshipsSkeleton,
@@ -54,7 +55,12 @@ export function adminSubpath(pathname: string): string {
   return m?.[1] ?? "";
 }
 
-export function adminRouteShape(sub: string): Shape {
+/** `view` is the merged pages' `?view=` (Server activity → Log,
+ *  Background work → Jobs). */
+export function adminRouteShape(
+  sub: string,
+  view: string | null = null,
+): Shape {
   const parts = sub.split("/").filter(Boolean);
   const [first, second, third] = parts;
   switch (first) {
@@ -64,10 +70,13 @@ export function adminRouteShape(sub: string): Shape {
         body: <DashboardSkeleton label="" />,
       };
     case "activity":
-    case "audit":
       return {
-        header: { title: 15, description: 163 },
-        body: <ActivityFeedSkeleton />,
+        header: { title: 15, description: 161 },
+        body: (
+          <LineTabsSkeleton widths={["w-14", "w-8"]}>
+            {view === "log" ? <LogsSkeleton /> : <ActivityFeedSkeleton />}
+          </LineTabsSkeleton>
+        ),
       };
     case "auth":
       return {
@@ -76,8 +85,16 @@ export function adminRouteShape(sub: string): Shape {
       };
     case "background-work":
       return {
-        header: { title: 15, description: 166 },
-        body: <BackgroundWorkSkeleton label="" />,
+        header: { title: 15, description: 165 },
+        body: (
+          <LineTabsSkeleton widths={["w-16", "w-9"]}>
+            {view === "jobs" ? (
+              <QueuePageSkeleton />
+            ) : (
+              <BackgroundWorkSkeleton label="" />
+            )}
+          </LineTabsSkeleton>
+        ),
       };
     case "duplicates":
       return {
@@ -91,7 +108,7 @@ export function adminRouteShape(sub: string): Shape {
       };
     case "findings":
       return {
-        header: { title: 14, description: 170 },
+        header: { title: 14, description: 177 },
         body: <FindingsSkeleton />,
       };
     case "libraries":
@@ -100,29 +117,19 @@ export function adminRouteShape(sub: string): Shape {
         header: { title: 9, description: 93, actions: LIBRARIES_ACTIONS },
         body: <LibraryListSkeleton label="" />,
       };
-    case "logs":
-      return {
-        header: { title: 10, description: 201 },
-        body: <LogsSkeleton />,
-      };
     case "metadata":
       return {
         header: { title: 8, description: 129 },
         body: <MetadataTabsSkeleton />,
-      };
-    case "queue":
-      return {
-        header: { title: 5, description: 166 },
-        body: <QueuePageSkeleton />,
       };
     case "relationships":
       return {
         header: { title: 13, description: 238 },
         body: <RelationshipsSkeleton />,
       };
-    case "scan-dashboard":
+    case "scans":
       return {
-        header: { title: 14, description: 172 },
+        header: { title: 5, description: 149 },
         body: <ScanDashboardSkeleton />,
       };
     case "series":
@@ -162,7 +169,8 @@ export function adminRouteShape(sub: string): Shape {
 /** `(admin)` route fallback body: the entered page's header and the same
  *  body shape its client component shows while loading. */
 export function AdminRouteSkeleton() {
-  const shape = adminRouteShape(adminSubpath(usePathname() ?? ""));
+  const view = useSearchParams()?.get("view") ?? null;
+  const shape = adminRouteShape(adminSubpath(usePathname() ?? ""), view);
   return (
     <LoadingRegion label="Loading…">
       {shape.header ? (

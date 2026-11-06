@@ -56,7 +56,7 @@ export class ApiMutationError extends Error {
   readonly code: string | null;
   /** Server request id (`x-request-id` response header), surfaced in the
    *  error toast so a user can quote it and an operator can grep it in
-   *  /admin/logs (OBS-1). `null` for network errors / missing header. */
+   *  Server activity → Log (OBS-1). `null` for network errors / missing header. */
   readonly requestId: string | null;
 
   constructor(

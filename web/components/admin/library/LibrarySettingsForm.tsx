@@ -904,7 +904,7 @@ function ThumbnailSettingsCard({
           </div>
           <p className="text-muted-foreground mt-1 text-xs">
             Each change here saves on its own — there&rsquo;s no Save button.
-            Generation actions and queue status live on the Live scan page.
+            Generation actions and queue status live on the Scan tab.
           </p>
         </div>
 

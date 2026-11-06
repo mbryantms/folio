@@ -197,7 +197,7 @@ REST writer (which would otherwise send `auth_shape=none` and be
 rejected by Folio's CSRF + auth gates).
 
 **Verifying it worked.** With `observability.log_level = debug`
-temporarily, navigate forward in Panels. `/admin/logs` should show
+temporarily, navigate forward in Panels. Server activity → Log should show
 lines like:
 
 ```text

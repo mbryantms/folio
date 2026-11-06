@@ -2,7 +2,7 @@
 
 import { Pause, Play } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { SegmentedControl } from "@/components/settings/SegmentedControl";
 import { Badge } from "@/components/ui/badge";
@@ -34,11 +34,12 @@ const DOMAINS: ReadonlyArray<{ value: Domain; label: string }> = [
 ];
 
 export function LogsClient() {
-  // URL-driven library filter so cross-links from /admin/findings
-  // scan-run rows (`/admin/logs?library_id=<uuid>`) land with the
+  // URL-driven library filter so cross-links from Scans → Every scan
+  // rows (`/admin/activity?view=log&library_id=<uuid>`) land with the
   // scope already applied. Level + search stay in local state so
   // keystroke-rapid changes don't flap the URL bar.
   const router = useRouter();
+  const pathname = usePathname();
   const sp = useSearchParams();
   const libraryId = sp.get("library_id") ?? "all";
   const { data: libraries } = useLibraryList();
@@ -71,7 +72,7 @@ export function LogsClient() {
     if (next === "all") params.delete("library_id");
     else params.set("library_id", next);
     const qs = params.toString();
-    router.replace(`/admin/logs${qs ? `?${qs}` : ""}`, { scroll: false });
+    router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
   }
 
   return (
@@ -99,7 +100,7 @@ export function LogsClient() {
             className="h-9 w-72"
           />
           {/* Library scope is URL-driven so a cross-link from the
-              findings page (`/admin/logs?library_id=<uuid>`) lands
+              Scans page (`/admin/activity?view=log&library_id=<uuid>`) lands
               with the scope already applied. */}
           <label className="text-muted-foreground flex items-center gap-1.5 text-xs uppercase">
             Library

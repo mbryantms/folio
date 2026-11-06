@@ -1,7 +1,7 @@
 # Logging conventions
 
 Folio's server uses `tracing` for structured logging with a JSON stdout sink and
-an in-process ring buffer that backs the admin `/admin/logs` page. This doc
+an in-process ring buffer that backs the admin Server activity → Log view (`/admin/activity?view=log`). This doc
 covers what to log, how, and what *never* to log.
 
 > For how the ring buffer fits into the two-stream admin observability model
@@ -84,7 +84,7 @@ list; the manual `Span::current().record(...)` pattern is the escape hatch.
 
 The risk is leaking these into:
 - The JSON stdout sink (captured by container runtimes / log shippers).
-- The in-memory ring buffer (visible to any admin via `/admin/logs`).
+- The in-memory ring buffer (visible to any admin via Server activity → Log).
 - Crash reports / structured-error responses sent to clients.
 
 **Forbidden logging targets:**

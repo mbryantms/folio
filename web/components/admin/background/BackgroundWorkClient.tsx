@@ -37,6 +37,7 @@ import {
   taskLabel,
   thumbPace,
 } from "@/lib/admin/background-work";
+import { JOBS_HREF, libraryScanHref, SCANS_HREF } from "@/lib/admin/routes";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { useHydrated } from "@/lib/ui/use-hydrated";
 import { cn } from "@/lib/utils";
@@ -85,7 +86,7 @@ function StaleSnapshotNotice({
  * The one place that shows everything in flight: per-library scan +
  * thumbnail + hashing state, every other queue, and unfinished metadata
  * batches. The header pill links here. Each row links onward to the surface
- * that owns the detail (a library's Live scan page, the queue page, …).
+ * that owns the detail (a library's Scan tab, the Jobs tab, …).
  */
 export function BackgroundWorkClient() {
   const { data, isLoading, isError, dataUpdatedAt, refetch } =
@@ -166,13 +167,13 @@ function Summary({ view }: { view: BackgroundWorkView }) {
           label="Jobs pending"
           value={t.jobs_outstanding}
           detail={`${n(t.jobs_in_flight)} with workers`}
-          href="/admin/queue"
+          href={JOBS_HREF}
         />
         <Tile
           label="Failed jobs"
           value={t.jobs_dead}
           detail={t.jobs_dead > 0 ? "Review and retry" : "None"}
-          href="/admin/queue?tab=failed"
+          href={`${JOBS_HREF}&tab=failed`}
           tone={t.jobs_dead > 0 ? "error" : undefined}
         />
       </div>
@@ -240,7 +241,11 @@ function LibrariesCard({ libraries }: { libraries: LibraryWorkView[] }) {
         <CardTitle className="text-sm font-medium">Libraries</CardTitle>
         <p className="text-muted-foreground text-xs">
           Scan, cover and hashing progress per library. Open a library for its
-          live scan detail.
+          live scan detail, or{" "}
+          <Link href={SCANS_HREF} className="fact-link">
+            Scans
+          </Link>{" "}
+          to watch every scan and “Scan all” run.
         </p>
       </CardHeader>
       <CardContent>
@@ -265,7 +270,7 @@ function LibraryRow({ lib }: { lib: LibraryWorkView }) {
   return (
     <li>
       <Link
-        href={`/admin/libraries/${lib.slug}/scan`}
+        href={libraryScanHref(lib.slug)}
         className={cn(
           "hover:bg-muted/40 focus-visible:ring-ring -mx-2 grid gap-x-6 gap-y-3 rounded-md px-2 py-3 transition-colors focus-visible:ring-2 focus-visible:outline-none md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_minmax(0,1.4fr)_auto]",
           // 80, not 70: the row's muted 12px text sits on a card and

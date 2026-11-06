@@ -188,12 +188,12 @@ describe("palette commands (folio-flair)", () => {
     expect(new Set(hrefs).size).toBe(hrefs.length);
     expect(byId.get("open-downloads")?.href).toBe("/settings/downloads");
     for (const [id, href] of [
-      ["admin-scan-dashboard", "/admin/scan-dashboard"],
+      ["admin-scans", "/admin/scans"],
       ["admin-findings", "/admin/findings"],
       ["admin-metadata", "/admin/metadata"],
       ["admin-duplicates", "/admin/duplicates"],
       ["admin-starter-lists", "/admin/starter-lists"],
-      ["admin-queue", "/admin/queue"],
+      ["admin-queue", "/admin/background-work?view=jobs"],
     ] as const) {
       expect(byId.get(id), id).toMatchObject({ href, role: "admin" });
     }

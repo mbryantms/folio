@@ -228,16 +228,8 @@ const ROUTES: Route[] = [
     label: "admin, library health",
   },
   {
-    path: (ids) => `/admin/libraries/${ids.librarySlug}/history`,
-    label: "admin, library history",
-  },
-  {
     path: (ids) => `/admin/libraries/${ids.librarySlug}/settings`,
     label: "admin, library settings",
-  },
-  {
-    path: (ids) => `/admin/libraries/${ids.librarySlug}/thumbnails`,
-    label: "admin, library thumbnails",
   },
   {
     path: (ids) => `/admin/libraries/${ids.librarySlug}/duplicates`,
@@ -247,7 +239,9 @@ const ROUTES: Route[] = [
     path: (ids) => `/admin/libraries/${ids.librarySlug}/removed`,
     label: "admin, library removed",
   },
-  { path: "/admin/scan-dashboard", label: "admin, scan dashboard" },
+  // Merged pages' second views (`?history=`, `?view=`) are their own rows.
+  { path: "/admin/scans", label: "admin, scans" },
+  { path: "/admin/scans?history=runs", label: "admin, scans, every scan" },
   { path: "/admin/findings", label: "admin, library events" },
   { path: "/admin/users", label: "admin, users" },
   { path: (ids) => `/admin/users/${ids.userId}`, label: "admin, user detail" },
@@ -261,10 +255,10 @@ const ROUTES: Route[] = [
   },
   { path: "/admin/server", label: "admin, server info" },
   { path: "/admin/activity", label: "admin, server activity" },
-  { path: "/admin/logs", label: "admin, server log" },
+  { path: "/admin/activity?view=log", label: "admin, server log" },
   { path: "/admin/auth", label: "admin, auth config" },
   { path: "/admin/email", label: "admin, email" },
-  { path: "/admin/queue", label: "admin, queue" },
+  { path: "/admin/background-work?view=jobs", label: "admin, job queue" },
   {
     path: "/admin/api-docs",
     label: "admin, API reference",

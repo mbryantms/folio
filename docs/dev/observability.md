@@ -18,8 +18,8 @@ secret-redaction rules, see [logging.md](logging.md).
 
 | Surface | Route | Source | Durability |
 | --- | --- | --- | --- |
-| Server log | `/admin/logs` | in-process ring buffer (`observability.rs`) | ephemeral (lost on restart, 5k cap) |
-| Server activity | `/admin/activity` | `audit_log` + per-hour `reading_sessions` aggregate (`api/admin_activity.rs`) | durable |
+| Server activity → Activity | `/admin/activity` | `audit_log` + per-hour `reading_sessions` aggregate (`api/admin_activity.rs`) | durable |
+| Server activity → Log | `/admin/activity?view=log` | in-process ring buffer (`observability.rs`) | ephemeral (lost on restart, 5k cap) |
 | Server info | `/admin/server` | build/uptime/deps/probes | live |
 
 **Ring buffer domain classification.** Every captured `tracing` event is tagged
@@ -63,8 +63,22 @@ The export directory sits inside the app-data volume, so the weekly
 
 | Surface | Route | Source | Durability |
 | --- | --- | --- | --- |
-| Library activity | `/admin/findings` | `library_events` manifest + `library_health_issues` + `scan_runs` (tabs) | durable |
-| Scan dashboard | `/admin/scan-dashboard` | live `/ws/scan-events` + `scan_batch` rollup | durable + live |
+| Scans | `/admin/scans` | live `/ws/scan-events` + background-work snapshot; `scan_batch` rollup (`?batch=`); `scan_runs` (`?history=runs`) | durable + live |
+| A library's Scan tab | `/admin/libraries/<slug>/scan` | live `/ws/scan-events` + that library's `scan_runs` | durable + live |
+| Library events | `/admin/findings` | `library_events` manifest + `library_health_issues` (tabs) | durable |
+
+**Watching a scan (scan-activity consolidation, 2026-11).** There is one
+place per scope. *Scan all* lands on `/admin/scans?batch=<id>`: overall
+progress, a status row per member library, the full live card (ring,
+throughput, discoveries, log) for each library scanning while the page is
+open, and — once the batch closes — the results summary and itemized
+changes. A single-library scan lands on that library's Scan tab (live
+progress over its run history). `/admin/scans` without a batch shows every
+running scan plus the history (every Scan all batch, every scan run).
+Canonical hrefs live in `web/lib/admin/routes.ts`; the old pages
+(`/admin/scan-dashboard`, `/admin/logs`, `/admin/queue`, `/admin/audit`, a
+library's `history` / `thumbnails` tabs, Library events' Scan runs tab)
+were removed outright, with no redirects.
 
 ### The `library_events` manifest
 
@@ -111,8 +125,8 @@ operator must rectify).
 A "Scan all" creates a `scan_batch` row (migration `m20270113…`); each
 newly-enqueued per-library `scan_run` adopts its `batch_id`. The batch's
 terminal state (`complete` / `partial_failed` / `failed`) is derived in
-`scanner::maybe_finalize_batch` once every member run finishes. The Scan
-dashboard reads `GET /admin/scan-batches[/{id}]` for the rollup and overlays
+`scanner::maybe_finalize_batch` once every member run finishes. The Scans
+page reads `GET /admin/scan-batches[/{id}]` for the rollup and overlays
 live `/ws/scan-events` (tagged with `batch_id` on `Started`/`Completed`/
 `Failed`; `Progress` is correlated by `library_id`). The batch list, the
 per-library scan history and the cross-library findings feed are all
@@ -127,10 +141,11 @@ first-page cap on what an operator can scroll to; `scan.started` /
 The two streams above are history. "What is the server doing right now" is
 one snapshot, `GET /admin/background-work`
 ([`api/background_work.rs`](../../crates/server/src/api/background_work.rs)),
-rendered at `/admin/background-work`. The header queue pill, the dashboard
-Scans card and the nav entry all link there; each row links on to the
-surface that owns the detail (a library's Live scan page, `/admin/queue`,
-`/admin/metadata`).
+rendered at `/admin/background-work` (Overview view). Its Jobs view
+(`?view=jobs`) is the job-by-job lanes, failed jobs and archive
+operations. The header queue pill, the dashboard Scans card and the nav
+entry all link there; each row links on to the surface that owns the
+detail (a library's Scan tab, the Jobs view, `/admin/metadata`).
 
 - **Per library**: the unfinished library scan run (`scan_runs` in `queued`
   / `running`, with its persisted `stats.progress`), cover readiness from the

@@ -81,9 +81,11 @@ export function adminNav(localePrefix: string): NavSection[] {
           label: "Libraries",
           icon: "Library",
         },
+        // The one place to watch scans — one library or a "Scan all"
+        // run (`?batch=`).
         {
-          href: p("/scan-dashboard"),
-          label: "Scan dashboard",
+          href: p("/scans"),
+          label: "Scans",
           icon: "ScanLine",
         },
         {
@@ -134,17 +136,15 @@ export function adminNav(localePrefix: string): NavSection[] {
     {
       // The Server stream (observability-split): how the app runs + how
       // users use it. The Library stream (scans, health, changes) lives
-      // under Overview as "Library events" + "Scan dashboard".
+      // under Overview as "Scans" + "Library events".
       label: "System",
       items: [
         { href: p("/server"), label: "Server info", icon: "Server" },
-        // Audit + user-activity feed. The dedicated /admin/audit route still
-        // resolves — it redirects to `/admin/activity?kinds=audit`.
+        // Audit + user-activity feed (`?kinds=audit` for audit only) +
+        // the runtime log (`?view=log`).
         { href: p("/activity"), label: "Server activity", icon: "Activity" },
-        { href: p("/logs"), label: "Server log", icon: "ListChecks" },
         { href: p("/auth"), label: "Auth config", icon: "Shield" },
         { href: p("/email"), label: "Email", icon: "Mail" },
-        { href: p("/queue"), label: "Queue", icon: "Gauge" },
         { href: p("/api-docs"), label: "API reference", icon: "FileText" },
       ],
     },

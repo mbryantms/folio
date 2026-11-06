@@ -23,7 +23,7 @@ export default function LocaleError({
     // Surface to the browser console so devtools-open users see the
     // stack; the digest is what Next.js logs server-side, so quoting
     // it makes correlation easy when an operator pulls the row from
-    // `/admin/logs`.
+    // Server activity → Log (`/admin/activity?view=log`).
     console.error("LocaleError boundary caught:", error);
   }, [error]);
 
