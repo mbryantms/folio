@@ -18,7 +18,7 @@ import { cardGridColumns } from "@/lib/library/card-size";
 
 /**
  * Window-virtualized responsive card grid (audit G1). Reproduces the
- * `repeat(auto-fill, minmax(cardSize, 1fr))` look but only mounts the
+ * `cardGridColumns` look but only mounts the
  * rows in (and near) the viewport, so a 10k-item library no longer
  * mounts 10k cards.
  *
@@ -62,7 +62,11 @@ export function VirtualizedCardGrid({
   const [containerRef, containerWidth] = useContainerWidth<HTMLDivElement>();
   const columnsPerRow = computeColumnsPerRow(containerWidth, cardSize);
   const rowCount = computeRowCount(items.length, columnsPerRow);
-  const columnWidth = computeColumnWidth(containerWidth, columnsPerRow);
+  const columnWidth = computeColumnWidth(
+    containerWidth,
+    columnsPerRow,
+    cardSize,
+  );
   const estRowHeight = estimateRowHeight(columnWidth, estimateTextHeight);
 
   const listRef = React.useRef<HTMLDivElement | null>(null);
@@ -170,7 +174,9 @@ export function VirtualizedCardGrid({
                 left: 0,
                 width: "100%",
                 transform: `translateY(${vr.start - virtualizer.options.scrollMargin}px)`,
-                gridTemplateColumns: `repeat(${columnsPerRow}, minmax(0, 1fr))`,
+                // Fixed-width tracks, same as `cardGridColumns`: the card
+                // size is the cover width, not a minimum to stretch from.
+                gridTemplateColumns: `repeat(${columnsPerRow}, ${columnWidth}px)`,
                 gap: `${GRID_GAP_PX}px`,
                 paddingBottom: `${GRID_GAP_PX}px`,
               }}
