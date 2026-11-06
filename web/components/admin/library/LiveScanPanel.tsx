@@ -28,21 +28,31 @@ import { useCancelScanRun, useTriggerScan } from "@/lib/api/mutations";
 import { useBackgroundWork } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
 import type { LibraryWorkView, ScanEvent } from "@/lib/api/types";
+import { libraryScanHref } from "@/lib/admin/routes";
 import { cn } from "@/lib/utils";
 
 type Lib = Pick<LibraryWorkView, "id" | "name" | "slug">;
 
 /**
- * Live scan dashboard (folio-flair phase 5): the top of Admin → Scan
- * dashboard. Start a scan for one library (or all); every running scan
+ * Live scan dashboard (folio-flair phase 5): the top of Admin → Scans.
+ * Start a scan for one library (or all); every running scan
  * gets a live card: a progress ring with ticking counters, a throughput
  * sparkline with an ETA, newly found series popping in, and a log. Driven
  * by the admin scan-event socket, seeded from the background-work snapshot
  * (which also says which libraries are scanning). A finished scan stays
  * with its summary until dismissed.
+ *
+ * With `libraryIds` (a "Scan all" batch's members) the panel shows only
+ * those libraries' cards and drops the start bar — the batch view already
+ * has its own overall progress and status list.
  * Plan: ~/.claude/plans/folio-flair-phase5-admin.md
  */
-export function LiveScanPanel() {
+export function LiveScanPanel({
+  libraryIds,
+}: {
+  /** Restrict the cards to these libraries (batch view). */
+  libraryIds?: readonly string[];
+} = {}) {
   const work = useBackgroundWork();
   const { events, status } = useScanEvents({
     toastCompletions: false,
@@ -104,7 +114,9 @@ export function LiveScanPanel() {
   const activeIds = new Set(
     (work.data?.libraries ?? []).filter((l) => l.scan).map((l) => l.id),
   );
+  const scope = libraryIds ? new Set(libraryIds) : null;
   const shown = libs.filter((l) => {
+    if (scope && !scope.has(l.id)) return false;
     const s = scans[l.id];
     if (dismissed.has(l.id))
       return activeIds.has(l.id) && s?.status !== "complete";
@@ -116,6 +128,24 @@ export function LiveScanPanel() {
           s.status === "failed"))
     );
   });
+
+  if (scope) {
+    // Batch view: nothing live (all queued, or finished before this page
+    // opened) means the status list above says it all.
+    if (shown.length === 0) return null;
+    return (
+      <section className="space-y-4" aria-label="Live scans">
+        {shown.map((l) => (
+          <LiveScanCard
+            key={l.id}
+            lib={l}
+            scan={scans[l.id] ?? emptyScan(l.id)}
+            onDismiss={() => setDismissed((d) => new Set(d).add(l.id))}
+          />
+        ))}
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-4" aria-label="Live scans">
@@ -226,10 +256,7 @@ function LiveScanCard({
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold">
-            <Link
-              href={`/admin/libraries/${lib.slug}/scan`}
-              className="fact-link"
-            >
+            <Link href={libraryScanHref(lib.slug)} className="fact-link">
               {lib.name}
             </Link>
           </h2>

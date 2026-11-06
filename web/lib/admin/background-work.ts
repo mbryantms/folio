@@ -7,6 +7,7 @@ import type {
   LibraryWorkView,
   QueueDepthView,
 } from "@/lib/api/types";
+import { JOBS_HREF } from "@/lib/admin/routes";
 
 /** The one page that shows everything in flight; the header pill, the
  *  dashboard card and the nav entry all point here. */
@@ -132,7 +133,7 @@ export function queueHref(queue: string): string {
     queue === "provider_coverage" ||
     queue === "entity_enrich"
     ? "/admin/metadata"
-    : "/admin/queue";
+    : JOBS_HREF;
 }
 
 /** Queues the per-library table already accounts for. */

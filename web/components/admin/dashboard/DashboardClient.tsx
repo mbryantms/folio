@@ -36,6 +36,7 @@ import { BumpNumber } from "@/components/admin/BumpNumber";
 import { fillDayBuckets, lastUtcDays, sparklinePoints } from "@/lib/activity";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { useHydrated } from "@/lib/ui/use-hydrated";
+import { libraryScanHref } from "@/lib/admin/routes";
 import { cn } from "@/lib/utils";
 import {
   useAdminLatestScanPerLibrary,
@@ -296,7 +297,7 @@ function ScansCard({
             <Link href={`/admin/background-work`}>Background work</Link>
           </Button>
           <Button asChild variant="outline" size="sm" className="flex-1">
-            <Link href={`/admin/findings?tab=scans`}>View runs</Link>
+            <Link href="/admin/scans?history=runs">View runs</Link>
           </Button>
         </div>
       </CardContent>
@@ -349,7 +350,7 @@ function RecentScanFailuresCard() {
                 className="border-border/60 border-b pb-1.5 last:border-b-0 last:pb-0"
               >
                 <Link
-                  href={`/admin/libraries/${row.library_slug}/history`}
+                  href={libraryScanHref(row.library_slug)}
                   className="hover:bg-muted/50 -mx-1 block rounded px-1 py-0.5 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -371,7 +372,7 @@ function RecentScanFailuresCard() {
           </ul>
         )}
         <Button asChild variant="outline" size="sm" className="w-full">
-          <Link href={`/admin/findings?tab=scans&state=failed`}>
+          <Link href="/admin/scans?history=runs&state=failed">
             View all failures
           </Link>
         </Button>
@@ -414,7 +415,7 @@ function LatestScanPerLibraryCard() {
             {items.map((row) => (
               <li key={row.id}>
                 <Link
-                  href={`/admin/libraries/${row.library_slug}/history`}
+                  href={libraryScanHref(row.library_slug)}
                   className="hover:bg-muted/50 -mx-1 flex items-center justify-between gap-2 rounded px-1 py-0.5 transition-colors"
                 >
                   <span className="truncate">{row.library_name}</span>
@@ -427,7 +428,7 @@ function LatestScanPerLibraryCard() {
           </ul>
         )}
         <Button asChild variant="outline" size="sm" className="w-full">
-          <Link href={`/admin/findings?tab=scans`}>View all scan runs</Link>
+          <Link href="/admin/scans?history=runs">View all scan runs</Link>
         </Button>
       </CardContent>
     </Card>

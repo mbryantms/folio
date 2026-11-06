@@ -36,10 +36,9 @@ const ALL_KINDS: ReadonlyArray<{
 
 export function ActivityFeedClient() {
   // Seed initial selection from `?kinds=audit,scan` so deep-links
-  // from elsewhere (Quick Actions "View audit log" → `?kinds=audit`,
-  // the now-redirected `/admin/audit` route) land with the right
-  // filter applied. Unknown values fall back to "show all" rather
-  // than an empty list.
+  // (Quick Actions "View audit log", the palette's "Audit log" →
+  // `?kinds=audit`) land with the right filter applied. Unknown values
+  // fall back to "show all" rather than an empty list.
   const sp = useSearchParams();
   const [active, setActive] = useState<Set<ActivityKind>>(() => {
     const raw = sp.get("kinds");

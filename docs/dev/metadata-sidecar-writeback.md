@@ -663,7 +663,7 @@ reemit_in_progress` while the library already has a live run.
 - **Stopping.** Turning either writeback flag off aborts the run at its next
   tick; the at most 32 rewrites already queued still finish (or refuse
   themselves when archive writeback is off). *Clear metadata queues* on
-  `/admin/queue` also drops the run and its queued rewrites.
+  Background work → Jobs also drops the run and its queued rewrites.
 
 ## Series-scope fan-out
 

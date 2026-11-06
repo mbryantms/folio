@@ -39,7 +39,8 @@ import { adminLibraryUrl, issueUrl, seriesUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
 /**
- * `/admin/queue` — background-job queue surface (archive-rewrite-1.0 M7).
+ * Background work → Jobs (`/admin/background-work?view=jobs`) — the
+ * background-job queue surface (archive-rewrite-1.0 M7).
  *
  *   - **Overview**: queue lanes, every queue's jobs as cards moving
  *     Queued → Running → Done (folio-flair phase 5, `QueueLanes`).
@@ -49,7 +50,7 @@ import { cn } from "@/lib/utils";
  *     trail the worker writes on completion (success or failure).
  */
 export function QueuePage() {
-  // Deep link: `?tab=failed` from the Background work page's failed-jobs tile.
+  // Deep link: `?view=jobs&tab=failed` from the Overview's failed-jobs tile.
   const deepTab = useSearchParams().get("tab");
   const initialTab =
     deepTab === "failed" || deepTab === "archive" ? deepTab : "overview";
@@ -57,7 +58,7 @@ export function QueuePage() {
   return (
     <Tabs value={tab} onValueChange={setTab} className="mt-2">
       <TabsList>
-        <TabsTrigger value="overview">Overview</TabsTrigger>
+        <TabsTrigger value="overview">All jobs</TabsTrigger>
         <TabsTrigger value="failed">Failed jobs</TabsTrigger>
         <TabsTrigger value="archive">Archive operations</TabsTrigger>
       </TabsList>

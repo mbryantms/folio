@@ -7,7 +7,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 let pathname = "/admin";
-vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
+let search = "";
+vi.mock("next/navigation", () => ({
+  usePathname: () => pathname,
+  useSearchParams: () => new URLSearchParams(search),
+}));
 
 import {
   AdminRouteSkeleton,
@@ -17,7 +21,6 @@ import {
 const ROUTES = [
   "/admin",
   "/admin/activity",
-  "/admin/audit",
   "/admin/api-docs",
   "/admin/auth",
   "/admin/background-work",
@@ -28,16 +31,12 @@ const ROUTES = [
   "/admin/libraries/image",
   "/admin/libraries/image/settings",
   "/admin/libraries/image/health",
-  "/admin/libraries/image/history",
   "/admin/libraries/image/duplicates",
   "/admin/libraries/image/removed",
   "/admin/libraries/image/scan",
-  "/admin/libraries/image/thumbnails",
-  "/admin/logs",
   "/admin/metadata",
-  "/admin/queue",
   "/admin/relationships",
-  "/admin/scan-dashboard",
+  "/admin/scans",
   "/admin/series/the-walking-dead",
   "/admin/server",
   "/admin/starter-lists",
@@ -67,9 +66,23 @@ describe("AdminRouteSkeleton", () => {
   });
 
   it("draws the library chrome (no PageHeader) under a library", () => {
-    pathname = "/admin/libraries/image/history";
+    pathname = "/admin/libraries/image/scan";
     const html = renderToStaticMarkup(createElement(AdminRouteSkeleton));
-    // The library layout's tab strip: seven underline tabs.
-    expect(html.match(/border-b-2 px-3 py-2/g)?.length).toBe(7);
+    // The library layout's tab strip: six underline tabs.
+    expect(html.match(/border-b-2 px-3 py-2/g)?.length).toBe(6);
+  });
+
+  it.each([
+    ["/admin/activity", "view=log"],
+    ["/admin/background-work", "view=jobs"],
+  ])("draws the %s ?%s view's own body", (route, query) => {
+    pathname = route;
+    search = "";
+    const base = renderToStaticMarkup(createElement(AdminRouteSkeleton));
+    search = query;
+    const view = renderToStaticMarkup(createElement(AdminRouteSkeleton));
+    search = "";
+    expect(view).toContain('aria-busy="true"');
+    expect(view).not.toBe(base);
   });
 });

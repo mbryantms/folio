@@ -153,7 +153,7 @@ describe("otherWork", () => {
       {
         queue: "hash_backfill",
         label: "Content hashing",
-        href: "/admin/queue",
+        href: "/admin/background-work?view=jobs",
         pending: 1,
         inFlight: 1,
       },
@@ -165,7 +165,9 @@ describe("queueHref", () => {
   it("sends metadata work to the metadata page and the rest to the queue page", () => {
     expect(queueHref("metadata_search_series")).toBe("/admin/metadata");
     expect(queueHref("provider_coverage")).toBe("/admin/metadata");
-    expect(queueHref("rewrite_issue_sidecars")).toBe("/admin/queue");
+    expect(queueHref("rewrite_issue_sidecars")).toBe(
+      "/admin/background-work?view=jobs",
+    );
   });
 });
 

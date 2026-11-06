@@ -310,6 +310,15 @@ export function AdminHeaderSkeleton({
 
 /** Line-variant `TabsList` + the `pt-4` panel under it, inside the Tabs
  *  root's `flex-col gap-2`. */
+/** A top-level `UrlViewTabs` strip over its first view's body (merged
+ *  admin pages: Server activity, Background work). */
+export function LineTabsSkeleton(props: {
+  widths: readonly string[];
+  children: React.ReactNode;
+}) {
+  return <LineTabsShell {...props} />;
+}
+
 function LineTabsShell({
   widths,
   className,
@@ -522,7 +531,7 @@ export function DashboardSkeleton({
 }
 
 // ---------------------------------------------------------------------------
-// Activity (/admin/activity, /admin/audit)
+// Activity (/admin/activity)
 // ---------------------------------------------------------------------------
 
 /** Activity feed rows: kind badge + time, then icon, summary, detail. */
@@ -990,7 +999,7 @@ export function ScanRunsCardSkeleton({
 /** `/admin/findings` (`FindingsView`, default Activity tab). */
 export function FindingsSkeleton() {
   return (
-    <LineTabsShell widths={["w-14", "w-32", "w-20"]}>
+    <LineTabsShell widths={["w-14", "w-32"]}>
       <div className="space-y-3">
         <div className="border-border/60 flex flex-wrap items-center gap-2 rounded-md border p-3">
           <L line="h-4" bar="h-2.5" w="w-12" />
@@ -1054,19 +1063,17 @@ export function LibraryChromeSkeleton({ active = 0 }: { active?: number }) {
         aria-hidden
         className="border-border relative -mb-px flex gap-1 overflow-hidden border-b"
       >
-        {["w-14", "w-14", "w-11", "w-11", "w-[4.5rem]", "w-14", "w-14"].map(
-          (w, i) => (
-            <div
-              key={i}
-              className={cn(
-                "flex shrink-0 items-center border-b-2 px-3 py-2",
-                i === active ? "border-muted" : "border-transparent",
-              )}
-            >
-              <L w={w} />
-            </div>
-          ),
-        )}
+        {["w-14", "w-14", "w-9", "w-11", "w-[4.5rem]", "w-14"].map((w, i) => (
+          <div
+            key={i}
+            className={cn(
+              "flex shrink-0 items-center border-b-2 px-3 py-2",
+              i === active ? "border-muted" : "border-transparent",
+            )}
+          >
+            <L w={w} />
+          </div>
+        ))}
       </div>
     </>
   );
@@ -1462,16 +1469,8 @@ export function LiveScanSkeleton() {
 /** `/admin/libraries/<slug>[/tab]` route fallback: the layout's header
  *  and tabs, then the tab's own body inside the `pt-4` panel. */
 export function LibraryDetailSkeleton({ tab }: { tab: string }) {
-  const TABS = [
-    "",
-    "settings",
-    "health",
-    "history",
-    "duplicates",
-    "removed",
-    "scan",
-  ];
-  const at = Math.max(0, TABS.indexOf(tab === "thumbnails" ? "scan" : tab));
+  const TABS = ["", "settings", "scan", "health", "duplicates", "removed"];
+  const at = Math.max(0, TABS.indexOf(tab));
   let body: React.ReactNode;
   switch (TABS[at]) {
     case "settings":
@@ -1480,9 +1479,6 @@ export function LibraryDetailSkeleton({ tab }: { tab: string }) {
     case "health":
       body = <LibraryHealthSkeleton />;
       break;
-    case "history":
-      body = <ScanRunsSkeleton />;
-      break;
     case "duplicates":
       body = <DuplicatesPanelSkeleton />;
       break;
@@ -1490,7 +1486,12 @@ export function LibraryDetailSkeleton({ tab }: { tab: string }) {
       body = <RemovedItemsSkeleton />;
       break;
     case "scan":
-      body = <LiveScanSkeleton />;
+      body = (
+        <div className="space-y-8">
+          <LiveScanSkeleton />
+          <ScanRunsSkeleton />
+        </div>
+      );
       break;
     default:
       body = <LibraryOverviewSkeleton />;
@@ -1504,7 +1505,7 @@ export function LibraryDetailSkeleton({ tab }: { tab: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Logs (/admin/logs)
+// Logs (/admin/activity?view=log)
 // ---------------------------------------------------------------------------
 
 /** Log rows: time, level chip, message + target + field chips. */
@@ -1541,7 +1542,7 @@ export function LogRowsSkeleton({
   );
 }
 
-/** `/admin/logs` (`LogsClient`): stream / level segments, search, library
+/** Server activity → Log (`LogsClient`): stream / level segments, search, library
  *  picker, follow toggle + count, the log card and the footnote. */
 export function LogsSkeleton() {
   return (
@@ -1691,7 +1692,7 @@ export function MetadataTabsSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// Queue (/admin/queue)
+// Jobs (/admin/background-work?view=jobs)
 // ---------------------------------------------------------------------------
 
 /** Queue Overview (`QueueLanes`): the counts line + queue filter pills,
@@ -1740,7 +1741,7 @@ export function QueueLanesSkeleton({
   );
 }
 
-/** `/admin/queue` (`QueuePage`, Overview tab). */
+/** Background work → Jobs (`QueuePage`, All jobs tab). */
 export function QueuePageSkeleton() {
   return (
     <div className="mt-2 flex flex-col gap-2">
@@ -1837,7 +1838,7 @@ export function RelationshipsSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
-// Scan dashboard (/admin/scan-dashboard)
+// Scans (/admin/scans)
 // ---------------------------------------------------------------------------
 
 /** File-watcher rows (`WatchersCard` body): mode badge, library name,
@@ -1885,8 +1886,8 @@ export function BatchListSkeleton({ rows = 4 }: { rows?: number }) {
   );
 }
 
-/** `/admin/scan-dashboard` (`ScanDashboardClient`, no batch selected):
- *  start-scan bar + idle note, file watchers, scan-all history. */
+/** `/admin/scans` (`ScanDashboardClient`, no batch selected):
+ *  start-scan bar + idle note, history tabs, file watchers. */
 export function ScanDashboardSkeleton() {
   return (
     <div className="space-y-8">
@@ -1901,6 +1902,12 @@ export function ScanDashboardSkeleton() {
           <Skeleton className="h-3.5 w-[34rem] max-w-full" />
         </div>
       </div>
+      <section className="space-y-3">
+        <L line="h-7" bar="h-4" w="w-16" />
+        <LineTabsShell widths={["w-24", "w-20"]}>
+          <BatchListSkeleton rows={2} />
+        </LineTabsShell>
+      </section>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <div className="flex h-5 items-center gap-2">
@@ -1913,10 +1920,6 @@ export function ScanDashboardSkeleton() {
           <WatcherRowsSkeleton />
         </CardContent>
       </Card>
-      <section className="space-y-3">
-        <L line="h-7" bar="h-4" w="w-36" />
-        <BatchListSkeleton rows={2} />
-      </section>
     </div>
   );
 }

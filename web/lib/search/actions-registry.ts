@@ -341,13 +341,13 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     keywords: ["jobs", "queue", "scans", "workers", "thumbnails"],
   },
   {
-    id: "admin-scan-dashboard",
-    label: "Scan dashboard",
+    id: "admin-scans",
+    label: "Scans",
     group: "Admin",
     icon: Radar,
-    href: "/admin/scan-dashboard",
+    href: "/admin/scans",
     role: "admin",
-    keywords: ["scans", "library scan", "progress"],
+    keywords: ["scan dashboard", "scan all", "library scan", "progress"],
   },
   {
     id: "admin-findings",
@@ -387,12 +387,13 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
   },
   {
     id: "admin-queue",
-    label: "Queue",
+    label: "Job queue",
     group: "Admin",
     icon: Gauge,
-    href: "/admin/queue",
+    // Background work → Jobs.
+    href: "/admin/background-work?view=jobs",
     role: "admin",
-    keywords: ["redis", "workers", "jobs"],
+    keywords: ["queue", "redis", "workers", "jobs", "failed jobs"],
   },
   {
     id: "admin-relationships",
@@ -440,10 +441,7 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     label: "Audit log",
     group: "Admin",
     icon: History,
-    // The standalone /admin/audit page redirects into the unified
-    // Activity feed; deep-link directly with the chip pre-applied so
-    // the command-palette action lands on the same filtered view a
-    // typed URL would.
+    // The Activity feed with the Audit chip pre-applied.
     href: "/admin/activity?kinds=audit",
     role: "admin",
     keywords: ["actions", "trail"],
@@ -453,9 +451,10 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     label: "Server logs",
     group: "Admin",
     icon: FileText,
-    href: "/admin/logs",
+    // Server activity → Log.
+    href: "/admin/activity?view=log",
     role: "admin",
-    keywords: ["debug", "errors"],
+    keywords: ["debug", "errors", "log"],
   },
   {
     id: "admin-activity",

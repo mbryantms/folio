@@ -14,10 +14,13 @@ import { BumpNumber } from "@/components/admin/BumpNumber";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { LiveScanPanel } from "@/components/admin/library/LiveScanPanel";
+import { ScanRunsHistory } from "@/components/admin/library/ScanRunsHistory";
+import { UrlViewTabs } from "@/components/admin/UrlViewTabs";
 import { WatchersCard } from "@/components/admin/library/WatchersCard";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
 import { BACKGROUND_WORK_HREF } from "@/lib/admin/background-work";
+import { libraryScanHref, scanBatchHref, SCANS_HREF } from "@/lib/admin/routes";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
 import type {
@@ -30,7 +33,7 @@ import type {
  *  batch detail's member runs. */
 export type LibRow = {
   libraryId: string;
-  /** Library slug, for the link to its Live scan page ("" if deleted). */
+  /** Library slug, for the link to its Scan tab ("" if deleted). */
   slug: string;
   name: string;
   state: string; // queued | running | complete | failed | cancelled
@@ -102,6 +105,20 @@ export function doneCount(rows: LibRow[]): number {
   ).length;
 }
 
+/**
+ * Admin → Scans (`/admin/scans`): the one place to watch scans.
+ *
+ *  - No `?batch=`: live cards for every running library (start a scan or
+ *    "Scan all" from here), then history — every "Scan all" batch and every
+ *    single scan run — and the file-watcher card.
+ *  - `?batch=<id>`: one "Scan all" run — where the Scan all button lands.
+ *    Overall progress, a status row per library, the rich live card for
+ *    each library still scanning, and, once the batch closes, the results
+ *    summary + itemized changes.
+ *
+ * A single library's scan has its own scoped view on that library's Scan
+ * tab (`/admin/libraries/<slug>/scan`).
+ */
 export function ScanDashboardClient() {
   const sp = useSearchParams();
   const batchId = sp.get("batch");
@@ -110,11 +127,28 @@ export function ScanDashboardClient() {
     return (
       <div className="space-y-8">
         <LiveScanPanel />
-        <WatchersCard />
-        <section className="space-y-3" aria-label="Scan-all history">
-          <h2 className="text-lg font-semibold">Scan-all history</h2>
-          <BatchPicker />
+        <section className="space-y-3" aria-labelledby="scan-history-heading">
+          <h2 id="scan-history-heading" className="text-lg font-semibold">
+            History
+          </h2>
+          <UrlViewTabs
+            param="history"
+            label="Scan history"
+            views={[
+              {
+                value: "batches",
+                label: "Scan all runs",
+                content: <BatchPicker />,
+              },
+              {
+                value: "runs",
+                label: "Every scan",
+                content: <ScanRunsHistory />,
+              },
+            ]}
+          />
         </section>
+        <WatchersCard />
       </div>
     );
   }
@@ -133,8 +167,8 @@ export function BatchPicker() {
   if (batches.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">
-        No “Scan all” runs yet. Trigger one from the Libraries header and it
-        will appear here with live progress.
+        No “Scan all” runs yet. Start one above (or from the Libraries header)
+        and it opens here with live progress.
       </p>
     );
   }
@@ -144,7 +178,7 @@ export function BatchPicker() {
         {batches.map((b) => (
           <li key={b.id}>
             <Link
-              href={`?batch=${b.id}`}
+              href={scanBatchHref(b.id)}
               className="border-border bg-card hover:bg-muted/40 flex items-center justify-between rounded-md border px-4 py-3 transition-colors"
             >
               <span className="flex items-center gap-3">
@@ -192,10 +226,10 @@ function BatchView({ batchId }: { batchId: string }) {
   return (
     <div className="space-y-4">
       <Link
-        href="?"
+        href={SCANS_HREF}
         className="text-muted-foreground hover:text-foreground text-sm"
       >
-        ← All batches
+        ← All scans
       </Link>
 
       {/* Overall progress */}
@@ -292,7 +326,7 @@ function BatchView({ batchId }: { batchId: string }) {
                 <RowIcon state={r.state} />
                 {r.slug ? (
                   <Link
-                    href={`/admin/libraries/${r.slug}/scan`}
+                    href={libraryScanHref(r.slug)}
                     className="truncate text-sm hover:underline"
                   >
                     {r.name}
@@ -323,6 +357,13 @@ function BatchView({ batchId }: { batchId: string }) {
           </li>
         ))}
       </ul>
+
+      {/* The full live card (ring, throughput, discoveries, log) for each
+          member library scanning — or finished — while this page is open:
+          the same card the Scans page shows, scoped to this batch. A batch
+          opened after it ended has no live state, and the panel renders
+          nothing. */}
+      <LiveScanPanel libraryIds={batch.member_runs.map((r) => r.library_id)} />
 
       {/* Itemized manifest — every change recorded under this batch (M10). */}
       <Card>

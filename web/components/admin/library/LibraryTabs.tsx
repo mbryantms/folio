@@ -15,11 +15,10 @@ import { cn } from "@/lib/utils";
 const TABS = [
   { slug: "", label: "Overview" },
   { slug: "settings", label: "Settings" },
+  { slug: "scan", label: "Scan" },
   { slug: "health", label: "Health" },
-  { slug: "history", label: "History" },
   { slug: "duplicates", label: "Duplicates" },
   { slug: "removed", label: "Removed" },
-  { slug: "scan", label: "Live scan" },
 ] as const;
 
 /** Index of the tab `pathname` belongs to under `basePath` (-1: none). */

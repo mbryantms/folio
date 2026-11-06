@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { scanBatchHref, SCANS_HREF } from "@/lib/admin/routes";
 import { useScanAllLibraries } from "@/lib/api/mutations";
 import { useLibraryList } from "@/lib/api/queries";
 
@@ -47,13 +48,15 @@ export function ScanAllButton() {
       { force },
       {
         onSuccess: (data) => {
+          // Land on the Scans page scoped to the batch just started: live
+          // progress for every library in it, then the results. Navigate
+          // before closing the dialog so nothing in the close path can
+          // swallow the push.
+          router.push(
+            data?.batch_id ? scanBatchHref(data.batch_id) : SCANS_HREF,
+          );
           setOpen(false);
           setForce(false);
-          // Drop the operator straight onto the live dashboard for the batch
-          // they just kicked off (observability-split M9).
-          if (data?.batch_id) {
-            router.push(`/admin/scan-dashboard?batch=${data.batch_id}`);
-          }
         },
       },
     );

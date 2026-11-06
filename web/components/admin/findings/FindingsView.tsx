@@ -3,39 +3,20 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  Info,
-  Loader2,
-  ScrollText,
-  XCircle,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { NativeSelect } from "@/components/folio/native-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/folio/filter-pill";
-import {
-  HealthIssueCardsSkeleton,
-  ScanRunsCardSkeleton,
-} from "@/components/skeletons/AdminShapes";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { HealthIssueCardsSkeleton } from "@/components/skeletons/AdminShapes";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "@/components/folio/tabs";
+import { FilterRow, LibraryFilter } from "@/components/admin/AdminFilters";
 import {
   HealthPayloadExtras,
   PayloadRefLinks,
@@ -43,11 +24,7 @@ import {
 import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList";
 import { useDismissHealthIssue } from "@/lib/api/mutations";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
-import {
-  useAdminHealthIssues,
-  useAdminScanRunsInfinite,
-  useLibraryList,
-} from "@/lib/api/queries";
+import { useAdminHealthIssues, useLibraryList } from "@/lib/api/queries";
 import type { CrossLibHealthIssueView } from "@/lib/api/types";
 import {
   healthKindLabel,
@@ -57,36 +34,25 @@ import { statusToneText } from "@/lib/ui/status-tone";
 
 import type { HealthSeverityFilter } from "@/components/admin/severity";
 
-type Tab = "activity" | "health" | "scans";
+type Tab = "activity" | "health";
 type Severity = HealthSeverityFilter;
 
 /**
- * Cross-library findings page. Two rails in one shell:
+ * Library events (`/admin/findings`) — the Library stream minus scans:
  *
- *  1. Open health issues — joined `library_health_issue` x `library`,
+ *  1. Activity (observability-split M11): the durable, itemized
+ *     `library_events` manifest — every issue/series add·update·remove,
+ *     thumbnail/metadata/archive op, scoped by library. Distinct from
+ *     `/admin/activity`, the *Server* stream (audit + user activity +
+ *     the runtime log); the two streams are deliberately non-overlapping.
+ *  2. Open health issues — joined `library_health_issue` x `library`,
  *     filter by severity / library, inline dismiss action.
- *  2. Recent scan runs — joined `scan_run` x `library`, color-coded
- *     state, jump back to the per-library history page; each row has
- *     a "Logs" cross-link that scopes `/admin/logs` to the row's
- *     library.
+ *
+ * Scan runs live on the Scans page (`/admin/scans?history=runs`).
  *
  * Filter state is reflected to URL query params so the dashboard
- * cards can deep-link into specific subsets ("show only failed scans
- * from last 7 days" etc.) and the page is browser-back-friendly.
- *
- * **Why no Logs tab here**: `/admin/logs` owns the live-tail UX
- * (2s polling, newest-at-top, follow-mode toggle). Duplicating those
- * controls in a second tab cost information density without adding
- * any capability. The cross-link on each scan-run row reaches the
- * same outcome — see the logs this scan emitted — without leaving
- * the admin shell.
- *
- * **Activity tab** (observability-split M11): the durable, itemized
- * Library-stream manifest (`library_events`) — every issue/series
- * add·update·remove, thumbnail/metadata/archive op, scoped by library +
- * filterable by category/severity. This is distinct from `/admin/activity`,
- * which is the *Server* stream (audit + user activity); the two streams are
- * deliberately non-overlapping.
+ * cards can deep-link into specific subsets and the page is
+ * browser-back-friendly.
  */
 export function FindingsView() {
   const router = useRouter();
@@ -95,7 +61,6 @@ export function FindingsView() {
   const tab = (sp.get("tab") as Tab) ?? "activity";
   const severity = (sp.get("severity") as Severity) ?? "all";
   const libraryId = sp.get("library_id") ?? "all";
-  const state = sp.get("state") ?? "all";
 
   const { data: libraries } = useLibraryList();
 
@@ -114,7 +79,6 @@ export function FindingsView() {
       <TabsList>
         <TabsTrigger value="activity">Activity</TabsTrigger>
         <TabsTrigger value="health">Open health issues</TabsTrigger>
-        <TabsTrigger value="scans">Scan runs</TabsTrigger>
       </TabsList>
 
       <TabsContent value="activity" className="mt-4 space-y-3">
@@ -145,27 +109,7 @@ export function FindingsView() {
         </FilterRow>
         <HealthIssuesRail severity={severity} libraryId={libraryId} />
       </TabsContent>
-
-      <TabsContent value="scans" className="mt-4 space-y-3">
-        <FilterRow>
-          <StateChips value={state} onChange={(v) => setParam("state", v)} />
-          <LibraryFilter
-            libraries={libraries ?? []}
-            value={libraryId}
-            onChange={(v) => setParam("library_id", v)}
-          />
-        </FilterRow>
-        <ScanRunsRail state={state} libraryId={libraryId} />
-      </TabsContent>
     </Tabs>
-  );
-}
-
-function FilterRow({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="border-border/60 flex flex-wrap items-center gap-2 rounded-md border p-3">
-      {children}
-    </div>
   );
 }
 
@@ -197,65 +141,6 @@ function SeverityChips({
         </FilterPill>
       ))}
     </div>
-  );
-}
-
-function StateChips({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const options = [
-    { v: "all", label: "All" },
-    { v: "running", label: "Running" },
-    { v: "complete", label: "Complete" },
-    { v: "failed", label: "Failed" },
-    { v: "cancelled", label: "Cancelled" },
-  ];
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-muted-foreground mr-1 text-xs uppercase">
-        State
-      </span>
-      {options.map((o) => (
-        <FilterPill
-          key={o.v}
-          active={value === o.v}
-          onClick={() => onChange(o.v)}
-        >
-          {o.label}
-        </FilterPill>
-      ))}
-    </div>
-  );
-}
-
-function LibraryFilter({
-  libraries,
-  value,
-  onChange,
-}: {
-  libraries: { id: string; name: string }[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <label className="flex items-center gap-1.5">
-      <span className="text-muted-foreground mr-1 text-xs uppercase">
-        Library
-      </span>
-      <NativeSelect
-        size="sm"
-        value={value}
-        onChange={onChange}
-        options={[
-          { value: "all", label: "All libraries" },
-          ...libraries.map((l) => ({ value: l.id, label: l.name })),
-        ]}
-      />
-    </label>
   );
 }
 
@@ -369,141 +254,4 @@ function SeverityIcon({ severity }: { severity: string }) {
       />
     );
   return <Info className="text-muted-foreground mt-0.5 size-4 shrink-0" />;
-}
-
-function ScanRunsRail({
-  state,
-  libraryId,
-}: {
-  state: string;
-  libraryId: string;
-}) {
-  const filters = {
-    state: state === "all" ? undefined : state,
-    library_id: libraryId === "all" ? undefined : libraryId,
-    limit: 50,
-  };
-  const query = useAdminScanRunsInfinite(filters);
-  const { data, isLoading, error } = query;
-
-  if (isLoading) return <ScanRunsCardSkeleton />;
-  if (error) return <p className="text-destructive text-sm">{error.message}</p>;
-  const items = data?.pages.flatMap((p) => p.items) ?? [];
-  if (items.length === 0) {
-    return (
-      <Card>
-        <CardContent className="text-muted-foreground py-12 text-center text-sm">
-          No scan runs match these filters.
-        </CardContent>
-      </Card>
-    );
-  }
-  return (
-    <div className="space-y-3">
-      <Card>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>State</TableHead>
-                <TableHead>Library</TableHead>
-                <TableHead>Kind</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead>Ended</TableHead>
-                <TableHead>Error</TableHead>
-                <TableHead>
-                  <span className="sr-only">Logs</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((row) => (
-                <TableRow key={row.id}>
-                  <TableCell>
-                    <StateBadge state={row.state} />
-                  </TableCell>
-                  <TableCell>
-                    {row.library_slug ? (
-                      <Link
-                        href={`/admin/libraries/${row.library_slug}/history`}
-                        className="hover:underline"
-                      >
-                        {row.library_name}
-                      </Link>
-                    ) : (
-                      row.library_name
-                    )}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {row.kind}
-                    {row.series_name ? ` · ${row.series_name}` : ""}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
-                    {new Date(row.started_at).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
-                    {row.ended_at
-                      ? new Date(row.ended_at).toLocaleString()
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-xs wrap-anywhere">
-                    {row.error ?? ""}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {/* Cross-link into the live log tail scoped to
-                      this scan's library. The Logs page picks up
-                      `?library_id=` from the URL on mount. */}
-                    <Link
-                      href={`/admin/logs?library_id=${encodeURIComponent(row.library_id)}`}
-                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
-                    >
-                      <ScrollText className="size-3.5" aria-hidden="true" />
-                      Logs
-                    </Link>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      <InfiniteSentinel query={query} />
-    </div>
-  );
-}
-
-function StateBadge({ state }: { state: string }) {
-  if (state === "running") {
-    return (
-      <Badge variant="secondary" className="gap-1">
-        <Loader2 className="size-3 animate-spin" />
-        Running
-      </Badge>
-    );
-  }
-  if (state === "complete") {
-    return (
-      <Badge variant="outline" className="text-primary border-primary/40 gap-1">
-        <CheckCircle2 className="size-3" />
-        Complete
-      </Badge>
-    );
-  }
-  if (state === "failed") {
-    return (
-      <Badge variant="destructive" className="gap-1">
-        <XCircle className="size-3" />
-        Failed
-      </Badge>
-    );
-  }
-  if (state === "cancelled") {
-    return (
-      <Badge variant="secondary" className="gap-1">
-        <AlertCircle className="size-3" />
-        Cancelled
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">{state}</Badge>;
 }

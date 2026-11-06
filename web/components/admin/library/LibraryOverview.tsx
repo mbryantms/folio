@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { LibraryOverviewSkeleton } from "@/components/skeletons/AdminShapes";
@@ -13,6 +14,7 @@ import {
 } from "@/lib/api/queries";
 import { useTriggerScan } from "@/lib/api/mutations";
 import { validateCron } from "@/lib/api/cron";
+import { libraryScanHref } from "@/lib/admin/routes";
 import { cn } from "@/lib/utils";
 import { LibraryStatsCard } from "./LibraryStatsCard";
 import { ScanModeMenu } from "./ScanModeMenu";
@@ -35,6 +37,7 @@ export function LibraryOverview({ id }: { id: string }) {
   const preview = useScanPreview(id);
   const queue = useQueueDepth({ intervalMs: 10_000 });
   const trigger = useTriggerScan(id);
+  const router = useRouter();
 
   if (lib.isLoading) {
     return <LibraryOverviewSkeleton />;
@@ -57,7 +60,7 @@ export function LibraryOverview({ id }: { id: string }) {
       value: last?.started_at
         ? new Date(last.started_at).toLocaleString()
         : "Never",
-      href: `/admin/libraries/${slug}/history`,
+      href: libraryScanHref(slug),
     },
     { label: "Last state", value: last?.state ?? "—" },
     {
@@ -71,7 +74,7 @@ export function LibraryOverview({ id }: { id: string }) {
         typeof scanPreview?.thumbnail_backlog === "number"
           ? String(scanPreview.thumbnail_backlog)
           : "—",
-      href: `/admin/libraries/${slug}/thumbnails`,
+      href: libraryScanHref(slug),
     },
   ];
 
@@ -153,10 +156,16 @@ export function LibraryOverview({ id }: { id: string }) {
         <ScanModeMenu
           isPending={trigger.isPending}
           isRunning={last?.state === "running"}
-          onScan={(mode) => trigger.mutate({ mode })}
+          onScan={(mode) =>
+            // Land on this library's Scan tab to watch it run.
+            trigger.mutate(
+              { mode },
+              { onSuccess: () => router.push(libraryScanHref(slug)) },
+            )
+          }
         />
         <Link
-          href={`/admin/libraries/${id}/scan`}
+          href={libraryScanHref(slug)}
           className={cn(
             "border-border hover:bg-secondary rounded-md border px-3 py-1.5 text-xs font-medium",
             last?.state === "running"

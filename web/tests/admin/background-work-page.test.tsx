@@ -194,7 +194,9 @@ describe("BackgroundWorkClient", () => {
     // Queues with no library column, and the failed-jobs deep link.
     expect(html).toContain("Sidecar rewrite");
     expect(html).toContain("2 with workers");
-    expect(html).toContain('href="/admin/queue?tab=failed"');
+    expect(html).toContain(
+      'href="/admin/background-work?view=jobs&amp;tab=failed"',
+    );
     // Metadata batch.
     expect(html).toContain("Library refresh");
     expect(html).toContain("waiting on provider quota");
