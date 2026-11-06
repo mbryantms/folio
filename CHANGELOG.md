@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.77.0](https://github.com/mbryantms/folio/compare/v0.76.0...v0.77.0) (2026-11-06)
+
+
+### Added
+
+* **admin:** one place to watch scans; merge overlapping activity pages ([#1471](https://github.com/mbryantms/folio/issues/1471)) ([075c444](https://github.com/mbryantms/folio/commit/075c4447bd11a655bec09c490506ec0d87e7343c))
+
+
+### Fixed
+
+* **web:** cover grids render at the slider width; centre the resting cover stack ([#1473](https://github.com/mbryantms/folio/issues/1473)) ([a90490a](https://github.com/mbryantms/folio/commit/a90490a34106d1eba6d52b80f43e759f4199e0dc))
+
 ## [0.76.0](https://github.com/mbryantms/folio/compare/v0.75.0...v0.76.0) (2026-11-05)
 
 
