@@ -95,7 +95,7 @@ export function AtoZScrubber({
           // off the bezel — the system-index look — instead of glued to
           // the art. The grids keep two
           // columns regardless via the half-width floor in
-          // `computeColumnsPerRow` / the CSS `minmax(min(...))` rule.
+          // `computeColumnsPerRow` / `cardGridColumns`.
           "fixed top-(--topbar-h) right-0 bottom-[calc(var(--bottom-tab-h)+var(--safe-bottom))] z-20 flex w-6 touch-none flex-col items-stretch justify-center py-2 select-none sm:hidden",
           className,
         )}

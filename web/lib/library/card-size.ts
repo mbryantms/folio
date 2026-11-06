@@ -60,12 +60,19 @@ export function cardWidth(
 
 /** The cover-grid template every card-size surface shares: as many
  *  columns as fit at the reader's size, never fewer than two
- *  (docs/dev/phone-layout.md), stretched to fill the row. */
+ *  (docs/dev/phone-layout.md).
+ *
+ *  Fixed-width tracks — `min(<size>, 50% - gap/2)` — never
+ *  `minmax(<size>, 1fr)`: a `1fr` max stretches every column to fill the
+ *  row, so one slider value rendered anywhere from <size> to almost
+ *  2×<size> depending on the container width, and wider than the home
+ *  rails, which size each card at exactly `width: <size>`. The `50%` cap
+ *  keeps phones at two columns. `computeColumnWidth` mirrors this. */
 export function cardGridColumns(
   storageKey: string | undefined,
   fallbackPx: number = DEFAULT_CARD_SIZE_PX,
 ): string {
-  return `repeat(auto-fill, minmax(min(${cardWidth(storageKey, fallbackPx)}, calc(50% - 0.5rem)), 1fr))`;
+  return `repeat(auto-fill, min(${cardWidth(storageKey, fallbackPx)}, calc(50% - 0.5rem)))`;
 }
 
 /**

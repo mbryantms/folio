@@ -23,7 +23,7 @@ describe("computeColumnsPerRow", () => {
     // 390px phone: 358 content, 350 with the A–Z gutter reserved.
     // 375px phone: 343 / 335. All stay two-up at the default 160 and
     // at the 280 maximum — the effective card width is capped at half
-    // the row, matching the CSS `minmax(min(cardSize, 50% - 0.5rem))`.
+    // the row, matching `cardGridColumns`'s `min(cardSize, 50% - 0.5rem)` tracks.
     for (const w of [358, 350, 343, 335]) {
       expect(computeColumnsPerRow(w, 160)).toBe(2);
       expect(computeColumnsPerRow(w, 280)).toBe(2);
@@ -35,7 +35,7 @@ describe("computeColumnsPerRow", () => {
     expect(computeColumnsPerRow(1200, 160)).toBe(6);
   });
 
-  it("matches the auto-fill minmax inversion (gap=16)", () => {
+  it("matches the auto-fill column-count inversion (gap=16)", () => {
     // One 160 card: needs 160 (half of 160 is below the 96px floor).
     expect(computeColumnsPerRow(160, 160)).toBe(1);
     // Two: 160+16+160 = 336 (the floor already grants two from 208).
@@ -81,18 +81,21 @@ describe("rowItemRange", () => {
 });
 
 describe("computeColumnWidth", () => {
-  it("splits leftover width after gaps evenly", () => {
-    // 864 wide, 5 cols, 4 gaps*16 = 64 → 800/5 = 160.
-    expect(computeColumnWidth(864, 5)).toBe(160);
+  it("is the card size, never stretched to fill the row", () => {
+    // 1000 wide fits 4 × 200 (+ gaps) with 136px left over: the columns
+    // stay 200, matching the home rails' `width: 200px` cards.
+    expect(computeColumnWidth(1000, 4, 200)).toBe(200);
+    expect(computeColumnWidth(864, 5, 160)).toBe(160);
   });
 
-  it("equals full width for a single column (no gaps)", () => {
-    expect(computeColumnWidth(500, 1)).toBe(500);
+  it("halves the row under the two-column phone floor", () => {
+    // 390 phone, 200 card: half the row (minus one gap) is narrower.
+    expect(computeColumnWidth(390, 2, 200)).toBe((390 - 16) / 2);
   });
 
   it("guards zero width / zero columns", () => {
-    expect(computeColumnWidth(0, 4)).toBe(0);
-    expect(computeColumnWidth(500, 0)).toBe(0);
+    expect(computeColumnWidth(0, 4, 160)).toBe(0);
+    expect(computeColumnWidth(500, 0, 160)).toBe(0);
   });
 });
 

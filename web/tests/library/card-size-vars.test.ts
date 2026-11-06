@@ -76,7 +76,7 @@ describe("card-size variables", () => {
       "var(--card-size-series-cardSize, 200px)",
     );
     expect(cardGridColumns(CARD_SIZE_KEYS.series)).toBe(
-      "repeat(auto-fill, minmax(min(var(--card-size-series-cardSize, 160px), calc(50% - 0.5rem)), 1fr))",
+      "repeat(auto-fill, min(var(--card-size-series-cardSize, 160px), calc(50% - 0.5rem)))",
     );
   });
 });

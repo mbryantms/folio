@@ -17,6 +17,8 @@
  *   the stack box, so fanning never overflows the card.
  * - Every style shares one box aspect (the tallest), so switching style
  *   never shifts the card layout.
+ * - The resting stack is centred horizontally in the box; fanning spreads
+ *   it across the box's full width.
  *
  * Percentages keep the stack fluid: it scales with whatever width the
  * card gives it, no measuring.
@@ -199,6 +201,8 @@ function fit(v: Variant): Fit {
   let maxX = 1;
   let minY = 0;
   let maxY = H;
+  let restMinX = Infinity;
+  let restMaxX = -Infinity;
   for (const sp of specs) {
     for (const st of [sp.rest, sp.fan]) {
       for (const [x, y] of corners(st)) {
@@ -206,9 +210,20 @@ function fit(v: Variant): Fit {
         maxX = Math.max(maxX, x);
         minY = Math.min(minY, y);
         maxY = Math.max(maxY, y);
+        if (st === sp.rest) {
+          restMinX = Math.min(restMinX, x);
+          restMaxX = Math.max(restMaxX, x);
+        }
       }
     }
   }
+  // Centre the resting stack horizontally in the box: the box is sized for
+  // the fanned spread, so an uncentred rest pile hugs the left edge with
+  // the fan's empty runway beside it. Fanning then spreads out across the
+  // whole box. The rest union is no wider than the full union, so the
+  // shifted covers still fit.
+  const shift = (minX + maxX) / 2 - (restMinX + restMaxX) / 2;
+  for (const sp of specs) sp.rest = { ...sp.rest, tx: sp.rest.tx + shift };
   return { specs, minX, maxX, minY, maxY };
 }
 
@@ -259,12 +274,14 @@ export function boundsFor(style: CoverStackStyle) {
   return { minX, maxX, minY, maxY };
 }
 
-/** Exposed for tests: the corners of one cover in one state. */
+/** Exposed for tests: the corners of one cover in one state (rest
+ *  includes the centring shift). */
 export function cornersFor(
   style: CoverStackStyle,
   depth: number,
   fanned: boolean,
 ) {
-  const v = VARIANTS[style];
-  return corners(v.spec(depth, fanned ? v.fan : v.rest, fanned));
+  const sp = FITS[style].specs[depth];
+  if (!sp) throw new Error(`no cover at depth ${depth}`);
+  return corners(fanned ? sp.fan : sp.rest);
 }

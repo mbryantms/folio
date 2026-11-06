@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/admin/PageHeader";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
+import { cardGridColumns } from "@/lib/library/card-size";
 import { SeriesCard } from "@/components/library/SeriesCard";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { CreatorDetailView, CreatorRoleRail } from "@/lib/api/types";
@@ -258,7 +259,7 @@ function SeriesGrid({ series }: { series: CreatorRoleRail["series"] }) {
       // guard every other cover grid uses. A bare 180px minimum
       // collapsed to one full-width column below ~376px.
       style={{
-        gridTemplateColumns: `repeat(auto-fill, minmax(min(${CARD_WIDTH_PX}px, calc(50% - 0.5rem)), 1fr))`,
+        gridTemplateColumns: cardGridColumns(undefined, CARD_WIDTH_PX),
       }}
     >
       {series.map((s) => (

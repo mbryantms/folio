@@ -23,29 +23,26 @@ import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
 const KEY = SERIES_CARD_SIZE.storageKey;
 
 describe("effectiveColumnWidth", () => {
-  it("matches the CSS grid: (W - gap*(cols-1)) / cols", () => {
-    // 1000px, 160px min, 16px gap → floor(1016/176) = 5 columns.
-    expect(computeColumnsPerRow(1000, 160)).toBe(5);
-    expect(effectiveColumnWidth(1000, 160)).toBeCloseTo((1000 - 64) / 5);
-    // 200px min → floor(1016/216) = 4 → (1000-48)/4 = 238.
-    expect(effectiveColumnWidth(1000, 200)).toBe(238);
-    // Exact fit: 3*200 + 2*16 = 632 → 3 columns of exactly 200.
+  it("is exactly the slider value whenever two cards fit", () => {
+    // Regression: the grid used `minmax(<size>px, 1fr)`, so 200px
+    // rendered 238px wide at 1000px while the home rail showed 200px.
+    expect(computeColumnsPerRow(1000, 200)).toBe(4);
+    expect(effectiveColumnWidth(1000, 200)).toBe(200);
+    expect(effectiveColumnWidth(1000, 160)).toBe(160);
     expect(effectiveColumnWidth(632, 200)).toBe(200);
-    // One px short of fitting 3 → 2 wider columns.
-    expect(effectiveColumnWidth(631, 200)).toBe((631 - 16) / 2);
+    expect(effectiveColumnWidth(631, 200)).toBe(200);
   });
 
-  it("never drops below one column and falls back before measuring", () => {
-    expect(effectiveColumnWidth(100, 160)).toBe(100);
+  it("falls back to the slider value before measuring", () => {
     expect(effectiveColumnWidth(0, 160)).toBe(160);
     expect(effectiveColumnWidth(-5, 240)).toBe(240);
   });
 
-  it("is never narrower than the slider value once two cards fit", () => {
+  it("matches the slider value, or half the row under the phone floor", () => {
     for (let w = 300; w <= 1600; w += 37) {
       for (const size of [120, 160, 200, 240, 280]) {
         if (w >= 2 * size + GRID_GAP_PX) {
-          expect(effectiveColumnWidth(w, size)).toBeGreaterThanOrEqual(size);
+          expect(effectiveColumnWidth(w, size)).toBe(size);
         } else {
           // Narrower than two cards at the slider value: the two-column
           // floor wins (phone-layout.md) and the row is split in half.
