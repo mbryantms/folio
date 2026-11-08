@@ -137,7 +137,7 @@
       ]
     },
     {
-      "description": "@types/node major must track the Node runtime major, currently 24 (engines.node >=24, .nvmrc, ci.yml node-version, web/Dockerfile node:24). Don't let @types/node run ahead of the runtime; bump both together when Node moves. Minors/patches within 24.x auto-merge.",
+      "description": "@types/node major must track the Node runtime major, currently 26 (.nvmrc, ci.yml node-version, web/Dockerfile builder node:26 and distroless runtime). Don't let @types/node run ahead of the runtime; bump them together when Node moves. Minors/patches within 26.x auto-merge.",
       "matchPackageNames": [
         "@types/node"
       ],

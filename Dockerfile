@@ -25,7 +25,7 @@
 # reverse proxy. See `docs/install/` for the wiring.
 
 # ───── Stage 1a: cargo-chef recipe ─────
-FROM rust:1-slim-bookworm@sha256:24707e70a4f1e23d9a7b25202ec43126d28a52294b96aad5c670df1fd1f1d400 AS planner
+FROM rust:1-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS planner
 WORKDIR /work
 COPY rust-toolchain.toml ./
 RUN cargo install cargo-chef --locked
@@ -36,7 +36,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ───── Stage 1b: cargo-chef cook (cached deps) ─────
 # Its own target so CI can build + cache just this layer (`--target deps`)
 # without exporting the per-commit final build.
-FROM rust:1-slim-bookworm@sha256:24707e70a4f1e23d9a7b25202ec43126d28a52294b96aad5c670df1fd1f1d400 AS deps
+FROM rust:1-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS deps
 WORKDIR /work
 COPY rust-toolchain.toml ./
 # build-essential / g++ pulled in for cc-rs crates (zstd-sys, image, webp,
@@ -82,7 +82,7 @@ RUN cargo build --release --bin server --bin migration \
     && strip /work/target/release/server /work/target/release/migration
 
 # ───── Stage 2: tini + unrar from Debian apt ─────
-FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS apt-source
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS apt-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
     unrar-free tini \
     && rm -rf /var/lib/apt/lists/*
@@ -93,7 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # than debian12: the bookworm-based tag shipped a fixable HIGH libssl3 CVE for
 # weeks (2026-09) while the trixie tag was clean; a bookworm-built binary runs
 # on the newer glibc unchanged. Verified by the docker-smoke job.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:e792ab3d241a468a4fd7519ddbbebe66b49b5f365771716ea688ad40b6c6f1c2 AS runtime
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime
 WORKDIR /app
 
 # Re-declare build-time args in the final stage so the LABEL block below

@@ -14,13 +14,13 @@
 # both as compose services fronted by an operator-owned reverse proxy.
 
 # ───── Stage 1: build the standalone bundle ─────
-FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS builder
+FROM node:26-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS builder
 WORKDIR /work
 
 # pnpm is fast + matches what the repo uses locally. The exact version is
 # kept in lockstep with `package.json/packageManager` by Renovate (see the
 # `pnpm` custom manager + group in renovate.json).
-RUN npm install -g pnpm@12.16.1
+RUN npm install -g pnpm@12.18.0
 
 # Bring in just enough to make pnpm install efficient — workspace manifest,
 # lockfile, and the web package contents. The root `Cargo.toml` etc. live
@@ -48,7 +48,7 @@ RUN cd web && pnpm build
 # tag carried a fixable CRITICAL + 5 HIGH libssl3 CVEs for weeks (2026-09)
 # while the trixie tag was clean. The standalone bundle is JS + prebuilt
 # native modules and runs on the newer glibc unchanged (docker-smoke boots it).
-FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:9eeb7f5887d0e239e78264b06f7f11d2e14be534050481803a9e4728fcdd278e AS runtime
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:b8cec4b2f2126ff7bd034ec9ac207ffb3272667dfdc48376e3b035d3270549ba AS runtime
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \
