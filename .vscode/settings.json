@@ -85,7 +85,9 @@
   "prettier.configPath": "web/.prettierrc.json",
 
   // ───── TypeScript ─────
-  "typescript.tsdk": "web/node_modules/typescript/lib",
+  // `web/node_modules/typescript` is the TS 6 API alias and has no tsserver.js;
+  // this is the real TS 6 package behind it. TS 7.0 ships no tsserver at all.
+  "typescript.tsdk": "node_modules/.pnpm/node_modules/@typescript/old/lib",
   "typescript.preferences.importModuleSpecifier": "non-relative",
   "typescript.updateImportsOnFileMove.enabled": "always",
   "typescript.suggest.autoImports": true,

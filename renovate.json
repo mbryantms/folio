@@ -124,7 +124,7 @@
       ]
     },
     {
-      "description": "typescript 7 is the native-compiler (tsgo) rewrite; its JS compiler API is not a drop-in replacement. openapi-typescript (the `just openapi` codegen) crashes on it (ts.factory.createKeywordTypeNode undefined) and the web lint/typecheck job crashes on ModuleKind.Cjs. Clears when openapi-typescript and the rest of the TS-compiler-API tooling ship typescript-7 support; retest by re-running CI on the renovate branch. Minors within 6.x keep flowing through the normal automerge rule.",
+      "description": "typescript majors stay human-reviewed. web/package.json runs TS 7 side by side with the TS 6 API, the setup the TS 7.0 announcement recommends: `@typescript/native` aliases typescript 7 and owns the `tsc` binary, while `typescript` aliases @typescript/typescript6 because typescript-eslint (peer cap <6.1.0) and openapi-typescript (the `just openapi` codegen) import the JS compiler API, which TS 7.0 does not ship. Replace both aliases with one plain `typescript` entry once those two tools support the TS 7.1 API. Minors within 7.x keep flowing through the normal automerge rule.",
       "matchPackageNames": [
         "typescript"
       ],
