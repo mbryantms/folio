@@ -143,7 +143,24 @@ async fn worker_loop_consumes_a_queued_job_and_writes_its_side_effect() {
 
     // Flair phase 5 B3: the metrics layer reported both jobs to the activity
     // hub with their apalis task ids (the soft-failed thumbnail returns Ok).
-    let recent = state.job_activity.recent("post_scan_thumbs");
+    // The layer records a job once its handler has returned, which is after
+    // the row stamp awaited above became visible, so wait for the record too.
+    let recent = tokio::time::timeout(PICKUP_BUDGET, async {
+        loop {
+            let recent = state.job_activity.recent("post_scan_thumbs");
+            if recent.len() >= 2 {
+                return recent;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "metrics layer never reported both jobs within {PICKUP_BUDGET:?}: {:?}",
+            state.job_activity.recent("post_scan_thumbs")
+        )
+    });
     assert_eq!(recent.len(), 2, "{recent:?}");
     assert!(recent.iter().all(|r| r.ok && !r.task_id.is_empty()));
     assert!(recent.iter().all(|r| r.attempt == Some(1)), "{recent:?}");

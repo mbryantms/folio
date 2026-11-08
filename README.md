@@ -161,7 +161,7 @@ upgrades, are in [docs/install/](./docs/install/).
 
 Folio is a Rust workspace (axum, SeaORM, Postgres, Redis) behind a
 Next.js web app. You need Docker, [just](https://github.com/casey/just),
-Node 24 with pnpm, and the Rust toolchain pinned in `rust-toolchain.toml`.
+Node 26 with pnpm, and the Rust toolchain pinned in `rust-toolchain.toml`.
 
 ```bash
 just bootstrap         # one-time tooling and .env setup

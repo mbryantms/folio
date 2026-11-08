@@ -28,7 +28,7 @@ jobs:
   # expensive Rust compile + test suite while the required checks still report.
   changes:
     name: Detect changed paths
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # 15, not 5: the job does a second of work, but `timeout-minutes` also
     # counts a hosted runner that is assigned and never starts executing
     # (zero steps run, 2026-10-24 on #1300). Every other job needs this one,
@@ -124,7 +124,7 @@ jobs:
   # rare PRs that touch the config (dependency-pipeline audit 2026-07-02).
   renovate-config:
     name: Renovate — config validation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes]
     if: needs.changes.outputs.renovate == 'true'
     timeout-minutes: 10
@@ -137,7 +137,7 @@ jobs:
 
   rust-fmt:
     name: Rust — fmt
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes]
     timeout-minutes: 10
     steps:
@@ -167,7 +167,7 @@ jobs:
 
   rust-clippy:
     name: Rust — clippy
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 50
@@ -210,7 +210,7 @@ jobs:
   # aggregate matrix result, so the required check name is unchanged.
   rust-test:
     name: Rust — test (${{ matrix.shard }}/4)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 90
@@ -248,7 +248,7 @@ jobs:
     # digests — the mirror serves Docker Hub's own manifests).
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -257,7 +257,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
-        image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
@@ -298,7 +298,7 @@ jobs:
         with:
           shared-key: rust-test
       - name: install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       # `sidecar_parity` validates Folio's MetronInfo.xml against the vendored
@@ -381,7 +381,7 @@ jobs:
   # See scripts/ci/migration-roundtrip.sh.
   migration-roundtrip:
     name: Rust — migration down round-trip
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
     timeout-minutes: 30
@@ -389,7 +389,7 @@ jobs:
       CARGO_INCREMENTAL: 0
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -429,7 +429,7 @@ jobs:
   # run here does not block a merge, so look at it on every writeback PR.
   sidecar-interop:
     name: Writeback — ComicTagger + Metron-Tagger read a Folio archive
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes]
     if: needs.changes.outputs.sidecar_interop == 'true'
     # Same budget as a test shard: on a cache miss (toolchain bump, or a
@@ -444,7 +444,7 @@ jobs:
       CARGO_PROFILE_DEV_STRIP: symbols
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -453,7 +453,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
-        image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
@@ -520,7 +520,7 @@ jobs:
 
   rust-check:
     name: Rust — fmt / clippy / test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     needs: [changes, rust-fmt, rust-clippy, rust-test, migration-roundtrip]
     if: always()
     # 15, not 5: a runner stall (assigned, zero steps run) cancelled this
@@ -561,7 +561,7 @@ jobs:
 
   rust-audit:
     name: Rust — cargo deny / audit
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     # cargo-deny + cargo-audit inspect the dependency tree, so they only need
     # to run when deps change (Cargo.*, deny.toml). The job still RUNS (required
@@ -584,7 +584,7 @@ jobs:
       # before any step can log in — and Docker Hub's anonymous pull limit on
       # the shared runner IPs failed the v0.50.0 release-please PR (429 Too
       # Many Requests, 2026-10-09). The binary comes from GitHub Releases.
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         if: env.DEPS == 'true'
         with:
           tool: cargo-deny@0.20.2,cargo-audit
@@ -609,7 +609,7 @@ jobs:
 
   web-check:
     name: Web — lint / typecheck / test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     # Job always runs (so the required check always reports), but its steps are
     # gated on web changes — a docs/CHANGELOG-only PR skips the ~3min suite and
@@ -619,10 +619,10 @@ jobs:
       WEB: ${{ needs.changes.outputs.web }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         if: env.WEB == 'true'
         with:
-          version: 12.16.1
+          version: 12.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: env.WEB == 'true'
         with:
@@ -785,7 +785,7 @@ jobs:
 
   openapi-drift:
     name: OpenAPI — snapshot + breaking-change check
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 35
     # Decoupled from rust-check (it builds its own spec); depends only on the
     # ~5s `changes` job so drift feedback isn't queued behind the test suite.
@@ -796,9 +796,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         with:
-          version: 12.16.1
+          version: 12.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26
@@ -869,7 +869,7 @@ jobs:
           # Pinned: with no `version` the installer resolves "latest" through the
           # unauthenticated GitHub API, which rate-limits shared runners and fails
           # the job (#1032). Renovate bumps this via the regex manager in renovate.json.
-          OASDIFF_VERSION=1.35.0
+          OASDIFF_VERSION=1.36.0
           curl -fsSL https://raw.githubusercontent.com/oasdiff/oasdiff/main/install.sh | version="$OASDIFF_VERSION" sh
           # The installer drops the binary in /usr/local/bin (on PATH); invoke
           # it by name, not `./oasdiff` (the old install-to-cwd behavior).
@@ -880,7 +880,7 @@ jobs:
 
   audit-check:
     name: Rust — audit-log enforcement (M10.2)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     # Decoupled from rust-check; gated on Rust changes (a handler audit only
     # matters when crates/** changed). Job still reports success when skipped.
@@ -916,7 +916,7 @@ jobs:
   # release workflow separately attaches per-IMAGE SBOMs to published images.
   sbom:
     name: SBOM — source (Cargo.lock + pnpm-lock.yaml)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -930,7 +930,7 @@ jobs:
 
   docker-build:
     name: Docker — amd64 build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     # Runs CONCURRENTLY with the check jobs. It used to wait for rust-check +
     # web-check ("don't burn an image build behind failed checks"), which put
@@ -1001,7 +1001,7 @@ jobs:
               mirrors = ["mirror.gcr.io"]
       - name: Log in to GHCR (cache write)
         if: env.BUILD == 'true' && env.CACHE_WRITE == 'true'
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1059,7 +1059,7 @@ jobs:
   # sign-in page. Make it a REQUIRED check alongside `docker-build`.
   docker-smoke:
     name: Docker — image smoke test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     # Gated on every check that must be green before images are worth
     # booting (docker-build no longer waits for them; it runs alongside).
@@ -1182,10 +1182,10 @@ jobs:
       # render-path minors auto-merge: it exercises hydration, event
       # handlers, the proxy hop, cookies/CSRF and the scan pipeline, which no
       # vitest or Rust test reaches.
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         if: env.SMOKE == 'true'
         with:
-          version: 12.16.1
+          version: 12.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: env.SMOKE == 'true'
         with:

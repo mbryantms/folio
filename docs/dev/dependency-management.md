@@ -6,7 +6,7 @@ reviewable trail for every change, and that a human is asked for exactly
 two things: decisions automation cannot make (majors, breaking 0.x
 minors, infrastructure lines) and failures automation cannot fix.
 
-Last reviewed: 2026-09-13.
+Last reviewed: 2026-11-08.
 
 ## The three buckets
 
@@ -42,11 +42,18 @@ and the run is short.
 | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `major-review`                    | Any major                                                                                                                                                                           | Migration work by definition; release notes are in the PR body.                                                                                                   |
 | `zerover-review`                  | `0.x` **minor**                                                                                                                                                                     | The breaking step for 0.x under both ecosystems' semver rules.                                                                                                    |
-| `gated-major`                     | eslint 10, typescript 7, `@types/node` major                                                                                                                                        | Known upstream blockers, documented in the rule description.                                                                                                      |
+| `gated-major`                     | eslint 10, `typescript` major, `@types/node` major                                                                                                                                  | Known upstream blockers, documented in the rule description.                                                                                                      |
 | `needs-migration-review`          | react-hook-form, `@hookform/resolvers`, openapi-typescript, `@tanstack/react-query`                                                                                                 | History of breaking-within-minor; codegen shim must move with openapi-typescript.                                                                                 |
 | `coordinated-bump`                | reqwest/oauth2/openidconnect, sea-orm/sqlx, apalis/redis, utoipa/utoipa-axum, testcontainers, RustCrypto                                                                            | Must co-resolve; grouped so they never arrive alone.                                                                                                              |
 | `infra-review`                    | A **tag** change of postgres/redis/dex/alpine/curl or a Dockerfile base line                                                                                                        | A postgres major needs a data-dir plan; dev and CI must stay on the tested major.                                                                                 |
 | _(none; branch `shadcn/refresh`)_ | The weekly shadcn registry pull (`.github/workflows/shadcn-refresh.yml`, Mondays 06:41 UTC): the upstream diff of every file under `web/components/ui/`, which is vendored verbatim | A component change is visual; CI proves it compiles and passes the smoke run, a human eyeballs it. Red = an upstream API change needs a wrapper or call-site fix. |
+
+TypeScript runs side by side. In `web/package.json`, `@typescript/native` is
+`typescript@7` and owns the `tsc` binary that `pnpm run typecheck` uses, and
+`typescript` is an alias of `@typescript/typescript6`, so typescript-eslint,
+openapi-typescript and `next build` keep the TS 6 compiler API that TS 7.0
+does not ship. Replace both with one plain `typescript` entry once those
+tools support the TS 7.1 API.
 
 Mend Merge Confidence is display-only here: the Age/Confidence badges in
 PR bodies render without credentials, but a `matchConfidence` package
@@ -199,7 +206,7 @@ What is still unproven, in priority order:
 | Image SBOM + signature                               | `.github/workflows/release.yml`                                                                                 |
 | MSRV                                                 | `Cargo.toml` `rust-version` = the `dtolnay/rust-toolchain@…` refs in `ci.yml` (bump together)                   |
 | Dev toolchain                                        | `rust-toolchain.toml` + Dockerfile `rust:` tag (Renovate group `rust-toolchain`)                                |
-| Node                                                 | `engines.node >=24`, `.nvmrc`, `node-version: 24` in workflows, `node:24-…` in `web/Dockerfile` (bump together) |
+| Node                                                 | `engines.node >=24` (floor), `.nvmrc`, `node-version: 26` in workflows, `node:26-…` + distroless `nodejs<major>` in `web/Dockerfile` (bump together) |
 
 ## Accepted advisories
 

@@ -124,7 +124,7 @@
       ]
     },
     {
-      "description": "typescript 7 is the native-compiler (tsgo) rewrite; its JS compiler API is not a drop-in replacement. openapi-typescript (the `just openapi` codegen) crashes on it (ts.factory.createKeywordTypeNode undefined) and the web lint/typecheck job crashes on ModuleKind.Cjs. Clears when openapi-typescript and the rest of the TS-compiler-API tooling ship typescript-7 support; retest by re-running CI on the renovate branch. Minors within 6.x keep flowing through the normal automerge rule.",
+      "description": "typescript majors stay human-reviewed. web/package.json runs TS 7 side by side with the TS 6 API, the setup the TS 7.0 announcement recommends: `@typescript/native` aliases typescript 7 and owns the `tsc` binary, while `typescript` aliases @typescript/typescript6 because typescript-eslint (peer cap <6.1.0) and openapi-typescript (the `just openapi` codegen) import the JS compiler API, which TS 7.0 does not ship. Replace both aliases with one plain `typescript` entry once those two tools support the TS 7.1 API. Minors within 7.x keep flowing through the normal automerge rule.",
       "matchPackageNames": [
         "typescript"
       ],
@@ -137,7 +137,7 @@
       ]
     },
     {
-      "description": "@types/node major must track the Node runtime major, currently 24 (engines.node >=24, .nvmrc, ci.yml node-version, web/Dockerfile node:24). Don't let @types/node run ahead of the runtime; bump both together when Node moves. Minors/patches within 24.x auto-merge.",
+      "description": "@types/node major must track the Node runtime major, currently 26 (.nvmrc, ci.yml node-version, web/Dockerfile builder node:26 and distroless runtime). Don't let @types/node run ahead of the runtime; bump them together when Node moves. Minors/patches within 26.x auto-merge.",
       "matchPackageNames": [
         "@types/node"
       ],

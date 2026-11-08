@@ -40,7 +40,7 @@ permissions:
 jobs:
   rust:
     name: Rust advisories
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     outputs:
       failed: ${{ steps.summary.outputs.failed }}
@@ -51,7 +51,7 @@ jobs:
       # the Docker-based cargo-deny-action: its image is built from
       # `rust:alpine` on docker.io at job start, and Docker Hub's anonymous
       # pull limit on the shared runner IPs 429'd CI on 2026-10-09.
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: cargo-deny@0.20.2,cargo-audit
       # `--format json` so the stale-ignore step below can read the
@@ -101,15 +101,15 @@ jobs:
 
   web:
     name: Web advisories
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     outputs:
       failed: ${{ steps.summary.outputs.failed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         with:
-          version: 12.16.1
+          version: 12.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26
@@ -131,7 +131,7 @@ jobs:
 
   osv:
     name: OSV scan (both lockfiles)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     outputs:
       failed: ${{ steps.summary.outputs.failed }}
@@ -158,13 +158,13 @@ jobs:
 
   images:
     name: Published image CVEs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     outputs:
       failed: ${{ steps.summary.outputs.failed }}
     steps:
       - name: Log in to GHCR
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -207,7 +207,7 @@ jobs:
 
   updates:
     name: Stuck dependency updates
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     outputs:
       failed: ${{ steps.summary.outputs.failed }}
@@ -334,7 +334,7 @@ jobs:
     name: Tracking issue
     needs: [rust, web, osv, images, updates, runner]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ github.token }}
