@@ -13,6 +13,29 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.77.1](https://github.com/mbryantms/folio/compare/v0.77.0...v0.77.1) (2026-11-08)
+
+
+### Dependencies
+
+* run TypeScript 7 side by side with the TS 6 API ([#1502](https://github.com/mbryantms/folio/issues/1502)) ([1420433](https://github.com/mbryantms/folio/commit/142043361a860afa4320f7f1d25fa589f602edd5))
+* take the open majors: resolvers 7, jsdom 31, sevenz-rust2 0.25, Node 26 runtime, Ubuntu 26.04 runners ([#1491](https://github.com/mbryantms/folio/issues/1491)) ([0a95d95](https://github.com/mbryantms/folio/commit/0a95d955292c616ebdca7350dc8552e5be51f9f1))
+* update dependency @scalar/api-reference-react to v0.9.88 ([#1478](https://github.com/mbryantms/folio/issues/1478)) ([0c886b9](https://github.com/mbryantms/folio/commit/0c886b9b706a6936edb863a19eb8601c2e8404f2))
+* update dependency cron-parser to v5.10.3 ([#1480](https://github.com/mbryantms/folio/issues/1480)) ([e0cf943](https://github.com/mbryantms/folio/commit/e0cf94342a05cb05031e9d2986d271a29b1c4664))
+* update dependency eslint to v10.14.0 ([#1490](https://github.com/mbryantms/folio/issues/1490)) ([e8dfac2](https://github.com/mbryantms/folio/commit/e8dfac28eae08ba516cccff860c845a62ae9139d))
+* update dependency lucide-react to v1.69.0 ([#1495](https://github.com/mbryantms/folio/issues/1495)) ([ed939d7](https://github.com/mbryantms/folio/commit/ed939d70d94e69806df4efd269019e191fd7c82e))
+* update everything to latest and clear the Cargo findings in the dependency-health issue ([#1479](https://github.com/mbryantms/folio/issues/1479)) ([2ea8a8b](https://github.com/mbryantms/folio/commit/2ea8a8b1eeb7baa86a7e27c39d3ef07a49d0fadb))
+* update nextjs monorepo to v16.4.5 ([#1484](https://github.com/mbryantms/folio/issues/1484)) ([bba9b2a](https://github.com/mbryantms/folio/commit/bba9b2a2a713da813bccc8e5e16f2ec1d9e5f07e))
+* update nextjs monorepo to v16.4.5 ([#1485](https://github.com/mbryantms/folio/issues/1485)) ([7fedc71](https://github.com/mbryantms/folio/commit/7fedc71dfd3fa9ccfd69fde40623f72d92291db8))
+* update node.js to add5c17 ([#1475](https://github.com/mbryantms/folio/issues/1475)) ([8b2117c](https://github.com/mbryantms/folio/commit/8b2117cdf213686975510d306128daa0e94447ee))
+* update sigstore/cosign-installer action to v4.1.3 ([#1488](https://github.com/mbryantms/folio/issues/1488)) ([8e9598c](https://github.com/mbryantms/folio/commit/8e9598c47584f52d024959f5837117e4462dd46c))
+* update softprops/action-gh-release digest to 8a0cd65 ([#1494](https://github.com/mbryantms/folio/issues/1494)) ([0cde3a2](https://github.com/mbryantms/folio/commit/0cde3a2eca36a5b5e2ac63d9551d0a0176c15edc))
+
+
+### Build & CI
+
+* alert when the self-hosted Renovate runner goes silent ([#1492](https://github.com/mbryantms/folio/issues/1492)) ([c2f0943](https://github.com/mbryantms/folio/commit/c2f094343b36e7d62388e5f9c2d2fe13a84549a0))
+
 ## [0.77.0](https://github.com/mbryantms/folio/compare/v0.76.0...v0.77.0) (2026-11-06)
 
 
