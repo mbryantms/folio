@@ -57,7 +57,8 @@ describe("sheet swipe", () => {
     pointer(body, "pointermove", 130, 200);
     pointer(body, "pointerup", 140, 600);
     expect(esc).not.toHaveBeenCalled();
-    expect(el.style.translate).toBe("0px 0px");
+    // `translate: 0px 0px` serializes to its shortest form, `0px`.
+    expect(el.style.translate).toBe("0px");
   });
 
   it("leaves a scrolled sheet to scroll", () => {
