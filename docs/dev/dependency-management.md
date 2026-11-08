@@ -72,12 +72,32 @@ re-run CI: tick the PR's rebase box on the Dependency Dashboard.
 GitHub does not notify you about your own PRs, and Renovate runs as your
 account — so PR activity is _not_ the alert channel. These are:
 
-| Signal                                          | Source                                              | When                                                                                                                                                                                                                                                                                     |
-| ----------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Issue **"Dependency health: attention needed"** | `.github/workflows/advisories.yml`, daily 06:17 UTC | Any of: new RUSTSEC advisory, high npm advisory, OSV hit, HIGH/CRITICAL fixable CVE in the published images, or a Renovate PR that should have auto-merged but is red / >7 days old. Created once, body rewritten daily, commented when the failing set changes, auto-closed when green. |
-| Issue **Dependency Dashboard** (#352)           | Renovate                                            | Single pane: pending (age-gated), open, held, blocked-by-closed, OSV summary. No notification; look when you want.                                                                                                                                                                       |
-| Release PR (`chore: release vX.Y.Z`)            | release-please                                      | Every dependency merge lands in the next release's "Dependencies" section.                                                                                                                                                                                                               |
-| CI step summary "Image CVE scan"                | `docker-smoke` job on every PR                      | Informational table; never blocks.                                                                                                                                                                                                                                                       |
+| Signal                                          | Source                                              | When                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Issue **"Dependency health: attention needed"** | `.github/workflows/advisories.yml`, daily 06:17 UTC | Any of: new RUSTSEC advisory, high npm advisory, OSV hit, HIGH/CRITICAL fixable CVE in the published images, a Renovate PR that should have auto-merged but is red / >7 days old, or a silent Renovate runner (below). Created once, body rewritten daily, commented when the failing set changes, auto-closed when green. |
+| Issue **Dependency Dashboard** (#352)           | Renovate                                            | Single pane: pending (age-gated), open, held, blocked-by-closed, OSV summary. No notification; look when you want.                                                                                                                                                                                                         |
+| Release PR (`chore: release vX.Y.Z`)            | release-please                                      | Every dependency merge lands in the next release's "Dependencies" section.                                                                                                                                                                                                                                                 |
+| CI step summary "Image CVE scan"                | `docker-smoke` job on every PR                      | Informational table; never blocks.                                                                                                                                                                                                                                                                                         |
+
+**Silent runner.** Renovate runs on a self-hosted LAN container (Proxmox
+CT 135) that no GitHub Action can reach, and PR-based checks cannot tell a
+dead runner from a quiet week: a host reboot on 2026-11-01 stopped it for
+7 days with the sweep green. So the sweep reads the two marks the runner
+leaves on GitHub, and goes red as **Renovate runner looks dead** when
+both the Dashboard's last edit and the newest `renovate/*` PR are over
+**4 days** old. That line clears the morning after the runner is back.
+
+Why both: new PRs stop whenever `prConcurrentLimit` is full, and a Dashboard
+with nothing to change is not edited. Why 4 days, replaying every sweep since
+2026-07-03: the longest healthy silence was 3.1 days (2026-08-19..22,
+force-pushes prove the runner was up; no Dashboard history that old, so it
+is assumed silent), and the two outages (2026-11-01..08, and 2026-07-29..08-07,
+inferred from no activity of any kind followed by 15 PRs in four minutes)
+would have gone red on 11-06 and 08-03. What it cannot see: an outage under 4 days (the 34-hour one of
+2026-09-13), or a dead runner while someone ticks a Dashboard box, since a
+tick is a body edit too and restarts the clock. A runner that is up but
+failing before it touches the repo looks the same as a stopped one, so check
+`journalctl -u renovate.service` as well as `pct status 135`.
 
 Silence everywhere else: a green automerge leaves only its merge commit,
 the release-notes line, and the SBOM artifact.

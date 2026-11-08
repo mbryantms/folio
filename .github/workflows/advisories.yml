@@ -22,6 +22,8 @@
 #   images  trivy on the published :latest images (HIGH/CRITICAL, fixed only)
 #   updates open renovate/* PRs whose auto-merge is stuck (red CI, or >7 days
 #           old without a hold label) — the "failed automerge" alert
+#   runner  the self-hosted Renovate runner has gone silent (no Dependency
+#           Dashboard edit and no new renovate/* PR for 4 days)
 name: Advisories (daily)
 
 on:
@@ -255,17 +257,91 @@ jobs:
           if [ "${{ steps.check.outcome }}" = "failure" ]; then f="stuck-updates"; fi
           echo "failed=$f" >> "$GITHUB_OUTPUT"
 
+  runner:
+    name: Renovate runner liveness
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      failed: ${{ steps.summary.outputs.failed }}
+      details: ${{ steps.check.outputs.details }}
+    steps:
+      # The `updates` job above only sees PRs that exist, so a dead runner looks
+      # exactly like a quiet week: the 2026-11-01 host reboot left it stopped for
+      # 7 days with this sweep green. The runner is on the LAN, out of reach from
+      # here, so this reads the two marks it leaves on GitHub and calls it dead
+      # only when BOTH are older than SILENT_DAYS. Neither is enough alone: new
+      # PRs stop whenever prConcurrentLimit is full, and a Dashboard with nothing
+      # to change does not get edited.
+      #
+      # 4 days, from replaying every sweep since 2026-07-03: the longest healthy
+      # silence was 3.1 days (2026-08-19..22, force-pushes prove the runner was
+      # up), and both outages (2026-07-29..08-07, 2026-11-01..08) cross 4 days
+      # with days to spare. 3 clears that healthy spell by under 4 hours of
+      # sweep timing; 7 misses the November outage. Shorter outages stay silent
+      # by design (the 34-hour one of 2026-09-13).
+      #
+      # lastEditedAt, not updatedAt: a PR or commit that mentions the issue bumps
+      # updatedAt, and that says nothing about the runner.
+      - id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if ! gh pr list --repo "$REPO" --state all --search 'head:renovate/ sort:created-desc' --limit 1 \
+                 --json createdAt > prs.json \
+             || ! gh api graphql -f owner="${REPO%/*}" -f name="${REPO#*/}" -f query='
+                 query($owner: String!, $name: String!) {
+                   repository(owner: $owner, name: $name) { issue(number: 352) { lastEditedAt } }
+                 }' > dashboard.json; then
+            echo "rc=2" >> "$GITHUB_OUTPUT"
+            exit 2
+          fi
+          python3 - <<'EOF'
+          import json, datetime, os
+          SILENT_DAYS = 4
+          now = datetime.datetime.now(datetime.timezone.utc)
+          def parse(ts):
+              return datetime.datetime.fromisoformat(ts.replace("Z","+00:00")) if ts else None
+          prs = json.load(open("prs.json"))
+          marks = {
+              "Dependency Dashboard (#352) last edited": parse(json.load(open("dashboard.json"))["data"]["repository"]["issue"]["lastEditedAt"]),
+              "Newest `renovate/*` PR opened": parse(prs[0]["createdAt"]) if prs else None,
+          }
+          def stale(ts):
+              return ts is None or (now - ts).total_seconds() > SILENT_DAYS * 86400
+          silent = all(stale(ts) for ts in marks.values())
+          lines = [f"- {name}: " + (f"{ts:%Y-%m-%d %H:%M} UTC ({(now - ts).total_seconds() / 86400:.1f} days ago)" if ts else "never")
+                   for name, ts in marks.items()]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"rc={1 if silent else 0}\n")
+              out.write("details<<EOD\n" + "\n".join(lines) + "\nEOD\n")
+          print("\n".join(lines))
+          raise SystemExit(1 if silent else 0)
+          EOF
+      - id: summary
+        if: always()
+        run: |
+          f=""
+          case "${{ steps.check.outputs.rc }}" in
+            0) ;;
+            1) f="renovate-runner-silent" ;;
+            *) f="renovate-runner-unknown" ;;
+          esac
+          echo "failed=$f" >> "$GITHUB_OUTPUT"
+
   report:
     name: Tracking issue
-    needs: [rust, web, osv, images, updates]
+    needs: [rust, web, osv, images, updates, runner]
     if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      FAILED: ${{ needs.rust.outputs.failed }} ${{ needs.web.outputs.failed }} ${{ needs.osv.outputs.failed }} ${{ needs.images.outputs.failed }} ${{ needs.updates.outputs.failed }}
+      FAILED: ${{ needs.rust.outputs.failed }} ${{ needs.web.outputs.failed }} ${{ needs.osv.outputs.failed }} ${{ needs.images.outputs.failed }} ${{ needs.updates.outputs.failed }} ${{ needs.runner.outputs.failed }}
       STUCK: ${{ needs.updates.outputs.details }}
+      RENOVATE_MARKS: ${{ needs.runner.outputs.details }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       # `gh issue create --label` fails outright if the label does not exist
@@ -306,6 +382,8 @@ jobs:
                 image-folio)           echo "- **published image \`folio:latest\`** — HIGH/CRITICAL OS-package CVE with an upstream fix. Usually resolved by the base-image digest refresh Renovate opens (auto-merged) + the next release; if distroless itself lags, chase that." ;;
                 image-folio-web)       echo "- **published image \`folio-web:latest\`** — HIGH/CRITICAL OS-package CVE with an upstream fix in the Node image. Same remedy: base-image digest refresh (auto-merged) + next release; chase distroless if it lags." ;;
                 stuck-updates)         echo "- **stuck dependency updates** — Renovate PRs that should have auto-merged but did not:"; echo "$STUCK" | sed 's/^/  /' ;;
+                renovate-runner-silent) echo "- **Renovate runner looks dead** — no Dashboard edit and no new \`renovate/*\` PR for over 4 days, so no updates are flowing. Check the self-hosted runner: \`pct status 135\` on the Proxmox host (a host reboot leaves it stopped), then \`journalctl -u renovate.service -n 80\` inside it. This line clears the morning after it is back:"; echo "$RENOVATE_MARKS" | sed 's/^/  /' ;;
+                renovate-runner-unknown) echo "- **Renovate runner check could not run** — the GitHub API calls behind it failed, so the runner's state is unknown. See the run log; a one-off API failure clears on the next sweep." ;;
               esac
             done
             echo
