@@ -45,7 +45,7 @@ jobs:
   # rebuild + push. The paths-filter runs ONLY for branch pushes, so a tag
   # release is never gated on it (publish's `if` short-circuits on the tag ref).
   changes:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
       code: ${{ steps.filter.outputs.code }}
@@ -72,7 +72,7 @@ jobs:
 
   publish:
     name: ${{ matrix.image }} (linux/amd64)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     needs: [changes]
     # Always build on a tag (the actual release) or a manual dispatch; on a
@@ -268,7 +268,7 @@ jobs:
     # that existing release — it never creates or overwrites the body.
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
