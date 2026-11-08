@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "Self-hostable comic reader (workspace root)",
-  "packageManager": "pnpm@12.16.1",
+  "packageManager": "pnpm@12.18.0",
   "engines": {
     "node": ">=24"
   },
@@ -19,6 +19,6 @@
     "openapi:gen": "pnpm --filter web run openapi:gen"
   },
   "dependencies": {
-    "@playwright/test": "^1.59.1"
+    "@playwright/test": "^1.65.0"
   }
 }

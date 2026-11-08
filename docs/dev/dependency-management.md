@@ -6,7 +6,7 @@ reviewable trail for every change, and that a human is asked for exactly
 two things: decisions automation cannot make (majors, breaking 0.x
 minors, infrastructure lines) and failures automation cannot fix.
 
-Last reviewed: 2026-09-13.
+Last reviewed: 2026-11-08.
 
 ## The three buckets
 
@@ -179,7 +179,7 @@ What is still unproven, in priority order:
 | Image SBOM + signature                               | `.github/workflows/release.yml`                                                                                 |
 | MSRV                                                 | `Cargo.toml` `rust-version` = the `dtolnay/rust-toolchain@…` refs in `ci.yml` (bump together)                   |
 | Dev toolchain                                        | `rust-toolchain.toml` + Dockerfile `rust:` tag (Renovate group `rust-toolchain`)                                |
-| Node                                                 | `engines.node >=24`, `.nvmrc`, `node-version: 24` in workflows, `node:24-…` in `web/Dockerfile` (bump together) |
+| Node                                                 | `engines.node >=24` (floor), `.nvmrc`, `node-version: 26` in workflows, `node:26-…` + distroless `nodejs<major>` in `web/Dockerfile` (bump together) |
 
 ## Accepted advisories
 

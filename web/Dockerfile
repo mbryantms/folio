@@ -20,7 +20,7 @@ WORKDIR /work
 # pnpm is fast + matches what the repo uses locally. The exact version is
 # kept in lockstep with `package.json/packageManager` by Renovate (see the
 # `pnpm` custom manager + group in renovate.json).
-RUN npm install -g pnpm@12.16.1
+RUN npm install -g pnpm@12.18.0
 
 # Bring in just enough to make pnpm install efficient — workspace manifest,
 # lockfile, and the web package contents. The root `Cargo.toml` etc. live
@@ -48,7 +48,7 @@ RUN cd web && pnpm build
 # tag carried a fixable CRITICAL + 5 HIGH libssl3 CVEs for weeks (2026-09)
 # while the trixie tag was clean. The standalone bundle is JS + prebuilt
 # native modules and runs on the newer glibc unchanged (docker-smoke boots it).
-FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:9eeb7f5887d0e239e78264b06f7f11d2e14be534050481803a9e4728fcdd278e AS runtime
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:b8cec4b2f2126ff7bd034ec9ac207ffb3272667dfdc48376e3b035d3270549ba AS runtime
 WORKDIR /app
 
 LABEL org.opencontainers.image.title="Folio Web" \

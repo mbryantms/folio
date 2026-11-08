@@ -248,7 +248,7 @@ jobs:
     # digests — the mirror serves Docker Hub's own manifests).
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -257,7 +257,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
-        image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
@@ -298,7 +298,7 @@ jobs:
         with:
           shared-key: rust-test
       - name: install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         with:
           tool: nextest
       # `sidecar_parity` validates Folio's MetronInfo.xml against the vendored
@@ -389,7 +389,7 @@ jobs:
       CARGO_INCREMENTAL: 0
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -444,7 +444,7 @@ jobs:
       CARGO_PROFILE_DEV_STRIP: symbols
     services:
       postgres:
-        image: mirror.gcr.io/library/postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
         env:
           POSTGRES_USER: comic
           POSTGRES_PASSWORD: comic
@@ -453,7 +453,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U comic" --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
-        image: mirror.gcr.io/library/redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: mirror.gcr.io/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
         ports: ["6379:6379"]
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
@@ -584,7 +584,7 @@ jobs:
       # before any step can log in — and Docker Hub's anonymous pull limit on
       # the shared runner IPs failed the v0.50.0 release-please PR (429 Too
       # Many Requests, 2026-10-09). The binary comes from GitHub Releases.
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
         if: env.DEPS == 'true'
         with:
           tool: cargo-deny@0.20.2,cargo-audit
@@ -619,10 +619,10 @@ jobs:
       WEB: ${{ needs.changes.outputs.web }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         if: env.WEB == 'true'
         with:
-          version: 12.16.1
+          version: 12.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: env.WEB == 'true'
         with:
@@ -796,9 +796,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         with:
-          version: 12.16.1
+          version: 12.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 26
@@ -869,7 +869,7 @@ jobs:
           # Pinned: with no `version` the installer resolves "latest" through the
           # unauthenticated GitHub API, which rate-limits shared runners and fails
           # the job (#1032). Renovate bumps this via the regex manager in renovate.json.
-          OASDIFF_VERSION=1.35.0
+          OASDIFF_VERSION=1.36.0
           curl -fsSL https://raw.githubusercontent.com/oasdiff/oasdiff/main/install.sh | version="$OASDIFF_VERSION" sh
           # The installer drops the binary in /usr/local/bin (on PATH); invoke
           # it by name, not `./oasdiff` (the old install-to-cwd behavior).
@@ -1001,7 +1001,7 @@ jobs:
               mirrors = ["mirror.gcr.io"]
       - name: Log in to GHCR (cache write)
         if: env.BUILD == 'true' && env.CACHE_WRITE == 'true'
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1182,10 +1182,10 @@ jobs:
       # render-path minors auto-merge: it exercises hydration, event
       # handlers, the proxy hop, cookies/CSRF and the scan pipeline, which no
       # vitest or Rust test reaches.
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
         if: env.SMOKE == 'true'
         with:
-          version: 12.16.1
+          version: 12.18.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: env.SMOKE == 'true'
         with:
