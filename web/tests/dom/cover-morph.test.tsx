@@ -241,4 +241,60 @@ describe("cover morph into the reader", () => {
     const reader = render(<ReaderCoverHandoff />);
     expect(reader.container.innerHTML).toBe("");
   });
+
+  // Regression: the cover sat over the reader for 4 s while the page turned
+  // behind it, even when that page had already failed to load.
+  describe("the cover stands in, never in the way", () => {
+    const openReader = () => {
+      const tap = render(
+        <ProgressIssueCard card={card} primaryAction="reader" />,
+      );
+      fireEvent.click(
+        screen.getByRole("link", { name: /^Continue reading Eight Is Enough/ }),
+      );
+      tap.unmount();
+      return render(<ReaderRoute loaded />);
+    };
+    const covered = (r: { container: HTMLElement }) =>
+      r.container.querySelector("[data-reader-cover-handoff]") !== null;
+    /** A frame for the watcher, then the (zero-length, reduced motion) fade. */
+    const settle = () => act(() => vi.advanceTimersByTime(40));
+
+    it("gives way to a slow page on its own", () => {
+      const reader = openReader();
+      act(() => vi.advanceTimersByTime(1400));
+      expect(covered(reader)).toBe(true);
+      act(() => vi.advanceTimersByTime(200));
+      settle();
+      expect(covered(reader)).toBe(false);
+    });
+
+    it("lets go as soon as the page has failed", () => {
+      const reader = openReader();
+      settle();
+      expect(covered(reader)).toBe(true);
+
+      const failed = document.createElement("button");
+      failed.setAttribute("data-page-load-error", "");
+      document.body.append(failed);
+      settle();
+      settle();
+      failed.remove();
+      expect(covered(reader)).toBe(false);
+    });
+
+    it.each([
+      ["a key", () => fireEvent.keyDown(window, { key: "ArrowRight" })],
+      ["a tap", () => fireEvent.pointerDown(window)],
+      ["the wheel", () => fireEvent.wheel(window)],
+    ])("lets go on %s", (_name, input) => {
+      const reader = openReader();
+      settle();
+      expect(covered(reader)).toBe(true);
+
+      act(() => void input());
+      settle();
+      expect(covered(reader)).toBe(false);
+    });
+  });
 });

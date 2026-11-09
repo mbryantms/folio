@@ -418,4 +418,34 @@ test.describe("Reader flow", () => {
     ).toBeVisible();
     await expect(page.locator("[data-back-button]")).toHaveCount(0);
   });
+
+  test("a page that won't load shows its retry at once, and the retry can be tapped", async ({
+    page,
+  }) => {
+    const { items } = await json<{ items: { slug: string; name: string }[] }>(
+      page.request.get("/api/series?limit=50"),
+    );
+    const series = items.find((s) => s.name === "Relay");
+    expect(series, "fixture series Relay").toBeTruthy();
+
+    await page.route(/\/issues\/[^/]+\/pages\/\d+(\?|$)/, (route) =>
+      route.fulfill({ status: 500, body: "" }),
+    );
+    await page.goto(`/series/${series!.slug}`);
+    await page.getByRole("link", { name: /^(Read|Continue reading)$/ }).click();
+    await page.waitForURL(/\/read\//);
+
+    const retry = page.getByRole("button", {
+      name: /Couldn.t load this page/,
+    });
+    await expect(retry).toBeInViewport({ timeout: 15_000 });
+    // The tapped cover stands in for the page, but not for a failed one.
+    await expect(page.locator("[data-reader-cover-handoff]")).toHaveCount(0);
+
+    // `click()` refuses if another element takes the pointer: the reader's
+    // tap zones lie over the page, and used to swallow this.
+    const retried = page.waitForRequest(/\/pages\/\d+\?(.*&)?r=\d/);
+    await retry.click();
+    await retried;
+  });
 });
