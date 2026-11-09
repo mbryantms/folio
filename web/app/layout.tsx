@@ -10,6 +10,7 @@ import { HydrateAuthCache } from "@/components/HydrateAuthCache";
 import { getMe, SESSION_COOKIE } from "@/lib/api/me";
 import { SearchModalProvider } from "@/lib/search/use-search-modal";
 import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
+import { BackFlightLayer } from "@/components/shell/BackFlightLayer";
 import { SheetSwipe } from "@/components/SheetSwipe";
 import { QueryProvider } from "@/components/QueryProvider";
 import { ScanResultListener } from "@/components/ScanResultListener";
@@ -198,6 +199,7 @@ export default async function RootLayout({
                 <VisualViewportSync />
                 <SheetSwipe />
                 <InstallEvents />
+                <BackFlightLayer />
                 <GlobalShortcutsSheet>{children}</GlobalShortcutsSheet>
               </SearchModalProvider>
             </QueryProvider>

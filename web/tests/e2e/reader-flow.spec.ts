@@ -388,4 +388,34 @@ test.describe("Reader flow", () => {
       .toMatchObject({ page: 1, run: (before.run ?? 0) + 1 });
     await expect.poll(queuedProgress).toBe(0);
   });
+
+  test("the issue page offers no Back into the reader it just left", async ({
+    page,
+  }) => {
+    // Relay, not Test Series: the test above asserts that issue's progress.
+    const { items } = await json<{ items: { slug: string; name: string }[] }>(
+      page.request.get("/api/series?limit=50"),
+    );
+    const series = items.find((s) => s.name === "Relay");
+    expect(series, "fixture series Relay").toBeTruthy();
+
+    // A real in-app page before the reader, which is what makes the button
+    // show at all. The reader's exit pushes the issue page, so the entry
+    // behind that page is the reader: Back would re-open it, with a copy of
+    // the cover left floating over it (lib/ui/back-flight.ts).
+    await page.goto(`/series/${series!.slug}`);
+    await page.getByRole("link", { name: /^(Read|Continue reading)$/ }).click();
+    await page.waitForURL(/\/read\//);
+    await expect(page.getByTestId("reader-chrome")).toBeAttached({
+      timeout: 15_000,
+    });
+    await page.keyboard.press("t");
+    await page.getByRole("button", { name: "Exit reader" }).click();
+    await page.waitForURL(/\/series\/[^/]+\/issues\/[^/]+$/);
+
+    await expect(
+      page.getByRole("navigation", { name: "Breadcrumb" }),
+    ).toBeVisible();
+    await expect(page.locator("[data-back-button]")).toHaveCount(0);
+  });
 });

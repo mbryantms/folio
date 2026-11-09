@@ -5,9 +5,10 @@ import { useEffect } from "react";
 
 import { landBackFlight, noteRoute } from "@/lib/ui/back-flight";
 
-/** Mounted once per shell: records in-app history for `BackButton` and
- *  lands a pending Back flight when the previous page is back
- *  (lib/ui/back-flight.ts). Renders nothing. */
+/** Mounted once, in the root layout, so it sees every route (the reader and
+ *  the admin and settings shells included): records in-app history for
+ *  `BackButton` and lands a pending Back flight when the previous page is
+ *  back (lib/ui/back-flight.ts). Renders nothing. */
 export function BackFlightLayer() {
   const pathname = usePathname() ?? "";
   useEffect(() => {

@@ -25,7 +25,8 @@ import { useSyncExternalStore } from "react";
  *
  * Also tracks in-app history, so the button only shows when there is a
  * page in this tab's app history to go back to (not after a reload or on
- * a deep link — the breadcrumbs cover those).
+ * a deep link, and not into the reader or sign-in — the breadcrumbs cover
+ * those).
  */
 
 // ---------- in-app history ----------
@@ -41,7 +42,8 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** Record the current pathname. Called by `BackFlightLayer` on every
+/** Record the current pathname. Called by `BackFlightLayer` (root layout,
+ *  so every route is seen and this stack matches the real history) on every
  *  pathname change. */
 export function noteRoute(pathname: string): void {
   const top = stack[stack.length - 1];
@@ -60,13 +62,23 @@ function subscribe(cb: () => void) {
   return () => subs.delete(cb);
 }
 
+/** Two pages Back doesn't offer, though they are in the history:
+ *  - The reader. Its exit pushes the issue page, so the entry behind that page
+ *    is the reader itself: Back would go there, and exiting again would land
+ *    on the same page with the same Back, with no way past it.
+ *  - Sign-in, which pushes the page you were after once you're signed in. */
+function isBackTarget(pathname: string): boolean {
+  return !pathname.startsWith("/read/") && pathname !== "/sign-in";
+}
+
+function canGoBack(): boolean {
+  const previous = stack[stack.length - 2];
+  return previous !== undefined && isBackTarget(previous);
+}
+
 /** True when this tab has an in-app page to go back to. */
 export function useCanGoBack(): boolean {
-  return useSyncExternalStore(
-    subscribe,
-    () => stack.length > 1,
-    () => false,
-  );
+  return useSyncExternalStore(subscribe, canGoBack, () => false);
 }
 
 // ---------- the flight ----------
@@ -76,8 +88,14 @@ interface Flight {
   clone: HTMLElement;
   from: DOMRect;
   fromPath: string;
-  started: number;
+  /** Fades the copy out if it hasn't taken off in time. Armed at the click,
+   *  so the copy can't outlive the navigation even if nothing ever lands it:
+   *  a Back whose pathname doesn't change (`?tab=` entries) never calls
+   *  `landBackFlight`. */
+  expiry: ReturnType<typeof setTimeout>;
 }
+/** The flight waiting to land. Cleared once it takes off or starts fading;
+ *  from there its animation owns the copy. */
 let flight: Flight | null = null;
 
 const EASE = "cubic-bezier(.2,.8,.2,1)";
@@ -125,17 +143,24 @@ export function startBackFlight(): void {
     boxShadow: "0 12px 32px rgb(0 0 0 / .35)",
   } satisfies Partial<CSSStyleDeclaration>);
   document.body.appendChild(clone);
-  flight = {
+  const f: Flight = {
     name,
     clone,
     from,
     fromPath: location.pathname,
-    started: performance.now(),
+    expiry: setTimeout(() => fadeOut(f), WAIT_MS),
   };
+  flight = f;
 }
 
 function dropFlight() {
-  flight?.clone.remove();
+  if (!flight) return;
+  flight.clone.remove();
+  stopWaiting(flight);
+}
+
+function stopWaiting(f: Flight) {
+  clearTimeout(f.expiry);
   flight = null;
 }
 
@@ -168,16 +193,13 @@ export function landBackFlight(pathname: string): void {
       return;
     }
     last = r;
-    if (performance.now() - f.started > WAIT_MS) {
-      fadeOut(f);
-      return;
-    }
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
 }
 
 function flyTo(f: Flight, target: HTMLImageElement, to: DOMRect) {
+  stopWaiting(f);
   target.style.visibility = "hidden";
   const { from, clone } = f;
   const dx = to.left - from.left;
@@ -196,14 +218,14 @@ function flyTo(f: Flight, target: HTMLImageElement, to: DOMRect) {
   );
   const done = () => {
     target.style.visibility = "";
-    if (flight === f) dropFlight();
-    else clone.remove();
+    clone.remove();
   };
   anim.onfinish = done;
   anim.oncancel = done;
 }
 
 function fadeOut(f: Flight) {
+  stopWaiting(f);
   const anim = f.clone.animate(
     [
       { opacity: 1, transform: "none" },
@@ -211,10 +233,7 @@ function fadeOut(f: Flight) {
     ],
     { duration: 200, easing: "ease-out", fill: "forwards" },
   );
-  const done = () => {
-    if (flight === f) dropFlight();
-    else f.clone.remove();
-  };
+  const done = () => f.clone.remove();
   anim.onfinish = done;
   anim.oncancel = done;
 }
