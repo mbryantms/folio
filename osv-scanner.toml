@@ -46,6 +46,10 @@ reason = "`zip` <9 symlink target escape on extract — same stale candle-core /
 id = "RUSTSEC-2026-0369"
 reason = "`zip` <9 permissions applied through symlinks on extract — same stale candle-core / tesseract-rs pins as RUSTSEC-2026-0367; neither calls `extract()`."
 
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0459"
+reason = "Bundled SQLite <3.54 returns uninitialized page-cache memory with a mismatched `-wal` sibling — libsqlite3-sys 0.37 is pinned by sqlx-sqlite 0.9.0 (latest, `<0.38`; fix is 0.39). Folio's only open, `metadata::local_db::open`, uses `immutable=true`, which never reads a WAL. Delete when sqlx-sqlite allows libsqlite3-sys 0.39."
+
 # Unmaintained-only advisory. `cargo audit` reports these as allowed
 # warnings and exits 0 (the job runs `--deny unsound`, not `--deny
 # warnings`), so it needs no audit.toml entry; deny.toml carries it. OSV
