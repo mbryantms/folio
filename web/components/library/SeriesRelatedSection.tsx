@@ -65,7 +65,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge, badgeVariants } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -647,18 +647,20 @@ function ExternalRows({
             </span>
           )}
           {e.url ? (
-            <a
-              href={e.url}
-              target="_blank"
-              rel="noreferrer"
-              className={cn(
-                badgeVariants({ variant: "outline" }),
-                "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",
-              )}
-              title={`${e.source_label} · ${e.provider_series_id}`}
+            <Badge
+              asChild
+              variant="outline"
+              className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
             >
-              {e.source_label}
-            </a>
+              <a
+                href={e.url}
+                target="_blank"
+                rel="noreferrer"
+                title={`${e.source_label} · ${e.provider_series_id}`}
+              >
+                {e.source_label}
+              </a>
+            </Badge>
           ) : (
             <Badge
               variant="outline"
