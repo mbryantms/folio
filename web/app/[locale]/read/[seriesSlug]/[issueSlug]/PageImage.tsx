@@ -103,12 +103,27 @@ export function PageImage({
   const effectiveSrc =
     retry > 0 ? `${src}${src.includes("?") ? "&" : "?"}r=${retry}` : src;
 
+  const handleError = () => {
+    if (!autoRetried.current) {
+      autoRetried.current = true;
+      setSlow(false);
+      setRetry((n) => n + 1);
+      return;
+    }
+    setStatus("error");
+  };
+
   useLayoutEffect(() => {
     const el = imgRef.current;
-    if (el && el.complete && el.naturalWidth > 0) {
+    if (!el?.complete) return;
+    if (el.naturalWidth > 0) {
       setStatus("loaded");
       setNaturalAspect(el.naturalWidth / el.naturalHeight);
       onNaturalSize?.(el.naturalWidth, el.naturalHeight);
+    } else {
+      // A server-rendered image can also fail before hydration, when React
+      // isn't listening for its `error` event yet.
+      handleError();
     }
     // `onNaturalSize` identity changes are tolerated — we only emit
     // once per image regardless, and a stale closure won't mis-report.
@@ -123,15 +138,6 @@ export function PageImage({
     return () => clearTimeout(t);
   }, [status, retry]);
 
-  const handleError = () => {
-    if (!autoRetried.current) {
-      autoRetried.current = true;
-      setSlow(false);
-      setRetry((n) => n + 1);
-      return;
-    }
-    setStatus("error");
-  };
   const handleRetry = () => {
     autoRetried.current = false;
     setSlow(false);
@@ -166,7 +172,10 @@ export function PageImage({
       style={aspectStyle}
     >
       {status === "loading" && (!thumbSrc || slow) ? (
-        <span className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-neutral-500">
+        // `min(50%, 50dvh)`: the middle of the page, or of the screen when
+        // the page is taller than it (fit-width), so this is never below
+        // the fold.
+        <span className="pointer-events-none absolute top-[min(50%,50dvh)] left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 text-neutral-500">
           <Loader2 aria-hidden="true" className="size-8 animate-spin" />
           {slow ? (
             <span role="status" className="text-xs">
@@ -177,12 +186,15 @@ export function PageImage({
       ) : null}
       {status === "error" ? (
         // Failed after the silent auto-retry — offer a manual retry
-        // rather than leaving a broken-image glyph (audit C3). The button
-        // is the actionable target; the whole region is also clickable.
+        // rather than leaving a broken-image glyph (audit C3). z-20 puts it
+        // over the reader's tap zones (z-10), which otherwise take the tap;
+        // the rest of the page still turns. The attribute is what the cover
+        // handoff watches for (ReaderCoverMorph.tsx).
         <button
           type="button"
+          data-page-load-error=""
           onClick={handleRetry}
-          className="text-muted-foreground hover:text-foreground absolute top-1/2 left-1/2 z-10 flex min-h-11 -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-md px-4 py-3 text-sm"
+          className="bg-background/85 text-foreground hover:bg-background absolute top-[min(50%,50dvh)] left-1/2 z-20 flex min-h-11 -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-md px-4 py-3 text-sm"
         >
           <RotateCw aria-hidden="true" className="size-6" />
           <span>Couldn&apos;t load this page. Tap to retry.</span>

@@ -68,6 +68,13 @@ describe("legacy migration", () => {
     expect(store.getItem("reader.v1:__migrated")).toBe("1");
   });
 
+  it("leaves the first-run flag alone: it is not a legacy pref", () => {
+    store.setItem("reader:firstRunSeen:v1", "1");
+    prefGet(store, "fitMode", "ser-1");
+    expect(store.getItem("reader:firstRunSeen:v1")).toBe("1");
+    expect(store.getItem("reader.v1:firstRunSeen:v1")).toBeNull();
+  });
+
   it("does not overwrite an already-migrated value on a later run", () => {
     store.setItem("reader:fitMode:ser-1", "original");
     prefSet(store, "fitMode", "ser-1", "width"); // migrates, then writes

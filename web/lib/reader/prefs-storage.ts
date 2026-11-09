@@ -23,6 +23,8 @@
  * `readerPref*` wrappers bind lazily to `window.localStorage`.
  */
 
+import { READER_FIRST_RUN_KEY } from "./first-run";
+
 /** Bump to invalidate every persisted reader pref at once. */
 export const SCHEMA_VERSION = 1;
 const NS = `reader.v${SCHEMA_VERSION}`;
@@ -99,8 +101,15 @@ function ensureMigrated(storage: Storage): void {
   const legacy: string[] = [];
   for (let i = 0; i < storage.length; i++) {
     const k = storage.key(i);
-    // Match `reader:<slice>:<scope>` but NOT the new `reader.v1:*` keys.
-    if (k && k.startsWith(LEGACY_PREFIX) && !k.startsWith(`${NS}:`)) {
+    // Match `reader:<slice>:<scope>` but NOT the new `reader.v1:*` keys, nor
+    // the first-run flag (lib/reader/first-run.ts), which isn't a pref: this
+    // would read as "never seen" and show the coachmark again.
+    if (
+      k &&
+      k.startsWith(LEGACY_PREFIX) &&
+      !k.startsWith(`${NS}:`) &&
+      k !== READER_FIRST_RUN_KEY
+    ) {
       legacy.push(k);
     }
   }
