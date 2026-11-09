@@ -13,6 +13,20 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.77.3](https://github.com/mbryantms/folio/compare/v0.77.2...v0.77.3) (2026-11-09)
+
+
+### Fixed
+
+* **ci:** accept RUSTSEC-2026-0459 until sqlx-sqlite allows libsqlite3-sys 0.39 ([#1513](https://github.com/mbryantms/folio/issues/1513)) ([6e626c9](https://github.com/mbryantms/folio/commit/6e626c975b7eb5e3470d62085962b26884861fcb))
+* **web:** the reader's cover no longer hides a failed or turning page, and Tap to retry works ([#1510](https://github.com/mbryantms/folio/issues/1510)) ([8a5abb7](https://github.com/mbryantms/folio/commit/8a5abb7e14a7256d1a48ad5ea7a86d006b5ed3f6))
+
+
+### Dependencies
+
+* lock file maintenance ([#1508](https://github.com/mbryantms/folio/issues/1508)) ([e89d255](https://github.com/mbryantms/folio/commit/e89d25577b011f1e97c5eccee56e0403caa0cf24))
+* move the OIDC test's RSA key to rsa 0.10 ([#1512](https://github.com/mbryantms/folio/issues/1512)) ([4b636cb](https://github.com/mbryantms/folio/commit/4b636cb86982a2cf395d6279b2e16fa71151351e))
+
 ## [0.77.2](https://github.com/mbryantms/folio/compare/v0.77.1...v0.77.2) (2026-11-09)
 
 
