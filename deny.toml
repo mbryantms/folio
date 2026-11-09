@@ -60,16 +60,18 @@ ignore = [
     # candle bumps its memmap2 pin.
     # `rsa 0.9.10` Marvin Attack (RUSTSEC-2023-0071 / CVE-2023-49092) —
     # timing sidechannel in RSA *private-key* operations (decrypt/sign).
-    # Reaches the graph three ways: `openidconnect` 4 (unconditional dep;
-    # RS256 id_token *verification* is a public-key op, not the affected
-    # path), `jsonwebtoken`'s `rust_crypto` backend (Folio signs its own
-    # JWTs with Ed25519 — `secrets::Secrets::jwt_signing` — so the RSA
-    # signer is never invoked), and the `crates/server` dev-dep that
-    # generates the mock OP's throwaway signing key for the OIDC tests
-    # (private-key use, test-only). No fixed version exists: the advisory
-    # range is open-ended and still covers the 0.10 release candidates
-    # (re-checked 2026-09-15), so Renovate's dashboard keeps listing it
-    # until RustCrypto ships a constant-time fix. Revisit on each pass.
+    # Fixed in `rsa` 0.10.0 (the advisory's patched range since 2026-11),
+    # and Folio's own direct use, the `crates/server` dev-dep that makes
+    # the mock OP's throwaway key for the OIDC tests, is on 0.10. The
+    # 0.9.10 copy stays in the graph through two deps that have no
+    # rsa-0.10 release yet (re-checked 2026-11-09): `openidconnect` 4.1
+    # (unconditional dep; RS256 id_token *verification* is a public-key
+    # op, not the affected path) and `jsonwebtoken` 11.1's `rust_crypto`
+    # backend (Folio signs its own JWTs with Ed25519 —
+    # `secrets::Secrets::jwt_signing` — so production never invokes the
+    # RSA signer; only the OIDC test signs its mock id_tokens through
+    # it). Drop this entry once both move to 0.10 and `cargo tree -i
+    # rsa@0.9.10` comes back empty.
     "RUSTSEC-2023-0071",
     # --- `zip` < 9 extraction advisories (2026-10-09 batch, patched only
     # in 9.x): RUSTSEC-2026-0367 (SUID/SGID bits preserved on extract),

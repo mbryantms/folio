@@ -28,7 +28,7 @@ reason = "`paste` no longer maintained (build-time proc-macro)."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2023-0071"
-reason = "`rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken / openidconnect; we sign JWTs with Ed25519 only and RS256 id_token verification is a public-key op. No fixed version exists."
+reason = "`rsa 0.9.10` Marvin Attack — transitive via jsonwebtoken / openidconnect; we sign JWTs with Ed25519 only and RS256 id_token verification is a public-key op. Fixed in rsa 0.10 (our OIDC test dev-dep is on it); delete when jsonwebtoken and openidconnect move to 0.10 and `cargo tree -i rsa@0.9.10` is empty."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0387"

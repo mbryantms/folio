@@ -32,10 +32,7 @@ use axum::{
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64URL};
 use common::TestApp;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-use rsa::{
-    RsaPrivateKey, RsaPublicKey, pkcs1::EncodeRsaPrivateKey, pkcs8::LineEnding,
-    traits::PublicKeyParts,
-};
+use rsa::{PrivateKey, PublicKey, pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower::ServiceExt;
@@ -46,13 +43,13 @@ use wiremock::{
 
 // ───────────────────── RSA key fixture ─────────────────────
 //
-// Generated once per test binary, shared across tests via OnceLock. Pem
-// is consumed by jsonwebtoken to sign; modulus + exponent are exposed as
-// a JWK from the mock OP. `kid = "test-key-1"` lets openidconnect's
-// id-token verifier find the right key.
+// Generated once per test binary, shared across tests via OnceLock. The
+// PKCS#1 DER is consumed by jsonwebtoken to sign; modulus + exponent are
+// exposed as a JWK from the mock OP. `kid = "test-key-1"` lets
+// openidconnect's id-token verifier find the right key.
 
 struct TestKeyMaterial {
-    pem: String,
+    der: Vec<u8>,
     n_b64url: String,
     e_b64url: String,
 }
@@ -60,19 +57,18 @@ struct TestKeyMaterial {
 fn key_material() -> &'static TestKeyMaterial {
     static MAT: OnceLock<TestKeyMaterial> = OnceLock::new();
     MAT.get_or_init(|| {
-        // `rsa` 0.9 wants a rand_core 0.6 RNG; workspace rand moved to the
-        // 0.10 core, so use the OsRng that rsa itself re-exports.
-        let mut rng = rsa::rand_core::OsRng;
-        let priv_key = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
-        let pub_key = RsaPublicKey::from(&priv_key);
-        let pem = priv_key
-            .to_pkcs1_pem(LineEnding::LF)
-            .expect("encode pkcs1 pem")
-            .to_string();
-        let n_b64url = B64URL.encode(pub_key.n().to_bytes_be());
-        let e_b64url = B64URL.encode(pub_key.e().to_bytes_be());
+        let priv_key = PrivateKey::new(&mut rand::rng(), 2048).expect("rsa keygen");
+        let pub_key = PublicKey::from(&priv_key);
+        let der = priv_key
+            .to_pkcs1_der()
+            .expect("encode pkcs1 der")
+            .as_bytes()
+            .to_vec();
+        // JWK `n` / `e` are unsigned big-endian with no leading zeros.
+        let n_b64url = B64URL.encode(pub_key.n_bytes());
+        let e_b64url = B64URL.encode(pub_key.e_bytes());
         TestKeyMaterial {
-            pem,
+            der,
             n_b64url,
             e_b64url,
         }
@@ -119,7 +115,7 @@ fn sign_id_token(claims: &IdTokenClaims) -> String {
     let mat = key_material();
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(KID.into());
-    let key = EncodingKey::from_rsa_pem(mat.pem.as_bytes()).expect("encoding key");
+    let key = EncodingKey::from_rsa_der(&mat.der);
     encode(&header, claims, &key).expect("encode jwt")
 }
 
