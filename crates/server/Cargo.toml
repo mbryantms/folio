@@ -182,7 +182,7 @@ image = { workspace = true }
 # backend pulls it too. It only adds the keygen + PKCS#1 PEM encoding the
 # mock OP needs. RUSTSEC-2023-0071 (Marvin) is accepted in deny.toml.
 wiremock = "0.6"
-rsa = { version = "0.9", features = ["sha2", "pem"] }
+rsa = { version = "0.10", features = ["sha2", "pem"] }
 rand = { workspace = true }
 
 [lints]
