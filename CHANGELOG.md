@@ -13,6 +13,18 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.77.2](https://github.com/mbryantms/folio/compare/v0.77.1...v0.77.2) (2026-11-09)
+
+
+### Fixed
+
+* **web:** stop the Back flight's cover sticking over the reader ([#1505](https://github.com/mbryantms/folio/issues/1505)) ([90a7821](https://github.com/mbryantms/folio/commit/90a782199570cfab162c07f6e3c840d3c7a9f189))
+
+
+### Dependencies
+
+* lock file maintenance ([#1506](https://github.com/mbryantms/folio/issues/1506)) ([f2aff62](https://github.com/mbryantms/folio/commit/f2aff62b0b6d4fef1a2792b7fd404d133fe64f78))
+
 ## [0.77.1](https://github.com/mbryantms/folio/compare/v0.77.0...v0.77.1) (2026-11-08)
 
 
