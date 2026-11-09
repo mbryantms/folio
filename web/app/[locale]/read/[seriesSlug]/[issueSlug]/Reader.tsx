@@ -44,6 +44,7 @@ import {
 } from "@/lib/reader/finish-progress";
 import { ProgressUnavailableBanner } from "./ProgressUnavailableBanner";
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
+import { useSeededPage } from "@/lib/reader/use-seeded-page";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
 import { EDGE_GUARD_ATTR, useReaderGestures } from "@/lib/reader/use-swipe";
 import { useWheelZoom } from "@/lib/reader/use-wheel-zoom";
@@ -303,7 +304,11 @@ export function Reader({
   "use no memo";
   const router = useRouter();
   const init = useReaderStore((s) => s.init);
-  const currentPage = useReaderStore((s) => s.currentPage);
+  const { currentPage, storeReady } = useSeededPage({
+    issueId,
+    initialPage,
+    totalPages,
+  });
   const fitMode = useReaderStore((s) => s.fitMode);
   const viewMode = useReaderStore((s) => s.viewMode);
   const direction = useReaderStore((s) => s.direction);
@@ -733,24 +738,7 @@ export function Reader({
     };
   }, [pushPreferences]);
 
-  // Initial mount: hydrate the store from props. The store is a module
-  // singleton and this runs in an effect, so the first render of a new
-  // issue — a fresh mount after reading another issue in the same app
-  // lifetime, or an in-place end-of-issue navigation — still shows the
-  // previous issue's `currentPage`. `storeReady` tells the two hooks that
-  // persist a page (progress write, reading session) to wait for this
-  // issue's seed; without it the old page was written against the new
-  // issue, and because both the writer and the server keep the furthest
-  // page it stuck until the PWA reloaded and "resumed" there.
-  //
-  // Readiness is "`init` has run since this instance last saw a new
-  // `issueId`": the store's `initSeq` must have moved past the value
-  // captured when the issue changed (adjust-state-during-render, so a
-  // re-render with a new issue starts unready in that same render).
-  const initSeq = useReaderStore((s) => s.initSeq);
-  const [seen, setSeen] = useState({ issueId, initSeq });
-  if (seen.issueId !== issueId) setSeen({ issueId, initSeq });
-  const storeReady = seen.issueId === issueId && initSeq > seen.initSeq;
+  // Initial mount: hydrate the store from props (see `useSeededPage`).
   useEffect(() => {
     init({
       issueId,

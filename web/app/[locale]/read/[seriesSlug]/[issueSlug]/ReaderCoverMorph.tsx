@@ -25,6 +25,12 @@ import { useReducedMotion } from "@/lib/visual-effects";
  * over at the same spot and under the same view-transition name (so that
  * commit doesn't move it), keeps it until the first page image has
  * decoded, then fades it away over the page.
+ *
+ * It only stands in briefly, and never in the way: the reader works behind
+ * it from the first frame, so it also lets go as soon as the page has failed
+ * to load, the reader touches or keys anything, or `MAX_HOLD_MS` passes. By
+ * then the page's own blurred thumbnail is a better placeholder than a cover
+ * that may not even be the page being resumed.
  */
 
 /** A fitted 2:3 page: full height, or full width on very narrow screens. */
@@ -63,8 +69,11 @@ export function ReaderCoverSlot() {
   );
 }
 
-/** True once a full page image (not a strip thumb) has decoded on screen. */
-export function firstPageReady(doc: Document = document): boolean {
+/** True once there is nothing left to wait for: a full page image (not a
+ *  strip thumb) has decoded on screen, or a page gave up loading and is
+ *  showing its retry (`PageImage`), which the cover must not hide. */
+export function firstPageSettled(doc: Document = document): boolean {
+  if (doc.querySelector("[data-page-load-error]")) return true;
   const view = doc.defaultView;
   const vw = view?.innerWidth ?? 0;
   const vh = view?.innerHeight ?? 0;
@@ -80,7 +89,7 @@ export function firstPageReady(doc: Document = document): boolean {
 }
 
 /** Longest the cover waits for the first page before giving way anyway. */
-const MAX_HOLD_MS = 4000;
+const MAX_HOLD_MS = 1500;
 const FADE_MS = 220;
 
 /** Mounted with the reader: holds the handed-over cover over the first
@@ -104,14 +113,26 @@ export function ReaderCoverHandoff() {
     const start = performance.now();
     let raf = 0;
     const tick = () => {
-      if (firstPageReady() || performance.now() - start > MAX_HOLD_MS) {
+      if (firstPageSettled() || performance.now() - start > MAX_HOLD_MS) {
         setPhase("fade");
         return;
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    // Any input means the reader is reading: a page turned under the cover
+    // would otherwise stay hidden behind it.
+    const letGo = () => setPhase("fade");
+    const input = ["pointerdown", "keydown", "wheel"] as const;
+    for (const type of input) {
+      window.addEventListener(type, letGo, { capture: true, passive: true });
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const type of input) {
+        window.removeEventListener(type, letGo, { capture: true });
+      }
+    };
   }, [phase]);
 
   useEffect(() => {
