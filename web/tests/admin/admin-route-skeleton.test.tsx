@@ -62,7 +62,9 @@ describe("AdminRouteSkeleton", () => {
     const html = renderToStaticMarkup(createElement(AdminRouteSkeleton));
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('role="status"');
-    expect(html).toContain("skeleton-shimmer");
+    // The vendored <Skeleton>; globals.css gives its slot the shared sweep
+    // (tests/ui/vendored-slot-styles.test.ts).
+    expect(html).toContain('data-slot="skeleton"');
   });
 
   it("draws the library chrome (no PageHeader) under a library", () => {

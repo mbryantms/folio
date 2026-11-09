@@ -21,6 +21,7 @@ describe("EmptyState illustration", () => {
     );
     expect(covers(html)).toBe(3);
     expect(html).not.toContain("skeleton-shimmer");
+    expect(html).not.toContain('data-slot="skeleton"');
     expect(html).toContain('aria-hidden="true"');
   });
 

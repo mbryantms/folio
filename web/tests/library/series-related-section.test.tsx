@@ -384,6 +384,13 @@ describe("<SeriesRelatedSection> external links (WP-7.8)", () => {
     expect(html).toContain("— not in your library");
     expect(html).toContain('href="https://metron.cloud/series/2311/"');
     expect(html).toContain('target="_blank"');
+    // The provider link is a real badge (`<Badge asChild>`), so it takes
+    // the badge's data-slot styling like the plain-text one beside it.
+    const providerLink = html.match(
+      /<a [^>]*href="https:\/\/metron\.cloud\/series\/2311\/"[^>]*>/,
+    )?.[0];
+    expect(providerLink).toContain('data-slot="badge"');
+    expect(providerLink).toContain('data-variant="outline"');
     // A resolved user link points at the local series instead.
     expect(html).toContain('href="/series/saga-annual"');
     expect(html).toContain("in your library");

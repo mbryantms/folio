@@ -749,6 +749,13 @@ body {
     background-color: var(--accent);
     color: var(--accent-foreground);
   }
+  /* Badges keep `rounded-md` corners instead of upstream's `rounded-4xl`
+   * pill, so they match the hero chips (`[data-hero-chip]`, which draw
+   * `rounded-md` themselves) they sit beside (folio-flair). A link styled
+   * as a badge renders through `<Badge asChild>` to carry the slot. */
+  [data-slot="badge"][data-slot="badge"] {
+    border-radius: var(--radius-md);
+  }
   /* Tabs. Line variant (the Folio `TabsList` default — section
    * navigation): the 2px indicator takes the accent instead of upstream's
    * foreground bar (shadcn's theming table gives `--primary` the
@@ -1173,8 +1180,12 @@ body {
  * One light band sweeps across every placeholder on screen at once
  * (`background-attachment: fixed` puts all of them on the viewport's
  * gradient), instead of each box pulsing on its own. Cover placeholders
- * (`components/CoverSkeleton.tsx`) add a cover silhouette. */
-.skeleton-shimmer {
+ * (`components/CoverSkeleton.tsx`) add a cover silhouette. The vendored
+ * `<Skeleton>` stays pristine upstream (`animate-pulse bg-muted`) and
+ * takes the same sweep through its `data-slot`: these rules are unlayered,
+ * so they win over those layered utilities, as the class always did. */
+.skeleton-shimmer,
+[data-slot="skeleton"] {
   background-color: var(--muted);
   background-image: linear-gradient(
     100deg,
@@ -1221,11 +1232,13 @@ body {
   ) !important;
 }
 @media (prefers-reduced-motion: reduce) {
-  .skeleton-shimmer {
+  .skeleton-shimmer,
+  [data-slot="skeleton"] {
     animation: none;
   }
 }
-[data-motion="reduced"] .skeleton-shimmer {
+[data-motion="reduced"] .skeleton-shimmer,
+[data-motion="reduced"] [data-slot="skeleton"] {
   animation: none;
 }
 
