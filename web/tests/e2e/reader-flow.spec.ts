@@ -22,7 +22,12 @@
  * `pnpm test:e2e` against raw Next still exits clean.
  */
 import { test, expect } from "@playwright/test";
-import { ADMIN_EMAIL, json, registrationOpen } from "./support/admin";
+import {
+  ADMIN_EMAIL,
+  csrfToken,
+  json,
+  registrationOpen,
+} from "./support/admin";
 import { expectNoAxeViolations } from "./support/axe";
 
 test.describe("Reader flow", () => {
@@ -70,6 +75,17 @@ test.describe("Reader flow", () => {
     ).items[0];
     expect(issue, "scan should produce one issue").toBeTruthy();
 
+    // The steps below assume an unread issue, but progress outlives a failed
+    // attempt: without this a CI retry finds "Continue reading" instead of
+    // "Read" and can never pass. An explicit write sets the page as given,
+    // which puts the series back to unread.
+    await json(
+      page.request.post("/api/progress", {
+        headers: { "X-CSRF-Token": await csrfToken(context) },
+        data: { issue_id: issue.id, page: 0, finished: false },
+      }),
+    );
+
     // 4. Series page CTA → reader (a real client-side navigation).
     await page.goto(`/series/${series.slug}`);
     const read = page.getByRole("link", { name: /^Read$/ });
@@ -95,11 +111,14 @@ test.describe("Reader flow", () => {
     await readerReady();
 
     // 5. Turn one page; the debounced progress write must reach the server.
+    //    Match on the page: opening the reader also saves page 0 shortly after
+    //    it is ready, and that write can land after this waiter is registered.
     const progressWrite = page.waitForResponse(
       (r) =>
         r.url().endsWith("/api/progress") &&
         r.request().method() === "POST" &&
-        r.ok(),
+        r.ok() &&
+        r.request().postDataJSON()?.page === 1,
     );
     await page.keyboard.press("ArrowRight");
     await progressWrite;
