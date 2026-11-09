@@ -19,10 +19,10 @@ ignore = [
     "RUSTSEC-2025-0119",
     # `paste` no longer maintained (build-time proc-macro).
     "RUSTSEC-2024-0436",
-    # `rsa 0.9.10` Marvin Attack — private-key timing sidechannel. In the
-    # graph via openidconnect (public-key RS256 verify only), jsonwebtoken
-    # (we sign with Ed25519), and the OIDC test's throwaway mock-OP key.
-    # No fixed version exists; deny.toml carries the full rationale.
+    # `rsa 0.9.10` Marvin Attack — private-key timing sidechannel, fixed
+    # in 0.10 (our OIDC test dev-dep is on it). 0.9.10 stays in the graph
+    # via openidconnect (public-key RS256 verify only) and jsonwebtoken
+    # (we sign with Ed25519); deny.toml carries the full rationale.
     "RUSTSEC-2023-0071",
     # `crypto-bigint 0.5.5` timing variability in constant-time ops
     # (RUSTSEC-2026-0387). Patched only in the 0.7 line; in the graph via
