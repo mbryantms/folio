@@ -49,6 +49,11 @@ ignore = [
     # `astral-tokio-tar` unmaintained: test-only, via testcontainers 0.28
     # (latest). deny.toml carries the full rationale.
     "RUSTSEC-2026-0440",
+    # Bundled SQLite < 3.54 with a mismatched `-wal` sibling: libsqlite3-sys
+    # 0.37 is pinned by sqlx-sqlite 0.9.0 (latest, `<0.38`); the fix is
+    # 0.39. Folio's only open (`local_db::open`) is `immutable=true`, which
+    # never reads a WAL. deny.toml carries the full rationale.
+    "RUSTSEC-2026-0459",
     # No entry for the rest of the 2026-10-29 `zip` GHSA batch
     # (GHSA-m665-v7pm-7grj, -hjqx-j4rw-g7xv, -8hxf-qr8p-62x4,
     # -9hj8-73fh-9963): the RustSec db has no id for them (2026-11-08), so cargo-audit never reports them and
