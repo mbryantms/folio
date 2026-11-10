@@ -535,6 +535,37 @@ async fn cover_endpoint_serves_sniffed_mime_and_refuses_non_image_files() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/png");
     assert_eq!(resp.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    // The route is ACL-checked, so a shared cache must never store it
+    // (`public` used to let a reverse proxy hand one account's cover to
+    // another); the browser still caches it for a year per credentials.
+    assert_eq!(
+        resp.headers()[header::CACHE_CONTROL],
+        "private, max-age=31536000, immutable"
+    );
+    assert_eq!(resp.headers()[header::VARY], "Cookie, Authorization");
+
+    // The 304 revalidation carries the same caching headers.
+    let etag = resp.headers()[header::ETAG].clone();
+    let revalidated = f
+        ._app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/issues/{}/covers/{id}", f.issue_id))
+                .header(header::COOKIE, &cookie)
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revalidated.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        revalidated.headers()[header::CACHE_CONTROL],
+        "private, max-age=31536000, immutable"
+    );
+    assert_eq!(revalidated.headers()[header::VARY], "Cookie, Authorization");
 
     // A legacy row whose file isn't an image (stored before the write-side
     // sniff existed) is refused rather than served as image/*.
