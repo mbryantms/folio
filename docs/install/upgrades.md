@@ -146,6 +146,27 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — a single sign-on login linked to a local account makes it single-sign-on only
+
+Applies only if you turned on **Admin → Auth → Auto-link local accounts by
+verified email** (`auth.oidc.link_local_by_verified_email`).
+
+- A link now happens only when the identity provider sends
+  `email_verified: true`. An absent claim, even with the trust-unverified
+  setting on, no longer links.
+- A linked account loses its local password, refresh sessions and app
+  passwords (OPDS readers and other apps must be given a new app password),
+  whether or not the local address was verified. A disabled local account is
+  refused and left unchanged.
+- Accounts linked by an earlier release kept their local password. They lose
+  it, with their sessions and app passwords, at their next single sign-on;
+  the audit log records `auth.oidc.local_password_dropped`. To find them
+  beforehand: `SELECT id, email FROM users WHERE external_id LIKE 'oidc:%'
+  AND password_hash IS NOT NULL;` and the earlier `auth.oidc.auto_link`
+  audit rows.
+- Keep a separate local admin account with a different email, so you can
+  still sign in when the identity provider is down.
+
 ### Unreleased — age-rating caps enforced; library-access `role` removed
 
 - **`library_user_access.age_rating_max` is now enforced.** A user whose

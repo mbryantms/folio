@@ -722,12 +722,13 @@ async fn fetch_visible_issue(
             "issue not found",
         ));
     };
-    let visible = access::for_user(app, user).await;
-    if !access::issue_allowed(app, &visible, &row).await {
+    // An issue the caller can't see (outside the grant, or rated above
+    // their cap) answers exactly like an unknown id.
+    if !access::issue_visible(app, user, &row).await {
         return Err(MarkerError::new(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            "issue not visible",
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "issue not found",
         ));
     }
     Ok(row)
@@ -1322,7 +1323,7 @@ pub async fn list_for_issue(
     user: CurrentUser,
     AxPath(issue_id): AxPath<String>,
 ) -> impl IntoResponse {
-    // ACL: fetch_visible_issue returns 404/403 if the caller can't
+    // ACL: fetch_visible_issue returns 404 if the caller can't
     // reach this issue, before we leak whether they have markers on
     // it.
     let issue_row = match fetch_visible_issue(&app, &user, &issue_id).await {

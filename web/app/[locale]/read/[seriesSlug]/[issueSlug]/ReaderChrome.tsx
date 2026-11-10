@@ -397,6 +397,7 @@ function BookmarkToggleButton({
     issueId,
     pageIndex,
     "bookmark",
+    { silentCreate: true },
   );
   return (
     <ChromeIconButton
@@ -428,6 +429,7 @@ function FavoriteToggleButton({
     issueId,
     pageIndex,
     "favorite",
+    { silentCreate: true },
   );
   const starred = !!existing;
   return (

@@ -12,6 +12,7 @@ import type {
   SetIssueNoteReq,
   SetRatingReq,
 } from "../types";
+import { apiPath } from "../path";
 import { useApiMutation } from "./_core";
 
 /**
@@ -24,7 +25,7 @@ import { useApiMutation } from "./_core";
 export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
   return useApiMutation<RatingView, SetRatingReq>(
     (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/rating`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/rating`,
       method: "PUT",
       body,
     }),
@@ -46,7 +47,7 @@ export function useSetIssueNote(
   const qc = useQueryClient();
   return useApiMutation<IssueNoteView, SetIssueNoteReq>(
     (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/note`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/note`,
       method: "PUT",
       body,
     }),

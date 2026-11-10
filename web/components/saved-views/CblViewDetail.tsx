@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   BookOpen,
@@ -134,29 +133,12 @@ function CblViewDetailInner({
   listId: string;
 }) {
   const detail = useCblList(listId);
-  const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
   const [offlineOpen, setOfflineOpen] = React.useState(false);
   const [offlineMounted, setOfflineMounted] = React.useState(false);
   if (offlineOpen && !offlineMounted) setOfflineMounted(true);
   const fetchViewMetadata = () => {
-    createBatch.mutate(
-      { saved_view_id: savedView.id },
-      {
-        onSuccess: (resp) => {
-          if (!resp) return;
-          toast.success(`Searching ${resp.items_total} issues for metadata`, {
-            action: {
-              label: "Review",
-              onClick: () =>
-                router.push(
-                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
-                ),
-            },
-          });
-        },
-      },
-    );
+    createBatch.mutate({ saved_view_id: savedView.id });
   };
   // Server-filter when `hideMissing` is on: only fetch entries we'll
   // render. Otherwise pull everything in position order. Entries

@@ -665,14 +665,14 @@ export function Reader({
   // `b` / `s` keybinds — share one toggle hook with the chrome's
   // BookmarkToggleButton / FavoriteToggleButton (kills the duplicated
   // find-existing → create/delete-with-Undo logic, audit G9). The
-  // page-specific toast copy stays here so the keybind path keeps its
-  // exact wording ("Bookmarked page N" / "Removed bookmark on page N").
+  // removal toast copy stays here so the keybind path keeps its exact
+  // wording ("Removed bookmark on page N"); "Bookmarked page N" comes from
+  // `useCreateMarker`.
   const bookmarkToggle = usePageMarkerToggle(issueId, currentPage, "bookmark");
   const favoriteToggle = usePageMarkerToggle(issueId, currentPage, "favorite");
   const toggleBookmark = useCallback(
     () =>
       bookmarkToggle.toggle({
-        created: `Bookmarked page ${currentPage + 1}`,
         removed: `Removed bookmark on page ${currentPage + 1}`,
       }),
     [bookmarkToggle, currentPage],
@@ -680,7 +680,6 @@ export function Reader({
   const toggleFavorite = useCallback(
     () =>
       favoriteToggle.toggle({
-        created: `Starred page ${currentPage + 1}`,
         removed: `Unstarred page ${currentPage + 1}`,
       }),
     [favoriteToggle, currentPage],

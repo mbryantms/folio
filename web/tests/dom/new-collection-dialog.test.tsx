@@ -11,6 +11,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({
   create: vi.fn(),
+  success: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: { success: m.success, error: vi.fn() },
 }));
 
 vi.mock("@/lib/api/queries", () => ({
@@ -26,6 +31,7 @@ import { ApiMutationError } from "@/lib/api/mutations/_core";
 
 beforeEach(() => {
   m.create.mockReset();
+  m.success.mockReset();
 });
 
 describe("collectServerErrors", () => {
@@ -79,6 +85,24 @@ describe("<NewCollectionDialog>", () => {
     expect(
       screen.getByLabelText("Description").getAttribute("aria-invalid"),
     ).toBeNull();
+  });
+
+  it("closes on success without a toast of its own", async () => {
+    // `useCreateCollection` toasts "Collection … created"; the dialog
+    // must not add a second one.
+    m.create.mockImplementation(
+      (_input: unknown, opts: { onSuccess: () => void }) => opts.onSuccess(),
+    );
+    const onOpenChange = vi.fn();
+    render(<NewCollectionDialog open onOpenChange={onOpenChange} />);
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Capes" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(m.success).not.toHaveBeenCalled();
   });
 
   it("clears the bound error on the next submit", async () => {
