@@ -145,6 +145,12 @@ export function PageRails({
         </p>
       ) : null}
 
+      {/* First run: Home auto-pins system views, so the pinned list is
+          never empty and `EmptyPinnedState` alone can't reach a fresh
+          install. The setup card sits above the rails whatever is
+          pinned, and goes away once a library exists. */}
+      {isSystem ? <NoLibrariesCard /> : null}
+
       {pinnedQ.isLoading ? (
         <RailsSkeleton
           cardSizeKey={storageKey}
@@ -187,15 +193,52 @@ export function PageRails({
   );
 }
 
+/** The system Home's "no library" card: an admin gets the link to create
+ *  one; a reader, who sees only the libraries granted to them, is told
+ *  that an admin has to add a library or grant access. Renders nothing
+ *  until both probes resolve, and nothing once a library is visible. */
+function NoLibrariesCard() {
+  const me = useMe();
+  const librariesQ = useLibraryList();
+  if (me.data === undefined || librariesQ.data === undefined) return null;
+  if (librariesQ.data.length > 0) return null;
+  const isAdmin = me.data.role === "admin";
+
+  return (
+    <section
+      aria-labelledby="no-libraries-heading"
+      className="border-border/60 mb-(--density-page-pad-y) rounded-lg border border-dashed p-8"
+    >
+      <h2
+        id="no-libraries-heading"
+        className="text-xl font-semibold tracking-tight"
+      >
+        {isAdmin ? "Set up your first library" : "Nothing to read yet"}
+      </h2>
+      <p className="text-muted-foreground mt-2 text-sm">
+        {isAdmin
+          ? "Create a library pointing at your comics folder, run a scan, and your collection shows up here."
+          : "An admin needs to add a library or grant you access to one, then your comics will show up here."}
+      </p>
+      {isAdmin ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button asChild>
+            <Link href="/admin/libraries">
+              <FolderPlus />
+              Create a library
+            </Link>
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function EmptyPinnedState({ isSystem }: { isSystem: boolean }) {
-  // First-run signposting (audit UX-1): a fresh sign-in lands here with
-  // zero pinned views, so the system Home must route the user to their
-  // actual content (or to creating some) instead of dead-ending on a
-  // Settings link. Only the system page probes libraries/role — custom
-  // pages keep the lightweight pin hint.
-  const me = useMe({ enabled: isSystem });
+  // First-run signposting (audit UX-1). The no-library case is owned by
+  // `NoLibrariesCard` above the rails, so this only covers a Home with
+  // libraries but nothing pinned, and custom pages.
   const librariesQ = useLibraryList({ enabled: isSystem });
-  const isAdmin = me.data?.role === "admin";
   const hasLibraries = (librariesQ.data?.length ?? 0) > 0;
 
   if (!isSystem) {
@@ -218,35 +261,22 @@ function EmptyPinnedState({ isSystem }: { isSystem: boolean }) {
     );
   }
 
+  if (!hasLibraries) return null;
+
   return (
     <div className="border-border/60 rounded-lg border border-dashed p-8">
-      <h2 className="text-xl font-semibold tracking-tight">
-        {hasLibraries ? "Welcome to Folio" : "No libraries yet"}
-      </h2>
+      <h2 className="text-xl font-semibold tracking-tight">Welcome to Folio</h2>
       <p className="text-muted-foreground mt-2 text-sm">
-        {hasLibraries
-          ? "Your comics are ready — browse your library, or pin saved views here to build a custom home."
-          : isAdmin
-            ? "Create a library pointing at your comics folder, run a scan, and your collection shows up here."
-            : "Ask your server admin to grant you access to a library, then your comics will show up here."}
+        Your comics are ready — browse your library, or pin saved views here to
+        build a custom home.
       </p>
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        {hasLibraries ? (
-          <Button asChild>
-            <Link href="/?library=all">
-              <LibraryBig />
-              Browse your library
-            </Link>
-          </Button>
-        ) : null}
-        {isAdmin && !hasLibraries ? (
-          <Button asChild>
-            <Link href="/admin/libraries">
-              <FolderPlus />
-              Create a library
-            </Link>
-          </Button>
-        ) : null}
+        <Button asChild>
+          <Link href="/?library=all">
+            <LibraryBig />
+            Browse your library
+          </Link>
+        </Button>
         <Button asChild variant="outline">
           <Link href="/settings/views">Manage saved views</Link>
         </Button>
