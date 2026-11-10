@@ -730,6 +730,9 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     });
     // Aggregated `queue.activity` events for the admin queue lanes.
     crate::jobs::activity::spawn_flusher(state.clone(), shutdown.clone());
+    // Prometheus recorder upkeep: drains histogram samples into their
+    // buckets on a timer so their memory stays bounded between scrapes.
+    crate::observability::spawn_metrics_upkeep(state.prometheus.clone(), shutdown.clone());
 
     // Cron scheduler — best-effort. Failure here doesn't block startup.
     match crate::jobs::scheduler::start(state.clone()).await {
