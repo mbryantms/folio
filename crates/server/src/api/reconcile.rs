@@ -527,6 +527,7 @@ pub async fn restore_issue(
         );
     }
     let library_id = row.library_id;
+    let series_id = row.series_id;
     let mut am: issue::ActiveModel = row.into();
     am.removed_at = Set(None);
     am.removal_confirmed_at = Set(None);
@@ -544,6 +545,19 @@ pub async fn restore_issue(
     {
         tracing::warn!(error = %e, issue_id = %id, "restore issue: clearing duplicate decision failed");
     }
+    // A live issue brings a soft-removed series back with it. Runs after
+    // the pin is dropped: a pinned issue never counts as live.
+    let mut events = crate::library::event_log::EventCollector::new(library_id, None);
+    if let Err(e) = crate::library::reconcile::restore_series_with_live_issues(
+        &app.db,
+        [series_id],
+        &mut events,
+    )
+    .await
+    {
+        tracing::error!(error = %e, issue_id = %id, %series_id, "restore issue: series restore failed");
+    }
+    events.flush(&app.db).await;
 
     record_admin_action!(
         db = &app.db,
