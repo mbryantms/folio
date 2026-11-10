@@ -425,6 +425,33 @@ tags carry), `format`, `page_count`, `file_size_bytes`, `read_state`
 `GET /issues?read_status=`), `comicvine_id`, `metron_id`, `gcd_id`
 (issue-level `external_ids`), then `file_path` for admins only.
 
+## Reading-log CSV
+
+`GET /me/reading-log/export` returns the reading-log feed (same filters as
+`GET /me/reading-log`, up to 50,000 most recent events) as
+`text/csv; charset=utf-8`, one row per event: `occurred_at`, `kind`,
+`series`, `series_year`, `publisher`, `issue_number`, `issue_title`,
+`started_at`, `ended_at`, `active_minutes`, `pages_read`,
+`total_sessions`, `is_reread`, `total_issues`, `span_days`,
+`marker_kind`, `tags`. RFC 4180 quoting. The text columns that carry
+archive metadata or user input (`series`, `publisher`, `issue_number`,
+`issue_title`, `marker_kind`, `tags`) use the same guard as the holdings
+CSV (`util::csv_cell::formula_safe`): a cell starting with `=`, `+`, `-`,
+`@`, tab or CR gets a leading `'`, except plain numbers such as issue
+`-1`. Timestamps, counts and `kind` are written as the server formats
+them.
+
+## Download file names
+
+Every `Content-Disposition` the server sends (these exports, archive
+downloads, page bytes, `.cbl` exports) is built by
+`util::content_disposition`: an ASCII `filename="..."` fallback with
+quotes, backslashes, path separators, `%`, control characters and
+non-ASCII characters replaced by `_`, followed by the full name as
+`filename*=UTF-8''...` (RFC 5987 percent-encoding, path separators and
+control characters replaced). Names over 255 bytes are shortened, keeping
+the extension. The headers shown above carry both parameters.
+
 ## Changelog
 
 - **v1** (2026-09-29, WP-2.1) — initial shape.

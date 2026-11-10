@@ -2558,13 +2558,16 @@ pub async fn export(
 
     let bytes = list.raw_xml.into_bytes();
     use axum::http::header;
-    let disposition = format!("attachment; filename=\"{filename}\"");
+    let disposition = crate::util::content_disposition::content_disposition(
+        crate::util::content_disposition::Disposition::Attachment,
+        &filename,
+    );
     (
         StatusCode::OK,
         [
             (
                 header::CONTENT_TYPE,
-                "application/xml; charset=utf-8".to_string(),
+                axum::http::HeaderValue::from_static("application/xml; charset=utf-8"),
             ),
             (header::CONTENT_DISPOSITION, disposition),
         ],

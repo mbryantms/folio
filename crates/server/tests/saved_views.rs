@@ -2519,3 +2519,22 @@ async fn metadata_completeness_filter_excludes_accepted() {
         "an all-accepted series must NOT match needs_metadata: {names:?}"
     );
 }
+
+#[tokio::test]
+async fn reorder_rejects_a_list_over_the_cap_with_field_details() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "reorder-cap@example.com").await;
+    let max = server::api::saved_views::MAX_REORDER_VIEW_IDS;
+    let ids: Vec<Uuid> = (0..=max).map(|_| Uuid::now_v7()).collect();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/saved-views/reorder",
+        Some(&auth),
+        Some(serde_json::json!({ "view_ids": ids })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["details"][0]["field"], "view_ids");
+}

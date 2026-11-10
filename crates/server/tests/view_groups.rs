@@ -628,3 +628,43 @@ async fn replace_layout_rejects_incomplete_or_invalid_sets() {
     assert_eq!(groups[0]["id"], g1["id"]);
     assert_eq!(ids(&groups[0]["view_ids"]), vec![a.to_string()]);
 }
+
+#[tokio::test]
+async fn replace_layout_rejects_lists_over_the_caps_with_field_details() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "layout-cap@example.com").await;
+    let max = server::api::view_groups::MAX_LAYOUT_VIEW_IDS;
+    let many: Vec<Uuid> = (0..=max).map(|_| Uuid::now_v7()).collect();
+    let groups: Vec<serde_json::Value> = (0..51)
+        .map(|_| serde_json::json!({ "id": Uuid::now_v7(), "view_ids": [] }))
+        .collect();
+    for (body, field) in [
+        (
+            serde_json::json!({ "scope": "filter", "groups": [], "ungrouped": many }),
+            "ungrouped",
+        ),
+        (
+            serde_json::json!({
+                "scope": "filter",
+                "groups": [{ "id": Uuid::now_v7(), "view_ids": many }],
+            }),
+            "groups[0].view_ids",
+        ),
+        (
+            serde_json::json!({ "scope": "filter", "groups": groups }),
+            "groups",
+        ),
+    ] {
+        let (status, resp) = http(
+            &app,
+            Method::PUT,
+            "/api/me/view-groups/layout",
+            Some(&user),
+            Some(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+        assert_eq!(resp["error"]["code"], "validation");
+        assert_eq!(resp["error"]["details"][0]["field"], field, "{resp}");
+    }
+}

@@ -1585,7 +1585,7 @@ pub(crate) async fn download(
     let leaf = std::path::Path::new(&row.file_path)
         .file_name()
         .and_then(|s| s.to_str())
-        .map(sanitize_filename_for_header)
+        .map(str::to_owned)
         .unwrap_or_else(|| "comic.cbz".to_owned());
     let mime = mime_for(&row.file_path);
 
@@ -1626,8 +1626,10 @@ pub(crate) async fn download(
             hdrs.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
             hdrs.insert(
                 header::CONTENT_DISPOSITION,
-                HeaderValue::from_str(&format!("attachment; filename=\"{leaf}\""))
-                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+                crate::util::content_disposition::content_disposition(
+                    crate::util::content_disposition::Disposition::Attachment,
+                    &leaf,
+                ),
             );
             hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
             hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
@@ -1653,8 +1655,10 @@ pub(crate) async fn download(
             hdrs.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
             hdrs.insert(
                 header::CONTENT_DISPOSITION,
-                HeaderValue::from_str(&format!("attachment; filename=\"{leaf}\""))
-                    .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
+                crate::util::content_disposition::content_disposition(
+                    crate::util::content_disposition::Disposition::Attachment,
+                    &leaf,
+                ),
             );
             hdrs.insert(header::CONTENT_LENGTH, HeaderValue::from(total));
             hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
@@ -2754,17 +2758,6 @@ fn atom(body: String) -> Response {
 fn server_error<E: std::fmt::Display>(e: E) -> Response {
     tracing::warn!(error = %e, "opds error");
     super::error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
-}
-
-/// Strip control characters (CR / LF / NUL etc.) from a filesystem
-/// leaf before substituting it into a `Content-Disposition` header.
-/// `HeaderValue::from_str` rejects controls; without this guard a
-/// CBZ filename containing `\r\n` would panic the OPDS download task.
-/// Replacement char is `_`.
-fn sanitize_filename_for_header(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() || c == '"' { '_' } else { c })
-        .collect()
 }
 
 fn xml_escape(s: &str) -> String {

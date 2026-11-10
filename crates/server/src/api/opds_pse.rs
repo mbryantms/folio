@@ -250,8 +250,10 @@ pub async fn stream(
     hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     hdrs.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", meta.ext))
-            .unwrap_or_else(|_| HeaderValue::from_static("inline")),
+        crate::util::content_disposition::content_disposition(
+            crate::util::content_disposition::Disposition::Inline,
+            &format!("page-{n}.{}", meta.ext),
+        ),
     );
     // PSE clients (Chunky / KOReader) re-fetch pages on every reopen
     // unless the cache is honoured. The signed URL itself is the access

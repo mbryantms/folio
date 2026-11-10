@@ -55,6 +55,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use super::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
@@ -174,8 +175,16 @@ pub struct SidebarEntryView {
     pub position: i32,
 }
 
-#[derive(Debug, Clone, Deserialize, utoipa::ToSchema)]
+/// Most entries a sidebar layout may save. A sidebar holds the built-ins
+/// (about ten), one row per visible library, the saved views shown there,
+/// the user's pages (at most 21) and any headers and spacers; libraries
+/// and views are not capped, so this is a safety bound far above any real
+/// sidebar.
+pub const MAX_SIDEBAR_ENTRIES: usize = 1_000;
+
+#[derive(Debug, Clone, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateLayoutReq {
+    #[garde(length(max = MAX_SIDEBAR_ENTRIES))]
     pub entries: Vec<UpdateEntryReq>,
 }
 
@@ -222,7 +231,7 @@ pub async fn get_layout(State(app): State<AppState>, user: CurrentUser) -> Respo
 pub async fn update_layout(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<UpdateLayoutReq>,
+    Validated(req): Validated<UpdateLayoutReq>,
 ) -> Response {
     // Validate the payload before opening a transaction. `seen` catches
     // duplicate (kind, ref_id) pairs that would otherwise produce
