@@ -29,14 +29,19 @@
  *
  * Replay runs in the page, never in the service worker: the CSRF token is
  * a cookie the page reads (`__Host-comic_csrf`), and `apiFetch` owns token
- * refresh. Triggers are launch, `online`, the tab becoming visible, a
- * backoff timer while entries are retained, and — on Chromium — a
- * Background Sync wake-up relayed by the service worker as a
- * `FOLIO_OUTBOX_REPLAY` message to open windows (`startOutboxReplay`).
+ * refresh. Triggers are launch, `online`, the tab becoming visible, the
+ * server answering again (`folio:connectivity` → `reachable`), a backoff
+ * timer — armed by a new entry and stretched while entries are retained —
+ * and, on Chromium, a Background Sync wake-up relayed by the service worker
+ * as a `FOLIO_OUTBOX_REPLAY` message to open windows (`startOutboxReplay`).
+ * The replayer is the one retry loop: live writers deliver once and leave
+ * whatever failed in the queue for it.
  *
  * Without IndexedDB (SSR, storage disabled) the outbox falls back to an
  * in-memory store: same API, no durability.
  */
+
+import { CONNECTIVITY_EVENT } from "./connectivity";
 
 export type DeliveryOutcome = "done" | "drop" | "retry";
 
@@ -77,6 +82,9 @@ export type ReplayReport = {
 
 export type OutboxFilter = { kind?: string };
 
+/** What changed, passed to `subscribe` listeners. */
+export type OutboxChange = "enqueue" | "acknowledge" | "replay" | "clear";
+
 export interface Outbox {
   /** Queue (or coalesce) a write. Resolves once it is durable. `merge`
    *  overrides the registered kind's merge (for writers that enqueue
@@ -100,7 +108,7 @@ export interface Outbox {
   /** The account new entries are stamped with and replays deliver for. */
   setAccount(account: string | null | undefined): void;
   /** Notified after every change to the queue (for sync-state UI). */
-  subscribe(listener: () => void): () => void;
+  subscribe(listener: (change: OutboxChange) => void): () => void;
 }
 
 /** Map an HTTP status to a delivery outcome: 2xx done; auth, timeout,
@@ -268,15 +276,15 @@ export function createOutbox(
   const now = opts.now ?? Date.now;
   const lockName = opts.lockName ?? "folio-outbox-replay";
   const handlers = new Map<string, OutboxKind<unknown>>();
-  const listeners = new Set<() => void>();
+  const listeners = new Set<(change: OutboxChange) => void>();
   let account: string | null | undefined;
   let counter = 0;
   let running: Promise<ReplayReport> | undefined;
 
   const currentAccount = () =>
     account === undefined ? storedAccount() : account;
-  const emit = () => {
-    for (const listener of listeners) listener();
+  const emit = (change: OutboxChange) => {
+    for (const listener of listeners) listener(change);
   };
   const nextSeq = () => now() * 1000 + (counter++ % 1000);
 
@@ -382,7 +390,7 @@ export function createOutbox(
               lastError: null,
             },
       );
-      emit();
+      emit("enqueue");
     },
     async acknowledge<T>(kind: string, key: string, delivered: T) {
       let removed = false;
@@ -393,7 +401,7 @@ export function createOutbox(
         }
         return cur ?? null;
       });
-      if (removed) emit();
+      if (removed) emit("acknowledge");
       return removed;
     },
     async entries<T = unknown>(filter?: OutboxFilter) {
@@ -406,13 +414,13 @@ export function createOutbox(
       if (running) return running;
       running = locked().finally(() => {
         running = undefined;
-        emit();
+        emit("replay");
       });
       return running;
     },
     async clear() {
       await storage.clear();
-      emit();
+      emit("clear");
     },
     register<T>(kind: string, handler: OutboxKind<T>) {
       handlers.set(kind, handler as OutboxKind<unknown>);
@@ -480,37 +488,88 @@ async function requestBackgroundSync(): Promise<void> {
 const BACKOFF_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000];
 
 /**
- * Wire the page-side replay triggers: launch (now), `online`, the tab
- * becoming visible, a backoff timer while deliveries are being retried,
- * and the service worker's Background Sync relay. Returns a cleanup.
+ * Wire the page-side replay triggers and own the one retry loop. Returns a
+ * cleanup.
+ *
+ * - Immediate passes: launch (now), `online`, the tab becoming visible,
+ *   the server answering again (`folio:connectivity` → `reachable`, fired
+ *   by any `apiFetch` that gets a reply), and the service worker's
+ *   Background Sync relay.
+ * - One backoff timer, never more: a pass that leaves entries queued
+ *   re-arms it at the next step of 5 s → 5 min, a pass that empties the
+ *   queue resets the step, and a new entry arms it at the current step
+ *   when nothing is armed. Nothing in the page probes the server while
+ *   the reader just sits on a page, so this timer is what retries a write
+ *   that failed against an unreachable server while the browser stayed
+ *   online.
+ * - `onDrained` fires once when a pass empties a queue that an earlier
+ *   pass could not deliver — not after an ordinary write.
+ *
+ * Mounted only for a signed-in account (or the offline shell's device
+ * owner), so nothing retries for a signed-out page.
  */
 export function startOutboxReplay(
   outbox: Outbox,
-  opts: { onReport?: (report: ReplayReport) => void } = {},
+  opts: {
+    onReport?: (report: ReplayReport) => void;
+    onDrained?: () => void;
+  } = {},
 ): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let active: Promise<void> | undefined;
   let failures = 0;
-  const run = async () => {
-    if (stopped) return;
+  let stuck = false;
+  let armAfterRun = false;
+  const arm = (delay: number) => {
+    if (stopped || timer) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      void run();
+    }, delay);
+  };
+  const step = () => BACKOFF_MS[Math.min(failures, BACKOFF_MS.length - 1)]!;
+  const run = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    // Single flight: a trigger during a pass joins it (the pass's own
+    // successful request is what reports `reachable`).
+    if (active) return active;
     if (timer) clearTimeout(timer);
     timer = undefined;
-    const report = await outbox.replay().catch((): ReplayReport => ({
-      delivered: 0,
-      dropped: 0,
-      retained: 1,
-      skipped: false,
-    }));
-    if (stopped) return;
-    opts.onReport?.(report);
-    if (report.retained > 0) {
-      const delay = BACKOFF_MS[Math.min(failures, BACKOFF_MS.length - 1)]!;
-      failures++;
-      timer = setTimeout(() => void run(), delay);
-      void requestBackgroundSync();
-    } else if (!report.skipped) {
+    armAfterRun = false;
+    active = (async () => {
+      const report = await outbox.replay().catch((): ReplayReport => ({
+        delivered: 0,
+        dropped: 0,
+        retained: 1,
+        skipped: false,
+      }));
+      if (stopped) return;
+      opts.onReport?.(report);
+      if (report.retained > 0) {
+        const delay = step();
+        failures++;
+        stuck = true;
+        arm(delay);
+        void requestBackgroundSync();
+        return;
+      }
+      if (report.skipped) {
+        // Another tab holds the replay lock; look again later.
+        arm(step());
+        return;
+      }
       failures = 0;
-    }
+      if (stuck) {
+        stuck = false;
+        opts.onDrained?.();
+      }
+      // An entry queued while this pass ran may have missed it.
+      if (armAfterRun) arm(step());
+    })().finally(() => {
+      active = undefined;
+    });
+    return active;
   };
   const trigger = () => void run();
   const onVisible = () => {
@@ -519,15 +578,26 @@ export function startOutboxReplay(
   const onMessage = (event: MessageEvent) => {
     if (event.data?.type === OUTBOX_REPLAY_MESSAGE) trigger();
   };
+  const onConnectivity = (event: Event) => {
+    if ((event as CustomEvent<string>).detail === "reachable") trigger();
+  };
+  const offChanges = outbox.subscribe((change) => {
+    if (change !== "enqueue") return;
+    if (active) armAfterRun = true;
+    else arm(step());
+  });
   const sw = globalThis.navigator?.serviceWorker;
   window.addEventListener("online", trigger);
+  window.addEventListener(CONNECTIVITY_EVENT, onConnectivity);
   document.addEventListener("visibilitychange", onVisible);
   sw?.addEventListener("message", onMessage);
   trigger();
   return () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    offChanges();
     window.removeEventListener("online", trigger);
+    window.removeEventListener(CONNECTIVITY_EVENT, onConnectivity);
     document.removeEventListener("visibilitychange", onVisible);
     sw?.removeEventListener("message", onMessage);
   };

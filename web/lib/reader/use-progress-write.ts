@@ -60,14 +60,19 @@ export function postProgress(body: ProgressBody): Promise<Response> {
  * - The CSRF token is read inside the write callback, not snapshotted
  *   at mount — a token rotation mid-session (long read across a
  *   re-auth) used to 403 every subsequent write, silently, forever.
- * - Hidden/pagehide/online events flush the latest pending writes. Every
- *   request uses keepalive and a failed response stays pending in memory.
- *   Delivery is serialized; account resets discard pending writes.
+ * - Hidden/pagehide/unmount flush the latest pending writes before the
+ *   page can die. Every request uses keepalive and a failed response stays
+ *   pending in memory for the next flush. Delivery is serialized; account
+ *   resets discard pending writes.
  * - Durable outbox (WP-4.5): each write is also queued in IndexedDB
- *   (`lib/pwa/outbox.ts`) and removed once acknowledged. If the tab dies
- *   before delivery, `OutboxReplayer` replays it on the next launch /
- *   `online` / visible — safe because every write carries its run and a
- *   run-tagged restart is applied once by the server.
+ *   (`lib/pwa/outbox.ts`) and removed once acknowledged. Retrying belongs
+ *   to the outbox replayer alone (`startOutboxReplay`, mounted by
+ *   `OutboxReplayer`): the enqueue arms its backoff timer, so a write that
+ *   failed while the browser stayed online is retried without another
+ *   page turn, and `online` / visible / server-reachable replay it too —
+ *   this hook adds no retry timer or `online` listener of its own. Replays
+ *   are safe because every write carries its run and a run-tagged restart
+ *   is applied once by the server.
  *
  * Cache invalidation: after each successful write we mark the
  * shared `useUserProgress` query stale + invalidate every cached
@@ -239,14 +244,12 @@ export function useReaderProgressWrite(opts: {
       writer.clear();
     };
     window.addEventListener("pagehide", flush);
-    window.addEventListener("online", flush);
     window.addEventListener("folio:before-reload", flush);
     window.addEventListener(PRIVATE_RESET, clear);
     document.addEventListener("visibilitychange", hidden);
     return () => {
       flush();
       window.removeEventListener("pagehide", flush);
-      window.removeEventListener("online", flush);
       window.removeEventListener("folio:before-reload", flush);
       window.removeEventListener(PRIVATE_RESET, clear);
       document.removeEventListener("visibilitychange", hidden);

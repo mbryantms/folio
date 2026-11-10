@@ -60,8 +60,12 @@ payload-agnostic: each *kind* registers `{ merge?, deliver }`.
   queue only matters when the page dies first.
 - **Replay** runs in the page (`OutboxReplayer`, mounted in `QueryProvider`
   for a signed-in account) through `apiFetch`, so the CSRF header and token
-  refresh behave like live writes. Triggers: launch, `online`, tab visible,
-  backoff (5 s → 5 min) while entries are retained, and the service worker's
+  refresh behave like live writes. It is the only retry loop (the live
+  writer delivers once and leaves failures queued). Triggers: launch,
+  `online`, tab visible, the server answering again (`folio:connectivity` →
+  `reachable`), one backoff timer (5 s → 5 min) armed by a new entry and
+  stretched while entries are retained — the timer is what retries while the
+  browser stays online but the server does not answer — and the service worker's
   `sync` event (tag `folio-outbox`), which only posts `FOLIO_OUTBOX_REPLAY`
   to open windows — a worker cannot read the CSRF cookie or refresh a token,
   and Background Sync is Chromium-only, so it is a wake-up hint, not the
@@ -82,8 +86,11 @@ payload-agnostic: each *kind* registers `{ merge?, deliver }`.
 
 Known limits: the replayed progress `updated_at` is the replay time (sessions
 keep their client timestamps); the reader's resume page comes from SSR and
-does not yet consult queued local writes; there is no pending/error
-sync-state UI yet (`outbox.subscribe` + `entries()` are there for it).
+does not yet consult queued local writes. Sync state: the reader settings
+popover shows one line per issue (saved / saved on this device, will sync /
+retrying; `ProgressSyncStatus`), the connectivity toasts say reading progress
+is kept on the device while other changes may not save, and one
+"Reading progress synced" toast follows a stuck queue draining.
 
 ## Offline downloads (WP-4.6)
 
