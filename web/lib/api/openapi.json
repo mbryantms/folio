@@ -7580,8 +7580,30 @@
     "/api/me/continue-reading": {
       "get": {
         "summary": "In-progress issues for the calling user, ordered by most recent\nactivity. Excludes finished issues, issues that haven't actually been\nopened (`last_page = 0`), removed/encrypted issues, issues the user\ncan't see (library ACL), and issues whose dismissal is still current\n(no newer progress write past the dismissal timestamp).",
-        "description": "Implementation note: dismissals require comparing `progress_records.\nupdated_at` against `rail_dismissals.dismissed_at`, so we let Postgres\ndo that in one SQL pass rather than re-filtering rows in Rust.",
+        "description": "Implementation note: dismissals require comparing `progress_records.\nupdated_at` against `rail_dismissals.dismissed_at`, so we let Postgres\ndo that in one SQL pass rather than re-filtering rows in Rust.\n\nCursor-paginated on `(progress.updated_at, issue_id)` descending (see\n[`progress_cards`]).",
         "operationId": "rails_continue_reading",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size; default 24, max 100. Sending it asks for `total` on the\nfirst page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -7591,6 +7613,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "invalid cursor"
           }
         }
       }
@@ -8400,7 +8425,30 @@
     "/api/me/on-deck": {
       "get": {
         "summary": "\"What's next\" suggestions for the home page. Returns a mix of\n`series_next` cards (next-unread issue in a series the user has read\nat least one finished issue of, with no in-progress issue blocking the\nqueue) and `cbl_next` cards (lowest-position unfinished matched entry\nin a CBL the user has any progress in). Series with an active in-\nprogress issue are skipped — they already surface in Continue Reading.",
+        "description": "Paging: the cards are merged and ranked in Rust (the series walk and\nthe reading-list frontier are not expressible as one SQL ordering), so\na paged request recomputes the merge over a *bounded* candidate set —\nthe [`ON_DECK_PAGED_CANDIDATES`] most recently active series and as\nmany reading lists — and keysets over the ranked result (`OnDeckCursor`).\n`total` counts that set, and `bounded_to` says when the bound was hit.\nThe home-rail preview (no `cursor`, no `limit`) keeps the rail's\nsmaller candidate set and returns no cursor.",
         "operationId": "rails_on_deck",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size; default 24, max 100. Sending it asks for `total` on the\nfirst page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -8410,6 +8458,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "invalid cursor"
           }
         }
       }
@@ -9158,6 +9209,28 @@
       "get": {
         "summary": "Everything the caller touched recently — in progress *or* finished —\nmost recent activity first. Bulk mark-read backfills are excluded\n(`is_backfill`) so marking a 200-issue run read doesn't bury the\nissues actually read. Dismissals follow the Continue-reading rule.",
         "operationId": "rails_recent_history",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size; default 24, max 100. Sending it asks for `total` on the\nfirst page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -9167,6 +9240,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "invalid cursor"
           }
         }
       }
@@ -18958,6 +19034,22 @@
             "items": {
               "$ref": "#/components/schemas/ContinueReadingCard"
             }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the next page; `null` on the last page."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Matching cards in total; first page of a paged request only.",
+            "minimum": 0
           }
         }
       },
@@ -29090,11 +29182,36 @@
           "items"
         ],
         "properties": {
+          "bounded_to": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "First page of a paged request only, and only when the merge hit\nits bound: the cards come from at most this many most recently\nactive series and this many reading lists (see\n`ON_DECK_PAGED_CANDIDATES`), so older ones are not listed.",
+            "minimum": 0
+          },
           "items": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OnDeckCard"
             }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the next page; `null` on the last page and on\nthe home-rail preview (a request with neither `cursor` nor `limit`)."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Cards in the ranked list; first page of a paged request only.",
+            "minimum": 0
           }
         }
       },
@@ -31585,6 +31702,22 @@
             "items": {
               "$ref": "#/components/schemas/ContinueReadingCard"
             }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the next page; `null` on the last page."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Matching cards in total; first page of a paged request only.",
+            "minimum": 0
           }
         }
       },
