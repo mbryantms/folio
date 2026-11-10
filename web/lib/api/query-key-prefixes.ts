@@ -9,6 +9,8 @@
 export const queryKeyPrefixes = {
   /** Every series query: detail, list, issues, collection report. */
   series: ["series"] as const,
+  /** Every series listing (`queryKeys.seriesList`, one-shot + infinite). */
+  seriesList: ["series", "list"] as const,
   /** Every saved-view query: index, detail, results. */
   savedViews: ["saved-views"] as const,
   /** Every home-rail query. */

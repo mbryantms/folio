@@ -3,7 +3,10 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { invalidateRails } from "@/lib/api/mutations/rails";
+import {
+  invalidateRails,
+  invalidateSeriesProgress,
+} from "@/lib/api/mutations/rails";
 import { queryKeys } from "@/lib/api/queries";
 import { TOAST } from "@/lib/api/toast-strings";
 import { getOutbox, startOutboxReplay } from "@/lib/pwa/outbox";
@@ -36,6 +39,7 @@ export function OutboxReplayer({ userId }: { userId?: string }) {
       progressOutboxKind(postProgress, () => {
         void client.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(client);
+        invalidateSeriesProgress(client);
       }),
     );
     const offSession = outbox.register(

@@ -8,7 +8,11 @@ vi.mock("@/lib/api/auth-refresh", () => ({
   apiFetch: api.send,
   getCsrfToken: () => "csrf",
 }));
-vi.mock("@/lib/api/mutations/rails", () => ({ invalidateRails: vi.fn() }));
+vi.mock("@/lib/api/mutations/rails", () => ({
+  invalidateRails: vi.fn(),
+  invalidateSeriesProgress: vi.fn(),
+}));
+import { invalidateSeriesProgress } from "@/lib/api/mutations/rails";
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 afterEach(() => {
   vi.useRealTimers();
@@ -182,5 +186,33 @@ it("queues nothing for a new issue until the store is hydrated for it", async ()
   const body = JSON.parse(api.send.mock.calls[0]![1].body as string);
   expect(body).toMatchObject({ issue_id: "b", page: 0 });
   expect(body.finished).toBeUndefined();
+  unmount();
+});
+
+it("marks the series statistics stale after a write without refetching them", async () => {
+  vi.useFakeTimers();
+  api.send.mockResolvedValue(new Response(null, { status: 204 }));
+  const client = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  const { unmount } = renderHook(
+    () =>
+      useReaderProgressWrite({
+        issueId: "a",
+        currentPage: 5,
+        initialPage: 3,
+        totalPages: 20,
+        incognito: false,
+      }),
+    { wrapper },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(400);
+  });
+  expect(api.send).toHaveBeenCalledTimes(1);
+  expect(invalidateSeriesProgress).toHaveBeenCalledWith(client, {
+    refetchActive: false,
+  });
   unmount();
 });
