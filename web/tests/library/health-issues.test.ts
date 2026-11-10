@@ -214,3 +214,17 @@ describe("DuplicateExternalId", () => {
     expect(healthPayloadHint("MissingComicInfo", old)).toBeUndefined();
   });
 });
+
+describe("SymlinkSkipped", () => {
+  it("labels the kind and summarizes the link path", () => {
+    const payload = {
+      kind: "symlink_skipped",
+      data: { path: "/lib/Marvel/Linked Series" },
+    };
+    expect(healthKindLabel("SymlinkSkipped")).toBe("Symbolic link skipped");
+    expect(healthKindHint("SymlinkSkipped")).toMatch(/never follows/);
+    expect(healthPayloadSummary("SymlinkSkipped", payload)).toBe(
+      "/lib/Marvel/Linked Series",
+    );
+  });
+});

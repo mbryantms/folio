@@ -48,6 +48,33 @@ export const AmbientGlow = dynamic(
   { ssr: false },
 );
 
+export const preloadDragTurnPeek = () => import("./DragTurnPeek");
+/** Neighbouring pages shown beside the current one while a drag-to-turn
+ *  is in progress. Only mounted during a drag, and the drag motion itself
+ *  loads after the first paint (`lib/reader/use-drag-turn.ts`, which calls
+ *  `preloadDragTurnPeek` when it fetches its engine), so this is warm long
+ *  before the first drag. Decorative: if its chunk fails to load the drag
+ *  still moves the page, with nothing beside it, instead of throwing the
+ *  reader into its error boundary. */
+export const DragTurnPeek = dynamic(
+  () =>
+    import("./DragTurnPeek")
+      .then((m) => m.DragTurnPeek)
+      .catch(() => NoDragTurnPeek),
+  { ssr: false },
+);
+function NoDragTurnPeek() {
+  return null;
+}
+
+/** One-time "this file has known problems" toast (effect-only, renders
+ *  nothing). Its health query starts once the chunk lands, just after
+ *  hydration; the toast was never part of the first paint. */
+export const ReaderHealthToast = dynamic(
+  () => import("./ReaderHealthToast").then((m) => m.ReaderHealthToast),
+  { ssr: false },
+);
+
 export const preloadReaderChrome = () => import("./ReaderChrome");
 /** Top bar. Starts closed (translated above the viewport) and slides in
  *  after the first frame, so it is not part of the first paint. */

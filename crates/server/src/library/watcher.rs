@@ -48,7 +48,7 @@ use crate::state::AppState;
 use chrono::{DateTime, Utc};
 use entity::library;
 use notify_debouncer_full::notify::{self, EventKind, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify_debouncer_full::{DebounceEventResult, RecommendedCache, new_debouncer_opt};
 use sea_orm::EntityTrait;
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
@@ -291,6 +291,13 @@ impl TouchedDirs {
         // `symlink_metadata` stats the changed entry itself. Only reached in
         // inotify mode (local disk); the network poller never stats files.
         match std::fs::symlink_metadata(path) {
+            // A link is never followed, but its arrival is a change: the
+            // scoped scan reports it (`SymlinkSkipped`) and reconciles a
+            // series folder that was replaced by one.
+            Ok(meta) if meta.file_type().is_symlink() => {
+                self.dirs.insert(parent);
+                true
+            }
             Ok(meta) if meta.is_dir() => {
                 self.dirs.insert(path.to_path_buf());
                 self.dirs.insert(parent);
@@ -699,9 +706,17 @@ pub async fn start_library_watcher(
         // Adding a recursive inotify watch walks the directory tree once;
         // keep that off the async runtime.
         let setup = tokio::task::spawn_blocking(move || {
-            let mut debouncer = new_debouncer(tick, None, move |res: DebounceEventResult| {
-                let _ = tx.send(res);
-            })?;
+            // Never follow links below the root (the scanner does not index
+            // anything behind one); the root's own path is resolved as-is.
+            let mut debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, _>(
+                tick,
+                None,
+                move |res: DebounceEventResult| {
+                    let _ = tx.send(res);
+                },
+                RecommendedCache::new(),
+                notify::Config::default().with_follow_symlinks(false),
+            )?;
             debouncer.watch(&root_for_watch, RecursiveMode::Recursive)?;
             Ok::<_, notify::Error>(debouncer)
         })

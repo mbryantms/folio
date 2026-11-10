@@ -60,10 +60,10 @@ Verified against the code at `ed5d9019` on 2026-11-10 (DoS row).
 | Zip-slip | Entries are read into memory and never extracted to disk. Entry-name validation (`archive::entry_name`) rejects absolute paths, `.` and `..` components, empty components, backslashes and NUL; other control characters are allowed. CBT keeps regular-file entries only; CBZ and CBR skip directory entries. |
 | Subprocess RCE | Not applicable: the server runs no subprocess. The `unrar` binary in the container image is not invoked; RAR is read in-process. |
 | Image decoder CVEs | The server decodes JPEG, PNG, WebP and GIF in-process with the `image` crate (thumbnails, page variants, OCR, cover hashes) through `util::image_decode::decode_limited`, which refuses an image wider or taller than 20,000 px. AVIF and JPEG XL pages are content-sniffed and served as stored; the server does not decode them. No decoder sandbox exists (not implemented). |
-| Path traversal in scanner | A full library scan follows a symlink to a directory at the top level of the library or directly inside a publisher folder, and does not check that its target is inside the library root. Symlinks inside a series folder are skipped. A single-series rescan refuses a series folder whose resolved path is outside the root. Only people you trust should be able to write to a library folder: whatever the scanner indexes there is served to that library's readers. |
+| Path traversal in scanner | Symbolic links below a library root are never followed, wherever they point: the scanner classifies entries without following links and walks with `follow_links(false)` / `follow_root_links(false)`, so a linked publisher folder, series folder or archive is not indexed; each is reported as a `SymlinkSkipped` health finding. A single-series rescan refuses a folder that is, or sits under, a link. The configured root path itself may be a link (resolved once, as `validate_library` canonicalizes it). Serving routes (OPDS download, page bytes, OPDS page stream, thumbnails, OCR) open the stored path through `library::no_follow`: one name at a time from the root with `O_NOFOLLOW`, regular files only, otherwise not-found. An issue rescan checks the stored path the same way before ingesting. Still opened by name after a check or with none (each needs write access to the library folder plus timing; closing them is the next part): the archive reader behind page extraction, thumbnails and OCR (`zip_lru`), scanner ingest and hashing, the writeback read and rewrite (`jobs/rewrite_sidecars.rs`), thumbnail generation (`jobs/post_scan.rs`), deep validation (`library/deep_validate.rs`), cover hashing (`metadata/phash.rs`) and the admin archive editor (`api/archive_edit.rs`). Hard links cannot be told apart from ordinary files and are deliberately not refused (download tools commonly hard-link). The OPDS download refuses soft-removed issues. Only people you trust should be able to write to a library folder: whatever the scanner indexes there is served to that library's readers. |
 | Library-mount writability | No startup check (not implemented). Folio writes under a library root only when that library has `allow_archive_writeback` on ([archive-writes.md](../dev/archive-writes.md)); mount the library read-only when no library needs writeback. |
 
-Verified against the code at `1c51a486` on 2026-11-10.
+Verified against the code at `74a1c647` on 2026-11-10.
 
 ### WebSocket (`/ws/scan-events`)
 
@@ -85,11 +85,11 @@ App passwords (`app_…`, Basic or Bearer) authenticate only on the reader-clien
 
 | Threat | Mitigation |
 |---|---|
-| Brute-force on Basic Auth | Tokens are random and stored as argon2id + pepper. Per-IP buckets `opds_catalog` (30/min) and `opds_stream` (120/min) on `/opds/*`. The failed-auth lockout is not applied to OPDS or app-password authentication, and there is no OPDS lockout (not implemented). |
+| Brute-force on Basic Auth | Tokens are 256 random bits, stored as argon2id + pepper plus a SHA-256 lookup digest: a presented token is found by one indexed lookup and only that row is argon2-checked, so a wrong token costs no hashing once every row has its digest (rows from before the digest are tried at most 20 per request until each is used once). App-password misses count on their own per-IP lockout, separate from sign-in's (10 in 60 s, then 429 for 15 min, checked before any lookup or hashing, a miss charged before the legacy scan hashes; a refused token repeated within 5 min is answered from a refusal cache and not counted again; see [rate-limits.md](rate-limits.md#failed-auth-lockout)). App-password argon2 runs on the blocking pool behind 2 global permits; a request that can't get one within 2 s gets 503. Per-IP buckets `opds_catalog` (30/min) and `opds_stream` (120/min) on `/opds/*`. |
 | Stolen app password = full account | Reader routes only (above); two scopes (`read` / `read+progress`); revocable per token from account settings. |
 | URL-signature forgery (PSE) | HMAC-SHA256 with server-side key; ACL re-check on each request. |
 
-Verified against the code at `1c51a486` on 2026-11-10.
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### Email (when SMTP configured)
 
