@@ -49,40 +49,58 @@ pub fn origin_matches_host(origin: Option<&HeaderValue>, host: Option<&str>) -> 
     got.host() == sent_to.host() && got.port_or_known_default() == sent_to.port_or_known_default()
 }
 
-/// Why a browser request counts as cross-site for the CSRF-exempt sign-in
-/// POSTs, or `None` when it may proceed. The exact rule:
+/// Why a request counts as cross-site for the CSRF-exempt sign-in POSTs, or
+/// `None` when it may proceed. The exact rule:
 ///
-/// 1. `Sec-Fetch-Site: cross-site` or `same-site` refuses. `same-site` is
-///    refused on purpose: a sibling subdomain (another app on the same
-///    registrable domain) must not be able to sign a visitor in either, and
-///    no part of Folio posts these forms from another subdomain.
-///    `same-origin` and `none` (typed address, bookmark) pass this step.
-/// 2. An `Origin` header refuses unless it equals the configured public
-///    origin ([`origin_is_public`]) OR its host and port equal the
-///    request's own `Host` ([`origin_matches_host`]). `Origin: null` never
-///    passes.
-/// 3. A request with neither header (native clients, older browsers)
-///    proceeds.
+/// 1. When `Sec-Fetch-Site` is present it decides alone: `same-origin` and
+///    `none` (typed address, bookmark) proceed WITHOUT consulting `Origin`;
+///    `cross-site`, `same-site` and any other value are refused. It is a
+///    forbidden header name, set by the browser and never by a page, which
+///    is why it is trusted over `Origin`; a same-origin form post can carry
+///    `Origin: null` (an opaque origin under some referrer policies) while
+///    `Sec-Fetch-Site` still says `same-origin`. `same-site` is refused on
+///    purpose: a sibling subdomain must not sign visitors in, and nothing in
+///    Folio posts these forms from another subdomain.
+/// 2. Only without `Sec-Fetch-Site` (older browsers) does `Origin` decide:
+///    it proceeds when it equals the configured public origin
+///    ([`origin_is_public`]), or its host and port equal the request's own
+///    `Host` (the HTTP/2 authority when there is no `Host`), or, when the
+///    peer is a trusted proxy, the well-formed `X-Forwarded-Host` it set
+///    ([`crate::upstream::forwarded_host_proto`]; an untrusted peer's
+///    `X-Forwarded-Host` is never read). `Origin: null` is refused.
+/// 3. Neither header (native clients): proceed.
 pub fn cross_site_reason(
     headers: &HeaderMap,
     authority: Option<&str>,
     public_url: &str,
+    peer_trusted: bool,
 ) -> Option<&'static str> {
-    if let Some(site) = headers.get(SEC_FETCH_SITE).and_then(|v| v.to_str().ok())
-        && (site.eq_ignore_ascii_case("cross-site") || site.eq_ignore_ascii_case("same-site"))
+    if let Some(site) = headers.get(SEC_FETCH_SITE) {
+        let site = site.to_str().unwrap_or_default();
+        return if site.eq_ignore_ascii_case("same-origin") || site.eq_ignore_ascii_case("none") {
+            None
+        } else {
+            Some("sec-fetch-site")
+        };
+    }
+    let origin = headers.get(ORIGIN)?;
+    let host = headers
+        .get(HOST)
+        .and_then(|v| v.to_str().ok())
+        .or(authority);
+    let forwarded_host = if peer_trusted {
+        crate::upstream::forwarded_host_proto(headers, true).1
+    } else {
+        None
+    };
+    if origin_is_public(Some(origin), public_url)
+        || origin_matches_host(Some(origin), host)
+        || origin_matches_host(Some(origin), forwarded_host)
     {
-        return Some("sec-fetch-site");
+        None
+    } else {
+        Some("foreign-origin")
     }
-    if let Some(origin) = headers.get(ORIGIN) {
-        let host = headers
-            .get(HOST)
-            .and_then(|v| v.to_str().ok())
-            .or(authority);
-        if !origin_is_public(Some(origin), public_url) && !origin_matches_host(Some(origin), host) {
-            return Some("foreign-origin");
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -162,7 +180,11 @@ mod tests {
         ));
     }
 
-    fn reason(pairs: &[(&str, &str)], host: Option<&str>) -> Option<&'static str> {
+    fn reason_with(
+        pairs: &[(&str, &str)],
+        host: Option<&str>,
+        peer_trusted: bool,
+    ) -> Option<&'static str> {
         let mut h = HeaderMap::new();
         for (k, v) in pairs {
             h.insert(
@@ -170,22 +192,49 @@ mod tests {
                 HeaderValue::from_str(v).unwrap(),
             );
         }
-        cross_site_reason(&h, host, "https://comics.example.com")
+        cross_site_reason(&h, host, "https://comics.example.com", peer_trusted)
+    }
+
+    fn reason(pairs: &[(&str, &str)], host: Option<&str>) -> Option<&'static str> {
+        reason_with(pairs, host, false)
     }
 
     #[test]
-    fn cross_site_rule() {
-        assert_eq!(reason(&[], None), None);
+    fn sec_fetch_site_decides_alone_when_present() {
+        let refused = Some("sec-fetch-site");
         assert_eq!(reason(&[("sec-fetch-site", "same-origin")], None), None);
-        assert_eq!(reason(&[("sec-fetch-site", "none")], None), None);
         assert_eq!(
-            reason(&[("sec-fetch-site", "cross-site")], None),
-            Some("sec-fetch-site")
+            reason(
+                &[("sec-fetch-site", "same-origin"), ("origin", "null")],
+                None
+            ),
+            None,
+            "a same-origin form post under a strict referrer policy sends Origin: null"
         );
         assert_eq!(
-            reason(&[("sec-fetch-site", "same-site")], None),
-            Some("sec-fetch-site")
+            reason(&[("sec-fetch-site", "none"), ("origin", "null")], None),
+            None
         );
+        assert_eq!(reason(&[("sec-fetch-site", "cross-site")], None), refused);
+        assert_eq!(
+            reason(
+                &[
+                    ("sec-fetch-site", "cross-site"),
+                    ("origin", "https://comics.example.com")
+                ],
+                None
+            ),
+            refused,
+            "a matching Origin does not override Sec-Fetch-Site"
+        );
+        assert_eq!(reason(&[("sec-fetch-site", "same-site")], None), refused);
+        assert_eq!(reason(&[("sec-fetch-site", "bogus")], None), refused);
+    }
+
+    #[test]
+    fn origin_decides_without_sec_fetch_site() {
+        let refused = Some("foreign-origin");
+        assert_eq!(reason(&[], None), None, "no header: a native client");
         assert_eq!(
             reason(&[("origin", "https://comics.example.com")], None),
             None
@@ -196,6 +245,23 @@ mod tests {
                     ("origin", "http://192.168.1.20:8080"),
                     ("host", "192.168.1.20:8080")
                 ],
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            reason(
+                &[
+                    ("origin", "https://lan.example"),
+                    ("host", "lan.example:443")
+                ],
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            reason(
+                &[("origin", "http://lan.example"), ("host", "lan.example:80")],
                 None
             ),
             None
@@ -216,11 +282,39 @@ mod tests {
                 ],
                 None
             ),
-            Some("foreign-origin")
+            refused
         );
         assert_eq!(
             reason(&[("origin", "null"), ("host", "comics.example.com")], None),
-            Some("foreign-origin")
+            refused
+        );
+    }
+
+    #[test]
+    fn forwarded_host_counts_only_from_a_trusted_proxy() {
+        let headers = [
+            ("origin", "https://comics.lan"),
+            ("host", "folio:8080"),
+            ("x-forwarded-host", "comics.lan"),
+        ];
+        assert_eq!(reason_with(&headers, None, true), None);
+        assert_eq!(
+            reason_with(&headers, None, false),
+            Some("foreign-origin"),
+            "an untrusted peer's X-Forwarded-Host is never read"
+        );
+        assert_eq!(
+            reason_with(
+                &[
+                    ("origin", "https://comics.lan"),
+                    ("host", "folio:8080"),
+                    ("x-forwarded-host", "comics.lan/evil"),
+                ],
+                None,
+                true
+            ),
+            Some("foreign-origin"),
+            "a malformed X-Forwarded-Host is ignored"
         );
     }
 }

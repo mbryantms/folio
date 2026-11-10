@@ -732,13 +732,22 @@ pub async fn login(
     let peppers = app.secrets.peppers();
     let stored = user_row.as_ref().and_then(|r| r.password_hash.clone());
     let verified = match stored.as_deref() {
-        Some(stored) => password::verify_rotating_blocking(stored, &req.password, peppers)
-            .await
-            .unwrap_or(password::Verified::No),
+        Some(stored) => password::verify_rotating_blocking(stored, &req.password, peppers).await,
         None => {
             password::dummy_verify_blocking(&req.password, peppers, app.cfg().password_hash_cost)
-                .await;
-            password::Verified::No
+                .await
+                .map(|()| password::Verified::No)
+        }
+    };
+    // An unparsable stored hash is a non-match; a failed hashing task says
+    // nothing about the password, so it is a 500 and is not charged to the
+    // lockout.
+    let verified = match verified {
+        Ok(v) => v,
+        Err(password::PasswordError::InvalidHash) => password::Verified::No,
+        Err(e) => {
+            tracing::error!(error = %e, "login password check failed");
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
     let row = match user_row {

@@ -5,8 +5,9 @@
 //!   disabled / unverified codes only answer a correct password. The
 //!   failed-auth lockout counts every one of those attempts as before.
 //! - The CSRF-exempt sign-in POSTs refuse a request a browser marks as
-//!   cross-site (`Sec-Fetch-Site`) or whose `Origin` is neither the public
-//!   origin nor the request's own `Host`.
+//!   cross-site (`Sec-Fetch-Site`, which decides alone when present) or,
+//!   without it, whose `Origin` is neither the public origin, nor the
+//!   request's own `Host`, nor a trusted proxy's `X-Forwarded-Host`.
 //!
 //! Timing is not asserted (flaky); the code paths are.
 
@@ -230,38 +231,80 @@ async fn form_login_reports_state_only_to_the_right_password() {
 // ───────── cross-site guard on the CSRF-exempt sign-in POSTs ─────────
 
 const PUBLIC_ORIGIN: &str = "http://localhost:8080"; // TestApp's public_url
+const FORM: &str = "application/x-www-form-urlencoded";
+const JSON: &str = "application/json";
 
-fn route_body(route: &str) -> serde_json::Value {
-    match route {
-        "/auth/local/login" => serde_json::json!({ "email": "x@example.com", "password": WRONG }),
-        "/auth/local/register" => {
-            serde_json::json!({ "email": "new@example.com", "password": PW })
-        }
-        _ => serde_json::json!({ "email": "x@example.com" }),
+/// POST `body` as `content_type` from client address `n`, with `extra`.
+async fn post_raw(
+    app: &TestApp,
+    n: u8,
+    uri: &str,
+    content_type: &str,
+    body: &str,
+    extra: &[(&str, &str)],
+) -> Response<Body> {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, content_type);
+    for (k, v) in extra {
+        req = req.header(*k, *v);
     }
+    let mut req = req.body(Body::from(body.to_owned())).unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([198, 51, 100, n], 40_000))));
+    app.router.clone().oneshot(req).await.unwrap()
 }
 
-const GUARDED: [&str; 3] = [
-    "/auth/local/login",
-    "/auth/local/register",
-    "/auth/local/request-password-reset",
+fn location(resp: &Response<Body>) -> String {
+    resp.headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// Every CSRF-exempt POST the guard covers, with a JSON body its handler
+/// accepts.
+const GUARDED: [(&str, &str); 5] = [
+    (
+        "/auth/local/login",
+        r#"{"email":"x@example.com","password":"not-the-password-at-all"}"#,
+    ),
+    (
+        "/auth/local/register",
+        r#"{"email":"new@example.com","password":"correctly-horse-battery"}"#,
+    ),
+    (
+        "/auth/local/request-password-reset",
+        r#"{"email":"x@example.com"}"#,
+    ),
+    (
+        "/auth/local/reset-password",
+        r#"{"token":"bogus","new_password":"correctly-horse-battery"}"#,
+    ),
+    (
+        "/auth/local/resend-verification",
+        r#"{"email":"x@example.com"}"#,
+    ),
 ];
 
 #[tokio::test]
-async fn cross_site_sign_in_posts_are_refused() {
-    let refused: [&[(&str, &str)]; 4] = [
+async fn cross_site_sign_in_posts_are_refused_on_every_guarded_route() {
+    let refused: [&[(&str, &str)]; 5] = [
         &[("sec-fetch-site", "cross-site")],
         &[("sec-fetch-site", "same-site")],
+        &[("sec-fetch-site", "cross-site"), ("origin", PUBLIC_ORIGIN)],
         &[
             ("origin", "https://evil.example"),
             ("host", "localhost:8080"),
         ],
         &[("origin", "null"), ("host", "localhost:8080")],
     ];
-    for route in GUARDED {
+    for (route, body) in GUARDED {
+        let app = TestApp::spawn().await;
         for (i, headers) in refused.iter().enumerate() {
-            let app = TestApp::spawn().await;
-            let resp = post_from(&app, 50 + i as u8, route, route_body(route), headers).await;
+            let resp = post_raw(&app, 50 + i as u8, route, JSON, body, headers).await;
             let (status, code) = status_and_code(resp).await;
             assert_eq!(
                 (status, code.as_str()),
@@ -273,23 +316,26 @@ async fn cross_site_sign_in_posts_are_refused() {
 }
 
 #[tokio::test]
-async fn same_origin_and_headerless_sign_in_posts_proceed() {
-    let allowed: [&[(&str, &str)]; 5] = [
+async fn same_origin_and_headerless_sign_in_posts_proceed_on_every_guarded_route() {
+    let allowed: [&[(&str, &str)]; 6] = [
         &[],
-        &[("origin", PUBLIC_ORIGIN), ("sec-fetch-site", "same-origin")],
+        &[("sec-fetch-site", "same-origin"), ("origin", "null")],
+        &[("sec-fetch-site", "none"), ("origin", "null")],
+        &[("origin", PUBLIC_ORIGIN)],
         // A LAN address that is not the public URL: Origin equals Host.
         &[
             ("origin", "http://192.168.1.20:8080"),
             ("host", "192.168.1.20:8080"),
-            ("sec-fetch-site", "same-origin"),
         ],
-        &[("origin", PUBLIC_ORIGIN), ("host", "app:8080")],
-        &[("sec-fetch-site", "none")],
+        &[
+            ("origin", "https://lan.example"),
+            ("host", "lan.example:443"),
+        ],
     ];
-    for route in GUARDED {
+    for (route, body) in GUARDED {
         for (i, headers) in allowed.iter().enumerate() {
             let app = TestApp::spawn().await;
-            let resp = post_from(&app, 60 + i as u8, route, route_body(route), headers).await;
+            let resp = post_raw(&app, 60 + i as u8, route, JSON, body, headers).await;
             let status = resp.status();
             let (_, code) = status_and_code(resp).await;
             assert_ne!(code, "auth.csrf", "{route} {headers:?}");
@@ -299,8 +345,9 @@ async fn same_origin_and_headerless_sign_in_posts_proceed() {
                     StatusCode::OK
                         | StatusCode::CREATED
                         | StatusCode::ACCEPTED
-                        | StatusCode::UNAUTHORIZED
                         | StatusCode::NO_CONTENT
+                        | StatusCode::BAD_REQUEST
+                        | StatusCode::UNAUTHORIZED
                 ),
                 "{route} {headers:?}: {status}"
             );
@@ -308,22 +355,277 @@ async fn same_origin_and_headerless_sign_in_posts_proceed() {
     }
 }
 
-/// The OIDC callback is a cross-site redirect by design (its state cookie
-/// gates it) and keeps no cross-site guard.
+/// The no-JavaScript forms: a same-origin form post under a strict
+/// referrer policy carries `Sec-Fetch-Site: same-origin` with `Origin:
+/// null`. It reaches the handler, which answers the form its usual way.
 #[tokio::test]
-async fn oidc_callback_is_not_cross_site_guarded() {
+async fn same_origin_form_posts_with_a_null_origin_reach_the_handler() {
+    let headers: &[(&str, &str)] = &[("sec-fetch-site", "same-origin"), ("origin", "null")];
     let app = TestApp::spawn().await;
-    let mut req = Request::builder()
-        .method(Method::GET)
-        .uri("/auth/oidc/callback?code=x&state=y")
-        .header("sec-fetch-site", "cross-site")
-        .header("origin", "https://idp.example")
-        .body(Body::empty())
-        .unwrap();
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([198, 51, 100, 99], 40_000))));
-    let resp = app.router.clone().oneshot(req).await.unwrap();
-    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let text = String::from_utf8_lossy(&bytes);
-    assert!(!text.contains("auth.csrf"), "{text}");
+
+    let resp = post_raw(
+        &app,
+        70,
+        "/auth/local/login",
+        FORM,
+        "email=x%40example.com&password=not-the-password-at-all",
+        headers,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert!(
+        location(&resp).starts_with("/sign-in?error=auth.invalid"),
+        "{}",
+        location(&resp)
+    );
+
+    let resp = post_raw(
+        &app,
+        71,
+        "/auth/local/register",
+        FORM,
+        "email=first%40example.com&password=correctly-horse-battery",
+        headers,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert!(!location(&resp).contains("error="), "{}", location(&resp));
+
+    let resp = post_raw(
+        &app,
+        72,
+        "/auth/local/request-password-reset",
+        FORM,
+        "email=x%40example.com",
+        headers,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(location(&resp), "/forgot-password?sent=1");
+
+    let resp = post_raw(
+        &app,
+        73,
+        "/auth/local/reset-password",
+        FORM,
+        "token=bogus&new_password=correctly-horse-battery",
+        headers,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert!(
+        location(&resp).starts_with("/forgot-password?error=auth.token_invalid"),
+        "{}",
+        location(&resp)
+    );
+}
+
+/// Without `Sec-Fetch-Site`, `Origin` decides; default ports are equivalent.
+#[tokio::test]
+async fn origin_rule_without_sec_fetch_site() {
+    let app = TestApp::spawn().await;
+    let cases: [(&[(&str, &str)], bool); 6] = [
+        (&[("origin", PUBLIC_ORIGIN)], true),
+        (
+            &[
+                ("origin", "http://192.168.1.20:8080"),
+                ("host", "192.168.1.20:8080"),
+            ],
+            true,
+        ),
+        (
+            &[
+                ("origin", "https://lan.example"),
+                ("host", "lan.example:443"),
+            ],
+            true,
+        ),
+        (
+            &[("origin", "http://lan.example"), ("host", "lan.example:80")],
+            true,
+        ),
+        (&[("origin", "null"), ("host", "localhost:8080")], false),
+        (
+            &[
+                ("origin", "http://lan.example:8080"),
+                ("host", "lan.example:80"),
+            ],
+            false,
+        ),
+    ];
+    for (i, (headers, passes)) in cases.into_iter().enumerate() {
+        let body = format!(r#"{{"email":"case{i}@example.com","password":"{WRONG}"}}"#);
+        let resp = post_raw(
+            &app,
+            80 + i as u8,
+            "/auth/local/login",
+            JSON,
+            &body,
+            headers,
+        )
+        .await;
+        let (status, code) = status_and_code(resp).await;
+        let expected = if passes {
+            (StatusCode::UNAUTHORIZED, "auth.invalid")
+        } else {
+            (StatusCode::FORBIDDEN, "auth.csrf")
+        };
+        assert_eq!((status, code.as_str()), expected, "{headers:?}");
+    }
+}
+
+/// A refused form navigation is sent back to its page with the generic
+/// `auth.csrf` error; a refused JSON call gets the 403 envelope.
+#[tokio::test]
+async fn refused_form_posts_redirect_back_and_json_gets_the_envelope() {
+    let app = TestApp::spawn().await;
+    let cross: &[(&str, &str)] = &[("sec-fetch-site", "cross-site")];
+    let cases = [
+        (
+            "/auth/local/login",
+            "email=x%40example.com&password=pw",
+            "/sign-in?error=auth.csrf",
+        ),
+        (
+            "/auth/local/register",
+            "email=x%40example.com&password=pw",
+            "/sign-in?error=auth.csrf",
+        ),
+        (
+            "/auth/local/request-password-reset",
+            "email=x%40example.com",
+            "/forgot-password?error=auth.csrf",
+        ),
+        (
+            "/auth/local/reset-password",
+            "token=tok-123&new_password=pw",
+            "/reset-password?token=tok-123&error=auth.csrf",
+        ),
+    ];
+    for (i, (route, body, target)) in cases.into_iter().enumerate() {
+        let resp = post_raw(&app, 90 + i as u8, route, FORM, body, cross).await;
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER, "{route}");
+        assert!(
+            location(&resp).starts_with(target),
+            "{route}: {}",
+            location(&resp)
+        );
+    }
+    // Sec-Fetch-Mode: navigate marks a form navigation too.
+    let resp = post_raw(
+        &app,
+        95,
+        "/auth/local/login",
+        "text/plain",
+        "x",
+        &[
+            ("sec-fetch-site", "cross-site"),
+            ("sec-fetch-mode", "navigate"),
+        ],
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let resp = post_raw(&app, 96, "/auth/local/login", JSON, "{}", cross).await;
+    let (status, code) = status_and_code(resp).await;
+    assert_eq!(
+        (status, code.as_str()),
+        (StatusCode::FORBIDDEN, "auth.csrf")
+    );
+}
+
+/// Redis key of a failed-auth counter, derived as `auth::failed_auth`
+/// derives it (SHA-256 of the lower-cased address, first 8 bytes in hex).
+fn email_counter_key(email: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(email.trim().to_lowercase().as_bytes());
+    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    format!("auth_fail_email:{hex}")
+}
+
+async fn counter(app: &TestApp, key: &str) -> Option<i64> {
+    use redis::AsyncCommands;
+    let mut redis = app.state().jobs.redis.clone();
+    redis.get(key).await.unwrap()
+}
+
+/// A refused cross-site POST never reaches the handler, so it charges
+/// neither lockout axis.
+#[tokio::test]
+async fn refused_cross_site_posts_do_not_touch_the_lockout_counters() {
+    let app = TestApp::spawn().await;
+    let email = "counted@example.com";
+    let body = format!(r#"{{"email":"{email}","password":"{WRONG}"}}"#);
+    let resp = post_raw(
+        &app,
+        100,
+        "/auth/local/login",
+        JSON,
+        &body,
+        &[("sec-fetch-site", "cross-site")],
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(counter(&app, &email_counter_key(email)).await, None);
+    assert_eq!(counter(&app, "auth_fail:198.51.100.100").await, None);
+
+    // Control: the same attempt same-origin is counted on both axes.
+    let resp = post_raw(&app, 100, "/auth/local/login", JSON, &body, &[]).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(counter(&app, &email_counter_key(email)).await, Some(1));
+    assert_eq!(counter(&app, "auth_fail:198.51.100.100").await, Some(1));
+}
+
+/// A trusted proxy's `X-Forwarded-Host` counts as the request's host for
+/// the `Origin` rule; an untrusted peer's is ignored.
+#[tokio::test]
+async fn forwarded_host_counts_only_from_a_trusted_proxy() {
+    let headers: &[(&str, &str)] = &[
+        ("origin", "https://comics.lan"),
+        ("host", "folio:8080"),
+        ("x-forwarded-host", "comics.lan"),
+        ("x-forwarded-proto", "https"),
+    ];
+    let body = format!(r#"{{"email":"x@example.com","password":"{WRONG}"}}"#);
+
+    let trusted = TestApp::spawn_with_trusted_proxies("198.51.100.0/24").await;
+    let resp = post_raw(&trusted, 110, "/auth/local/login", JSON, &body, headers).await;
+    let (status, code) = status_and_code(resp).await;
+    assert_eq!(
+        (status, code.as_str()),
+        (StatusCode::UNAUTHORIZED, "auth.invalid")
+    );
+
+    let untrusted = TestApp::spawn().await;
+    let resp = post_raw(&untrusted, 110, "/auth/local/login", JSON, &body, headers).await;
+    let (status, code) = status_and_code(resp).await;
+    assert_eq!(
+        (status, code.as_str()),
+        (StatusCode::FORBIDDEN, "auth.csrf")
+    );
+}
+
+/// The `/api`-prefixed mounts of the sign-in routes are not CSRF-exempt:
+/// without the double-submit token they are refused even same-origin, so
+/// they are not reachable cross-site either.
+#[tokio::test]
+async fn api_mounts_of_the_sign_in_routes_need_the_csrf_token() {
+    let app = TestApp::spawn().await;
+    for (route, body) in GUARDED {
+        let api = format!("/api{route}");
+        let resp = post_raw(
+            &app,
+            120,
+            &api,
+            JSON,
+            body,
+            &[("sec-fetch-site", "same-origin")],
+        )
+        .await;
+        let (status, code) = status_and_code(resp).await;
+        assert_eq!(
+            (status, code.as_str()),
+            (StatusCode::FORBIDDEN, "auth.csrf"),
+            "{api}"
+        );
+    }
 }

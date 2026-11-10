@@ -249,6 +249,9 @@ pub async fn update(
                     locked_msg,
                 );
             }
+            PasswordCheck::Internal => {
+                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
             PasswordCheck::Wrong => {
                 tracing::info!(reason = "bad_password", "email change rejected");
                 return fail_password(StatusCode::FORBIDDEN, ApiErrorCode::AuthInvalid, wrong_msg);
@@ -312,6 +315,9 @@ pub async fn update(
                         "auth.locked_out",
                         locked_msg,
                     );
+                }
+                PasswordCheck::Internal => {
+                    return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
                 }
                 PasswordCheck::Wrong => {
                     tracing::info!(reason = "bad_password", "password change rejected");

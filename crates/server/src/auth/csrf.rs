@@ -81,14 +81,19 @@ pub async fn require_csrf(State(app): State<AppState>, req: Request, next: Next)
         return next.run(req).await;
     }
     if path_is_exempt(req.uri().path()) {
+        let peer_trusted = req
+            .extensions()
+            .get::<crate::middleware::RequestContext>()
+            .is_some_and(|c| c.peer_trusted);
         if CROSS_SITE_GUARDED_PATHS.contains(&req.uri().path())
             && let Some(reason) = super::origin::cross_site_reason(
                 req.headers(),
                 req.uri().authority().map(|a| a.as_str()),
                 &app.cfg().public_url,
+                peer_trusted,
             )
         {
-            return csrf_error(req.method(), req.uri().path(), reason);
+            return cross_site_refusal(req, reason).await;
         }
         return next.run(req).await;
     }
@@ -303,6 +308,72 @@ pub const CROSS_SITE_GUARDED_PATHS: &[&str] = &[
     "/auth/local/reset-password",
     "/auth/local/resend-verification",
 ];
+
+/// The refusal for a cross-site sign-in POST. A form navigation (a form
+/// content type, or `Sec-Fetch-Mode: navigate`) gets a 303 back to the page
+/// the form lives on with `error=auth.csrf`, which those pages show as a
+/// banner; any other caller gets the 403 `auth.csrf` envelope. Either way
+/// the answer is the same whichever check failed (the reason is logged).
+async fn cross_site_refusal(req: Request, reason: &'static str) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let content_type = req
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let urlencoded = content_type.starts_with("application/x-www-form-urlencoded");
+    let is_form = urlencoded
+        || content_type.starts_with("multipart/form-data")
+        || req
+            .headers()
+            .get("sec-fetch-mode")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|m| m.eq_ignore_ascii_case("navigate"));
+    if !is_form {
+        return csrf_error(&method, &path, reason);
+    }
+    tracing::info!(method = %method, path = %path, reason = %reason, "csrf rejection");
+    const CODE: &str = "auth.csrf";
+    const MESSAGE: &str = "request could not be verified";
+    let target = match path.as_str() {
+        "/auth/local/request-password-reset" => {
+            crate::api::form_or_json::redirect_with_error("/forgot-password", CODE, MESSAGE, None)
+        }
+        // The reset page needs its token back; it travels in the form body.
+        "/auth/local/reset-password" => {
+            let token = if urlencoded {
+                to_bytes(req.into_body(), MAX_FORM_BODY_FOR_CSRF)
+                    .await
+                    .ok()
+                    .and_then(|b| {
+                        serde_urlencoded::from_bytes::<Vec<(String, String)>>(&b)
+                            .ok()?
+                            .into_iter()
+                            .find_map(|(k, v)| (k == "token").then_some(v))
+                    })
+            } else {
+                None
+            };
+            match token {
+                Some(t) => format!(
+                    "/reset-password?token={}&error={CODE}&message={}",
+                    urlencoding::encode(&t),
+                    urlencoding::encode(MESSAGE)
+                ),
+                None => crate::api::form_or_json::redirect_with_error(
+                    "/forgot-password",
+                    CODE,
+                    MESSAGE,
+                    None,
+                ),
+            }
+        }
+        _ => crate::api::form_or_json::redirect_with_error("/sign-in", CODE, MESSAGE, None),
+    };
+    axum::response::Redirect::to(&target).into_response()
+}
 
 fn path_is_exempt(path: &str) -> bool {
     CSRF_EXEMPT_PATHS.contains(&path)
