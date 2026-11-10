@@ -991,10 +991,34 @@ impl Config {
         for r in rows {
             apply_overlay_row(&mut next, &r);
         }
+        next.clamp_stored_auth_durations();
         next.resolve_auth()?;
         next.validate()?;
         *self = next;
         Ok(())
+    }
+
+    /// Read a stored auth duration above [`AUTH_DURATION_CAP`] as the cap,
+    /// with a warning. Such a row can predate the cap or have been written
+    /// to the table by hand; refusing it would fail validation of the whole
+    /// overlay and drop every saved setting. Only the load path does this:
+    /// a settings change through the API is validated as written and
+    /// answers 422. Values that do not parse are left for `validate`.
+    fn clamp_stored_auth_durations(&mut self) {
+        for (key, value) in [
+            ("auth.jwt.access_ttl", &mut self.jwt_access_ttl),
+            ("auth.jwt.refresh_ttl", &mut self.jwt_refresh_ttl),
+            ("auth.session.max_age", &mut self.session_max_age),
+        ] {
+            if Self::parse_duration(value).is_ok_and(|d| d > AUTH_DURATION_CAP) {
+                tracing::warn!(
+                    key,
+                    stored = %value,
+                    "stored duration is above the 3650d ceiling; using 3650d"
+                );
+                *value = "3650d".to_owned();
+            }
+        }
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -1244,25 +1268,6 @@ impl Config {
 /// the DB value; the bootstrap path that copies env→DB on first boot
 /// would otherwise be noisy on every restart even though the values
 /// agree.
-/// A stored auth duration above [`AUTH_DURATION_CAP`] (saved before the
-/// cap existed, or written to the table by hand) is read as the cap, with
-/// a warning. Refusing it here would fail validation of the whole overlay
-/// and drop every saved setting at boot. Values that do not parse are
-/// left for `validate` to report.
-fn stored_auth_duration(key: &str, stored: &str) -> String {
-    match Config::parse_duration(stored) {
-        Ok(d) if d > AUTH_DURATION_CAP => {
-            tracing::warn!(
-                key,
-                stored,
-                "stored duration is above the 3650d ceiling; using 3650d"
-            );
-            "3650d".to_owned()
-        }
-        _ => stored.to_owned(),
-    }
-}
-
 pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolved) {
     use serde_json::Value;
 
@@ -1515,21 +1520,21 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         "auth.jwt.access_ttl" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.jwt_access_ttl.as_str()), s);
-                cfg.jwt_access_ttl = stored_auth_duration(&row.key, s);
+                cfg.jwt_access_ttl = s.to_owned();
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
         "auth.jwt.refresh_ttl" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.jwt_refresh_ttl.as_str()), s);
-                cfg.jwt_refresh_ttl = stored_auth_duration(&row.key, s);
+                cfg.jwt_refresh_ttl = s.to_owned();
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
         "auth.session.max_age" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.session_max_age.as_str()), s);
-                cfg.session_max_age = stored_auth_duration(&row.key, s);
+                cfg.session_max_age = s.to_owned();
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
@@ -2354,12 +2359,17 @@ mod tests {
                 },
             );
         }
+        // As written, the rows fail validation: a settings change through
+        // the API is refused.
+        assert!(cfg.validate().is_err());
+        // The load path reads them as the cap, so the overlay validates
+        // and the other saved settings still load.
+        cfg.clamp_stored_auth_durations();
         assert_eq!(cfg.jwt_access_ttl, "3650d");
         assert_eq!(cfg.jwt_refresh_ttl, "3650d");
         assert_eq!(cfg.session_max_age, "3650d");
-        // The overlay still validates, so the other saved settings load.
         assert!(cfg.validate().is_ok());
-        // An ordinary value is stored as written.
+        // An ordinary value is left as written.
         apply_overlay_row(
             &mut cfg,
             &crate::settings::Resolved {
@@ -2368,6 +2378,7 @@ mod tests {
                 is_secret: false,
             },
         );
+        cfg.clamp_stored_auth_durations();
         assert_eq!(cfg.session_max_age, "30d");
     }
 }
