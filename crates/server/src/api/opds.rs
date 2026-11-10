@@ -3779,7 +3779,8 @@ pub(crate) async fn progress_put(
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    // Hidden or soft-removed: no new progress, answered like an unknown id.
+    if !access::issue_writable(&app, &user, &row.id).await {
         return not_found();
     }
     // M4: normalize `page` / `position` into the integer `last_page`
@@ -3939,7 +3940,8 @@ async fn koreader_sync_put(
         }
         Err(e) => return server_error(e.to_string()),
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    // Hidden or soft-removed: no new progress, answered like an unknown hash.
+    if !access::issue_writable(&app, &user, &row.id).await {
         return error(
             StatusCode::UNAUTHORIZED,
             "document_unknown",

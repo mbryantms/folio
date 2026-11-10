@@ -851,7 +851,8 @@ async fn issue_results_respect_library_acl() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another user's view answers like an unknown id.
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 // ───── WP-5.7: has_notes / has_bookmarks / has_highlights ─────

@@ -803,7 +803,8 @@ async fn non_owner_cannot_access_other_users_list() {
     let other = register(&app, "other@example.com").await;
     let url = format!("/api/me/cbl-lists/{list_id}");
     let (status, _) = http(&app, Method::GET, &url, Some(&other), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another user's list answers exactly like an unknown id.
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -907,7 +908,8 @@ async fn export_rejected_for_other_users_lists() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another user's list answers exactly like an unknown id.
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1138,7 +1140,8 @@ async fn entries_endpoint_rejects_non_owner() {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another user's list answers exactly like an unknown id.
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

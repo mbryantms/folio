@@ -104,6 +104,7 @@ const ISSUE_CBLS: &str = "\
     JOIN cbl_lists cl ON cl.id = ce.cbl_list_id \
     JOIN saved_views sv ON sv.cbl_list_id = cl.id AND sv.kind = 'cbl' \
     WHERE ce.matched_issue_id = $1 AND sv.user_id = $2 \
+      AND (cl.owner_user_id IS NULL OR cl.owner_user_id = $2) \
     ORDER BY cl.parsed_name";
 
 const ISSUE_COLLECTIONS: &str = "\
@@ -181,7 +182,8 @@ fn series_cbls_sql(vis: &str) -> String {
          JOIN cbl_lists cl ON cl.id = ce.cbl_list_id \
          JOIN saved_views sv ON sv.cbl_list_id = cl.id AND sv.kind = 'cbl' \
          JOIN issues i ON i.id = ce.matched_issue_id \
-         WHERE i.series_id = $1 AND sv.user_id = $2{vis} \
+         WHERE i.series_id = $1 AND sv.user_id = $2 \
+           AND (cl.owner_user_id IS NULL OR cl.owner_user_id = $2){vis} \
          GROUP BY sv.id, cl.parsed_name \
          ORDER BY cl.parsed_name"
     )

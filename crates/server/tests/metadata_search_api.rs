@@ -155,7 +155,7 @@ async fn search_series_404_when_slug_unknown() {
 }
 
 #[tokio::test]
-async fn search_series_403_when_non_admin_lacks_library_access() {
+async fn search_series_404_when_non_admin_lacks_library_access() {
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
@@ -167,7 +167,10 @@ async fn search_series_403_when_non_admin_lacks_library_access() {
         &format!("/api/series/{series_id}/metadata/search"),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    // A series the caller can't see answers like an unknown slug.
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "not_found");
 }
 
 #[tokio::test]
@@ -863,7 +866,7 @@ async fn search_issue_400_when_issue_has_no_number_raw() {
 // ───────── composite (multi-provider) endpoints ─────────
 
 #[tokio::test]
-async fn composite_diff_series_403_when_non_admin_lacks_access() {
+async fn composite_diff_series_404_when_non_admin_lacks_access() {
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
@@ -876,7 +879,7 @@ async fn composite_diff_series_403_when_non_admin_lacks_access() {
         &format!("/api/series/{series_id}/metadata/composite-diff?run_id={run}"),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -1798,7 +1801,7 @@ async fn lookup_series_rejects_unconfigured_provider_with_422() {
 }
 
 #[tokio::test]
-async fn lookup_series_403_when_non_admin_lacks_library_access() {
+async fn lookup_series_404_when_non_admin_lacks_library_access() {
     let app = TestApp::spawn_with_comicvine("k", true).await;
     let _admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
     let user = register_authed(&app, "user@example.com", "correctly-horse-battery").await;
@@ -1811,7 +1814,7 @@ async fn lookup_series_403_when_non_admin_lacks_library_access() {
         json!({"url": "https://comicvine.gamespot.com/volume/4050-12345/"}),
     )
     .await;
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

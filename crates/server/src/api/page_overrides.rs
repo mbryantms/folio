@@ -90,31 +90,25 @@ fn internal(ctx: &str, e: &dyn std::fmt::Display) -> Response {
     )
 }
 
-/// Load the issue and enforce library ACL + age-rating visibility. An
-/// invisible issue is reported as missing (404).
+/// Load the issue and enforce library ACL + age-rating visibility, and
+/// that it is live (`access::visible_issue`). An invisible or soft-removed
+/// issue is reported as missing (404).
 async fn visible_issue(
     app: &AppState,
     user: &CurrentUser,
     issue_id: &str,
 ) -> Result<issue::Model, Response> {
-    let row = issue::Entity::find_by_id(issue_id.to_owned())
-        .one(&app.db)
+    let acl = access::for_user(app, user).await;
+    access::visible_issue(&app.db, &acl, issue_id)
         .await
-        .map_err(|e| internal("issue fetch failed", &e))?;
-    let not_found = || {
-        respond(
-            StatusCode::NOT_FOUND,
-            ApiErrorCode::NotFound,
-            "issue not found",
-        )
-    };
-    let Some(row) = row else {
-        return Err(not_found());
-    };
-    if !access::issue_visible(app, user, &row).await {
-        return Err(not_found());
-    }
-    Ok(row)
+        .map_err(|e| internal("issue fetch failed", &e))?
+        .ok_or_else(|| {
+            respond(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "issue not found",
+            )
+        })
 }
 
 fn pages_from_json(v: &serde_json::Value) -> Vec<i32> {

@@ -686,10 +686,10 @@ async fn collection_next_up_endpoint_start_then_continue_then_done() {
     assert_eq!(body["total"], 4);
     assert_eq!(body["started"], true);
 
-    // Someone else's collection is forbidden, a missing one is 404.
+    // Someone else's collection answers like a missing one: 404.
     let other = register(&app, "nuc-page-2@example.com").await;
     let (status, _) = http(&app, Method::GET, &url, Some(&other), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = http(
         &app,
         Method::GET,
@@ -784,8 +784,8 @@ async fn collection_window_anchors_on_first_unfinished_and_pages_by_position() {
     assert!(body.get("current_index").is_none());
     assert_eq!(body["total"], 4);
 
-    // Ownership: someone else's collection is forbidden.
+    // Ownership: someone else's collection answers like a missing one.
     let other = register(&app, "win-page-2@example.com").await;
     let (status, _) = http(&app, Method::GET, &base, Some(&other), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

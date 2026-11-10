@@ -665,8 +665,9 @@ async fn cross_user_collection_access_denied() {
 
     // Bob can't read alice's collection entries.
     let url = format!("/api/me/collections/{cid}/entries");
+    // Another user's collection answers exactly like an unknown id.
     let (status, body) = http(&app, Method::GET, &url, Some(&bob), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "body: {body:#?}");
+    assert_eq!(status, StatusCode::NOT_FOUND, "body: {body:#?}");
 
     // Bob can't patch it.
     let patch_url = format!("/api/me/collections/{cid}");
@@ -678,11 +679,11 @@ async fn cross_user_collection_access_denied() {
         Some(serde_json::json!({ "name": "Stolen" })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Bob can't delete it either.
     let (status, _) = http(&app, Method::DELETE, &patch_url, Some(&bob), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -953,10 +954,8 @@ async fn bulk_add_rejects_non_owner() {
         Some(serde_json::json!({"members": [{"entry_kind": "issue", "ref_id": "x"}]})),
     )
     .await;
-    // `fetch_owned` returns FORBIDDEN when the user isn't the
-    // collection's owner (the row exists, just isn't theirs). 404
-    // only fires when the collection id doesn't resolve at all.
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another user's collection answers exactly like an unknown id.
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1104,7 +1103,7 @@ async fn bulk_remove_rejects_non_owner() {
         Some(serde_json::json!({"members": [{"entry_kind": "issue", "ref_id": "x"}]})),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

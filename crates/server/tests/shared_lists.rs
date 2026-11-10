@@ -229,9 +229,9 @@ async fn admin_shares_a_list_with_everyone() {
     let list_url = format!("/api/me/cbl-lists/{list_id}");
     let share_url = format!("/api/admin/saved-views/{view_id}/share");
 
-    // Not shared yet → Bob can't see it.
+    // Not shared yet → Bob can't see it: it answers like an unknown list.
     let (status, _) = http(&app, Method::GET, &list_url, Some(&bob), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Only an admin can share.
     let (status, _) = http(&app, Method::POST, &share_url, Some(&bob), None).await;

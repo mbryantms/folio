@@ -489,18 +489,14 @@ pub async fn upsert(
         return StatusCode::NO_CONTENT.into_response();
     }
 
-    // ACL: confirm the user can see the issue.
-    let issue_row = match issue::Entity::find_by_id(req.issue_id.clone())
-        .one(&app.db)
-        .await
-    {
+    // ACL: an issue the caller can't see, or one soft-removed (with its
+    // series), answers exactly like an unknown id.
+    let acl = access::for_user(&app, &user).await;
+    let issue_row = match access::visible_issue(&app.db, &acl, &req.issue_id).await {
         Ok(Some(r)) => r,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    if !access::issue_visible(&app, &user, &issue_row).await {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
-    }
 
     let furthest = req.end_page.max(req.start_page);
     let now_off = now.fixed_offset();

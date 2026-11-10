@@ -497,10 +497,9 @@ async fn before_at_head_returns_empty_with_no_more() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unowned_list_returns_403() {
-    // `ensure_owner` returns 403 (not 404) so callers can distinguish
-    // "list exists but isn't yours" from "no such list" — the rail
-    // surfaces a sharing-friendly error message in the first case.
+async fn unowned_list_returns_404() {
+    // Another user's list answers exactly like an unknown id: the caller
+    // does not learn that it exists.
     let app = TestApp::spawn().await;
     let owner = register(&app, "owner@window.test").await;
     let other = register(&app, "other@window.test").await;
@@ -508,7 +507,7 @@ async fn unowned_list_returns_403() {
 
     let url = format!("/api/me/cbl-lists/{list_id}/window-paginated");
     let (status, _) = get_json(&app, &url, &other).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

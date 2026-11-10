@@ -313,12 +313,19 @@ app. It reuses the `markers` section's shape above (`ExportMarker` +
   (rewrite with `UPDATE_SNAPSHOTS=1` after an intentional change).
 - UI: "Export" menu on `/bookmarks`
   ([`NotesExportMenu`](../../web/components/markers/NotesExportMenu.tsx)).
-- Auth: cookie or Bearer; only the caller's markers, every kind, including
-  markers on issues since removed or no longer visible to the caller
-  (same posture as `/me/export`). Those entries carry `available: false`
-  and no `jump_url`, and read `(no longer available)` in Markdown in
-  place of the Jump link (owner decision 2026-09-30). "Visible" is the
-  list rule: issue not removed, library granted, within the age cap.
+- Auth: cookie or Bearer; only the caller's markers, every kind, and
+  issue-level closing notes, on issues the caller can currently see. A
+  marker or note whose issue was since soft-removed (or its series was),
+  or is no longer visible to the caller, is left out: the document names
+  series and issues, and a hidden one must not surface through it. This
+  is the marker list's rule (issue and series not removed, library
+  granted, within the age cap), so the list, the count, the permalink and
+  the export agree. The rows are kept and return with the content or the
+  grant; the full account export (`/me/export`) still carries them.
+  `available` is therefore always `true` (kept for the wire shape), and
+  the Markdown `(no longer available)` form no longer occurs. This
+  replaces the 2026-09-30 posture, which exported such markers flagged
+  unavailable.
   Rate-limited at 6 / min / IP in its own bucket (`rate_limit::NOTES_EXPORT`).
 - `format` defaults to `md`; an unknown value is a 400.
 - Response headers: `text/markdown; charset=utf-8` or `application/json`,
@@ -374,7 +381,8 @@ a rename. "Copy link" on a `/bookmarks` card copies the same URL.
 **Markdown layout**: `#` title, an `Exported <ts> · N markers` line,
 then `## Series (year)`, `### #number · title`, `#### Page n` (1-based),
 and per marker a line `**Kind** [★] · [Jump to page](url) [· tags: `a`, `b`]`
-(`(no longer available)` instead of the link for an unavailable marker),
+(`(no longer available)` instead of the link for an unavailable marker,
+which the current export never emits),
 the captured text (`selection.text`) as a blockquote, and the note body
 verbatim.
 

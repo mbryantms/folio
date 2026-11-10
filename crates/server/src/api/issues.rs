@@ -78,12 +78,12 @@ pub(crate) async fn find_by_slugs(
         .await
     {
         Ok(Some(r)) => r,
+        // The same answer as an unknown issue slug: an issue route under a
+        // series the caller can't see answers "issue not found" (the
+        // caller's visibility check runs after this), so an unknown series
+        // must too, or the two would tell a hidden series from a missing one.
         Ok(None) => {
-            return Err(error(
-                StatusCode::NOT_FOUND,
-                "not_found",
-                "series not found",
-            ));
+            return Err(error(StatusCode::NOT_FOUND, "not_found", "issue not found"));
         }
         Err(e) => {
             tracing::error!(error = %e, series_slug, "series slug lookup failed");

@@ -512,7 +512,6 @@ pub struct ApplyAcceptedResp {
     responses(
         (status = 202, body = SearchStartedResp),
         (status = 400, description = "no providers configured"),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
         (status = 422, description = "override validation failed"),
         (status = 502, description = "queue error"),
@@ -530,12 +529,8 @@ pub async fn search_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
     let mut facts = SeriesQueryFacts {
@@ -655,7 +650,6 @@ pub async fn search_series(
     params(("slug" = String, Path), CandidatesQuery),
     responses(
         (status = 200, body = CandidatesResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found / no run"),
     )
 )]
@@ -670,12 +664,8 @@ pub async fn candidates_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
     let run = match q.run_id {
@@ -761,7 +751,6 @@ pub struct CoverageHintView {
     params(("slug" = String, Path), CoverageHintsQuery),
     responses(
         (status = 200, body = CoverageHintsResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series / run / candidate not found"),
         (status = 422, description = "no ordinals, malformed, or more than the per-request cap"),
     )
@@ -778,12 +767,8 @@ pub async fn coverage_hints_series(
         Err(resp) => return resp,
     };
     let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_ok(&acl, &user, &s) {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let mut ordinals: Vec<i32> = Vec::new();
     for part in q
@@ -918,7 +903,6 @@ pub struct SyncStatusResp {
     params(("slug" = String, Path)),
     responses(
         (status = 200, body = SyncStatusResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
     )
 )]
@@ -932,12 +916,8 @@ pub async fn sync_status_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let linked = entity::external_id::Entity::find()
         .filter(entity::external_id::Column::EntityType.eq("series"))
@@ -1063,7 +1043,6 @@ async fn toggle_metadata_sync_paused(
     responses(
         (status = 202, body = SearchStartedResp),
         (status = 400, description = "no providers configured"),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "issue not found"),
         (status = 422, description = "override validation failed"),
         (status = 502, description = "queue error"),
@@ -1248,7 +1227,6 @@ pub async fn search_issue(
     request_body = LookupReq,
     responses(
         (status = 200, body = LookupResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found / provider has no such record"),
         (status = 422, description = "bad URL / id, or provider not configured"),
         (status = 502, description = "provider error"),
@@ -1267,12 +1245,8 @@ pub async fn lookup_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let facts = SeriesQueryFacts {
         name: s.name.clone(),
@@ -1303,7 +1277,6 @@ pub async fn lookup_series(
     request_body = LookupReq,
     responses(
         (status = 200, body = LookupResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "issue not found / provider has no such record"),
         (status = 422, description = "bad URL / id, or provider not configured"),
         (status = 502, description = "provider error"),
@@ -1580,7 +1553,6 @@ async fn note_overrides(app: &AppState, run_id: Uuid, overrides: &SearchOverride
     params(("slug" = String, Path), ("issue_slug" = String, Path), CandidatesQuery),
     responses(
         (status = 200, body = CandidatesResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "issue / run not found"),
     )
 )]
@@ -1810,7 +1782,6 @@ fn map_diff_err(e: apply::ApplyError) -> Response {
     responses(
         (status = 200, body = DiffResp),
         (status = 400, description = "invalid run scope"),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series / run / candidate not found"),
         (status = 502, description = "provider error"),
     )
@@ -1826,12 +1797,8 @@ pub async fn proposed_diff_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // Sanity-check run scope before paying the provider round trip.
     let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
@@ -2027,7 +1994,6 @@ pub async fn apply_series(
     responses(
         (status = 200, body = DiffResp),
         (status = 400, description = "invalid run scope"),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "issue / run / candidate not found"),
         (status = 502, description = "provider error"),
     )
@@ -2107,7 +2073,6 @@ fn parse_include(raw: &Option<String>) -> Vec<i32> {
     responses(
         (status = 200, body = crate::metadata::composite::CompositeDiffResp),
         (status = 400, description = "invalid run scope"),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series / run not found"),
     )
 )]
@@ -2122,12 +2087,8 @@ pub async fn composite_diff_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
         .await
@@ -2171,7 +2132,6 @@ pub async fn composite_diff_series(
     responses(
         (status = 200, body = crate::metadata::composite::CompositeDiffResp),
         (status = 400, description = "invalid run scope"),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "issue / run not found"),
     )
 )]
@@ -3339,7 +3299,7 @@ pub struct SavedViewBatchReq {
     request_body = SavedViewBatchReq,
     responses(
         (status = 202, body = BatchCreatedResp),
-        (status = 403, description = "admin only / view not visible"),
+        (status = 403, description = "admin only"),
         (status = 404, description = "saved view not found"),
     )
 )]
@@ -3732,7 +3692,6 @@ async fn user_can_see_batch(
     params(("batch_id" = String, Path)),
     responses(
         (status = 200, body = BatchStatusResp),
-        (status = 403, description = "batch not visible"),
         (status = 404, description = "batch not found"),
     )
 )]
@@ -3753,8 +3712,9 @@ pub async fn batch_status(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    // A batch the caller can't see answers like an unknown id.
     if !user_can_see_batch(&app, &user, &batch).await {
-        return error(StatusCode::FORBIDDEN, "forbidden", "batch not visible");
+        return error(StatusCode::NOT_FOUND, "not_found", "batch not found");
     }
 
     let runs = metadata_run::Entity::find()
@@ -4409,10 +4369,9 @@ async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) 
     row.is_some()
 }
 
-/// [`find_series_issue`] for the per-issue reader routes: 404 for an
-/// unknown slug, 403 when the series is outside the caller's grant or cap,
-/// and the same 404 as an unknown slug when the issue's own rating is
-/// above the cap (WP-2.7).
+/// [`find_series_issue`] for the per-issue reader routes: a series or
+/// issue the caller can't see (outside the grant, above the cap, or
+/// soft-removed for a non-admin) answers the same 404 as an unknown slug.
 async fn visible_series_issue(
     app: &AppState,
     user: &CurrentUser,
@@ -4424,14 +4383,9 @@ async fn visible_series_issue(
         return Err(not_found());
     };
     let acl = crate::library::access::for_library(app, user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        ));
-    }
-    if !crate::library::access::issue_allowed(app, &acl, &i).await {
+    if !crate::library::access::issue_page_allowed(app, &acl, user, &s, &i, i.removed_at.is_some())
+        .await
+    {
         return Err(not_found());
     }
     Ok((s, i))

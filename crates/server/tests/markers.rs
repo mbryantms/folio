@@ -743,11 +743,12 @@ async fn cross_user_isolation() {
         Some(serde_json::json!({ "color": "red" })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another user's marker answers exactly like an unknown id.
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Or delete it.
     let (status, _) = http(&app, Method::DELETE, &url, Some(&bob), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

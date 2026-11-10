@@ -196,8 +196,11 @@ async fn delete_resets_and_users_are_isolated() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (_, theirs) = http(&app, Method::GET, &url, Some(&other), None).await;
-    assert_eq!(theirs, serde_json::json!({}), "another user sees nothing");
+    // `other` holds no grant on the series' library: the series answers
+    // like an unknown id, so nothing of the first user's leaks either.
+    let (status, theirs) = http(&app, Method::GET, &url, Some(&other), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "another user sees nothing");
+    assert_eq!(theirs["error"]["code"], "not_found");
 
     let (status, _) = http(&app, Method::DELETE, &url, Some(&me), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);

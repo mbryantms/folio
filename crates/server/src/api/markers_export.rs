@@ -16,14 +16,19 @@
 //! break links already pasted into another app.
 //!
 //! Scope: every marker the caller owns, every kind (bookmark, note,
-//! favorite, highlight), including markers on issues since removed from
-//! the library or no longer visible to the caller — the export is the
-//! user's own data, same posture as `GET /me/export`. Those entries are
-//! flagged `available: false`, carry no `jump_url` (the permalink would
-//! 404), and read "(no longer available)" in Markdown (owner decision
-//! 2026-09-30). Query shape: one marker query, the account export's
-//! IN-batched identity hydration (issues → series → libraries), and one
-//! IN-batched visibility probe (live + library grant + age cap).
+//! favorite, highlight), and every issue-level closing note, on issues
+//! the caller can currently see. A marker or note whose issue was since
+//! soft-removed, or is no longer visible to the caller (library grant /
+//! age cap), is left out, the same rule as the marker list, count,
+//! search and permalink: the document names series and issues, and a
+//! hidden one must not surface through it. The rows are kept, so they
+//! return with the content or the grant. The full account export
+//! (`GET /me/export`) still carries every row the user owns.
+//! `available` is therefore always `true`; the field stays for the wire
+//! shape. Query shape: one marker query, one IN-batched visibility probe
+//! (live + library grant + age cap), and the account export's IN-batched
+//! identity hydration (issues → series → libraries) over the visible
+//! issues only.
 //!
 //! Wire format is documented in `docs/dev/export-format.md` ("Notes
 //! export").
@@ -146,13 +151,12 @@ pub struct NotesExportPage {
 pub struct NotesExportMarker {
     #[serde(flatten)]
     pub marker: ExportMarker,
-    /// `false` when the marker's issue was removed from the library or is
-    /// no longer visible to the caller (library grant / age cap). The
-    /// marker is still exported; only the link is withheld.
+    /// Always `true`: a marker whose issue was removed or is no longer
+    /// visible to the caller is left out of the export. Kept for the wire
+    /// shape.
     pub available: bool,
     /// Absolute marker permalink (`{public_url}/markers/{id}`); 303s to
-    /// the reader at this page in peek mode. Omitted when `available` is
-    /// `false`.
+    /// the reader at this page in peek mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jump_url: Option<String>,
 }
@@ -252,8 +256,9 @@ impl Ord for OrdF64 {
 /// export's hydration).
 const VISIBLE_CHUNK: usize = 1000;
 
-/// The subset of `issue_ids` that is live (`removed_at IS NULL`) and
-/// visible to the caller under `acl` (library grant + age cap).
+/// The subset of `issue_ids` the caller can see under `acl`: live, with
+/// a live parent series, inside the library grant and under the age cap
+/// (`access::visible_issues_select`, the marker list's rule).
 async fn visible_issue_ids(
     db: &DatabaseConnection,
     acl: &VisibleLibraries,
@@ -262,14 +267,10 @@ async fn visible_issue_ids(
     let ids: Vec<String> = issue_ids.iter().cloned().collect();
     let mut out = HashSet::with_capacity(ids.len());
     for chunk in ids.chunks(VISIBLE_CHUNK) {
-        let mut q = issue::Entity::find()
+        let q = access::visible_issues_select(acl)
             .select_only()
             .column(issue::Column::Id)
-            .filter(issue::Column::Id.is_in(chunk.to_vec()))
-            .filter(issue::Column::RemovedAt.is_null());
-        if let Some(cond) = acl.issue_filter() {
-            q = q.filter(cond);
-        }
+            .filter(issue::Column::Id.is_in(chunk.to_vec()));
         out.extend(q.into_tuple::<String>().all(db).await?);
     }
     Ok(out)
@@ -287,7 +288,6 @@ async fn build(
         .order_by_asc(marker::Column::Id)
         .all(db)
         .await?;
-    let total = rows.len() as u64;
     // Issue-level closing notes ride along: an issue may have a note and
     // no markers, so its id joins the hydration set too.
     let note_rows = user_issue_note::Entity::find()
@@ -295,10 +295,22 @@ async fn build(
         .order_by_asc(user_issue_note::Column::CreatedAt)
         .all(db)
         .await?;
-    let closing_notes = note_rows.len() as u64;
     let mut issue_ids: HashSet<String> = rows.iter().map(|m| m.issue_id.clone()).collect();
     issue_ids.extend(note_rows.iter().map(|n| n.issue_id.clone()));
+    // Rows on an issue the caller can't currently see are left out
+    // before anything about that issue is hydrated.
     let visible = visible_issue_ids(db, acl, &issue_ids).await?;
+    let rows: Vec<marker::Model> = rows
+        .into_iter()
+        .filter(|m| visible.contains(&m.issue_id))
+        .collect();
+    let note_rows: Vec<user_issue_note::Model> = note_rows
+        .into_iter()
+        .filter(|n| visible.contains(&n.issue_id))
+        .collect();
+    let total = rows.len() as u64;
+    let closing_notes = note_rows.len() as u64;
+    let issue_ids: HashSet<String> = visible;
     let mut series_ids: HashSet<Uuid> = rows.iter().map(|m| m.series_id).collect();
     if !note_rows.is_empty() {
         // Series ids for note-only issues come from the issue rows.
@@ -374,8 +386,9 @@ async fn build(
         let issue_id = m.issue_id.clone();
         let page_index = m.page_index;
         let (series_key, issue_key) = keys_for(&issue_id, Some(m.series_id));
-        let available = visible.contains(&issue_id);
-        let jump_url = available.then(|| format!("{base_url}/markers/{}", m.id));
+        // Every exported marker is on a visible issue (filtered above).
+        let available = true;
+        let jump_url = Some(format!("{base_url}/markers/{}", m.id));
         let marker = export_marker(m, &refs);
         tree.entry(series_key)
             .or_default()

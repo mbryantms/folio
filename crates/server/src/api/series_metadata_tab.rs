@@ -813,7 +813,8 @@ pub async fn accept_issues(
 
 // ───────── helpers ─────────
 
-/// The series by slug when the caller may see it, with the caller's ACL
+/// The series by slug when the caller may see it (the series-page gate:
+/// grant, cap, and soft-removed only for an admin), with the caller's ACL
 /// for the per-issue figures (one grant lookup, as before).
 async fn visible_series(
     app: &AppState,
@@ -822,8 +823,7 @@ async fn visible_series(
 ) -> Option<(series::Model, access::VisibleLibraries)> {
     let s = super::series::find_by_slug(&app.db, slug).await.ok()?;
     let acl = access::for_library(app, user, s.library_id).await;
-    acl.series_ok(s.library_id, s.age_rating.as_deref())
-        .then_some((s, acl))
+    access::series_page_ok(&acl, user, &s).then_some((s, acl))
 }
 
 fn not_found() -> Response {

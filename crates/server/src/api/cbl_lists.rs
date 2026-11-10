@@ -900,10 +900,11 @@ async fn ensure_owner(
     list: &cbl_list::Model,
     user: &CurrentUser,
 ) -> Result<(), axum::response::Response> {
+    // Another user's list answers exactly like an unknown id.
     if let Some(owner) = list.owner_user_id
         && owner != user.id
     {
-        return Err(error(StatusCode::FORBIDDEN, "forbidden", "not your list"));
+        return Err(error(StatusCode::NOT_FOUND, "not_found", "list not found"));
     }
     Ok(())
 }
@@ -917,8 +918,10 @@ async fn ensure_can_manage(
     user: &CurrentUser,
 ) -> Result<(), axum::response::Response> {
     match list.owner_user_id {
+        // Another user's list answers exactly like an unknown id; a
+        // shared list is visible, so refusing a reader's write is a 403.
         Some(owner) if owner != user.id => {
-            Err(error(StatusCode::FORBIDDEN, "forbidden", "not your list"))
+            Err(error(StatusCode::NOT_FOUND, "not_found", "list not found"))
         }
         None if user.role != entity::user::UserRole::Admin => Err(error(
             StatusCode::FORBIDDEN,
@@ -1143,7 +1146,6 @@ fn parse_entry_cursor(s: &str) -> Result<(i32, Uuid), ()> {
     responses(
         (status = 200, body = CblEntryListView),
         (status = 400, description = "invalid cursor or status"),
-        (status = 403, description = "not your list"),
         (status = 404, description = "list not found"),
     )
 )]

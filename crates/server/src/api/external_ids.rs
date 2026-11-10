@@ -121,7 +121,6 @@ fn external_id_present(value: &str, _: &()) -> garde::Result {
     params(("slug" = String, Path)),
     responses(
         (status = 200, body = ExternalIdsListResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
     )
 )]
@@ -135,12 +134,8 @@ pub async fn list_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let rows = fetch_rows(&app, "series", &s.id.to_string()).await;
     Json(ExternalIdsListResp {
@@ -226,7 +221,6 @@ pub async fn delete_series(
     params(("slug" = String, Path), ("issue_slug" = String, Path)),
     responses(
         (status = 200, body = ExternalIdsListResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "issue not found"),
     )
 )]
@@ -239,17 +233,12 @@ pub async fn list_issue(
     let Some((s, issue_row)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
+    // A series or issue the caller can't see (outside the grant, above the
+    // cap, soft-removed for a reader) answers like an unknown slug.
+    let removed = issue_removed(&app, &issue_row.id).await;
     let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
-    // WP-2.7: an issue rated above the caller's cap answers like an
-    // unknown slug, even inside a visible series.
-    if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
+    if !crate::library::access::issue_page_allowed(&app, &acl, &user, &s, &issue_row, removed).await
+    {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     }
     let issue_id = issue_row.id;
@@ -598,6 +587,19 @@ async fn manual_rewrite(
 
 /// The series and the issue's id. Projects the id only: the full
 /// `issue::Model` carries the large `comic_info_raw`.
+/// `issues.removed_at IS NOT NULL` for one id (the card projection does
+/// not carry the column). A lookup error reads as removed (fail closed).
+async fn issue_removed(app: &AppState, issue_id: &str) -> bool {
+    use sea_orm::PaginatorTrait;
+    !matches!(
+        issue::Entity::find_by_id(issue_id.to_owned())
+            .filter(issue::Column::RemovedAt.is_null())
+            .count(&app.db)
+            .await,
+        Ok(1)
+    )
+}
+
 async fn find_series_issue(
     app: &AppState,
     series_slug: &str,

@@ -6812,9 +6812,6 @@
           "400": {
             "description": "invalid cursor or status"
           },
-          "403": {
-            "description": "not your list"
-          },
           "404": {
             "description": "list not found"
           }
@@ -7432,9 +7429,6 @@
               }
             }
           },
-          "403": {
-            "description": "not owner"
-          },
           "404": {
             "description": "collection not found"
           },
@@ -7478,9 +7472,6 @@
               }
             }
           },
-          "403": {
-            "description": "not owner"
-          },
           "404": {
             "description": "collection not found"
           },
@@ -7512,9 +7503,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "not the caller's collection"
           },
           "404": {
             "description": "collection not found"
@@ -7564,9 +7552,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "not the caller's collection"
           },
           "404": {
             "description": "collection not found"
@@ -9786,6 +9771,9 @@
           },
           "401": {
             "description": "not authenticated"
+          },
+          "404": {
+            "description": "series not found"
           }
         }
       },
@@ -10189,7 +10177,7 @@
             }
           },
           "403": {
-            "description": "admin only / view not visible"
+            "description": "admin only"
           },
           "404": {
             "description": "saved view not found"
@@ -10219,9 +10207,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "batch not visible"
           },
           "404": {
             "description": "batch not found"
@@ -11604,9 +11589,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found"
           }
@@ -11855,9 +11837,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "issue not found"
@@ -12148,9 +12127,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "issue / run not found"
           }
@@ -12277,9 +12253,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "issue / run not found"
           }
@@ -12326,9 +12299,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "issue not found / provider has no such record"
@@ -12413,9 +12383,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "issue / run / candidate not found"
           },
@@ -12475,9 +12442,6 @@
           },
           "400": {
             "description": "no providers configured"
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "issue not found"
@@ -12664,9 +12628,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found / no run"
           }
@@ -12777,9 +12738,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series / run not found"
           }
@@ -12828,9 +12786,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series / run / candidate not found"
@@ -12987,9 +12942,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found / provider has no such record"
           },
@@ -13126,9 +13078,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series / run / candidate not found"
           },
@@ -13245,9 +13194,6 @@
           "400": {
             "description": "no providers configured"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found"
           },
@@ -13282,9 +13228,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series not found"
@@ -13392,9 +13335,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series not found"
@@ -13546,9 +13486,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series not found"
@@ -28712,14 +28649,14 @@
             "properties": {
               "available": {
                 "type": "boolean",
-                "description": "`false` when the marker's issue was removed from the library or is\nno longer visible to the caller (library grant / age cap). The\nmarker is still exported; only the link is withheld."
+                "description": "Always `true`: a marker whose issue was removed or is no longer\nvisible to the caller is left out of the export. Kept for the wire\nshape."
               },
               "jump_url": {
                 "type": [
                   "string",
                   "null"
                 ],
-                "description": "Absolute marker permalink (`{public_url}/markers/{id}`); 303s to\nthe reader at this page in peek mode. Omitted when `available` is\n`false`."
+                "description": "Absolute marker permalink (`{public_url}/markers/{id}`); 303s to\nthe reader at this page in peek mode."
               }
             }
           }
@@ -38176,7 +38113,7 @@
           "forbidden": {
             "type": "integer",
             "format": "int32",
-            "description": "Always 0. Kept for response shape: an issue the caller can't see\nis counted in `not_found`, indistinguishable from an unknown id.",
+            "description": "Always 0. Kept so the response schema does not change: an issue the\ncaller can't see (outside the grant, above the age cap, or\nsoft-removed) is counted in `not_found`, indistinguishable from an\nunknown id.",
             "minimum": 0
           },
           "not_found": {
@@ -38320,7 +38257,7 @@
           "forbidden_series": {
             "type": "integer",
             "format": "int32",
-            "description": "Always 0. Kept for response shape: a series the caller can't see\nis counted in `not_found_series`.",
+            "description": "Always 0. Kept so the response schema does not change: a series\nthe caller can't see (or a soft-removed one) is counted in\n`not_found_series`.",
             "minimum": 0
           },
           "not_found_series": {
