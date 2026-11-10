@@ -340,10 +340,11 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                   Auto-link local accounts by verified email
                 </Label>
                 <p className={`text-xs ${statusToneText("warning")}`}>
-                  When ON, a first OIDC sign-in whose verified email matches an
-                  existing password account links the OIDC identity onto that
-                  account instead of failing with <code>auth.email_in_use</code>
-                  . Avoids a manual admin merge.
+                  When ON, a first OIDC sign-in whose email the IdP marks
+                  verified links onto the password account with that email
+                  instead of failing with <code>auth.email_in_use</code>. The
+                  account becomes single sign-on only: its password, sessions
+                  and app passwords are revoked.
                 </p>
               </div>
               <Switch
@@ -364,7 +365,9 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
                 <span>
                   Anyone who can sign in at your IdP with a verified email
                   matching a local account will take over that account. Only
-                  enable if you trust the IdP&rsquo;s email verification.
+                  enable if you trust the IdP&rsquo;s email verification, and
+                  keep a local admin account with a different email for when the
+                  IdP is down.
                 </span>
               </div>
             )}
