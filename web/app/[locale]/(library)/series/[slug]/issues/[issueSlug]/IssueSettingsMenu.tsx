@@ -182,12 +182,11 @@ export function IssueSettingsMenu({
           }),
       });
     } else {
-      createMarker.mutate(
-        { issue_id: issue.id, page_index: 0, kind: "bookmark" },
-        {
-          onSuccess: () => toast.success("Bookmarked"),
-        },
-      );
+      createMarker.mutate({
+        issue_id: issue.id,
+        page_index: 0,
+        kind: "bookmark",
+      });
     }
   };
 

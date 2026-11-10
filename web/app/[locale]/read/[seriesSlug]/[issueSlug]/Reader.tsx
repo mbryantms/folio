@@ -82,11 +82,13 @@ import {
   READER_FILTER_VAR,
   composeFilter,
 } from "@/lib/reader/filters";
+// Direct shard imports, not the `@/lib/api/mutations` barrel: the barrel
+// would put every mutation hook in the app into first-load JS.
 import {
   useSetIssueNote,
   useSetIssueRating,
-  useUpdatePreferences,
-} from "@/lib/api/mutations";
+} from "@/lib/api/mutations/issue-user-state";
+import { useUpdatePreferences } from "@/lib/api/mutations/preferences";
 import { summarizeMarkers, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { readerUrl } from "@/lib/urls";
 import { exitReader, noteReplace } from "@/lib/ui/back-flight";
@@ -115,6 +117,7 @@ import { useDragTurn } from "@/lib/reader/use-drag-turn";
 // sheets / panels from there, not directly.
 import {
   AmbientGlow,
+  DragTurnPeek,
   EndOfIssueCard,
   MarkerEditor,
   MarkerModePill,
@@ -125,6 +128,7 @@ import {
   ReaderChrome,
   ReaderFirstRunOverlay,
   WebtoonEndFooter,
+  preloadDragTurnPeek,
 } from "./lazy";
 import { ReaderSkipLinks } from "./ReaderSkipLinks";
 import { usePageAltText, usePageTextPanel } from "@/lib/reader/page-text";
@@ -136,7 +140,7 @@ import {
 import { apiMutate } from "@/lib/api/mutations/_core";
 import type { SeriesReaderPrefsView } from "@/lib/api/types";
 import { PageImage } from "./PageImage";
-import { DragTurnPeek, type DragPeekPages } from "./DragTurnPeek";
+import type { DragPeekPages } from "./DragTurnPeek";
 
 const NO_NEXT_UP: NextUpView = { source: "none" };
 /** Pan offset + origin of a re-centred page — the identity zoom minus
@@ -661,14 +665,14 @@ export function Reader({
   // `b` / `s` keybinds — share one toggle hook with the chrome's
   // BookmarkToggleButton / FavoriteToggleButton (kills the duplicated
   // find-existing → create/delete-with-Undo logic, audit G9). The
-  // page-specific toast copy stays here so the keybind path keeps its
-  // exact wording ("Bookmarked page N" / "Removed bookmark on page N").
+  // removal toast copy stays here so the keybind path keeps its exact
+  // wording ("Removed bookmark on page N"); "Bookmarked page N" comes from
+  // `useCreateMarker`.
   const bookmarkToggle = usePageMarkerToggle(issueId, currentPage, "bookmark");
   const favoriteToggle = usePageMarkerToggle(issueId, currentPage, "favorite");
   const toggleBookmark = useCallback(
     () =>
       bookmarkToggle.toggle({
-        created: `Bookmarked page ${currentPage + 1}`,
         removed: `Removed bookmark on page ${currentPage + 1}`,
       }),
     [bookmarkToggle, currentPage],
@@ -676,7 +680,6 @@ export function Reader({
   const toggleFavorite = useCallback(
     () =>
       favoriteToggle.toggle({
-        created: `Starred page ${currentPage + 1}`,
         removed: `Unstarred page ${currentPage + 1}`,
       }),
     [favoriteToggle, currentPage],
@@ -934,6 +937,7 @@ export function Reader({
     onNext: goNext,
     onPrev: goPrev,
     trackRef: dragTrackRef,
+    warm: preloadDragTurnPeek,
   });
 
   // v0.3.44 / v0.3.45 page-turn animation. Webtoon mode skips

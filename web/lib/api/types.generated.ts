@@ -3495,6 +3495,9 @@ export interface paths {
          * @description Implementation note: dismissals require comparing `progress_records.
          *     updated_at` against `rail_dismissals.dismissed_at`, so we let Postgres
          *     do that in one SQL pass rather than re-filtering rows in Rust.
+         *
+         *     Cursor-paginated on `(progress.updated_at, issue_id)` descending (see
+         *     [`progress_cards`]).
          */
         get: operations["rails_continue_reading"];
         put?: never;
@@ -3888,6 +3891,14 @@ export interface paths {
          *     queue) and `cbl_next` cards (lowest-position unfinished matched entry
          *     in a CBL the user has any progress in). Series with an active in-
          *     progress issue are skipped — they already surface in Continue Reading.
+         * @description Paging: the cards are merged and ranked in Rust (the series walk and
+         *     the reading-list frontier are not expressible as one SQL ordering), so
+         *     a paged request recomputes the merge over a *bounded* candidate set —
+         *     the [`ON_DECK_PAGED_CANDIDATES`] most recently active series and as
+         *     many reading lists — and keysets over the ranked result (`OnDeckCursor`).
+         *     `total` counts that set, and `bounded_to` says when the bound was hit.
+         *     The home-rail preview (no `cursor`, no `limit`) keeps the rail's
+         *     smaller candidate set and returns no cursor.
          */
         get: operations["rails_on_deck"];
         put?: never;
@@ -8310,6 +8321,13 @@ export interface components {
         };
         ContinueReadingView: {
             items: components["schemas"]["ContinueReadingCard"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching cards in total; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description `sharp` | `default` | `round` — the `--radius` token every corner in
@@ -10437,7 +10455,7 @@ export interface components {
          *     one of these.
          * @enum {string}
          */
-        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "MetadataDriftFromXml";
+        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "MetadataDriftFromXml";
         /**
          * @description One kind-facet tally within the current status+severity scope (drives the
          *     per-kind filter pills).
@@ -12506,7 +12524,25 @@ export interface components {
             position: number;
         };
         OnDeckView: {
+            /**
+             * Format: int32
+             * @description First page of a paged request only, and only when the merge hit
+             *     its bound: the cards come from at most this many most recently
+             *     active series and this many reading lists (see
+             *     `ON_DECK_PAGED_CANDIDATES`), so older ones are not listed.
+             */
+            bounded_to?: number | null;
             items: components["schemas"]["OnDeckCard"][];
+            /**
+             * @description Opaque cursor for the next page; `null` on the last page and on
+             *     the home-rail preview (a request with neither `cursor` nor `limit`).
+             */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Cards in the ranked list; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description On-this-day rail: issues released on this calendar day (any year),
@@ -13562,6 +13598,13 @@ export interface components {
          */
         RecentHistoryView: {
             items: components["schemas"]["ContinueReadingCard"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching cards in total; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description Newest-ingests rail. Items are plain issue cards (`series_name`
@@ -16305,16 +16348,14 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Issues the caller doesn't have library access to read. Silent
-             *     from the user's perspective; surfaced here so an admin
-             *     debugging a "mark read did nothing" report can see the
-             *     filter fired.
+             * @description Always 0. Kept for response shape: an issue the caller can't see
+             *     is counted in `not_found`, indistinguishable from an unknown id.
              */
             forbidden: number;
             /**
              * Format: int32
              * @description Issues whose id didn't resolve to a row (removed / never
-             *     existed / typo). Treated the same as forbidden — the caller
+             *     existed / typo) or that the caller can't see — the caller
              *     doesn't get to distinguish a missing row from one they're
              *     not allowed to see.
              */
@@ -16388,12 +16429,13 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Series the caller can't see (library access denied).
+             * @description Always 0. Kept for response shape: a series the caller can't see
+             *     is counted in `not_found_series`.
              */
             forbidden_series: number;
             /**
              * Format: int32
-             * @description Series whose id didn't resolve.
+             * @description Series whose id didn't resolve, or that the caller can't see.
              */
             not_found_series: number;
             /**
@@ -21355,14 +21397,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueCoversResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description issue not found */
+            /** @description issue not found, or not visible to the caller */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -23747,7 +23782,15 @@ export interface operations {
     };
     rails_continue_reading: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -23761,6 +23804,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ContinueReadingView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -24595,7 +24645,15 @@ export interface operations {
     };
     rails_on_deck: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -24609,6 +24667,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OnDeckView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25238,7 +25303,15 @@ export interface operations {
     };
     rails_recent_history: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -25252,6 +25325,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RecentHistoryView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

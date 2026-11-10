@@ -25,6 +25,7 @@ import {
 import { usePathname } from "next/navigation";
 
 import { apiFetch, getCsrfToken } from "./auth-refresh";
+import { apiPath } from "./path";
 // Query-key registry extracted to ./query-keys (audit H1a) so the
 // check-query-keys gate whitelists exactly one file. Imported for the
 // hooks below; re-exported (where the object used to live) so the
@@ -495,7 +496,7 @@ export function useLibraryList({ enabled = true }: { enabled?: boolean } = {}) {
 export function useLibrary(id: string) {
   return useQuery({
     queryKey: queryKeys.library(id),
-    queryFn: () => jsonFetch<LibraryView>(`/libraries/${id}`),
+    queryFn: () => jsonFetch<LibraryView>(apiPath`/libraries/${id}`),
     enabled: !!id,
   });
 }
@@ -512,7 +513,7 @@ export function useHealthIssues(libraryId: string) {
     queryKey: queryKeys.health(libraryId),
     queryFn: () =>
       jsonFetch<HealthIssuesPage>(
-        `/libraries/${libraryId}/health-issues?status=all&limit=50`,
+        apiPath`/libraries/${libraryId}/health-issues?status=all&limit=50`,
       ),
     enabled: !!libraryId,
   });
@@ -546,7 +547,8 @@ export function useHealthIssuesInfinite(
       if (filters.kind) params.set("kind", filters.kind);
       if (pageParam) params.set("cursor", pageParam);
       return jsonFetch<HealthIssuesPage>(
-        `/libraries/${libraryId}/health-issues?${params.toString()}`,
+        apiPath`/libraries/${libraryId}/health-issues` +
+          `?${params.toString()}`,
       );
     },
     getNextPageParam: healthIssuesNextPage,
@@ -566,7 +568,7 @@ export function useArchivePageCount(issueId: string, enabled: boolean) {
     enabled: enabled && !!issueId,
     queryFn: () =>
       jsonFetch<PageCountResponse>(
-        `/issues/${encodeURIComponent(issueId)}/archive/page-count`,
+        apiPath`/issues/${issueId}/archive/page-count`,
       ),
     staleTime: 0,
   });
@@ -577,7 +579,9 @@ export function useBackupStorage(libraryId: string) {
   return useQuery({
     queryKey: queryKeys.backupStorage(libraryId),
     queryFn: () =>
-      jsonFetch<BackupStorageView>(`/libraries/${libraryId}/backup-storage`),
+      jsonFetch<BackupStorageView>(
+        apiPath`/libraries/${libraryId}/backup-storage`,
+      ),
     enabled: !!libraryId,
   });
 }
@@ -594,7 +598,7 @@ export function useIssueHealth(seriesSlug: string, issueSlug: string) {
     queryKey: queryKeys.issueHealth(seriesSlug, issueSlug),
     queryFn: () =>
       jsonFetch<HealthIssueView[]>(
-        `/series/${seriesSlug}/issues/${issueSlug}/health-issues`,
+        apiPath`/series/${seriesSlug}/issues/${issueSlug}/health-issues`,
       ),
     enabled: !!seriesSlug && !!issueSlug,
   });
@@ -611,7 +615,7 @@ export function useIssueMetadataOverview(
     queryKey: queryKeys.issueMetadataOverview(seriesSlug, issueSlug),
     queryFn: () =>
       jsonFetch<MetadataOverviewView>(
-        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata-overview`,
+        apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata-overview`,
       ),
     enabled: !!seriesSlug && !!issueSlug,
     staleTime: 30_000,
@@ -629,7 +633,7 @@ export function useIssueAppearances(
     queryKey: queryKeys.issueAppearances(seriesSlug, issueSlug),
     queryFn: () =>
       jsonFetch<AppearancesView>(
-        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/appearances`,
+        apiPath`/series/${seriesSlug}/issues/${issueSlug}/appearances`,
       ),
     enabled: !!seriesSlug && !!issueSlug,
     staleTime: 30_000,
@@ -646,9 +650,7 @@ export function useSeriesAppearances(
   return useQuery({
     queryKey: queryKeys.seriesAppearances(seriesSlug),
     queryFn: () =>
-      jsonFetch<AppearancesView>(
-        `/series/${encodeURIComponent(seriesSlug)}/appearances`,
-      ),
+      jsonFetch<AppearancesView>(apiPath`/series/${seriesSlug}/appearances`),
     enabled: !!seriesSlug,
     staleTime: 30_000,
     initialData,
@@ -679,7 +681,7 @@ export function useScanRuns(
       if (pageParam) params.set("cursor", pageParam);
       const qs = params.toString();
       return jsonFetch<{ items: ScanRunView[]; next_cursor: string | null }>(
-        `/libraries/${libraryId}/scan-runs${qs ? `?${qs}` : ""}`,
+        apiPath`/libraries/${libraryId}/scan-runs` + (qs ? `?${qs}` : ""),
       );
     },
     getNextPageParam: cursorNextPage,
@@ -699,7 +701,7 @@ export function useLatestScanRun(libraryId: string) {
     queryKey: queryKeys.latestScanRun(libraryId),
     queryFn: () =>
       jsonFetch<{ items: ScanRunView[]; next_cursor: string | null }>(
-        `/libraries/${libraryId}/scan-runs?limit=1`,
+        apiPath`/libraries/${libraryId}/scan-runs?limit=1`,
       ).then((p) => p.items[0] ?? null),
     enabled: !!libraryId,
   });
@@ -866,7 +868,8 @@ export function useScanBatch(id: string | null) {
   return useQuery({
     queryKey: queryKeys.adminScanBatch(id ?? ""),
     enabled: !!id,
-    queryFn: () => jsonFetch<ScanBatchDetailView>(`/admin/scan-batches/${id}`),
+    queryFn: () =>
+      jsonFetch<ScanBatchDetailView>(apiPath`/admin/scan-batches/${id ?? ""}`),
     // Keep polling after the scans finish while the thumbnail jobs they
     // queued are still draining (`post_scan`).
     refetchInterval: (q) =>
@@ -934,9 +937,7 @@ export function useLibraryStats(libraryId: string) {
   return useQuery({
     queryKey: queryKeys.libraryStats(libraryId),
     queryFn: () =>
-      jsonFetch<LibraryStatsView>(
-        `/admin/libraries/${encodeURIComponent(libraryId)}/stats`,
-      ),
+      jsonFetch<LibraryStatsView>(apiPath`/admin/libraries/${libraryId}/stats`),
     enabled: !!libraryId,
   });
 }
@@ -945,7 +946,7 @@ export function useScanPreview(libraryId: string) {
   return useQuery({
     queryKey: queryKeys.scanPreview(libraryId),
     queryFn: () =>
-      jsonFetch<ScanPreviewView>(`/libraries/${libraryId}/scan-preview`),
+      jsonFetch<ScanPreviewView>(apiPath`/libraries/${libraryId}/scan-preview`),
     enabled: !!libraryId,
   });
 }
@@ -971,9 +972,8 @@ export function useRemovedItemsInfinite(libraryId: string) {
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) =>
       jsonFetch<RemovedListView>(
-        `/libraries/${libraryId}/removed${
-          pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ""
-        }`,
+        apiPath`/libraries/${libraryId}/removed` +
+          (pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ""),
       ),
     getNextPageParam: removedItemsNextPage,
     enabled: !!libraryId,
@@ -989,7 +989,9 @@ export function useRemovedPending(libraryId: string) {
   return useQuery({
     queryKey: queryKeys.removedPending(libraryId),
     queryFn: () =>
-      jsonFetch<RemovedListView>(`/libraries/${libraryId}/removed?limit=1`),
+      jsonFetch<RemovedListView>(
+        apiPath`/libraries/${libraryId}/removed?limit=1`,
+      ),
     enabled: !!libraryId,
     select: (page) => ({
       issues: page.pending_issues ?? 0,
@@ -1023,7 +1025,7 @@ export function useDuplicatesInfinite(
       const qs = new URLSearchParams({ kind });
       if (pageParam) qs.set("cursor", pageParam);
       return jsonFetch<DuplicateListView>(
-        `/libraries/${libraryId}/duplicates?${qs.toString()}`,
+        apiPath`/libraries/${libraryId}/duplicates` + `?${qs.toString()}`,
       );
     },
     getNextPageParam: duplicatesNextPage,
@@ -1042,7 +1044,7 @@ export function useSeries(
 ) {
   return useQuery({
     queryKey: queryKeys.series(id),
-    queryFn: () => jsonFetch<SeriesView>(`/series/${id}`),
+    queryFn: () => jsonFetch<SeriesView>(apiPath`/series/${id}`),
     enabled: !!id,
     initialData: opts.initialData,
   });
@@ -1057,7 +1059,7 @@ export function useSeriesMany(ids: readonly string[]) {
   return useQueries({
     queries: ids.map((id) => ({
       queryKey: queryKeys.series(id),
-      queryFn: () => jsonFetch<SeriesView>(`/series/${id}`),
+      queryFn: () => jsonFetch<SeriesView>(apiPath`/series/${id}`),
       enabled: !!id,
       retry: (failureCount: number, error: unknown) => {
         if (error instanceof HttpError && error.status === 404) return false;
@@ -1133,9 +1135,7 @@ export function useDeadJobs(
     queryKey: queryKeys.deadJobs(queue ?? "", page),
     queryFn: () =>
       jsonFetch<DeadJobsView>(
-        `/admin/queue/dead-jobs?queue=${encodeURIComponent(
-          queue ?? "",
-        )}&page=${page}&page_size=${pageSize}`,
+        apiPath`/admin/queue/dead-jobs?queue=${queue ?? ""}&page=${page}&page_size=${pageSize}`,
       ),
     enabled: !!queue,
     staleTime: 5_000,
@@ -1179,7 +1179,7 @@ export function useThumbnailsStatus(
     queryKey: queryKeys.thumbnailsStatus(libraryId),
     queryFn: () =>
       jsonFetch<ThumbnailsStatusView>(
-        `/admin/libraries/${libraryId}/thumbnails-status`,
+        apiPath`/admin/libraries/${libraryId}/thumbnails-status`,
       ),
     enabled: enabled && !!libraryId,
     refetchInterval: (query) => {
@@ -1202,7 +1202,9 @@ export function useHashBackfill(
   return useQuery({
     queryKey: queryKeys.hashBackfill(librarySlug),
     queryFn: () =>
-      jsonFetch<HashBackfillView>(`/libraries/${librarySlug}/hash-backfill`),
+      jsonFetch<HashBackfillView>(
+        apiPath`/libraries/${librarySlug}/hash-backfill`,
+      ),
     enabled: !!librarySlug,
     refetchInterval: (query) => {
       const data = query.state.data as HashBackfillView | undefined;
@@ -1225,7 +1227,7 @@ export function useSidecarReemit(
     queryKey: queryKeys.sidecarReemit(librarySlug),
     queryFn: () =>
       jsonFetch<SidecarReemitStatusView>(
-        `/libraries/${librarySlug}/sidecar-reemit`,
+        apiPath`/libraries/${librarySlug}/sidecar-reemit`,
       ),
     enabled: !!librarySlug && enabled,
     refetchInterval: (query) => {
@@ -1243,7 +1245,7 @@ export function useThumbnailsSettings(libraryId: string) {
     queryKey: queryKeys.thumbnailsSettings(libraryId),
     queryFn: () =>
       jsonFetch<ThumbnailsSettingsView>(
-        `/admin/libraries/${libraryId}/thumbnails-settings`,
+        apiPath`/admin/libraries/${libraryId}/thumbnails-settings`,
       ),
     enabled: !!libraryId,
   });
@@ -1275,7 +1277,7 @@ export function useUserList(filters: UserListFilters = {}) {
 export function useUser(id: string) {
   return useQuery({
     queryKey: queryKeys.user(id),
-    queryFn: () => jsonFetch<AdminUserDetailView>(`/admin/users/${id}`),
+    queryFn: () => jsonFetch<AdminUserDetailView>(apiPath`/admin/users/${id}`),
     enabled: !!id,
   });
 }
@@ -1406,7 +1408,7 @@ export function useAdminUserReadingStats(
     queryKey: queryKeys.adminUserReadingStats(userId, range),
     queryFn: () =>
       jsonFetch<ReadingStatsView>(
-        `/admin/users/${userId}/reading-stats?range=${range}`,
+        apiPath`/admin/users/${userId}/reading-stats?range=${range}`,
       ),
     enabled: enabled && !!userId,
   });
@@ -1794,7 +1796,7 @@ export function useEntityListInfinite(
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<EntityListView>(
-        `/${kind}${buildQuery({ ...rest, cursor: pageParam })}`,
+        apiPath`/${kind}` + buildQuery({ ...rest, cursor: pageParam }),
       ),
     getNextPageParam: entityNextPage,
     gcTime: 30 * 60_000,
@@ -1811,7 +1813,8 @@ export function useEntitySearch(
   const enabled = !!filters.q && filters.q.length >= 2;
   return useQuery({
     queryKey: queryKeys.entitySearch(kind, filters),
-    queryFn: () => jsonFetch<EntityListView>(`/${kind}${buildQuery(filters)}`),
+    queryFn: () =>
+      jsonFetch<EntityListView>(apiPath`/${kind}` + buildQuery(filters)),
     enabled,
     placeholderData: keepPreviousData,
   });
@@ -1827,8 +1830,7 @@ export function useEntityDetail(
 ) {
   return useQuery({
     queryKey: queryKeys.entityDetail(kind, slug),
-    queryFn: () =>
-      jsonFetch<EntityDetailView>(`/${kind}/${encodeURIComponent(slug)}`),
+    queryFn: () => jsonFetch<EntityDetailView>(apiPath`/${kind}/${slug}`),
     initialData,
     staleTime: 30_000,
     refetchInterval: (q) =>
@@ -1841,9 +1843,7 @@ export function useEntityInsights(kind: EntityKindPath, slug: string) {
   return useQuery({
     queryKey: queryKeys.entityInsights(kind, slug),
     queryFn: () =>
-      jsonFetch<EntityInsightsView>(
-        `/${kind}/${encodeURIComponent(slug)}/insights`,
-      ),
+      jsonFetch<EntityInsightsView>(apiPath`/${kind}/${slug}/insights`),
     staleTime: 5 * 60_000,
   });
 }
@@ -1859,7 +1859,8 @@ export function useEntitySeriesInfinite(
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<SeriesListView>(
-        `/${kind}/${encodeURIComponent(slug)}/series${buildQuery({ limit, cursor: pageParam })}`,
+        apiPath`/${kind}/${slug}/series` +
+          buildQuery({ limit, cursor: pageParam }),
       ),
     getNextPageParam: entityNextPage,
   });
@@ -1878,7 +1879,8 @@ export function useEntityIssuesInfinite(
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<IssueListView>(
-        `/${kind}/${encodeURIComponent(slug)}/issues${buildQuery({ limit, cursor: pageParam })}`,
+        apiPath`/${kind}/${slug}/issues` +
+          buildQuery({ limit, cursor: pageParam }),
       ),
     getNextPageParam: entityNextPage,
     enabled: options.enabled ?? true,
@@ -1987,7 +1989,7 @@ export function useSavedViewResults(id: string, cursor?: string) {
   return useQuery({
     queryKey: queryKeys.savedViewResults(id, cursor),
     queryFn: () =>
-      jsonFetch<SeriesListView>(`/me/saved-views/${id}/results${qs}`),
+      jsonFetch<SeriesListView>(apiPath`/me/saved-views/${id}/results` + qs),
     enabled: !!id,
   });
 }
@@ -2006,7 +2008,8 @@ export function useSavedViewResultsInfinite(id: string) {
         // `limit` the endpoint falls back to the view's `result_limit` —
         // the home-rail *preview* count (default 12) — which made the
         // detail page dribble out 12 rows at a time.
-        `/me/saved-views/${id}/results${buildQuery({ cursor: pageParam, limit: 60 })}`,
+        apiPath`/me/saved-views/${id}/results` +
+          buildQuery({ cursor: pageParam, limit: 60 }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: !!id,
@@ -2019,7 +2022,7 @@ export function useSavedViewIssueResults(id: string) {
   return useQuery({
     queryKey: queryKeys.savedViewIssueResults(id),
     queryFn: () =>
-      jsonFetch<IssueListView>(`/me/saved-views/${id}/issue-results`),
+      jsonFetch<IssueListView>(apiPath`/me/saved-views/${id}/issue-results`),
     enabled: !!id,
   });
 }
@@ -2031,7 +2034,8 @@ export function useSavedViewIssueResultsInfinite(id: string) {
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<IssueListView>(
-        `/me/saved-views/${id}/issue-results${buildQuery({ cursor: pageParam, limit: 60 })}`,
+        apiPath`/me/saved-views/${id}/issue-results` +
+          buildQuery({ cursor: pageParam, limit: 60 }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: !!id,
@@ -2079,7 +2083,7 @@ export function useCblLists() {
 export function useCblList(id: string) {
   return useQuery({
     queryKey: queryKeys.cblList(id),
-    queryFn: () => jsonFetch<CblDetailView>(`/me/cbl-lists/${id}`),
+    queryFn: () => jsonFetch<CblDetailView>(apiPath`/me/cbl-lists/${id}`),
     enabled: !!id,
   });
 }
@@ -2106,7 +2110,8 @@ export function useCblListEntriesInfinite(
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<CblEntryListView>(
-        `/me/cbl-lists/${id}/entries${buildQuery({ ...params, cursor: pageParam })}`,
+        apiPath`/me/cbl-lists/${id}/entries` +
+          buildQuery({ ...params, cursor: pageParam }),
       ),
     getNextPageParam: cblEntriesNextPage,
   });
@@ -2136,7 +2141,7 @@ export function useCblListIssues(
     queryKey: queryKeys.cblListIssues(id, opts),
     queryFn: () =>
       jsonFetch<IssueListView>(
-        `/me/cbl-lists/${id}/issues${buildQuery(params)}`,
+        apiPath`/me/cbl-lists/${id}/issues` + buildQuery(params),
       ),
     enabled: !!id,
   });
@@ -2156,7 +2161,7 @@ export function useCblListWindow(
     queryKey: queryKeys.cblListWindow(id, opts),
     queryFn: () =>
       jsonFetch<CblWindowView>(
-        `/me/cbl-lists/${id}/window${buildQuery(params)}`,
+        apiPath`/me/cbl-lists/${id}/window` + buildQuery(params),
       ),
     enabled: !!id,
   });
@@ -2198,7 +2203,7 @@ export function useCblListWindowInfinite(
         params.limit = pageLimit;
       }
       return jsonFetch<CblWindowPageView>(
-        `/me/cbl-lists/${id}/window-paginated${buildQuery(params)}`,
+        apiPath`/me/cbl-lists/${id}/window-paginated` + buildQuery(params),
       );
     },
     getNextPageParam: (last) =>
@@ -2217,7 +2222,9 @@ export function useCblRefreshLog(id: string, opts?: { limit?: number }) {
   return useQuery({
     queryKey: queryKeys.cblRefreshLog(id),
     queryFn: () =>
-      jsonFetch<RefreshLogListView>(`/me/cbl-lists/${id}/refresh-log${qs}`),
+      jsonFetch<RefreshLogListView>(
+        apiPath`/me/cbl-lists/${id}/refresh-log` + qs,
+      ),
     enabled: !!id,
   });
 }
@@ -2369,7 +2376,8 @@ export function useMarkerTags() {
 export function useIssueMarkers(issueId: string) {
   return useQuery({
     queryKey: queryKeys.issueMarkers(issueId),
-    queryFn: () => jsonFetch<IssueMarkersView>(`/me/issues/${issueId}/markers`),
+    queryFn: () =>
+      jsonFetch<IssueMarkersView>(apiPath`/me/issues/${issueId}/markers`),
     enabled: !!issueId,
   });
 }
@@ -2393,7 +2401,9 @@ export function useIssuePageOverrides(
   return useQuery({
     queryKey: queryKeys.issuePageOverrides(issueId),
     queryFn: () =>
-      jsonFetch<PageOverridesView>(`/me/issues/${issueId}/page-overrides`),
+      jsonFetch<PageOverridesView>(
+        apiPath`/me/issues/${issueId}/page-overrides`,
+      ),
     enabled: !!issueId,
     initialData: initialData ?? undefined,
     staleTime: Infinity,
@@ -2422,7 +2432,7 @@ export function useIssuePageTextRegions(
     queryKey: queryKeys.issuePageTextRegions(issueId, page),
     queryFn: () =>
       jsonFetch<TextRegionsView>(
-        `/me/issues/${issueId}/pages/${page}/text-regions`,
+        apiPath`/me/issues/${issueId}/pages/${page}/text-regions`,
       ),
     staleTime: Infinity,
     retry: false,
@@ -2487,7 +2497,7 @@ export function useCollectionEntries(
     queryKey: queryKeys.collectionEntries(id, opts),
     queryFn: () =>
       jsonFetch<CollectionEntriesView>(
-        `/me/collections/${id}/entries${buildQuery(params)}`,
+        apiPath`/me/collections/${id}/entries` + buildQuery(params),
       ),
     enabled: !!id,
   });
@@ -2504,10 +2514,11 @@ export function useCollectionEntriesInfinite(id: string) {
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<CollectionEntriesView>(
-        `/me/collections/${id}/entries${buildQuery({
-          cursor: pageParam,
-          limit: 200,
-        })}`,
+        apiPath`/me/collections/${id}/entries` +
+          buildQuery({
+            cursor: pageParam,
+            limit: 200,
+          }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
@@ -2522,7 +2533,7 @@ export function useCollectionNextUp(id: string) {
     queryKey: queryKeys.collectionNextUp(id),
     enabled: !!id,
     queryFn: () =>
-      jsonFetch<CollectionNextUpView>(`/me/collections/${id}/next-up`),
+      jsonFetch<CollectionNextUpView>(apiPath`/me/collections/${id}/next-up`),
   });
 }
 
@@ -2539,7 +2550,9 @@ export function useCatalogEntries(sourceId: string) {
   return useQuery({
     queryKey: queryKeys.catalogEntries(sourceId),
     queryFn: () =>
-      jsonFetch<CatalogEntriesView>(`/catalog/sources/${sourceId}/lists`),
+      jsonFetch<CatalogEntriesView>(
+        apiPath`/catalog/sources/${sourceId}/lists`,
+      ),
     enabled: !!sourceId,
     staleTime: 60_000,
   });
@@ -2557,7 +2570,8 @@ export function useSeriesIssuesInfinite(
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<IssueListView>(
-        `/series/${seriesId}/issues${buildQuery({ ...rest, cursor: pageParam })}`,
+        apiPath`/series/${seriesId}/issues` +
+          buildQuery({ ...rest, cursor: pageParam }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
@@ -2565,13 +2579,10 @@ export function useSeriesIssuesInfinite(
 
 // ---------- Home rails (Continue Reading / On Deck) ----------
 
-/** Item cap of the Continue reading, On deck and Recently read endpoints:
- *  `LIMIT 24` in `progress_cards` (continue-reading + recent-history) and
- *  `items.truncate(24)` in `on_deck`, crates/server/src/api/rails.rs. The
- *  responses carry no cursor, so a full response may be truncated — the
- *  "see all" pages say "Most recent 24" instead of printing a total.
- *  Drop this once those endpoints are cursor-paginated. */
-export const PROGRESS_RAIL_CAP = 24;
+/** Page size of the progress rails' "see all" walks. Sending `limit`
+ *  also asks the server for `total` on the first page; the home rails
+ *  send no params and get the 24-card preview in one request. */
+const PROGRESS_RAIL_PAGE_SIZE = 48;
 
 /** Issues the user has started but not finished, most-recent-activity first.
  *  Drives the Continue Reading rail on the home page. */
@@ -2594,6 +2605,53 @@ export function useOnDeck(opts?: { enabled?: boolean }) {
   });
 }
 
+/** Every in-progress issue, page by page — the Continue reading "see
+ *  all" page. The home rail keeps `useContinueReading` (one request). */
+export function useContinueReadingInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.continueReadingAll,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<ContinueReadingView>(
+        `/me/continue-reading${buildQuery({ limit: PROGRESS_RAIL_PAGE_SIZE, cursor: pageParam })}`,
+      ),
+    getNextPageParam: cursorNextPage,
+  });
+}
+
+/** The ranked On deck list, page by page — the On deck "see all" page.
+ *  The first page carries `total` and, when the server's merge hit its
+ *  candidate bound, `bounded_to`. */
+export function useOnDeckInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.onDeckAll,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<OnDeckView>(
+        `/me/on-deck${buildQuery({ limit: PROGRESS_RAIL_PAGE_SIZE, cursor: pageParam })}`,
+      ),
+    getNextPageParam: cursorNextPage,
+    staleTime: 60_000,
+  });
+}
+
+/** Every recently read issue, page by page — the Recently read "see all"
+ *  page. */
+export function useRecentHistoryInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.recentHistoryAll,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<RecentHistoryView>(
+        `/me/recent-history${buildQuery({ limit: PROGRESS_RAIL_PAGE_SIZE, cursor: pageParam })}`,
+      ),
+    getNextPageParam: cursorNextPage,
+  });
+}
+
 /** The caller's hidden rail items, newest dismissal first
  *  (`GET /me/rail-dismissals`). Cursor-paginated; the first page carries
  *  `total` and `unavailable` (dismissals whose target the caller can no
@@ -2606,7 +2664,7 @@ export function useRailDismissals() {
     queryFn: ({ pageParam }) =>
       jsonFetch<RailDismissalListView>(
         pageParam
-          ? `/me/rail-dismissals?cursor=${encodeURIComponent(pageParam)}`
+          ? apiPath`/me/rail-dismissals?cursor=${pageParam}`
           : "/me/rail-dismissals",
       ),
     getNextPageParam: cursorNextPage,
@@ -2698,7 +2756,8 @@ export function useSimilarSeriesInfinite(
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<SimilarSeriesListView>(
-        `/series/${encodeURIComponent(seriesSlug)}/similar${buildQuery({ limit, cursor: pageParam })}`,
+        apiPath`/series/${seriesSlug}/similar` +
+          buildQuery({ limit, cursor: pageParam }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     staleTime: 5 * 60_000,
@@ -2742,7 +2801,7 @@ export function useNextUp(
     queryKey: queryKeys.nextUp(issueId, ctx),
     queryFn: () =>
       jsonFetch<NextUpView>(
-        `/issues/${encodeURIComponent(issueId)}/next-up${listContextQuery(ctx)}`,
+        apiPath`/issues/${issueId}/next-up` + listContextQuery(ctx),
       ),
     enabled,
     staleTime: 5 * 60 * 1000,
@@ -2774,7 +2833,7 @@ export function usePrevUp(
     queryKey: queryKeys.prevUp(issueId, ctx),
     queryFn: () =>
       jsonFetch<NextUpView>(
-        `/issues/${encodeURIComponent(issueId)}/prev-up${listContextQuery(ctx)}`,
+        apiPath`/issues/${issueId}/prev-up` + listContextQuery(ctx),
       ),
     enabled,
     staleTime: 5 * 60 * 1000,
@@ -2837,8 +2896,8 @@ export function useMetadataCandidatesSeries(
     queryFn: () =>
       jsonFetch<CandidatesResp>(
         runId
-          ? `/series/${encodeURIComponent(seriesSlug)}/metadata/candidates?run_id=${encodeURIComponent(runId)}`
-          : `/series/${encodeURIComponent(seriesSlug)}/metadata/candidates`,
+          ? apiPath`/series/${seriesSlug}/metadata/candidates?run_id=${runId}`
+          : apiPath`/series/${seriesSlug}/metadata/candidates`,
       ),
     enabled: !!seriesSlug && !!runId,
     refetchInterval: (q) => {
@@ -2877,9 +2936,9 @@ export function useMetadataCoverageHints(
       queryKey: queryKeys.metadataCoverageHints(seriesSlug, runId, ordinals),
       queryFn: () =>
         jsonFetch<CoverageHintsResp>(
-          `/series/${encodeURIComponent(seriesSlug)}/metadata/coverage-hints?run_id=${encodeURIComponent(
-            runId ?? "",
-          )}&ordinals=${ordinals.join(",")}`,
+          // Ordinals are numbers; the comma list stays as is.
+          apiPath`/series/${seriesSlug}/metadata/coverage-hints?run_id=${runId ?? ""}&ordinals=` +
+            ordinals.join(","),
         ),
       enabled: !!seriesSlug && !!runId && ordinals.length > 0,
       staleTime: Infinity,
@@ -2912,8 +2971,8 @@ export function useMetadataCandidatesIssue(
     queryFn: () =>
       jsonFetch<CandidatesResp>(
         runId
-          ? `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/candidates?run_id=${encodeURIComponent(runId)}`
-          : `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/candidates`,
+          ? apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/candidates?run_id=${runId}`
+          : apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/candidates`,
       ),
     enabled: !!seriesSlug && !!issueSlug && !!runId,
     refetchInterval: (q) => {
@@ -2957,7 +3016,8 @@ export function useMetadataProposedDiffSeries(
         override_user_edits: String(overrideUserEdits),
       });
       return jsonFetch<DiffResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/metadata/proposed-diff?${qs.toString()}`,
+        apiPath`/series/${seriesSlug}/metadata/proposed-diff` +
+          `?${qs.toString()}`,
       );
     },
     enabled: !!seriesSlug && !!runId && ordinal != null && ordinal >= 0,
@@ -2990,7 +3050,8 @@ export function useMetadataProposedDiffIssue(
         override_user_edits: String(overrideUserEdits),
       });
       return jsonFetch<DiffResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/proposed-diff?${qs.toString()}`,
+        apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/proposed-diff` +
+          `?${qs.toString()}`,
       );
     },
     enabled:
@@ -3033,7 +3094,8 @@ export function useMetadataCompositeDiffSeries(
     ),
     queryFn: () =>
       jsonFetch<CompositeDiffResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/metadata/composite-diff?${compositeDiffQs(runId!, mode, overrideUserEdits, include)}`,
+        apiPath`/series/${seriesSlug}/metadata/composite-diff` +
+          `?${compositeDiffQs(runId!, mode, overrideUserEdits, include)}`,
       ),
     enabled: !!seriesSlug && !!runId,
     staleTime: 10_000,
@@ -3059,7 +3121,8 @@ export function useMetadataCompositeDiffIssue(
     ),
     queryFn: () =>
       jsonFetch<CompositeDiffResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/composite-diff?${compositeDiffQs(runId!, mode, overrideUserEdits, include)}`,
+        apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/composite-diff` +
+          `?${compositeDiffQs(runId!, mode, overrideUserEdits, include)}`,
       ),
     enabled: !!seriesSlug && !!issueSlug && !!runId,
     staleTime: 10_000,
@@ -3070,9 +3133,7 @@ export function useMetadataSyncStatus(seriesSlug: string) {
   return useQuery({
     queryKey: queryKeys.metadataSyncStatusSeries(seriesSlug),
     queryFn: () =>
-      jsonFetch<SyncStatusResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/metadata/status`,
-      ),
+      jsonFetch<SyncStatusResp>(apiPath`/series/${seriesSlug}/metadata/status`),
     enabled: !!seriesSlug,
     staleTime: 30_000,
   });
@@ -3086,7 +3147,7 @@ export function useSeriesMetadataOverview(seriesSlug: string) {
     queryKey: queryKeys.seriesMetadataOverview(seriesSlug),
     queryFn: () =>
       jsonFetch<SeriesMetadataOverview>(
-        `/series/${encodeURIComponent(seriesSlug)}/metadata/overview`,
+        apiPath`/series/${seriesSlug}/metadata/overview`,
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
@@ -3110,7 +3171,7 @@ export function useSeriesMetadataIssues(
     queryKey: queryKeys.seriesMetadataIssues(seriesSlug, filters),
     queryFn: () =>
       jsonFetch<SeriesMetadataIssuesResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/metadata/issues${suffix}`,
+        apiPath`/series/${seriesSlug}/metadata/issues` + suffix,
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
@@ -3125,7 +3186,7 @@ export function useSeriesCollection(seriesSlug: string) {
     queryKey: queryKeys.seriesCollection(seriesSlug),
     queryFn: () =>
       jsonFetch<CollectionReportView>(
-        `/series/${encodeURIComponent(seriesSlug)}/collection`,
+        apiPath`/series/${seriesSlug}/collection`,
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
@@ -3147,9 +3208,7 @@ export function useMetadataBatch(
   return useQuery({
     queryKey: queryKeys.metadataBatch(batchId ?? ""),
     queryFn: () =>
-      jsonFetch<BatchStatusResp>(
-        `/metadata/batch/${encodeURIComponent(batchId ?? "")}`,
-      ),
+      jsonFetch<BatchStatusResp>(apiPath`/metadata/batch/${batchId ?? ""}`),
     enabled: !!batchId,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
@@ -3173,7 +3232,7 @@ export function useExternalIdsSeries(seriesSlug: string) {
     queryKey: queryKeys.externalIdsSeries(seriesSlug),
     queryFn: () =>
       jsonFetch<ExternalIdsListResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/external-ids`,
+        apiPath`/series/${seriesSlug}/external-ids`,
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
@@ -3185,7 +3244,7 @@ export function useExternalIdsIssue(seriesSlug: string, issueSlug: string) {
     queryKey: queryKeys.externalIdsIssue(seriesSlug, issueSlug),
     queryFn: () =>
       jsonFetch<ExternalIdsListResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+        apiPath`/series/${seriesSlug}/issues/${issueSlug}/external-ids`,
       ),
     enabled: !!seriesSlug && !!issueSlug,
     staleTime: 30_000,
@@ -3197,7 +3256,7 @@ export function useProviderRangesSeries(seriesSlug: string) {
     queryKey: queryKeys.providerRangesSeries(seriesSlug),
     queryFn: () =>
       jsonFetch<ProviderRangesListResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/provider-ranges`,
+        apiPath`/series/${seriesSlug}/provider-ranges`,
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
@@ -3218,7 +3277,7 @@ export function useProviderCoverageAnalysis(
     queryFn: async () => {
       try {
         return await jsonFetch<CoverageAnalysisResp>(
-          `/series/${encodeURIComponent(seriesSlug)}/provider-coverage/analysis`,
+          apiPath`/series/${seriesSlug}/provider-coverage/analysis`,
         );
       } catch (e) {
         if (e instanceof HttpError && e.status === 404) return null;
@@ -3249,7 +3308,7 @@ export function useSeriesRefreshStatus(
     queryKey: queryKeys.seriesRefreshStatus(seriesSlug),
     queryFn: () =>
       jsonFetch<SeriesRefreshStatusResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/metadata/refresh-status`,
+        apiPath`/series/${seriesSlug}/metadata/refresh-status`,
       ),
     enabled: enabled && !!seriesSlug,
     staleTime: 0,
@@ -3262,7 +3321,7 @@ export function useProviderCoverageSeries(seriesSlug: string) {
     queryKey: queryKeys.providerCoverageSeries(seriesSlug),
     queryFn: () =>
       jsonFetch<ProviderCoverageResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/provider-coverage`,
+        apiPath`/series/${seriesSlug}/provider-coverage`,
       ),
     enabled: !!seriesSlug,
     staleTime: 30_000,
@@ -3280,7 +3339,7 @@ export function useSeriesRelationships(
     queryKey: queryKeys.seriesRelationships(seriesSlug),
     queryFn: () =>
       jsonFetch<SeriesRelationshipsResp>(
-        `/series/${encodeURIComponent(seriesSlug)}/relationships`,
+        apiPath`/series/${seriesSlug}/relationships`,
       ),
     enabled: (opts?.enabled ?? true) && !!seriesSlug,
     staleTime: 30_000,
@@ -3301,7 +3360,8 @@ export function useSameUniverseInfinite(
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<SameUniverseListView>(
-        `/series/${encodeURIComponent(seriesSlug)}/same-universe${buildQuery({ limit, cursor: pageParam })}`,
+        apiPath`/series/${seriesSlug}/same-universe` +
+          buildQuery({ limit, cursor: pageParam }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     staleTime: 5 * 60_000,
@@ -3326,7 +3386,8 @@ export function useArcTieInsInfinite(arcSlug: string, limit = 60) {
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       jsonFetch<ArcTieInListView>(
-        `/arcs/${encodeURIComponent(arcSlug)}/tie-ins${buildQuery({ limit, cursor: pageParam })}`,
+        apiPath`/arcs/${arcSlug}/tie-ins` +
+          buildQuery({ limit, cursor: pageParam }),
       ),
     getNextPageParam: arcTieInsNextPage,
   });
@@ -3404,7 +3465,8 @@ export function useSeriesRelationshipSuggestions(
       const qs = new URLSearchParams({ limit: "20" });
       if (pageParam) qs.set("cursor", pageParam);
       return jsonFetch<RelationshipSuggestionListView>(
-        `/series/${encodeURIComponent(seriesSlug)}/relationship-suggestions?${qs.toString()}`,
+        apiPath`/series/${seriesSlug}/relationship-suggestions` +
+          `?${qs.toString()}`,
       );
     },
     getNextPageParam: relationshipSuggestionsNextPage,
@@ -3417,9 +3479,7 @@ export function useIssueCovers(issueId: string) {
   return useQuery({
     queryKey: queryKeys.issueCovers(issueId),
     queryFn: () =>
-      jsonFetch<IssueCoversResp>(
-        `/issues/${encodeURIComponent(issueId)}/covers`,
-      ),
+      jsonFetch<IssueCoversResp>(apiPath`/issues/${issueId}/covers`),
     enabled: !!issueId,
     staleTime: 60_000,
   });
@@ -3524,9 +3584,7 @@ export function useAdminMetadataRun(id: string) {
   return useQuery({
     queryKey: queryKeys.adminMetadataRun(id),
     queryFn: () =>
-      jsonFetch<RunDetailResp>(
-        `/admin/metadata/runs/${encodeURIComponent(id)}`,
-      ),
+      jsonFetch<RunDetailResp>(apiPath`/admin/metadata/runs/${id}`),
     enabled: !!id,
     staleTime: 15_000,
   });
@@ -3541,7 +3599,7 @@ export function useAdminMetadataRecentApplies(limit = 10) {
     queryKey: queryKeys.adminMetadataRecentApplies(limit),
     queryFn: () =>
       jsonFetch<RecentAppliesResp>(
-        `/admin/metadata/recent-applies?limit=${limit}`,
+        apiPath`/admin/metadata/recent-applies?limit=${limit}`,
       ),
     staleTime: 30_000,
     // Invalidated by the metadata.applied WS event (see scan-events.ts).

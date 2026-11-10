@@ -149,6 +149,7 @@ mod m20271103_000001_user_cover_stack_style;
 mod m20271104_000001_onboarding_starter_lists;
 mod m20271105_000001_user_effects;
 mod m20271106_000001_email_change_requests;
+mod m20271107_000001_app_password_lookup_digest;
 mod m20271110_000001_new_in_series_rail;
 
 #[derive(Debug)]
@@ -307,6 +308,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271104_000001_onboarding_starter_lists::Migration),
             Box::new(m20271105_000001_user_effects::Migration),
             Box::new(m20271106_000001_email_change_requests::Migration),
+            Box::new(m20271107_000001_app_password_lookup_digest::Migration),
             Box::new(m20271110_000001_new_in_series_rail::Migration),
         ]
     }

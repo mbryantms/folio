@@ -52,10 +52,17 @@ Redis-backed ([`auth/failed_auth.rs`](../../crates/server/src/auth/failed_auth.r
 | `GET /auth/oidc/callback` | client IP |
 | `DELETE /me` (password re-check) | client IP and the account's email |
 | `PATCH /me/account` email or password change (password re-check, shared with `DELETE /me` through `failed_auth::verify_password_counted`) | client IP and the account's email |
+| App-password authentication, Basic or Bearer, on the reader routes (`auth::app_password::verify`) | client IP, on its own counter (`auth_fail_app:{ip}` / `auth_lockout_app:{ip}`) |
 
-The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
+The handler checks the lockout before any password hashing, and a request refused by the lockout is not counted. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead).
 
-Verified against the code at `ed5d9019` on 2026-11-10.
+App-password misses have their own per-IP counter and lockout (`failed_auth::IpCounter::AppPassword`), with the same 10-in-60 s threshold and 15 min lockout. An app-password lockout refuses only app-password verification from that address; sign-in and cookie sessions are unaffected. A sign-in lockout does not refuse app passwords. Counted as an app-password miss: a token that no row matches, including a token that was revoked, or left outside the legacy window, before its row got a digest. Such a miss is charged before the legacy scan's hashing starts, so a request that ends busy or is dropped has still been counted, and a token created before the digest existed counts one miss on its first successful use. Not counted: a revoked token whose row is found by its digest, a token served from the cache of tokens this process already verified, a 503 busy answer with no legacy scan, and a repeat of a token refused within the last 5 min (`app_password::REFUSAL_TTL`), which is answered 401 from an in-process refusal cache (1024 entries) without a query or hashing.
+
+The lockout check runs after both caches: a cached token needs no hashing and keeps working from a locked-out address, the way an existing session outlives a sign-in lockout, while a token not yet verified gets the 429. A reader app sees 401 `auth.invalid` with `WWW-Authenticate` for a wrong token, as before, and the 429 only while its address is locked out. App-password argon2 verifications also pass a global gate of 2 concurrent permits (`app_password::VERIFY_PERMITS`); a request that waits more than 2 s for one gets 503 `auth.busy` with `Retry-After: 1`.
+
+The lockout is not applied to JWT Bearer authentication (a signature check, no password hashing). The `auth.rate_limit_enabled` setting switches the counters off on every row. When Redis is unavailable the lockout fails open. Behind a reverse proxy, set `COMIC_TRUSTED_PROXIES` so the counted address is the client's and not the proxy's.
+
+Verified against the code at `120f609c` on 2026-11-10.
 
 ### Email-change requests
 
@@ -107,7 +114,7 @@ Resource cap (not a rate): a non-admin user may own at most 50 server-fetched CB
 ## Metrics
 
 - `folio_rate_limit_denied_total{bucket="…"}` (the CBL import quota reports as `bucket="cbl_import"`)
-- `folio_auth_lockout_total` and `folio_auth_lockout_email_total` (a lockout was set on the IP or email axis)
+- `folio_auth_lockout_total` and `folio_auth_lockout_email_total` (a lockout was set on the IP or email axis), `folio_auth_lockout_app_password_total` (a lockout was set on the app-password counter)
 
 There is no remaining-tokens gauge.
 

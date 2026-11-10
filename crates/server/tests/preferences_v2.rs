@@ -384,3 +384,35 @@ async fn effects_merge_clear_and_validation() {
         serde_json::json!({"page_curl": false})
     );
 }
+
+#[tokio::test]
+async fn keybinds_are_bounded_with_field_details() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "kb-cap@example.com").await;
+    let max = server::auth::local::MAX_KEYBINDS;
+    let mut map = serde_json::Map::new();
+    for i in 0..=max {
+        map.insert(format!("action{i}"), serde_json::json!("k"));
+    }
+    let too_many = serde_json::json!({ "keybinds": map }).to_string();
+    let long = "x".repeat(server::auth::local::MAX_KEYBIND_LEN + 1);
+    let too_long = serde_json::json!({ "keybinds": { "nextPage": long } }).to_string();
+    for body in [too_many, too_long] {
+        let (status, resp) = patch_pref(&app, &auth, &body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+        assert_eq!(resp["error"]["code"], "validation");
+        assert_eq!(resp["error"]["details"][0]["field"], "keybinds", "{resp}");
+    }
+    // At the cap is fine.
+    let mut ok = serde_json::Map::new();
+    for i in 0..max {
+        ok.insert(format!("action{i}"), serde_json::json!("k"));
+    }
+    let (status, resp) = patch_pref(
+        &app,
+        &auth,
+        &serde_json::json!({ "keybinds": ok }).to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+}

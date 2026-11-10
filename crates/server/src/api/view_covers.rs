@@ -140,7 +140,8 @@ async fn build(app: &AppState, user: &CurrentUser) -> Result<ViewCoversView, sea
     .all(&app.db)
     .await?;
     let series_ids: Vec<Uuid> = coll.iter().filter_map(|r| r.series_id).collect();
-    let series_covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids).await;
+    let series_covers =
+        crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &acl).await;
     for r in coll {
         let url = match (&r.issue_id, r.series_id) {
             (Some(issue_id), _) => Some(thumb(issue_id)),

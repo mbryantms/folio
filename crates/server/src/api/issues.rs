@@ -1461,7 +1461,8 @@ pub async fn next_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    let acl = access::for_library(&app, &user, row.library_id).await;
+    if !access::issue_allowed(&app, &acl, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     let limit = q.limit.unwrap_or(5).clamp(1, 20);
@@ -1475,6 +1476,10 @@ pub async fn next_in_series(
         .filter(issue::Column::RemovedAt.is_null())
         .filter(issue::Column::Id.ne(row.id.clone()))
         .filter(crate::api::next_up::same_lane(row.special_type.as_deref()));
+    // WP-2.7: skip siblings whose own rating is above the caller's cap.
+    if let Some(cap) = acl.issue_cap_condition() {
+        select = select.filter(cap);
+    }
 
     // Sort handling — emulate "NULLS LAST" via a synthesized ASC bool.
     let nulls_last = Expr::cust("sort_number IS NULL");
@@ -1556,7 +1561,8 @@ pub async fn prev_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    let acl = access::for_library(&app, &user, row.library_id).await;
+    if !access::issue_allowed(&app, &acl, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1566,6 +1572,10 @@ pub async fn prev_in_series(
         .filter(issue::Column::Id.ne(row.id.clone()))
         // Same lane as the current issue (see `next_up::same_lane`).
         .filter(crate::api::next_up::same_lane(row.special_type.as_deref()));
+    // WP-2.7: skip siblings whose own rating is above the caller's cap.
+    if let Some(cap) = acl.issue_cap_condition() {
+        select = select.filter(cap);
+    }
 
     // Reverse of next_in_series' sort so `.one()` yields the *immediate*
     // predecessor: (sort_number IS NULL) DESC, sort_number DESC, id DESC.

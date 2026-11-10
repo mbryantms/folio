@@ -2701,7 +2701,9 @@ pub fn special_type_from_format(format: &str) -> Option<&'static str> {
 /// shouldn't block scanning — the spec calls for it as a hint).
 pub fn read_series_json(folder: &Path) -> Option<SeriesMetadata> {
     let p = folder.join("series.json");
-    let bytes = std::fs::read(&p).ok()?;
+    // A `series.json` that is a symbolic link is never read (links below a
+    // library root are never followed).
+    let bytes = crate::library::no_follow::read_sidecar(&p).ok()?;
     match parsers::series_json::parse(&bytes) {
         Ok(s) => Some(s.metadata),
         Err(e) => {

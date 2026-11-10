@@ -20,6 +20,7 @@ import type {
   SpecialsCompletion,
 } from "../types";
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 /** Invalidate every cached surface that renders series cards (the
  *  collection dot) or a completeness verdict. Server-rendered pages
@@ -66,7 +67,7 @@ export function useSetSeriesSpecialsCompletion(seriesId: string) {
   const qc = useQueryClient();
   return useApiMutation<SeriesCompletionPrefsView, SpecialsCompletion>(
     (mode) => ({
-      path: `/me/series/${encodeURIComponent(seriesId)}/completion-prefs`,
+      path: apiPath`/me/series/${seriesId}/completion-prefs`,
       method: "PUT",
       body: { count_specials: mode },
     }),

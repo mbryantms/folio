@@ -18,6 +18,11 @@ Put the file on the server's own disk (not a network share) and mount
 it into the container; Folio opens it **read-only and immutable**, so
 it never takes a lock and never writes to it. Replace a file by renaming
 a new one into place; the next open sees it.
+The configured path is handed to the SQLite driver as a file name
+(`SqliteConnectOptions::filename`, with read-only and immutable set
+explicitly), never pasted into a `sqlite://` URL, so a path containing
+`?`, `#` or `%` opens that exact file and cannot change the connection
+options.
 
 ## Settings (M1)
 

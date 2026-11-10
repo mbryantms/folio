@@ -53,6 +53,7 @@ neither are lazy `next/dynamic` chunks.
 | 2026-10-31, audit C2 (strip pill a11y, OCR alt, RECENTER hoist) | 141.66 KB | 15 | 145 KB | 120 KB |
 | 2026-10-31, audit C5 (touch pinch zoom, first-open chrome on touch) | 142.66 KB | 15 | 145 KB | 120 KB |
 | 2026-11-04, Folio Flair 1.0 (drag-to-turn, page curl, cover morph into the reader, finishing moment) | 161.47 KB | 17 | 170 KB | 120 KB |
+| 2026-11-10, deferred drag-turn motion + peek, health toast, mutations-barrel import | 148.58 KB | 16 | 152 KB | 120 KB |
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
@@ -88,6 +89,26 @@ paint, so `lazy.tsx` would trade the budget for a visible delay. The ceiling
 moves to 170 KB, tighter than the usual +10% (177.6 KB) on purpose; the
 target is unchanged, and the next reader work should pay this back by
 code-splitting the drag-turn physics and the finishing-progress queries.
+
+The 2026-11-10 row: `main` measured 165.43 KB (17 chunks) before it.
+The largest reader-owned item was not an effect but `Reader.tsx` importing
+three hooks from the `@/lib/api/mutations` barrel, which shipped the whole
+barrel again (a 13.9 KB chunk); `useSetIssueRating` / `useSetIssueNote`
+moved to `mutations/issue-user-state.ts` and `useUpdatePreferences` to
+`mutations/preferences.ts` (re-exported from the barrel), and the reader
+imports the shards. The drag-to-turn motion moved to
+`lib/reader/drag-turn-engine.ts`, fetched when the browser is first idle
+after the first paint (or on the first drag); until it arrives, or if its
+chunk fails, a swipe is the plain threshold turn. The drag peek and the
+health toast became `lazy.tsx` surfaces; the peek renders nothing if its
+chunk fails rather than reaching the error boundary. The page curl engine
+was already lazy (its hook is under 1 KB), and the cover hand-off stays
+eager: it must take the cover over in the reader's first commit. The
+ceiling drops to measured + ~3 KB = 152 KB. Offline, these chunks are not
+in the serwist precache (it holds only `offline.html`); the offline shell
+crawl (`lib/pwa/offline-shell.ts`) stores every chunk named inside a
+stored chunk, which includes the new lazy ones, and the fallbacks above
+cover a cold cache.
 
 The C5 row: +1.0 KB for the `usePinchZoom` shim, the swipe layer's
 `isPinching` gate, `readerTouchAction` and the store's first-open chrome

@@ -258,16 +258,23 @@ fn name_not_blank(name: &Option<String>, _: &()) -> garde::Result {
     }
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+/// Most view ids a pin reorder may carry. Pins on one page are bounded by
+/// the user's rails-per-page setting (12 by default); views a user owns
+/// are not capped, so this is a safety bound well above any page.
+pub const MAX_REORDER_VIEW_IDS: usize = 1_000;
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct ReorderReq {
     /// Page whose pins are being reordered. Omit to default to the
     /// caller's system "Home" page — transitional shim until the web
     /// migrates to explicit page ids (M5/M6).
     #[serde(default)]
+    #[garde(skip)]
     pub page_id: Option<Uuid>,
     /// View IDs in desired pin order. Views not currently pinned to
     /// `page_id` are rejected; pinned views absent from the list keep
     /// their existing position.
+    #[garde(length(max = MAX_REORDER_VIEW_IDS))]
     pub view_ids: Vec<Uuid>,
 }
 
@@ -1802,7 +1809,7 @@ async fn compact_pin_positions(
 pub async fn reorder(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<ReorderReq>,
+    Validated(req): Validated<ReorderReq>,
 ) -> impl IntoResponse {
     let txn = match app.db.begin().await {
         Ok(t) => t,
@@ -2398,7 +2405,9 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
 
     // hydrate_series attaches `issue_count` + `cover_url`. Skipping it
     // — as we did originally — was the M7 home page's empty-cover bug.
-    let items = crate::api::series::hydrate_series(app, rows, input.user_id).await;
+    let items =
+        crate::api::series::hydrate_series(app, rows, input.user_id, &input.visible_libraries)
+            .await;
     // Saved-view results don't surface a total today — saved views are
     // capped at `result_limit` (12 by default) and the caller knows
     // that ceiling. Leaving `None` so we don't pretend we counted.
