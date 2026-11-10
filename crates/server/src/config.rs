@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMode {
     Oidc,
@@ -109,7 +109,24 @@ pub struct Config {
     #[serde(default)]
     pub trusted_proxies: String,
 
-    #[serde(default = "default_auth_mode")]
+    /// The sign-in mode the operator chose: `COMIC_AUTH_MODE` at boot,
+    /// then the `auth.mode` row once the DB overlay applies. `None` means
+    /// nobody chose one; [`resolve_auth_mode`] then derives the mode from
+    /// whether single sign-on is configured. Blank env values count as
+    /// unset.
+    #[serde(
+        default,
+        rename = "auth_mode",
+        deserialize_with = "deserialize_auth_mode_choice"
+    )]
+    pub auth_mode_choice: Option<AuthMode>,
+
+    /// The effective sign-in mode. Every reader (login, register, the
+    /// OIDC routes, `/auth/config`, the admin auth page) uses this field.
+    /// Never read from env directly: [`Config::resolve_auth`] sets it from
+    /// `auth_mode_choice` + the OIDC settings in `load`, `overlay_db` and
+    /// the settings dry-run.
+    #[serde(skip, default = "default_auth_mode")]
     pub auth_mode: AuthMode,
 
     /// Upstream URL of the Next.js standalone server. Used by the
@@ -553,6 +570,7 @@ impl std::fmt::Debug for Config {
             .field("log_level", &self.log_level)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("auth_mode", &self.auth_mode)
+            .field("auth_mode_choice", &self.auth_mode_choice)
             .field("web_upstream_url", &self.web_upstream_url)
             .field("oidc_issuer", &self.oidc_issuer)
             .field("oidc_client_id", &self.oidc_client_id)
@@ -629,8 +647,86 @@ fn default_bind() -> SocketAddr {
 fn default_log_level() -> String {
     "info".into()
 }
+/// Placeholder until [`Config::resolve_auth`] runs; the effective default
+/// is decided by [`resolve_auth_mode`], not here.
 fn default_auth_mode() -> AuthMode {
-    AuthMode::Both
+    AuthMode::Local
+}
+
+/// `COMIC_AUTH_MODE` → `Option<AuthMode>`; an empty or blank value is
+/// "not chosen" (compose files often pass `${VAR:-}` through).
+fn deserialize_auth_mode_choice<'de, D>(d: D) -> Result<Option<AuthMode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(d)?;
+    match raw.as_deref().map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(s) => AuthMode::parse(s).map(Some).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "invalid auth mode `{s}`: expected one of local, oidc, both"
+            ))
+        }),
+    }
+}
+
+/// Decide the effective sign-in mode. The one rule every reader agrees on
+/// (via [`Config::resolve_auth`]):
+///
+/// | chosen mode     | OIDC issuer / client id / secret | effective          |
+/// |-----------------|----------------------------------|--------------------|
+/// | none            | none set                         | `local`            |
+/// | none            | all three set                    | `both`             |
+/// | none            | some but not all                 | error, names gaps  |
+/// | `local`         | anything                         | `local`            |
+/// | `oidc` / `both` | all three set                    | the chosen mode    |
+/// | `oidc` / `both` | any missing                      | error, names gaps  |
+///
+/// A partial single sign-on setup is an error rather than a silent fall
+/// back to local sign-in, so a typo in one value is caught at boot (or by
+/// the settings dry-run) instead of quietly hiding the SSO button.
+pub fn resolve_auth_mode(
+    choice: Option<AuthMode>,
+    oidc_issuer: Option<&str>,
+    oidc_client_id: Option<&str>,
+    oidc_client_secret: Option<&str>,
+) -> anyhow::Result<AuthMode> {
+    let is_set = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
+    let fields = [
+        ("issuer (COMIC_OIDC_ISSUER)", is_set(oidc_issuer)),
+        ("client id (COMIC_OIDC_CLIENT_ID)", is_set(oidc_client_id)),
+        (
+            "client secret (COMIC_OIDC_CLIENT_SECRET)",
+            is_set(oidc_client_secret),
+        ),
+    ];
+    let missing: Vec<&str> = fields
+        .iter()
+        .filter(|(_, set)| !set)
+        .map(|(name, _)| *name)
+        .collect();
+    match choice {
+        Some(AuthMode::Local) => Ok(AuthMode::Local),
+        Some(mode @ (AuthMode::Oidc | AuthMode::Both)) => {
+            if missing.is_empty() {
+                Ok(mode)
+            } else {
+                anyhow::bail!(
+                    "auth_mode `{mode}` includes oidc but COMIC_OIDC_ISSUER / CLIENT_ID / \
+                     CLIENT_SECRET are not all set; missing OIDC {}",
+                    missing.join(", ")
+                )
+            }
+        }
+        None if missing.is_empty() => Ok(AuthMode::Both),
+        None if missing.len() == fields.len() => Ok(AuthMode::Local),
+        None => anyhow::bail!(
+            "single sign-on is partly configured: missing OIDC {}. Set the missing \
+             values, remove the others, or choose a sign-in mode explicitly \
+             (auth.mode under /admin/auth, or COMIC_AUTH_MODE)",
+            missing.join(", ")
+        ),
+    }
 }
 fn default_web_upstream_url() -> String {
     "http://localhost:3000".into()
@@ -769,12 +865,27 @@ pub enum Provenance {
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
         // Env > config.toml > defaults.
-        let cfg: Config = Figment::new()
+        let mut cfg: Config = Figment::new()
             .merge(Toml::file("config.toml"))
             .merge(Env::prefixed("COMIC_"))
             .extract()?;
+        cfg.resolve_auth()?;
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Set the effective [`Config::auth_mode`] from the chosen mode and
+    /// the OIDC settings ([`resolve_auth_mode`]). Runs after every step
+    /// that can change either input: env load, the DB overlay, and the
+    /// `PATCH /admin/settings` dry-run.
+    pub fn resolve_auth(&mut self) -> anyhow::Result<()> {
+        self.auth_mode = resolve_auth_mode(
+            self.auth_mode_choice,
+            self.oidc_issuer.as_deref(),
+            self.oidc_client_id.as_deref(),
+            self.oidc_client_secret.as_deref(),
+        )?;
+        Ok(())
     }
 
     /// True when the OPDS feed should present as Komga (and the
@@ -842,14 +953,30 @@ impl Config {
         secrets: &crate::secrets::Secrets,
     ) -> anyhow::Result<()> {
         let rows = crate::settings::read_all(db, secrets).await?;
+        // Build on a copy so a failed overlay leaves `self` untouched (the
+        // boot path then really does keep the env-only Config, with its
+        // effective auth mode matching its own inputs).
+        let mut next = self.clone();
         for r in rows {
-            apply_overlay_row(self, &r);
+            apply_overlay_row(&mut next, &r);
         }
-        self.validate()?;
+        next.resolve_auth()?;
+        next.validate()?;
+        *self = next;
         Ok(())
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
+        // The chosen mode + OIDC settings must resolve (partial SSO and an
+        // explicit oidc/both without credentials are errors) …
+        resolve_auth_mode(
+            self.auth_mode_choice,
+            self.oidc_issuer.as_deref(),
+            self.oidc_client_id.as_deref(),
+            self.oidc_client_secret.as_deref(),
+        )?;
+        // … and the effective mode must be usable, which also covers a
+        // hand-built Config that skipped `resolve_auth`.
         match self.auth_mode {
             AuthMode::Oidc | AuthMode::Both => {
                 if self.oidc_issuer.is_none()
@@ -1156,11 +1283,14 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         "auth.mode" => match row.value.as_str() {
             Some(s) => match AuthMode::parse(s) {
                 Some(mode) => {
-                    let prev_str = cfg.auth_mode.to_string();
-                    if prev_str != s {
-                        tracing::debug!(env = %prev_str, db = %s, "auth.mode overridden by DB");
+                    if let Some(prev) = cfg.auth_mode_choice
+                        && prev != mode
+                    {
+                        tracing::debug!(env = %prev, db = %s, "auth.mode overridden by DB");
                     }
-                    cfg.auth_mode = mode;
+                    // Only the choice: `resolve_auth` derives the effective
+                    // mode once every row (incl. the OIDC ones) is applied.
+                    cfg.auth_mode_choice = Some(mode);
                 }
                 None => tracing::warn!(
                     key = "auth.mode",
@@ -1664,6 +1794,143 @@ pub fn restart_setting_value(cfg: &Config, key: &str) -> Option<serde_json::Valu
 mod tests {
     use super::*;
 
+    const FULL_OIDC: (Option<&str>, Option<&str>, Option<&str>) = (
+        Some("https://idp.example.test"),
+        Some("folio"),
+        Some("client-secret"),
+    );
+    const NO_OIDC: (Option<&str>, Option<&str>, Option<&str>) = (None, None, None);
+
+    fn resolve(
+        choice: Option<AuthMode>,
+        (iss, cid, secret): (Option<&str>, Option<&str>, Option<&str>),
+    ) -> anyhow::Result<AuthMode> {
+        resolve_auth_mode(choice, iss, cid, secret)
+    }
+
+    #[test]
+    fn auth_mode_unset_without_oidc_is_local() {
+        assert_eq!(resolve(None, NO_OIDC).unwrap(), AuthMode::Local);
+        // Blank strings (e.g. `COMIC_OIDC_ISSUER=` in a compose file) are
+        // "not configured", not a partial setup.
+        assert_eq!(
+            resolve(None, (Some(""), Some("  "), None)).unwrap(),
+            AuthMode::Local
+        );
+    }
+
+    #[test]
+    fn auth_mode_unset_with_full_oidc_is_both() {
+        assert_eq!(resolve(None, FULL_OIDC).unwrap(), AuthMode::Both);
+    }
+
+    #[test]
+    fn auth_mode_unset_with_partial_oidc_names_the_missing_values() {
+        let err = resolve(None, (Some("https://idp.example.test"), None, None))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("partly configured"), "{err}");
+        assert!(err.contains("client id (COMIC_OIDC_CLIENT_ID)"), "{err}");
+        assert!(
+            err.contains("client secret (COMIC_OIDC_CLIENT_SECRET)"),
+            "{err}"
+        );
+        assert!(!err.contains("issuer (COMIC_OIDC_ISSUER)"), "{err}");
+
+        let err = resolve(None, (Some("https://idp"), Some("folio"), Some(" ")))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("client secret"), "{err}");
+        assert!(!err.contains("client id"), "{err}");
+    }
+
+    #[test]
+    fn auth_mode_explicit_both_without_oidc_is_an_error() {
+        let err = resolve(Some(AuthMode::Both), NO_OIDC)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("includes oidc"), "{err}");
+        assert!(err.contains("issuer (COMIC_OIDC_ISSUER)"), "{err}");
+        assert!(
+            resolve(Some(AuthMode::Oidc), (Some("https://idp"), None, None)).is_err(),
+            "explicit oidc with partial settings must not boot"
+        );
+    }
+
+    #[test]
+    fn auth_mode_explicit_local_with_full_oidc_stays_local() {
+        assert_eq!(
+            resolve(Some(AuthMode::Local), FULL_OIDC).unwrap(),
+            AuthMode::Local
+        );
+        // An explicit local ignores a half-filled OIDC block (pre-existing
+        // behaviour: the values are inert until a mode uses them).
+        assert_eq!(
+            resolve(Some(AuthMode::Local), (Some("https://idp"), None, None)).unwrap(),
+            AuthMode::Local
+        );
+    }
+
+    #[test]
+    fn auth_mode_explicit_oidc_with_full_oidc_is_oidc() {
+        assert_eq!(
+            resolve(Some(AuthMode::Oidc), FULL_OIDC).unwrap(),
+            AuthMode::Oidc
+        );
+        assert_eq!(
+            resolve(Some(AuthMode::Both), FULL_OIDC).unwrap(),
+            AuthMode::Both
+        );
+    }
+
+    /// The overlay records the DB row as the *choice*; `resolve_auth`
+    /// turns it into the effective mode, so a DB `local` beats an env
+    /// default that would otherwise have resolved to `both`.
+    #[test]
+    fn overlay_row_sets_choice_and_resolve_applies_it() {
+        let mut cfg = Config {
+            auth_mode_choice: None,
+            oidc_issuer: Some("https://idp.example.test".into()),
+            oidc_client_id: Some("folio".into()),
+            oidc_client_secret: Some("client-secret".into()),
+            ..test_config_skeleton()
+        };
+        cfg.resolve_auth().unwrap();
+        assert_eq!(cfg.auth_mode, AuthMode::Both);
+
+        apply_overlay_row(
+            &mut cfg,
+            &crate::settings::Resolved {
+                key: "auth.mode".into(),
+                value: serde_json::json!("local"),
+                is_secret: false,
+            },
+        );
+        assert_eq!(cfg.auth_mode_choice, Some(AuthMode::Local));
+        cfg.resolve_auth().unwrap();
+        assert_eq!(cfg.auth_mode, AuthMode::Local);
+        cfg.validate().unwrap();
+    }
+
+    /// `COMIC_AUTH_MODE` parsing: absent or blank = not chosen; a known
+    /// value is the choice; anything else fails the boot.
+    #[test]
+    fn auth_mode_choice_deserializes_blank_as_unset() {
+        #[derive(Deserialize)]
+        struct Probe {
+            #[serde(default, deserialize_with = "deserialize_auth_mode_choice")]
+            auth_mode: Option<AuthMode>,
+        }
+        let parse = |v: serde_json::Value| serde_json::from_value::<Probe>(v).map(|p| p.auth_mode);
+        assert_eq!(parse(serde_json::json!({})).unwrap(), None);
+        assert_eq!(parse(serde_json::json!({ "auth_mode": "" })).unwrap(), None);
+        assert_eq!(
+            parse(serde_json::json!({ "auth_mode": "oidc" })).unwrap(),
+            Some(AuthMode::Oidc)
+        );
+        assert!(parse(serde_json::json!({ "auth_mode": "sso" })).is_err());
+    }
+
     /// Auth-hardening Phase B B2 (security-audit.md H-2): `Config`
     /// must not leak credentials through `{:?}` / `dbg!()` / panic
     /// captures. Seed every secret field with a unique, easily-grepped
@@ -1750,6 +2017,7 @@ mod tests {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "info".into(),
             trusted_proxies: String::new(),
+            auth_mode_choice: Some(AuthMode::Local),
             auth_mode: AuthMode::Local,
             web_upstream_url: "http://127.0.0.1:0".into(),
             oidc_issuer: None,

@@ -319,7 +319,7 @@ function ProviderForm({
     (initialLocal != null &&
       (localPath.trim() !== initialLocal.path ||
         localMode !== initialLocal.mode));
-  useUnsavedChangesGuard(dirty);
+  const leaveGuard = useUnsavedChangesGuard(dirty);
 
   return (
     <form
@@ -492,6 +492,7 @@ function ProviderForm({
           </Button>
         </div>
       </div>
+      {leaveGuard}
     </form>
   );
 }

@@ -486,27 +486,18 @@ pub(crate) async fn compute_publisher_facets(
         publisher: String,
         n: i64,
     }
-    let mut params: Vec<sea_orm::Value> = Vec::new();
-    let mut acl_sql = String::new();
-    if !visible.unrestricted {
-        if visible.allowed.is_empty() {
-            return Vec::new();
-        }
-        let placeholders: Vec<String> = visible
-            .allowed
-            .iter()
-            .map(|id| {
-                params.push((*id).into());
-                format!("${}", params.len())
-            })
-            .collect();
-        acl_sql.push_str(&format!(" AND library_id IN ({})", placeholders.join(",")));
-        acl_sql.push_str(&visible.raw_cap_clause("library_id", "age_rating", &mut params));
+    if !visible.unrestricted && visible.allowed.is_empty() {
+        return Vec::new();
     }
+    // `visible_series_sql`: removed series are not counted (the browse
+    // feed the facet links into lists active series only), plus the
+    // caller's grant + age cap — the same predicate as every series list.
+    let mut params: Vec<sea_orm::Value> = Vec::new();
+    let vis_sql = access::visible_series_sql(visible, "s", &mut params);
     let sql = format!(
-        "SELECT publisher, COUNT(*)::bigint AS n FROM series \
-         WHERE publisher IS NOT NULL AND publisher <> ''{acl_sql} \
-         GROUP BY publisher ORDER BY n DESC LIMIT {BROWSE_PUBLISHER_FACET_LIMIT}"
+        "SELECT s.publisher AS publisher, COUNT(*)::bigint AS n FROM series s \
+         WHERE s.publisher IS NOT NULL AND s.publisher <> ''{vis_sql} \
+         GROUP BY s.publisher ORDER BY n DESC LIMIT {BROWSE_PUBLISHER_FACET_LIMIT}"
     );
     let stmt = Statement::from_sql_and_values(sea_orm::DatabaseBackend::Postgres, sql, params);
     let rows = match Row::find_by_statement(stmt).all(&app.db).await {
@@ -742,7 +733,14 @@ async fn series_one(
     AxPath(id): AxPath<Uuid>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    let s = match series::Entity::find_by_id(id).one(&app.db).await {
+    // A soft-removed series answers the same not-found as an unknown id,
+    // for every role: OPDS is a list surface (`access::active_series`),
+    // and the admin Removed tab is the only place removed rows appear.
+    let s = match access::active_series_select()
+        .filter(series::Column::Id.eq(id))
+        .one(&app.db)
+        .await
+    {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
@@ -751,11 +749,10 @@ async fn series_one(
     if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return not_found();
     }
-    // WP-2.7: issues carrying their own rating above the cap are hidden.
-    let mut issues_base = issue::Entity::find().filter(issue::Column::SeriesId.eq(id));
-    if let Some(cond) = acl.issue_cap_condition() {
-        issues_base = issues_base.filter(cond);
-    }
+    // `visible_issues_select`: soft-removed issues drop out, and the grant
+    // + age cap (WP-2.7: an issue's own rating above the cap hides it)
+    // apply exactly as on every other OPDS issue listing.
+    let issues_base = access::visible_issues_select(&acl).filter(issue::Column::SeriesId.eq(id));
     let total = match issues_base.clone().count(&app.db).await {
         Ok(n) => n,
         Err(e) => return server_error(e.to_string()),
@@ -2532,11 +2529,9 @@ pub(crate) async fn compute_cbl_progress_summary(
         updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     }
     let mut params: Vec<sea_orm::Value> = vec![cbl_list_id.into(), user_id.into()];
-    let cap_sql = visible.raw_cap_clause(
-        "i.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
+    // `visible_issues_sql`: a removed issue, or an issue of a removed
+    // series, is not counted; grant + age cap as on every issue list.
+    let vis_sql = access::visible_issues_sql(visible, "i", &mut params);
     let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
@@ -2552,8 +2547,7 @@ pub(crate) async fn compute_cbl_progress_summary(
           ON p.user_id = $2 AND p.issue_id = i.id
         WHERE e.cbl_list_id = $1
           AND e.matched_issue_id IS NOT NULL
-          AND i.state = 'active'
-          AND i.removed_at IS NULL{cap_sql}
+          AND i.state = 'active'{vis_sql}
         "#
         ),
         params,

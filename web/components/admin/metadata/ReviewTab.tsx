@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { BatchLookupSummary } from "@/components/admin/metadata/BatchLookupSummary";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge as AdminStatusBadge } from "@/components/admin/StatusBadge";
+import { jobStateTone } from "@/components/admin/status-tones";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
@@ -44,11 +46,7 @@ import {
   useMetadataBatch,
   useMetadataBatches,
 } from "@/lib/api/queries";
-import {
-  statusTone,
-  statusToneText,
-  statusToneDot,
-} from "@/lib/ui/status-tone";
+import { statusToneText, statusToneDot } from "@/lib/ui/status-tone";
 import type { BatchChildRow, BatchListRow } from "@/lib/api/types";
 import {
   providerCoverage,
@@ -610,32 +608,32 @@ function ToneDot({ tone }: { tone: "strong" | "review" | "none" }) {
   return <span className={`inline-block h-2.5 w-2.5 rounded-full ${cls}`} />;
 }
 
+/** Batch status; tones from `jobStateTone` (completed neutral, running
+ *  info, awaiting quota / partial warning). */
 function StatusBadge({ status }: { status: string }) {
   if (status === "completed") {
     return (
-      <Badge variant="outline" className={statusTone("success")}>
+      <AdminStatusBadge tone={jobStateTone(status)}>
         <CheckCircle2 className="mr-1 size-3" /> Completed
-      </Badge>
+      </AdminStatusBadge>
     );
   }
   if (status === "awaiting_quota") {
     return (
-      <Badge variant="outline" className={statusTone("warning")}>
+      <AdminStatusBadge tone={jobStateTone(status)}>
         <AlertCircle className="mr-1 size-3" /> Awaiting quota
-      </Badge>
+      </AdminStatusBadge>
     );
   }
   if (status === "partial_failed") {
     return (
-      <Badge variant="outline" className={statusTone("error")}>
-        Partial
-      </Badge>
+      <AdminStatusBadge tone={jobStateTone(status)}>Partial</AdminStatusBadge>
     );
   }
   return (
-    <Badge variant="secondary">
+    <AdminStatusBadge tone={jobStateTone("running")}>
       <Loader2 className="mr-1 size-3 animate-spin" /> Running
-    </Badge>
+    </AdminStatusBadge>
   );
 }
 

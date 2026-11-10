@@ -12,6 +12,9 @@ import {
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { ScanRunsSkeleton } from "@/components/skeletons/AdminShapes";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { scanRunStateTone } from "@/components/admin/status-tones";
+import { ScanRunFindingsLink } from "@/components/admin/library/ScanRunFindings";
 import {
   Tabs,
   TabsContent,
@@ -32,17 +35,15 @@ const FILTERS: { value: Filter; label: string }[] = [
   { value: "issue", label: "Issue" },
 ];
 
-function stateVariant(s: string): "default" | "secondary" | "destructive" {
-  if (s === "failed") return "destructive";
-  if (s === "complete" || s === "completed") return "default";
-  return "secondary";
-}
-
-function kindVariant(k: ScanRunKind): "default" | "secondary" | "outline" {
-  if (k === "library") return "default";
-  if (k === "series") return "secondary";
+/** Kind is a category, not a status: no brand-accent fill for it. */
+function kindVariant(k: ScanRunKind): "secondary" | "outline" {
+  if (k === "library" || k === "series") return "secondary";
   return "outline";
 }
+
+/** Column priority below `lg`: the duration is repeated in the expanded
+ *  row's details. */
+const RUN_COLUMN_CLASSES = { duration: "max-lg:hidden" };
 
 function durationFromStats(stats: unknown): string {
   if (!stats || typeof stats !== "object") return "";
@@ -80,6 +81,8 @@ function resultsFromStats(stats: unknown): {
   };
 }
 
+/** One library's run history. `libraryId` is the library's slug (the
+ *  Scan tab passes its route param), which the API accepts as the id. */
 export function ScanRunsTable({ libraryId }: { libraryId: string }) {
   const [filter, setFilter] = React.useState<Filter>("all");
   const query = useScanRuns(libraryId, { kind: filter });
@@ -109,12 +112,12 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
         accessorKey: "state",
         header: "State",
         cell: ({ row }) => (
-          <Badge
-            variant={stateVariant(row.original.state)}
+          <StatusBadge
+            tone={scanRunStateTone(row.original.state)}
             className="uppercase"
           >
             {row.original.state}
-          </Badge>
+          </StatusBadge>
         ),
       },
       {
@@ -129,10 +132,19 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
       {
         id: "results",
         header: "Results",
-        cell: ({ row }) => <ResultsCell run={row.original} />,
+        cell: ({ row }) => (
+          <div className="flex flex-col gap-1">
+            <ResultsCell run={row.original} />
+            {/* `libraryId` is the library slug on this route. */}
+            <ScanRunFindingsLink
+              stats={row.original.stats}
+              href={`/admin/libraries/${encodeURIComponent(libraryId)}/health`}
+            />
+          </div>
+        ),
       },
     ],
-    [],
+    [libraryId],
   );
 
   if (isLoading && !data) return <ScanRunsSkeleton />;
@@ -158,6 +170,7 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
       <TabsContent value={filter} tabIndex={-1} className="space-y-4">
         <DataTable
           columns={columns}
+          columnClassNames={RUN_COLUMN_CLASSES}
           data={items}
           emptyMessage={
             filter === "all" ? "No scans yet." : `No ${filter} scans yet.`

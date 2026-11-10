@@ -583,9 +583,12 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
             "COMIC_SMTP_* env vars are deprecated; DB value wins once a row exists for each key"
         );
     }
-    if std::env::var("COMIC_AUTH_MODE").is_ok()
-        || std::env::var("COMIC_OIDC_ISSUER").is_ok()
-        || std::env::var("COMIC_LOCAL_REGISTRATION_OPEN").is_ok()
+    // Blank values (`COMIC_AUTH_MODE=` from a compose pass-through) count
+    // as unset, so an install that sets none of these never sees the WARN.
+    let env_set = |k: &str| std::env::var(k).is_ok_and(|v| !v.trim().is_empty());
+    if env_set("COMIC_AUTH_MODE")
+        || env_set("COMIC_OIDC_ISSUER")
+        || env_set("COMIC_LOCAL_REGISTRATION_OPEN")
     {
         tracing::warn!(
             target: "comic.deprecation",

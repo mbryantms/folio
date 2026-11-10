@@ -399,13 +399,14 @@ test.describe("Reader flow", () => {
     const series = items.find((s) => s.name === "Relay");
     expect(series, "fixture series Relay").toBeTruthy();
 
-    // A real in-app page before the reader, which is what makes the button
-    // show at all. The reader's exit pushes the issue page, so the entry
-    // behind that page is the reader: Back would re-open it, with a copy of
-    // the cover left floating over it (lib/ui/back-flight.ts).
-    await page.goto(`/series/${series!.slug}`);
-    await page.getByRole("link", { name: /^(Read|Continue reading)$/ }).click();
-    await page.waitForURL(/\/read\//);
+    // A cold load: the reader opened straight from a link, with no in-app
+    // page before it, so the exit falls back to the issue page. It replaces
+    // the reader entry, so that page has no Back into the reader
+    // (lib/ui/back-flight.ts `exitReader`).
+    const { items: issues } = await json<{ items: { slug: string }[] }>(
+      page.request.get(`/api/series/${series!.slug}/issues`),
+    );
+    await page.goto(`/read/${series!.slug}/${issues[0]!.slug}`);
     await expect(page.getByTestId("reader-chrome")).toBeAttached({
       timeout: 15_000,
     });
@@ -417,6 +418,58 @@ test.describe("Reader flow", () => {
       page.getByRole("navigation", { name: "Breadcrumb" }),
     ).toBeVisible();
     await expect(page.locator("[data-back-button]")).toHaveCount(0);
+  });
+
+  // Audit U-02. Unrun locally: it needs the docker-smoke stack.
+  test("the exit returns to where reading started, past the next issue", async ({
+    page,
+    context,
+  }) => {
+    const { items } = await json<{ items: { slug: string; name: string }[] }>(
+      page.request.get("/api/series?limit=50"),
+    );
+    const series = items.find((s) => s.name === "Two Step");
+    expect(series, "fixture series Two Step").toBeTruthy();
+    const { items: issues } = await json<{
+      items: { id: string; slug: string }[];
+    }>(page.request.get(`/api/series/${series!.slug}/issues`));
+    expect(issues).toHaveLength(2);
+    // Unread, so the series page offers issue 1 and Up Next is issue 2
+    // (progress outlives a retried attempt).
+    for (const issue of issues) {
+      await json(
+        page.request.post("/api/progress", {
+          headers: { "X-CSRF-Token": await csrfToken(context) },
+          data: { issue_id: issue.id, page: 0, finished: false },
+        }),
+      );
+    }
+
+    const seriesPath = `/series/${series!.slug}`;
+    await page.goto(seriesPath);
+    await page.getByRole("link", { name: /^Read$/ }).click();
+    await page.waitForURL(/\/read\//);
+    await expect(page.getByTestId("reader-chrome")).toBeAttached({
+      timeout: 15_000,
+    });
+
+    // Next issue (Shift+N): a no-op until Up Next has loaded, so retry.
+    const second = new RegExp(`/read/${series!.slug}/${issues[1]!.slug}`);
+    await expect(async () => {
+      await page.keyboard.press("Shift+N");
+      await page.waitForURL(second, { timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+    await expect(page.getByTestId("reader-chrome")).toBeAttached({
+      timeout: 15_000,
+    });
+
+    await page.keyboard.press("t");
+    await page.getByRole("button", { name: "Exit reader" }).click();
+    await page.waitForURL((url) => url.pathname === seriesPath);
+
+    // The reader is forward of the series page now, not behind it.
+    await page.goBack();
+    expect(new URL(page.url()).pathname).not.toMatch(/^\/read\//);
   });
 
   test("a page that won't load shows its retry at once, and the retry can be tapped", async ({

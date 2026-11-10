@@ -43,7 +43,7 @@ async fn forward_anon(
     req: Request<Body>,
     timeout: Duration,
 ) -> axum::response::Response {
-    upstream::forward(client, upstream_url, req, timeout, None, None).await
+    upstream::forward(client, upstream_url, req, timeout, None, false, None).await
 }
 
 #[tokio::test]
@@ -126,33 +126,151 @@ async fn forwards_post_body_to_upstream() {
     assert_eq!(*received.lock().unwrap(), payload);
 }
 
-#[tokio::test]
-async fn injects_x_forwarded_proto_default_http() {
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+/// Mount a `/x` mock that records every X-Forwarded-Host / -Proto value
+/// the upstream receives.
+async fn recording_upstream() -> (MockServer, Seen) {
     let server = MockServer::start().await;
+    let observed: Seen = Default::default();
+    let seen = observed.clone();
     Mock::given(method("GET"))
         .and(path("/x"))
-        .and(wm_header("x-forwarded-proto", "http"))
-        .respond_with(ResponseTemplate::new(200))
+        .respond_with(move |req: &WmRequest| {
+            let mut got = seen.lock().unwrap();
+            for name in ["x-forwarded-host", "x-forwarded-proto"] {
+                for v in req.headers.get_all(name).iter() {
+                    got.push((name.to_owned(), v.to_str().unwrap_or("").to_owned()));
+                }
+            }
+            ResponseTemplate::new(200)
+        })
         .mount(&server)
         .await;
+    (server, observed)
+}
 
-    let resp = forward_anon(
+/// Send `/x` with `Host: host` plus `extra` headers; return the recorded
+/// (sorted) X-Forwarded-Host / -Proto values.
+async fn forwarded_seen(
+    host: &str,
+    extra: &[(&str, &str)],
+    peer_trusted: bool,
+) -> Vec<(String, String)> {
+    let (server, observed) = recording_upstream().await;
+    let mut b = Request::builder()
+        .method(Method::GET)
+        .uri("/x")
+        .header(header::HOST, host);
+    for (k, v) in extra {
+        b = b.header(*k, *v);
+    }
+    let resp = upstream::forward(
         &proxy_client(),
         &server.uri(),
-        req_get("/x"),
+        b.body(Body::empty()).unwrap(),
         Duration::from_secs(5),
+        None,
+        peer_trusted,
+        None,
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
+    let mut got = observed.lock().unwrap().clone();
+    got.sort();
+    got
+}
+
+fn pair(host: &str, proto: &str) -> Vec<(String, String)> {
+    vec![
+        ("x-forwarded-host".to_owned(), host.to_owned()),
+        ("x-forwarded-proto".to_owned(), proto.to_owned()),
+    ]
 }
 
 #[tokio::test]
-async fn preserves_existing_x_forwarded_proto() {
+async fn untrusted_peer_client_forwarded_host_and_proto_are_replaced() {
+    let got = forwarded_seen(
+        "folio.example.com",
+        &[
+            ("x-forwarded-host", "evil.example"),
+            ("x-forwarded-proto", "https"),
+        ],
+        false,
+    )
+    .await;
+    assert_eq!(got, pair("folio.example.com", "http"));
+}
+
+#[tokio::test]
+async fn trusted_peer_forwarded_host_and_proto_are_kept() {
+    let got = forwarded_seen(
+        "folio:8080",
+        &[
+            ("x-forwarded-host", "comics.example.com"),
+            ("x-forwarded-proto", "https"),
+        ],
+        true,
+    )
+    .await;
+    assert_eq!(got, pair("comics.example.com", "https"));
+}
+
+#[tokio::test]
+async fn trusted_peer_without_forwarded_values_uses_host_and_http() {
+    let got = forwarded_seen("192.168.1.20:8080", &[], true).await;
+    assert_eq!(got, pair("192.168.1.20:8080", "http"));
+}
+
+#[tokio::test]
+async fn trusted_peer_malformed_forwarded_values_fall_back() {
+    let got = forwarded_seen(
+        "folio.lan:8080",
+        &[
+            ("x-forwarded-host", "comics.example.com"),
+            ("x-forwarded-proto", "javascript"),
+        ],
+        true,
+    )
+    .await;
+    assert_eq!(got, pair("comics.example.com", "http"));
+
+    let got = forwarded_seen(
+        "folio.lan:8080",
+        &[
+            ("x-forwarded-host", "a.example, b.example"),
+            ("x-forwarded-proto", "https"),
+        ],
+        true,
+    )
+    .await;
+    assert_eq!(got, pair("folio.lan:8080", "https"));
+
+    let got = forwarded_seen(
+        "folio.lan:8080",
+        &[
+            ("x-forwarded-host", "a.example"),
+            ("x-forwarded-host", "b.example"),
+        ],
+        true,
+    )
+    .await;
+    assert_eq!(got, pair("folio.lan:8080", "http"));
+}
+
+#[tokio::test]
+async fn strips_client_x_middleware_headers() {
     let server = MockServer::start().await;
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = observed.clone();
     Mock::given(method("GET"))
         .and(path("/x"))
-        .and(wm_header("x-forwarded-proto", "https"))
-        .respond_with(ResponseTemplate::new(200))
+        .respond_with(move |req: &WmRequest| {
+            seen.lock()
+                .unwrap()
+                .extend(req.headers.keys().map(|k| k.as_str().to_owned()));
+            ResponseTemplate::new(200)
+        })
         .mount(&server)
         .await;
 
@@ -160,20 +278,35 @@ async fn preserves_existing_x_forwarded_proto() {
         .method(Method::GET)
         .uri("/x")
         .header(header::HOST, "folio.example.com")
-        .header("x-forwarded-proto", "https")
+        .header(
+            "x-middleware-subrequest",
+            "middleware:middleware:middleware",
+        )
+        .header("x-middleware-rewrite", "/admin")
+        .header("x-custom", "kept")
         .body(Body::empty())
         .unwrap();
     let resp = forward_anon(&proxy_client(), &server.uri(), req, Duration::from_secs(5)).await;
     assert_eq!(resp.status(), StatusCode::OK);
+    let names = observed.lock().unwrap().clone();
+    assert!(
+        names.iter().all(|n| !n.starts_with("x-middleware-")),
+        "x-middleware-* reached the upstream: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "x-custom"), "{names:?}");
 }
 
 #[tokio::test]
-async fn injects_x_forwarded_host_from_inbound_host() {
+async fn strips_upstream_x_middleware_response_headers() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/x"))
-        .and(wm_header("x-forwarded-host", "folio.example.com"))
-        .respond_with(ResponseTemplate::new(200))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-middleware-rewrite", "/en/x")
+                .insert_header("x-middleware-set-cookie", "a=b")
+                .insert_header("x-nextjs-cache", "HIT"),
+        )
         .mount(&server)
         .await;
 
@@ -185,6 +318,14 @@ async fn injects_x_forwarded_host_from_inbound_host() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.headers()
+            .keys()
+            .all(|k| !k.as_str().starts_with("x-middleware-")),
+        "{:?}",
+        resp.headers()
+    );
+    assert_eq!(resp.headers().get("x-nextjs-cache").unwrap(), "HIT");
 }
 
 #[tokio::test]
@@ -254,6 +395,7 @@ async fn replaces_inbound_x_forwarded_for_with_resolved_ip() {
         req,
         Duration::from_secs(5),
         Some(client_ip),
+        false,
         None,
     )
     .await;
@@ -279,6 +421,7 @@ async fn sets_x_forwarded_for_when_no_inbound_chain() {
         req_get("/x"),
         Duration::from_secs(5),
         Some(client_ip),
+        false,
         None,
     )
     .await;
@@ -398,8 +541,15 @@ async fn returns_502_on_connection_failure() {
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    // The body names no internal address: not the upstream URL, its port,
+    // nor the request path.
+    assert!(!text.contains(&upstream_url), "{text}");
+    assert!(!text.contains(&addr.port().to_string()), "{text}");
+    assert!(!text.contains("127.0.0.1"), "{text}");
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["error"]["code"], "upstream_unreachable");
+    assert_eq!(v["error"]["message"], "The web app is not reachable");
 }
 
 #[tokio::test]
@@ -420,8 +570,11 @@ async fn returns_502_on_timeout() {
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    assert!(!text.contains(&server.uri()), "{text}");
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["error"]["code"], "upstream_timeout");
+    assert_eq!(v["error"]["message"], "The web app did not respond in time");
 }
 
 #[tokio::test]
@@ -473,6 +626,7 @@ async fn forwards_csp_to_upstream_as_request_header() {
         req_get("/page"),
         Duration::from_secs(5),
         None,
+        false,
         Some(csp),
     )
     .await;
@@ -526,6 +680,7 @@ async fn strips_inbound_csp_header_from_client() {
         req,
         Duration::from_secs(5),
         None,
+        false,
         None,
     )
     .await;

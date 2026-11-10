@@ -1,15 +1,19 @@
 "use client";
 
 import { AuthConfigSkeleton } from "@/components/skeletons/AdminShapes";
-import { useAdminSettings } from "@/lib/api/queries";
+import { useAdminSettings, useAuthConfig } from "@/lib/api/queries";
 
 import { AuthConfigForm, type AuthConfigInitial } from "./AuthConfigForm";
 import { TokensCard } from "./TokensCard";
 
 export function AuthConfigEditor() {
   const settings = useAdminSettings();
+  // The live config: its `auth_mode` is the effective mode, which differs
+  // from the `auth.mode` row when no mode has been saved (the server then
+  // derives it from whether single sign-on is configured).
+  const live = useAuthConfig();
 
-  if (settings.isLoading) return <AuthConfigSkeleton />;
+  if (settings.isLoading || live.isLoading) return <AuthConfigSkeleton />;
   if (settings.error || !settings.data) {
     return (
       <p className="text-destructive text-sm">Failed to load auth settings.</p>
@@ -23,7 +27,9 @@ export function AuthConfigEditor() {
 
   return (
     <div className="space-y-4">
-      <AuthConfigForm initial={pickAuthValues(settings.data.values)} />
+      <AuthConfigForm
+        initial={pickAuthValues(settings.data.values, live.data?.auth_mode)}
+      />
       <TokensCard
         initial={{
           access_ttl: asString("auth.jwt.access_ttl", "24h"),
@@ -34,8 +40,13 @@ export function AuthConfigEditor() {
   );
 }
 
+function isMode(v: unknown): v is AuthConfigInitial["mode"] {
+  return v === "local" || v === "oidc" || v === "both";
+}
+
 function pickAuthValues(
   rows: { key: string; value: unknown; is_secret: boolean }[],
+  effectiveMode: string | undefined,
 ): AuthConfigInitial {
   const asString = (k: string) => {
     const r = rows.find((x) => x.key === k);
@@ -45,10 +56,11 @@ function pickAuthValues(
     const r = rows.find((x) => x.key === k);
     return typeof r?.value === "boolean" ? r.value : fallback;
   };
-  const mode = asString("auth.mode");
+  const saved = asString("auth.mode");
+  const effective = isMode(effectiveMode) ? effectiveMode : "local";
   return {
-    mode:
-      mode === "local" || mode === "oidc" || mode === "both" ? mode : "both",
+    mode: isMode(saved) ? saved : effective,
+    mode_saved: isMode(saved),
     registration_open: asBool("auth.local.registration_open", true),
     oidc_issuer: asString("auth.oidc.issuer"),
     oidc_client_id: asString("auth.oidc.client_id"),

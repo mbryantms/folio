@@ -64,6 +64,14 @@ export interface DataTableProps<TData extends RowData> {
   /** Render an expanded row body. When provided, rows toggle on click. */
   renderExpanded?: (row: DataTableRow<TData>) => React.ReactNode;
   emptyMessage?: string;
+  /**
+   * Extra classes for a column's header and body cells, keyed by column id
+   * (an `accessorKey` column's id is its key). For column priority at
+   * narrow widths: hide a low-value column (`max-lg:hidden`) rather than
+   * shrinking text; the table still scrolls inside its own container as
+   * the fallback.
+   */
+  columnClassNames?: Partial<Record<string, string>>;
 }
 
 export function DataTable<TData extends RowData>({
@@ -71,6 +79,7 @@ export function DataTable<TData extends RowData>({
   data,
   renderExpanded,
   emptyMessage = "No rows.",
+  columnClassNames,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
@@ -118,7 +127,11 @@ export function DataTable<TData extends RowData>({
                       : "none"
                   : undefined;
                 return (
-                  <TableHead key={header.id} aria-sort={ariaSort}>
+                  <TableHead
+                    key={header.id}
+                    aria-sort={ariaSort}
+                    className={columnClassNames?.[header.column.id]}
+                  >
                     {header.isPlaceholder ? null : canSort ? (
                       <button
                         type="button"
@@ -192,7 +205,10 @@ export function DataTable<TData extends RowData>({
                       </TableCell>
                     ) : null}
                     {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
+                      <TableCell
+                        key={cell.id}
+                        className={columnClassNames?.[cell.column.id]}
+                      >
                         {flexRender(
                           cell.column.columnDef.cell,
                           cell.getContext(),

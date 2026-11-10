@@ -1,7 +1,18 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Serwist } from "@serwist/window";
 import { toast } from "sonner";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 /** Unregister this origin's `/sw.js` registrations; resolves to how many. */
 async function unregisterOurs(): Promise<number> {
@@ -32,8 +43,12 @@ function takeRecoveryParam(): boolean {
   return true;
 }
 
-/** Updates never reload another open reader. Only the accepting client reloads. */
+/** Updates never reload another open reader. Only the accepting client
+ *  reloads; with a form edited on the page it asks first. */
 export function ServiceWorkerUpdater() {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  /** The reload the dialog confirms; set by the effect below. */
+  const acceptRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     let disposed = false;
@@ -74,16 +89,16 @@ export function ServiceWorkerUpdater() {
       )
         dirty = true;
     };
-    const reload = () => {
-      if (
-        dirty &&
-        !window.confirm("Reload Folio? Unsaved form changes may be lost.")
-      )
-        return;
+    const accept = () => {
       accepted = true;
       window.dispatchEvent(new Event("folio:before-reload"));
       if (activated) window.location.reload();
       else sw.messageSkipWaiting();
+    };
+    acceptRef.current = accept;
+    const reload = () => {
+      if (dirty) setConfirmOpen(true);
+      else accept();
     };
     const show = () => {
       if (disposed) return;
@@ -143,7 +158,29 @@ export function ServiceWorkerUpdater() {
       document.removeEventListener("visibilitychange", onForeground);
       window.removeEventListener("online", onForeground);
       window.removeEventListener("folio:check-update", manualCheck);
+      acceptRef.current = null;
     };
   }, []);
-  return null;
+  return (
+    <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Reload Folio?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Reloading loads the new version, and unsaved form changes on this
+            page may be lost.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => acceptRef.current?.()}
+          >
+            Reload
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
