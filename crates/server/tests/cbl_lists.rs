@@ -1788,3 +1788,379 @@ async fn create_from_json_validation_names_the_field() {
     assert_eq!(body["error"]["code"], "validation");
     assert!(body["error"]["details"].is_null(), "{body:#?}");
 }
+
+// ───── library ACL on list entries ─────
+
+/// Grant `user_id` a library, optionally under an age-rating cap.
+async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid, cap: Option<&str>) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::library_user_access::ActiveModel {
+        user_id: Set(user_id),
+        library_id: Set(library_id),
+        age_rating_max: Set(cap.map(str::to_owned)),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+/// One issue (`number` of a 2020 series) titled `title`. Returns its id.
+async fn acl_issue(
+    db: &sea_orm::DatabaseConnection,
+    dir: &std::path::Path,
+    lib: Uuid,
+    series: Uuid,
+    number: f64,
+    title: &str,
+) -> String {
+    let path = dir.join(format!("{title}.cbz"));
+    common::seed::IssueSeed::new(lib, series, &path, title.as_bytes(), number)
+        .with_title(title)
+        .insert(db)
+        .await
+}
+
+/// Fixture for the reading-list ACL tests: library A (granted to the
+/// readers) and libraries B and C (hidden from them), a CBL naming
+///
+///   0. Aurora Patrol #1    → A, unrated, "Dawn Light"
+///   1. Midnight Cartel #1  → B, "Secret Moon"
+///   2. Twin Tale #1        → ambiguous: one candidate in A, one in B
+///   3. Ghost Pair #1       → ambiguous: candidates in B and C only
+///   4. Nowhere #1          → no such book
+///   5. Aurora Patrol #2    → A, rated Mature 17+, "Red Night"
+struct AclFixture {
+    dir: tempfile::TempDir,
+    lib_a: Uuid,
+    lib_b: Uuid,
+    visible_id: String,
+    hidden_id: String,
+    twin_a_id: String,
+    mature_id: String,
+    cbl: String,
+}
+
+async fn seed_acl_fixture(app: &TestApp) -> AclFixture {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let lib_a_root = dir.path().join("lib_a");
+    std::fs::create_dir_all(&lib_a_root).unwrap();
+    let lib_a = common::seed::LibrarySeed::new(&lib_a_root)
+        .insert(&db)
+        .await;
+    let lib_b_root = dir.path().join("lib_b");
+    std::fs::create_dir_all(&lib_b_root).unwrap();
+    let lib_b = common::seed::LibrarySeed::new(&lib_b_root)
+        .insert(&db)
+        .await;
+    let lib_c_root = dir.path().join("lib_c");
+    std::fs::create_dir_all(&lib_c_root).unwrap();
+    let lib_c = common::seed::LibrarySeed::new(&lib_c_root)
+        .insert(&db)
+        .await;
+    let aurora = common::seed::seed_series(&db, lib_a, "Aurora Patrol").await;
+    let cartel = common::seed::seed_series(&db, lib_b, "Midnight Cartel").await;
+    let twin_a = common::seed::seed_series(&db, lib_a, "Twin Tale").await;
+    let twin_b = common::seed::seed_series(&db, lib_b, "Twin Tale").await;
+    let ghost_b = common::seed::seed_series(&db, lib_b, "Ghost Pair").await;
+    let ghost_c = common::seed::seed_series(&db, lib_c, "Ghost Pair").await;
+    let visible_id = acl_issue(&db, dir.path(), lib_a, aurora, 1.0, "Dawn Light").await;
+    let hidden_id = acl_issue(&db, dir.path(), lib_b, cartel, 1.0, "Secret Moon").await;
+    let twin_a_id = acl_issue(&db, dir.path(), lib_a, twin_a, 1.0, "Twin A").await;
+    acl_issue(&db, dir.path(), lib_b, twin_b, 1.0, "Twin B").await;
+    acl_issue(&db, dir.path(), lib_b, ghost_b, 1.0, "Ghost B").await;
+    acl_issue(&db, dir.path(), lib_c, ghost_c, 1.0, "Ghost C").await;
+    let mature_id = acl_issue(&db, dir.path(), lib_a, aurora, 2.0, "Red Night").await;
+    sea_orm::ConnectionTrait::execute_unprepared(
+        &db,
+        &format!("UPDATE issues SET age_rating = 'Mature 17+' WHERE id = '{mature_id}'"),
+    )
+    .await
+    .unwrap();
+    let book = |series: &str, number: u32| {
+        format!(r#"<Book Series="{series}" Number="{number}" Volume="2020" Year="2020" />"#)
+    };
+    let cbl = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<ReadingList><Name>ACL list</Name><Books>{}{}{}{}{}{}</Books></ReadingList>"#,
+        book("Aurora Patrol", 1),
+        book("Midnight Cartel", 1),
+        book("Twin Tale", 1),
+        book("Ghost Pair", 1),
+        book("Nowhere", 1),
+        book("Aurora Patrol", 2),
+    );
+    AclFixture {
+        dir,
+        lib_a,
+        lib_b,
+        visible_id,
+        hidden_id,
+        twin_a_id,
+        mature_id,
+        cbl,
+    }
+}
+
+async fn entries_of(app: &TestApp, auth: &Authed, list_id: &str, query: &str) -> serde_json::Value {
+    let (status, body) = http(
+        app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/entries{query}"),
+        Some(auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    body
+}
+
+fn entry_at(body: &serde_json::Value, position: i64) -> &serde_json::Value {
+    body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["position"].as_i64() == Some(position))
+        .unwrap_or_else(|| panic!("entry {position}: {body:#?}"))
+}
+
+/// The match facts of an entry — what must be identical between a hidden
+/// match and a genuinely missing entry.
+fn match_facts(e: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "match_status": e["match_status"],
+        "matched_issue_id": e["matched_issue_id"],
+        "match_method": e["match_method"],
+        "match_confidence": e["match_confidence"],
+        "ambiguous_candidates": e["ambiguous_candidates"],
+        "matched_at": e["matched_at"],
+        "issue": e["issue"],
+    })
+}
+
+fn stat_counts(stats: &serde_json::Value) -> [i64; 5] {
+    [
+        stats["total"].as_i64().unwrap(),
+        stats["matched"].as_i64().unwrap(),
+        stats["ambiguous"].as_i64().unwrap(),
+        stats["missing"].as_i64().unwrap(),
+        stats["manual"].as_i64().unwrap(),
+    ]
+}
+
+/// Total of `?status=` / `?q=` on the entries endpoint (first page).
+async fn entries_total(app: &TestApp, auth: &Authed, list_id: &str, query: &str) -> i64 {
+    entries_of(app, auth, list_id, query).await["total"]
+        .as_i64()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_entries_respect_the_readers_library_access() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "acl-admin@example.com").await;
+    let reader = register(&app, "acl-reader@example.com").await;
+    let capped = register(&app, "acl-capped@example.com").await;
+    let fx = seed_acl_fixture(&app).await;
+    grant_library(&app, reader.user_id, fx.lib_a, None).await;
+    grant_library(&app, capped.user_id, fx.lib_a, Some("Teen")).await;
+
+    // ── Admin: the full view.
+    let (status, view) = upload_cbl(&app, &admin, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    assert_eq!(stat_counts(&view["stats"]), [6, 3, 2, 1, 0]);
+    let admin_list = view["id"].as_str().unwrap().to_owned();
+    let body = entries_of(&app, &admin, &admin_list, "").await;
+    assert_eq!(entry_at(&body, 1)["match_status"], "matched");
+    assert_eq!(
+        entry_at(&body, 1)["matched_issue_id"],
+        fx.hidden_id.as_str()
+    );
+    assert_eq!(
+        entry_at(&body, 3)["ambiguous_candidates"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        entries_total(&app, &admin, &admin_list, "?q=Secret").await,
+        1
+    );
+
+    // ── Reader granted library A only.
+    let (status, view) = upload_cbl(&app, &reader, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    assert_eq!(
+        stat_counts(&view["stats"]),
+        [6, 2, 1, 3, 0],
+        "import summary counts only what the reader can open: {view:#?}"
+    );
+    let list_id = view["id"].as_str().unwrap().to_owned();
+    let (_, detail) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(detail["stats"], view["stats"], "{detail:#?}");
+
+    let body = entries_of(&app, &reader, &list_id, "").await;
+    assert_eq!(body["total"].as_i64(), Some(6));
+    let missing = match_facts(entry_at(&body, 4));
+    assert_eq!(missing["match_status"], "missing");
+    // Hidden match and all-hidden ambiguous read exactly as missing.
+    assert_eq!(match_facts(entry_at(&body, 1)), missing, "{body:#?}");
+    assert_eq!(match_facts(entry_at(&body, 3)), missing, "{body:#?}");
+    // Visible match keeps its card.
+    assert_eq!(
+        entry_at(&body, 0)["matched_issue_id"],
+        fx.visible_id.as_str()
+    );
+    assert!(entry_at(&body, 0)["issue"].is_object());
+    assert_eq!(
+        entry_at(&body, 5)["matched_issue_id"],
+        fx.mature_id.as_str()
+    );
+    // Mixed ambiguous: only the candidate in library A survives.
+    let twin = entry_at(&body, 2);
+    assert_eq!(twin["match_status"], "ambiguous");
+    let cands = twin["ambiguous_candidates"].as_array().unwrap();
+    assert_eq!(cands.len(), 1, "{twin:#?}");
+    assert_eq!(cands[0]["issue_id"], fx.twin_a_id.as_str());
+
+    // Status filters and search are the reader's view.
+    assert_eq!(
+        entries_total(&app, &reader, &list_id, "?status=matched").await,
+        2
+    );
+    assert_eq!(
+        entries_total(&app, &reader, &list_id, "?status=ambiguous").await,
+        1
+    );
+    assert_eq!(
+        entries_total(&app, &reader, &list_id, "?status=missing").await,
+        3
+    );
+    let matched = entries_of(&app, &reader, &list_id, "?status=matched").await;
+    assert!(
+        matched["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["matched_issue_id"] != fx.hidden_id.as_str())
+    );
+    let found = entries_of(&app, &reader, &list_id, "?q=Secret").await;
+    assert_eq!(found["total"].as_i64(), Some(0), "{found:#?}");
+    assert!(found["items"].as_array().unwrap().is_empty());
+    assert_eq!(entries_total(&app, &reader, &list_id, "?q=Dawn").await, 1);
+
+    // Window + issues feed count only visible matches.
+    let (_, window) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/window"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(window["total_matched"].as_i64(), Some(2), "{window:#?}");
+    assert_eq!(window["total_entries"].as_i64(), Some(6));
+    let (_, page) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/window-paginated"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(page["total_matched"].as_i64(), Some(2), "{page:#?}");
+    let (_, issues) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/issues"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(issues["total"].as_i64(), Some(2), "{issues:#?}");
+
+    // A refresh summary is the reader's view too: a book that newly
+    // matches in a hidden library is neither matched nor rematched.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let nowhere = common::seed::seed_series(&db, fx.lib_b, "Nowhere").await;
+    acl_issue(&db, fx.dir.path(), fx.lib_b, nowhere, 1.0, "Nowhere B").await;
+    let (status, summary) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/refresh"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{summary:#?}");
+    assert_eq!(summary["matched"].as_i64(), Some(2), "{summary:#?}");
+    assert_eq!(summary["ambiguous"].as_i64(), Some(1));
+    assert_eq!(summary["missing"].as_i64(), Some(3));
+    assert_eq!(summary["rematched"].as_i64(), Some(0));
+
+    // ── Age-capped reader: the Mature issue in library A is hidden too.
+    let (status, view) = upload_cbl(&app, &capped, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    assert_eq!(stat_counts(&view["stats"]), [6, 1, 1, 4, 0], "{view:#?}");
+    let capped_list = view["id"].as_str().unwrap().to_owned();
+    let body = entries_of(&app, &capped, &capped_list, "").await;
+    assert_eq!(
+        match_facts(entry_at(&body, 5)),
+        match_facts(entry_at(&body, 4)),
+        "{body:#?}"
+    );
+    assert_eq!(
+        entries_total(&app, &capped, &capped_list, "?q=Red").await,
+        0
+    );
+    assert_eq!(
+        entries_total(&app, &capped, &capped_list, "?status=matched").await,
+        1
+    );
+    let (_, window) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{capped_list}/window"),
+        Some(&capped),
+        None,
+    )
+    .await;
+    assert_eq!(window["total_matched"].as_i64(), Some(1), "{window:#?}");
+
+    // ── Granting library B reveals the stored matches, no re-import.
+    grant_library(&app, reader.user_id, fx.lib_b, None).await;
+    let body = entries_of(&app, &reader, &list_id, "").await;
+    assert_eq!(entry_at(&body, 1)["match_status"], "matched");
+    assert_eq!(
+        entry_at(&body, 1)["matched_issue_id"],
+        fx.hidden_id.as_str()
+    );
+    assert!(entry_at(&body, 1)["issue"].is_object());
+    assert_eq!(entry_at(&body, 3)["match_status"], "ambiguous");
+    assert_eq!(entries_total(&app, &reader, &list_id, "?q=Secret").await, 1);
+    let (_, detail) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    // Entry 4 now matches "Nowhere" in B (refreshed above), visible too.
+    assert_eq!(
+        stat_counts(&detail["stats"]),
+        [6, 4, 2, 0, 0],
+        "{detail:#?}"
+    );
+}

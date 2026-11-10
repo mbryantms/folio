@@ -300,3 +300,223 @@ async fn share_rejects_a_view_the_admin_does_not_own() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ───── library ACL on a shared list ─────
+
+async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid, cap: Option<&str>) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::library_user_access::ActiveModel {
+        user_id: Set(user_id),
+        library_id: Set(library_id),
+        age_rating_max: Set(cap.map(str::to_owned)),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+fn entry_at(body: &serde_json::Value, position: i64) -> &serde_json::Value {
+    body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["position"].as_i64() == Some(position))
+        .unwrap_or_else(|| panic!("entry {position}: {body:#?}"))
+}
+
+fn match_facts(e: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "match_status": e["match_status"],
+        "matched_issue_id": e["matched_issue_id"],
+        "match_method": e["match_method"],
+        "match_confidence": e["match_confidence"],
+        "ambiguous_candidates": e["ambiguous_candidates"],
+        "matched_at": e["matched_at"],
+        "issue": e["issue"],
+    })
+}
+
+fn stat_counts(stats: &serde_json::Value) -> [i64; 4] {
+    [
+        stats["total"].as_i64().unwrap(),
+        stats["matched"].as_i64().unwrap(),
+        stats["ambiguous"].as_i64().unwrap(),
+        stats["missing"].as_i64().unwrap(),
+    ]
+}
+
+/// A list shared by an admin (`owner_user_id IS NULL`) whose entries match
+/// issues in a library some readers cannot see: every reader gets their own
+/// view of it, the admin the full one, and a later grant reveals the stored
+/// match.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_list_entries_respect_each_readers_library_access() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "acl-admin@example.com").await;
+    let bob = register(&app, "acl-bob@example.com").await;
+    let carol = register(&app, "acl-carol@example.com").await;
+    demote_to_user(&app, bob.user_id).await;
+    demote_to_user(&app, carol.user_id).await;
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let lib_a_root = dir.path().join("lib_a");
+    std::fs::create_dir_all(&lib_a_root).unwrap();
+    let lib_a = common::seed::LibrarySeed::new(&lib_a_root)
+        .insert(&db)
+        .await;
+    let lib_b_root = dir.path().join("lib_b");
+    std::fs::create_dir_all(&lib_b_root).unwrap();
+    let lib_b = common::seed::LibrarySeed::new(&lib_b_root)
+        .insert(&db)
+        .await;
+    let series_a = common::seed::seed_series(&db, lib_a, "Open Series").await;
+    let series_b = common::seed::seed_series(&db, lib_b, "Closed Series").await;
+    let issue = |lib: Uuid, series: Uuid, n: f64, title: &'static str| {
+        let db = db.clone();
+        let path = dir.path().join(format!("{title}.cbz"));
+        async move {
+            common::seed::IssueSeed::new(lib, series, &path, title.as_bytes(), n)
+                .with_title(title)
+                .insert(&db)
+                .await
+        }
+    };
+    let open = issue(lib_a, series_a, 1.0, "Open Book").await;
+    let mature = issue(lib_a, series_a, 2.0, "Late Show").await;
+    let closed = issue(lib_b, series_b, 1.0, "Closed Book").await;
+    db.execute_unprepared(&format!(
+        "UPDATE issues SET age_rating = 'Mature 17+' WHERE id = '{mature}'"
+    ))
+    .await
+    .unwrap();
+
+    // 0 → A, 1 → B (hidden), 2 → missing, 3 → ambiguous [A, B], 4 → A Mature.
+    let list_id = seed_cbl_list_mixed(
+        &app,
+        "Shared ACL",
+        &[
+            (0, Some(&open)),
+            (1, Some(&closed)),
+            (2, None),
+            (4, Some(&mature)),
+        ],
+    )
+    .await;
+    cbl_entry::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        cbl_list_id: Set(list_id),
+        position: Set(3),
+        series_name: Set("Series".into()),
+        issue_number: Set("3".into()),
+        volume: Set(None),
+        year: Set(None),
+        cv_series_id: Set(None),
+        cv_issue_id: Set(None),
+        metron_series_id: Set(None),
+        metron_issue_id: Set(None),
+        matched_issue_id: Set(None),
+        match_status: Set("ambiguous".into()),
+        match_method: Set(None),
+        match_confidence: Set(None),
+        ambiguous_candidates: Set(Some(serde_json::json!([
+            { "issue_id": open, "series_name": "Open Series", "similarity": 0.9 },
+            { "issue_id": closed, "series_name": "Closed Series", "similarity": 0.8 },
+        ]))),
+        user_resolved_at: Set(None),
+        matched_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    grant_library(&app, bob.user_id, lib_a, None).await;
+    grant_library(&app, carol.user_id, lib_a, Some("Teen")).await;
+
+    let detail_url = format!("/api/me/cbl-lists/{list_id}");
+    let entries_url = format!("/api/me/cbl-lists/{list_id}/entries");
+    let window_url = format!("/api/me/cbl-lists/{list_id}/window");
+
+    // Admin: the full view.
+    let (_, detail) = http(&app, Method::GET, &detail_url, Some(&admin), None).await;
+    assert_eq!(stat_counts(&detail["stats"]), [5, 3, 1, 1], "{detail:#?}");
+    let (_, body) = http(&app, Method::GET, &entries_url, Some(&admin), None).await;
+    assert_eq!(entry_at(&body, 1)["matched_issue_id"], closed.as_str());
+    assert_eq!(
+        entry_at(&body, 3)["ambiguous_candidates"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // Bob (library A, uncapped).
+    let (_, detail) = http(&app, Method::GET, &detail_url, Some(&bob), None).await;
+    assert_eq!(stat_counts(&detail["stats"]), [5, 2, 1, 2], "{detail:#?}");
+    let (_, body) = http(&app, Method::GET, &entries_url, Some(&bob), None).await;
+    assert_eq!(body["total"].as_i64(), Some(5));
+    assert_eq!(
+        match_facts(entry_at(&body, 1)),
+        match_facts(entry_at(&body, 2)),
+        "{body:#?}"
+    );
+    assert_eq!(entry_at(&body, 1)["match_status"], "missing");
+    let cands = entry_at(&body, 3)["ambiguous_candidates"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(cands.len(), 1, "{body:#?}");
+    assert_eq!(cands[0]["issue_id"], open.as_str());
+    let (_, found) = http(
+        &app,
+        Method::GET,
+        &format!("{entries_url}?q=Closed"),
+        Some(&bob),
+        None,
+    )
+    .await;
+    assert_eq!(found["total"].as_i64(), Some(0), "{found:#?}");
+    let (_, matched) = http(
+        &app,
+        Method::GET,
+        &format!("{entries_url}?status=matched"),
+        Some(&bob),
+        None,
+    )
+    .await;
+    assert_eq!(matched["total"].as_i64(), Some(2), "{matched:#?}");
+    let (_, window) = http(&app, Method::GET, &window_url, Some(&bob), None).await;
+    assert_eq!(window["total_matched"].as_i64(), Some(2), "{window:#?}");
+
+    // Carol (library A, capped at Teen): the Mature match is hidden too.
+    let (_, detail) = http(&app, Method::GET, &detail_url, Some(&carol), None).await;
+    assert_eq!(stat_counts(&detail["stats"]), [5, 1, 1, 3], "{detail:#?}");
+    let (_, body) = http(&app, Method::GET, &entries_url, Some(&carol), None).await;
+    assert_eq!(
+        match_facts(entry_at(&body, 4)),
+        match_facts(entry_at(&body, 2)),
+        "{body:#?}"
+    );
+    let (_, found) = http(
+        &app,
+        Method::GET,
+        &format!("{entries_url}?q=Late"),
+        Some(&carol),
+        None,
+    )
+    .await;
+    assert_eq!(found["total"].as_i64(), Some(0), "{found:#?}");
+    let (_, window) = http(&app, Method::GET, &window_url, Some(&carol), None).await;
+    assert_eq!(window["total_matched"].as_i64(), Some(1), "{window:#?}");
+
+    // Granting Bob library B reveals the stored match.
+    grant_library(&app, bob.user_id, lib_b, None).await;
+    let (_, detail) = http(&app, Method::GET, &detail_url, Some(&bob), None).await;
+    assert_eq!(stat_counts(&detail["stats"]), [5, 3, 1, 1], "{detail:#?}");
+    let (_, body) = http(&app, Method::GET, &entries_url, Some(&bob), None).await;
+    assert_eq!(entry_at(&body, 1)["match_status"], "matched");
+    assert_eq!(entry_at(&body, 1)["matched_issue_id"], closed.as_str());
+    assert!(entry_at(&body, 1)["issue"].is_object());
+}

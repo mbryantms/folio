@@ -518,9 +518,12 @@ async fn resolve_cbl_next(
         Ok(Some(l)) => l,
         _ => return Ok(CblBranchOutcome::NoMatch),
     };
+    // Matched entries the caller can open — a match into a library hidden
+    // from them is not part of their list's count.
     let total = match cbl_entry::Entity::find()
         .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
         .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
+        .filter(crate::api::cbl_lists::visible_match_exists(acl))
         .select_only()
         .column_as(
             Expr::from(Func::count(Expr::col(cbl_entry::Column::Id))),
@@ -1424,9 +1427,12 @@ async fn resolve_cbl_prev(
         Ok(Some(l)) => l,
         _ => return Ok(CblBranchOutcome::NoMatch),
     };
+    // Matched entries the caller can open — a match into a library hidden
+    // from them is not part of their list's count.
     let total = match cbl_entry::Entity::find()
         .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
         .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
+        .filter(crate::api::cbl_lists::visible_match_exists(acl))
         .select_only()
         .column_as(
             Expr::from(Func::count(Expr::col(cbl_entry::Column::Id))),
