@@ -13,8 +13,8 @@
 //! override row is keyed by `(user_id, kind, ref_id)`:
 //!
 //!   - `kind = 'builtin'` → `ref_id` is a [`BUILTIN_REGISTRY`] key
-//!     (e.g. `home`, `bookmarks`, `collections`, `want_to_read`,
-//!     `all_libraries`).
+//!     (e.g. `home`, `bookmarks`, `collections`, `reading_lists`,
+//!     `want_to_read`).
 //!   - `kind = 'library'` → `ref_id` is `libraries.id` (UUID as text).
 //!   - `kind = 'view'`    → `ref_id` is `saved_views.id`.
 //!
@@ -108,6 +108,16 @@ pub const BUILTIN_REGISTRY: &[BuiltinDef] = &[
         label: "Collections",
         icon: "Folder",
         href: "/collections",
+    },
+    // Imported CBL reading lists: the caller's own plus the ones an admin
+    // shared with everyone. A user with saved overrides has no row for a
+    // built-in added later, so it takes its default position and shows
+    // without touching their customisation.
+    BuiltinDef {
+        key: "reading_lists",
+        label: "Reading lists",
+        icon: "ListOrdered",
+        href: "/lists",
     },
     // WP-5.5: one tabbed browse index for characters / teams / story
     // arcs / publishers / creators (`/browse?tab=…`). Creators is a tab
