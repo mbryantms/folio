@@ -105,6 +105,11 @@ pub struct ContinueReadingCard {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ContinueReadingView {
     pub items: Vec<ContinueReadingCard>,
+    /// Opaque cursor for the next page; `null` on the last page.
+    pub next_cursor: Option<String>,
+    /// Matching cards in total; first page of a paged request only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
 }
 
 /// Recent-history rail (filter-parity-and-builtin-views-1.0 M6): every
@@ -113,6 +118,11 @@ pub struct ContinueReadingView {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RecentHistoryView {
     pub items: Vec<ContinueReadingCard>,
+    /// Opaque cursor for the next page; `null` on the last page.
+    pub next_cursor: Option<String>,
+    /// Matching cards in total; first page of a paged request only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
 }
 
 /// Random-picks rail: a daily shuffle of series the caller hasn't
@@ -179,6 +189,89 @@ pub enum OnDeckCard {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct OnDeckView {
     pub items: Vec<OnDeckCard>,
+    /// Opaque cursor for the next page; `null` on the last page and on
+    /// the home-rail preview (a request with neither `cursor` nor `limit`).
+    pub next_cursor: Option<String>,
+    /// Cards in the ranked list; first page of a paged request only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// First page of a paged request only, and only when the merge hit
+    /// its bound: the cards come from at most this many most recently
+    /// active series and this many reading lists (see
+    /// `ON_DECK_PAGED_CANDIDATES`), so older ones are not listed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounded_to: Option<u32>,
+}
+
+/// `?cursor=&limit=` for the progress rails (Continue reading, Recently
+/// read, On deck). A request with neither is the home-rail preview: the
+/// first [`RAIL_PREVIEW_LIMIT`] cards, without `total`.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct RailPageQuery {
+    /// Opaque cursor from a previous page's `next_cursor`.
+    pub cursor: Option<String>,
+    /// Page size; default 24, max 100. Sending it asks for `total` on the
+    /// first page.
+    pub limit: Option<u64>,
+}
+
+/// Home-rail preview size and the default page size of the progress rails.
+const RAIL_PREVIEW_LIMIT: u64 = 24;
+const RAIL_PAGE_MAX_LIMIT: u64 = 100;
+
+/// Keyset position in a progress rail: `(progress.updated_at, issue_id)`,
+/// both descending.
+#[derive(Debug, Serialize, Deserialize)]
+struct ProgressCursor {
+    at: chrono::DateTime<chrono::FixedOffset>,
+    id: String,
+}
+
+/// Keyset position in the ranked On deck list: activity descending, then
+/// reading-list cards before series cards, then issue id ascending.
+#[derive(Debug, Serialize, Deserialize)]
+struct OnDeckCursor {
+    at: chrono::DateTime<chrono::FixedOffset>,
+    rank: u8,
+    id: String,
+}
+
+/// A parsed `RailPageQuery`: the keyset position to resume after, the page
+/// size, and whether this page carries `total`.
+struct RailPage<C> {
+    after: Option<C>,
+    limit: u64,
+    with_total: bool,
+    preview: bool,
+}
+
+fn parse_rail_page<C: serde::de::DeserializeOwned>(
+    q: &RailPageQuery,
+) -> Result<RailPage<C>, Response> {
+    let after = match q.cursor.as_deref() {
+        Some(c) => match decode_cursor::<C>(c) {
+            Ok(k) => Some(k),
+            Err(_) => {
+                return Err(error(
+                    StatusCode::BAD_REQUEST,
+                    "validation",
+                    "invalid cursor",
+                ));
+            }
+        },
+        None => None,
+    };
+    let preview = after.is_none() && q.limit.is_none();
+    Ok(RailPage {
+        with_total: after.is_none() && q.limit.is_some(),
+        after,
+        limit: q
+            .limit
+            .unwrap_or(RAIL_PREVIEW_LIMIT)
+            .clamp(1, RAIL_PAGE_MAX_LIMIT),
+        preview,
+    })
 }
 
 /// Newest-ingests rail. Items are plain issue cards (`series_name`
@@ -355,22 +448,43 @@ fn rail_acl_clause(
 /// Implementation note: dismissals require comparing `progress_records.
 /// updated_at` against `rail_dismissals.dismissed_at`, so we let Postgres
 /// do that in one SQL pass rather than re-filtering rows in Rust.
+///
+/// Cursor-paginated on `(progress.updated_at, issue_id)` descending (see
+/// [`progress_cards`]).
 #[utoipa::path(
     operation_id = "rails_continue_reading",    get,
     path = "/me/continue-reading",
-    responses((status = 200, body = ContinueReadingView))
+    params(RailPageQuery),
+    responses(
+        (status = 200, body = ContinueReadingView),
+        (status = 400, description = "invalid cursor"),
+    )
 )]
 #[handler]
-pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) -> Response {
+pub async fn continue_reading(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<RailPageQuery>,
+) -> Response {
+    let page = match parse_rail_page::<ProgressCursor>(&q) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     match progress_cards(
         &app,
         &user,
         "AND p.finished = false AND p.last_page > 0",
         "continue-reading",
+        &page,
     )
     .await
     {
-        Ok(items) => Json(ContinueReadingView { items }).into_response(),
+        Ok((items, next_cursor, total)) => Json(ContinueReadingView {
+            items,
+            next_cursor,
+            total,
+        })
+        .into_response(),
         Err(resp) => resp,
     }
 }
@@ -382,19 +496,37 @@ pub async fn continue_reading(State(app): State<AppState>, user: CurrentUser) ->
 #[utoipa::path(
     operation_id = "rails_recent_history",    get,
     path = "/me/recent-history",
-    responses((status = 200, body = RecentHistoryView))
+    params(RailPageQuery),
+    responses(
+        (status = 200, body = RecentHistoryView),
+        (status = 400, description = "invalid cursor"),
+    )
 )]
 #[handler]
-pub async fn recent_history(State(app): State<AppState>, user: CurrentUser) -> Response {
+pub async fn recent_history(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<RailPageQuery>,
+) -> Response {
+    let page = match parse_rail_page::<ProgressCursor>(&q) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     match progress_cards(
         &app,
         &user,
         "AND (p.finished = true OR p.last_page > 0) AND p.is_backfill = false",
         "recent-history",
+        &page,
     )
     .await
     {
-        Ok(items) => Json(RecentHistoryView { items }).into_response(),
+        Ok((items, next_cursor, total)) => Json(RecentHistoryView {
+            items,
+            next_cursor,
+            total,
+        })
+        .into_response(),
         Err(resp) => resp,
     }
 }
@@ -403,12 +535,21 @@ pub async fn recent_history(State(app): State<AppState>, user: CurrentUser) -> R
 /// `progress_records` joined to active, visible issues, minus current
 /// dismissals, newest activity first, hydrated to `ContinueReadingCard`s.
 /// `extra_where` narrows the progress rows (static SQL, no user input).
+///
+/// Keyset-paginated on `(p.updated_at, p.issue_id)` descending — the
+/// issue id makes the order total, so a page never repeats or skips a row
+/// of a list that does not change. A card whose progress moves while the
+/// caller pages jumps to the head of the order: if it was already listed
+/// it is not listed again; if it was not yet reached, this walk skips it
+/// (it shows on the next first page). `total` (first page of a paged
+/// request) rides the same query as `COUNT(*) OVER ()`.
 async fn progress_cards(
     app: &AppState,
     user: &CurrentUser,
     extra_where: &'static str,
     rail: &'static str,
-) -> Result<Vec<ContinueReadingCard>, Response> {
+    page: &RailPage<ProgressCursor>,
+) -> Result<(Vec<ContinueReadingCard>, Option<String>, Option<u64>), Response> {
     let acl = access::for_user(app, user).await;
 
     #[derive(Debug, FromQueryResult)]
@@ -420,6 +561,7 @@ async fn progress_cards(
         library_id: Uuid,
         series_slug: String,
         series_name: String,
+        total: Option<i64>,
     }
 
     // We pull the columns we need to render `IssueSummaryView` + the
@@ -429,14 +571,35 @@ async fn progress_cards(
     // many records in libraries they cannot see end up with an empty
     // rail while their visible in-progress issues sat past the cut.
     let mut params: Vec<sea_orm::Value> = vec![user.id.into()];
+    let empty_total = page.with_total.then_some(0);
     let Some(acl_clause) = rail_acl_clause(&acl, "i.library_id", &mut params) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None, empty_total));
     };
     let cap_clause = acl.raw_cap_clause(
         "i.library_id",
         "COALESCE(i.age_rating, s.age_rating)",
         &mut params,
     );
+    let keyset = match &page.after {
+        Some(k) => {
+            params.push(k.at.into());
+            params.push(k.id.clone().into());
+            format!(
+                "AND (p.updated_at, p.issue_id) < (${}, ${})",
+                params.len() - 1,
+                params.len()
+            )
+        }
+        None => String::new(),
+    };
+    let total_col = if page.with_total {
+        "COUNT(*) OVER ()"
+    } else {
+        "NULL::bigint"
+    };
+    // One extra row says whether another page follows.
+    params.push(i64::try_from(page.limit + 1).unwrap_or(i64::MAX).into());
+    let limit_param = params.len();
     let sql = format!(
         r#"
             SELECT
@@ -446,7 +609,8 @@ async fn progress_cards(
                 p.updated_at          AS progress_updated_at,
                 i.library_id          AS library_id,
                 s.slug                AS series_slug,
-                s.name                AS series_name
+                s.name                AS series_name,
+                {total_col}           AS total
             FROM progress_records p
             JOIN issues  i ON i.id = p.issue_id
             JOIN series  s ON s.id = i.series_id
@@ -461,11 +625,12 @@ async fn progress_cards(
               AND s.removed_at IS NULL
               {acl_clause}{cap_clause}
               AND (d.dismissed_at IS NULL OR p.updated_at > d.dismissed_at)
-            ORDER BY p.updated_at DESC
-            LIMIT 24
+              {keyset}
+            ORDER BY p.updated_at DESC, p.issue_id DESC
+            LIMIT ${limit_param}
         "#
     );
-    let rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+    let mut rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         sql,
         params,
@@ -484,8 +649,28 @@ async fn progress_cards(
         }
     };
 
+    let total = if page.with_total {
+        Some(rows.first().and_then(|r| r.total).unwrap_or(0).max(0) as u64)
+    } else {
+        None
+    };
+    let has_more = rows.len() as u64 > page.limit;
+    rows.truncate(usize::try_from(page.limit).unwrap_or(usize::MAX));
+    // The cursor keys on the last SQL row, before the hydrate below can
+    // drop one, so the next page starts exactly where this one ended.
+    let next_cursor = if has_more {
+        rows.last().and_then(|r| {
+            encode_cursor(&ProgressCursor {
+                at: r.progress_updated_at,
+                id: r.issue_id.clone(),
+            })
+            .ok()
+        })
+    } else {
+        None
+    };
     if rows.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), next_cursor, total));
     }
 
     // Hydrate the slim card projection (WP-3.6) for the page. One batched
@@ -534,7 +719,7 @@ async fn progress_cards(
         })
         .collect();
 
-    Ok(items)
+    Ok((items, next_cursor, total))
 }
 
 /// A daily shuffle of series the caller hasn't started (no progress row
@@ -724,25 +909,92 @@ pub async fn on_this_day(
 /// queue) and `cbl_next` cards (lowest-position unfinished matched entry
 /// in a CBL the user has any progress in). Series with an active in-
 /// progress issue are skipped — they already surface in Continue Reading.
+///
+/// Paging: the cards are merged and ranked in Rust (the series walk and
+/// the reading-list frontier are not expressible as one SQL ordering), so
+/// a paged request recomputes the merge over a *bounded* candidate set —
+/// the [`ON_DECK_PAGED_CANDIDATES`] most recently active series and as
+/// many reading lists — and keysets over the ranked result (`OnDeckCursor`).
+/// `total` counts that set, and `bounded_to` says when the bound was hit.
+/// The home-rail preview (no `cursor`, no `limit`) keeps the rail's
+/// smaller candidate set and returns no cursor.
 #[utoipa::path(
     operation_id = "rails_on_deck",    get,
     path = "/me/on-deck",
-    responses((status = 200, body = OnDeckView))
+    params(RailPageQuery),
+    responses(
+        (status = 200, body = OnDeckView),
+        (status = 400, description = "invalid cursor"),
+    )
 )]
 #[handler]
-pub async fn on_deck(State(app): State<AppState>, user: CurrentUser) -> Response {
+pub async fn on_deck(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<RailPageQuery>,
+) -> Response {
     // Time the whole handler (ACL + composition) so the cost shows up as a
     // `Server-Timing` entry in the browser's Network → Timing panel — the
     // same place the slow TTFB was first observed. Lets an operator confirm
     // the rail's server cost directly without scraping `/metrics`.
     let started = std::time::Instant::now();
+    let page = match parse_rail_page::<OnDeckCursor>(&q) {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     let acl = access::for_user(&app, &user).await;
-    let mut items = match compute_on_deck(&app, user.id, &acl).await {
+    let candidates = if page.preview {
+        ON_DECK_RAIL_CANDIDATES
+    } else {
+        ON_DECK_PAGED_CANDIDATES
+    };
+    let (ranked, hit_bound) = match compute_on_deck_ranked(&app, user.id, &acl, candidates).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    items.truncate(24);
-    let mut resp = Json(OnDeckView { items }).into_response();
+    let view = if page.preview {
+        let mut items: Vec<OnDeckCard> = ranked.into_iter().map(|(_, c)| c).collect();
+        items.truncate(RAIL_PREVIEW_LIMIT as usize);
+        OnDeckView {
+            items,
+            next_cursor: None,
+            total: None,
+            bounded_to: None,
+        }
+    } else {
+        let total = page.with_total.then_some(ranked.len() as u64);
+        let bounded_to = (page.with_total && hit_bound).then_some(candidates as u32);
+        let mut rest: Vec<(OnDeckKey, OnDeckCard)> = ranked
+            .into_iter()
+            .map(|(ts, c)| (on_deck_key(ts, &c), c))
+            .filter(|(key, _)| match &page.after {
+                Some(k) => *key > (std::cmp::Reverse(k.at), k.rank, k.id.clone()),
+                None => true,
+            })
+            .collect();
+        let limit = usize::try_from(page.limit).unwrap_or(usize::MAX);
+        let has_more = rest.len() > limit;
+        rest.truncate(limit);
+        let next_cursor = if has_more {
+            rest.last().and_then(|((at, rank, id), _)| {
+                encode_cursor(&OnDeckCursor {
+                    at: at.0,
+                    rank: *rank,
+                    id: id.clone(),
+                })
+                .ok()
+            })
+        } else {
+            None
+        };
+        OnDeckView {
+            items: rest.into_iter().map(|(_, c)| c).collect(),
+            next_cursor,
+            total,
+            bounded_to,
+        }
+    };
+    let mut resp = Json(view).into_response();
     let dur_ms = started.elapsed().as_secs_f64() * 1000.0;
     if let Ok(value) = HeaderValue::from_str(&format!("compute;dur={dur_ms:.1}")) {
         resp.headers_mut()
@@ -920,6 +1172,30 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
     Json(RecentIssuesView { items }).into_response()
 }
 
+/// Candidates per source (series, reading lists) behind the home rail,
+/// the OPDS On Deck feeds and the next-up fallback.
+const ON_DECK_RAIL_CANDIDATES: i64 = 40;
+/// Candidates per source behind a paged On deck request (the see-all
+/// page). The merge runs in Rust over this bounded set on every page, so
+/// it is an upper bound, reported to the client as `bounded_to`.
+const ON_DECK_PAGED_CANDIDATES: i64 = 200;
+
+/// Total order of the ranked On deck list: activity descending, then
+/// reading-list cards (0) before series cards (1), then issue id.
+type OnDeckKey = (
+    std::cmp::Reverse<chrono::DateTime<chrono::FixedOffset>>,
+    u8,
+    String,
+);
+
+fn on_deck_key(ts: chrono::DateTime<chrono::FixedOffset>, card: &OnDeckCard) -> OnDeckKey {
+    let (rank, id) = match card {
+        OnDeckCard::CblNext { issue, .. } => (0, issue.id.clone()),
+        OnDeckCard::SeriesNext { issue, .. } => (1, issue.id.clone()),
+    };
+    (std::cmp::Reverse(ts), rank, id)
+}
+
 /// Composes the On Deck rail's cards (series_next + cbl_next mixed),
 /// sorted by most-recent activity desc. Same logic the `/me/on-deck`
 /// handler ships — extracted so the next-up resolver can ask for a
@@ -933,6 +1209,26 @@ pub(crate) async fn compute_on_deck(
     user_id: Uuid,
     acl: &access::VisibleLibraries,
 ) -> Result<Vec<OnDeckCard>, Response> {
+    let (ranked, _) = compute_on_deck_ranked(app, user_id, acl, ON_DECK_RAIL_CANDIDATES).await?;
+    Ok(ranked.into_iter().map(|(_, c)| c).collect())
+}
+
+/// [`compute_on_deck`] over `candidates` series and `candidates` reading
+/// lists, keeping each card's ranking timestamp. The flag is true when
+/// either source query returned `candidates` rows (older ones exist or may
+/// exist and were not considered).
+async fn compute_on_deck_ranked(
+    app: &AppState,
+    user_id: Uuid,
+    acl: &access::VisibleLibraries,
+    candidates: i64,
+) -> Result<
+    (
+        Vec<(chrono::DateTime<chrono::FixedOffset>, OnDeckCard)>,
+        bool,
+    ),
+    Response,
+> {
     let mut items: Vec<(chrono::DateTime<chrono::FixedOffset>, OnDeckCard)> = Vec::new();
     // SeriesNext cards are deferred into this buffer and filtered against
     // the CBL set after both queries run. CBL framing wins on overlap and
@@ -976,9 +1272,11 @@ pub(crate) async fn compute_on_deck(
     // belt-and-braces guard; it no longer decides which rows survive.
     let mut series_params: Vec<sea_orm::Value> = vec![user_id.into()];
     let Some(acl_clause) = rail_acl_clause(acl, "s.library_id", &mut series_params) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
     let cap_clause = acl.raw_cap_clause("s.library_id", "s.age_rating", &mut series_params);
+    series_params.push(candidates.into());
+    let candidates_param = series_params.len();
     let series_sql = format!(
         r#"
                 WITH started AS (
@@ -1016,8 +1314,8 @@ pub(crate) async fn compute_on_deck(
                   AND s.removed_at IS NULL
                   {acl_clause}{cap_clause}
                   AND (d.dismissed_at IS NULL OR started.last_activity > d.dismissed_at)
-                ORDER BY started.last_activity DESC
-                LIMIT 40
+                ORDER BY started.last_activity DESC, s.id
+                LIMIT ${candidates_param}
             "#
     );
     let series_candidates: Vec<SeriesRow> = match SeriesRow::find_by_statement(
@@ -1162,10 +1460,10 @@ pub(crate) async fn compute_on_deck(
                   )
                 GROUP BY cl.id, cl.parsed_name, d.dismissed_at
                 HAVING d.dismissed_at IS NULL OR MAX(p.updated_at) > d.dismissed_at
-                ORDER BY MAX(p.updated_at) DESC
-                LIMIT 40
+                ORDER BY MAX(p.updated_at) DESC, cl.id
+                LIMIT $2
             "#,
-            [user_id.into()],
+            [user_id.into(), candidates.into()],
         ))
         .all(&app.db)
         .await
@@ -1181,6 +1479,8 @@ pub(crate) async fn compute_on_deck(
             }
         };
 
+    let hit_bound =
+        series_candidates.len() as i64 >= candidates || cbl_candidates.len() as i64 >= candidates;
     let cbl_candidate_ids: Vec<Uuid> = cbl_candidates.iter().map(|c| c.cbl_list_id).collect();
 
     // Pre-fetch the (cbl_list_id → saved_view_id) lookup for only the
@@ -1357,7 +1657,10 @@ pub(crate) async fn compute_on_deck(
 
     // Merge by most-recent activity desc; caller caps to per-surface
     // limit (the rail truncates to 24, the next-up resolver takes 1).
-    items.sort_by_key(|item| std::cmp::Reverse(item.0));
+    // Ties break on card kind then issue id (`on_deck_key`) so the order
+    // is total and a paged walk can keyset over it; the sort is stable,
+    // so the dedup below still keeps the first-pushed of two equal keys.
+    items.sort_by_cached_key(|(ts, card)| on_deck_key(*ts, card));
 
     // ───── Final dedup by issue id ─────
     //
@@ -1378,7 +1681,7 @@ pub(crate) async fn compute_on_deck(
         seen_issue_ids.insert(id)
     });
 
-    Ok(items.into_iter().map(|(_, c)| c).collect())
+    Ok((items, hit_bound))
 }
 
 /// Top On Deck card for the user, excluding cards that target the

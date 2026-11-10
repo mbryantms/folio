@@ -2578,13 +2578,10 @@ export function useSeriesIssuesInfinite(
 
 // ---------- Home rails (Continue Reading / On Deck) ----------
 
-/** Item cap of the Continue reading, On deck and Recently read endpoints:
- *  `LIMIT 24` in `progress_cards` (continue-reading + recent-history) and
- *  `items.truncate(24)` in `on_deck`, crates/server/src/api/rails.rs. The
- *  responses carry no cursor, so a full response may be truncated — the
- *  "see all" pages say "Most recent 24" instead of printing a total.
- *  Drop this once those endpoints are cursor-paginated. */
-export const PROGRESS_RAIL_CAP = 24;
+/** Page size of the progress rails' "see all" walks. Sending `limit`
+ *  also asks the server for `total` on the first page; the home rails
+ *  send no params and get the 24-card preview in one request. */
+const PROGRESS_RAIL_PAGE_SIZE = 48;
 
 /** Issues the user has started but not finished, most-recent-activity first.
  *  Drives the Continue Reading rail on the home page. */
@@ -2604,6 +2601,53 @@ export function useOnDeck(opts?: { enabled?: boolean }) {
     queryFn: () => jsonFetch<OnDeckView>("/me/on-deck"),
     enabled: opts?.enabled ?? true,
     staleTime: 60_000,
+  });
+}
+
+/** Every in-progress issue, page by page — the Continue reading "see
+ *  all" page. The home rail keeps `useContinueReading` (one request). */
+export function useContinueReadingInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.continueReadingAll,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<ContinueReadingView>(
+        `/me/continue-reading${buildQuery({ limit: PROGRESS_RAIL_PAGE_SIZE, cursor: pageParam })}`,
+      ),
+    getNextPageParam: cursorNextPage,
+  });
+}
+
+/** The ranked On deck list, page by page — the On deck "see all" page.
+ *  The first page carries `total` and, when the server's merge hit its
+ *  candidate bound, `bounded_to`. */
+export function useOnDeckInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.onDeckAll,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<OnDeckView>(
+        `/me/on-deck${buildQuery({ limit: PROGRESS_RAIL_PAGE_SIZE, cursor: pageParam })}`,
+      ),
+    getNextPageParam: cursorNextPage,
+    staleTime: 60_000,
+  });
+}
+
+/** Every recently read issue, page by page — the Recently read "see all"
+ *  page. */
+export function useRecentHistoryInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.recentHistoryAll,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<RecentHistoryView>(
+        `/me/recent-history${buildQuery({ limit: PROGRESS_RAIL_PAGE_SIZE, cursor: pageParam })}`,
+      ),
+    getNextPageParam: cursorNextPage,
   });
 }
 

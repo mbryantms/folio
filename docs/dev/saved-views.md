@@ -448,6 +448,30 @@ The rails themselves (Continue reading, Recently read, On this day,
 Recently added, On Deck series) also skip issues of a removed series, so
 nothing a rail shows is undismissable.
 
+## Paging the progress rails
+
+`/me/continue-reading`, `/me/recent-history` and `/me/on-deck` take
+`?cursor=&limit=` (default 24, max 100) and return `next_cursor`; `total`
+rides the first page of a request that names `limit`. A request with
+neither parameter is the home-rail preview: the first 24 cards in one
+query path and no `total` (On deck also returns no cursor there). The
+"see all" pages walk the cursor with `useInfiniteQuery` +
+`<InfiniteSentinel>`.
+
+- **Continue reading / Recently read** keyset on
+  `(progress.updated_at, issue_id)` descending inside the one SQL query
+  (`progress_cards`); `total` is `COUNT(*) OVER ()` on that query. A card
+  whose progress moves while someone pages jumps to the head: one already
+  listed is not listed again, one not yet reached is skipped by that walk.
+- **On deck** is merged and ranked in Rust (series walk + reading-list
+  frontier), so a paged request recomputes the merge over a bounded set —
+  the `ON_DECK_PAGED_CANDIDATES` (200) most recently active series and as
+  many reading lists — and keysets over the ranked list (activity
+  descending, reading-list cards before series cards, issue id). `total`
+  counts that set; `bounded_to` is set on the first page when either
+  source hit the bound, and the page says so. The preview, the OPDS On
+  Deck feeds and the next-up fallback keep the rail's 40 candidates.
+
 ## Visibility on the other personal surfaces
 
 - **Collections**: `POST /me/collections/{id}/entries` and
