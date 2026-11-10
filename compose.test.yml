@@ -40,7 +40,8 @@ services:
       COMIC_DATABASE_URL: postgres://comic:smoke@postgres:5432/comic_reader
       COMIC_REDIS_URL: redis://redis:6379
       COMIC_PUBLIC_URL: http://localhost:${SMOKE_APP_PORT:-8080}
-      COMIC_AUTH_MODE: local
+      # No COMIC_AUTH_MODE: the smoke boot exercises the default (local
+      # sign-in when no single sign-on is configured).
       COMIC_AUTO_MIGRATE: "true"
       COMIC_TRUSTED_PROXIES: "172.16.0.0/12"
       # The Rust origin proxies HTML to the Next upstream (rust-public-origin);

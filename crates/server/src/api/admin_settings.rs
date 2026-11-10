@@ -311,6 +311,9 @@ async fn dry_run_validate(app: &AppState, updates: &[settings::Update]) -> Resul
     for r in merged.values() {
         crate::config::apply_overlay_row(&mut proposed, r);
     }
+    // Same order as `Config::overlay_db`: the effective sign-in mode is
+    // derived after every row (mode + OIDC values) is applied.
+    proposed.resolve_auth().map_err(|e| e.to_string())?;
     proposed.validate().map_err(|e| e.to_string())
 }
 

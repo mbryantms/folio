@@ -577,6 +577,11 @@ pub struct SpawnOpts {
     /// and sets `auth_mode = Both` so the OIDC handlers respond. Used by
     /// `tests/oidc.rs` with a wiremock mock OP.
     pub oidc_issuer: Option<String>,
+    /// Leave the sign-in mode unchosen (no `COMIC_AUTH_MODE`, no
+    /// `auth.mode` row) so `Config::resolve_auth` derives it, as on a
+    /// fresh install. Default `false`: the harness chooses `local` (or
+    /// `both` with `oidc_issuer`) explicitly.
+    pub auth_mode_unset: bool,
     /// Mirrors `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL`.
     pub oidc_trust_unverified_email: bool,
     /// Mirrors `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL` — auto-link an OIDC
@@ -658,6 +663,17 @@ impl TestApp {
 
     pub async fn spawn() -> Self {
         Self::spawn_inner(SpawnOpts::default()).await
+    }
+
+    /// Spawn the way a fresh install with a minimal env boots: no sign-in
+    /// mode chosen and no OIDC settings, so the effective mode is resolved
+    /// by `Config::resolve_auth` instead of being set by the harness.
+    pub async fn spawn_with_default_auth_mode() -> Self {
+        Self::spawn_inner(SpawnOpts {
+            auth_mode_unset: true,
+            ..SpawnOpts::default()
+        })
+        .await
     }
 
     /// [`spawn`] with sqlx statement logging left on, so a tracing layer
@@ -959,7 +975,7 @@ impl TestApp {
         }
         let secrets = Secrets::load(data_dir.path()).expect("load secrets");
 
-        let cfg = Config {
+        let mut cfg = Config {
             database_url: db_url.clone(),
             redis_url: redis_url.clone(),
             library_path: opts
@@ -973,11 +989,16 @@ impl TestApp {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "warn".into(),
             trusted_proxies: String::new(),
-            auth_mode: if opts.oidc_issuer.is_some() {
-                AuthMode::Both
+            auth_mode_choice: if opts.auth_mode_unset {
+                None
+            } else if opts.oidc_issuer.is_some() {
+                Some(AuthMode::Both)
             } else {
-                AuthMode::Local
+                Some(AuthMode::Local)
             },
+            // Placeholder; `resolve_auth` below derives the effective mode
+            // exactly as `Config::load` does in production.
+            auth_mode: AuthMode::Local,
             // Defaults to a guaranteed-dead address so any test that
             // accidentally triggers the SSR fallback fails loudly. Real
             // fallback coverage lives in `tests/fallback_proxy.rs`,
@@ -1090,6 +1111,7 @@ impl TestApp {
             // retention tests flip it via `replace_cfg`.
             audit_log_retention_days: 0,
         };
+        cfg.resolve_auth().expect("test config auth mode resolves");
 
         let jobs = JobRuntime::new(&redis_url, db.clone())
             .await

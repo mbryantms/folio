@@ -48,7 +48,7 @@ config.
 | Key (`app_setting` table) | Admin page | Effect |
 |---|---|---|
 | `smtp.{host,port,tls,username,password,from}` | `/admin/email` | Live — the `EmailSender` is rebuilt on save. |
-| `auth.mode` | `/admin/auth` → Mode | Live. |
+| `auth.mode` | `/admin/auth` → Mode | Live. Optional: with no row and no `COMIC_AUTH_MODE` the effective mode is `local` when no OIDC issuer / client id / client secret is set and `both` when all three are; only some set is an error naming the missing values ([`config::resolve_auth_mode`](../../crates/server/src/config.rs), run by `Config::resolve_auth` after env load, after the DB overlay and in the PATCH dry-run). An explicit `oidc` / `both` without all three is rejected. The admin page shows the effective mode and whether it was saved or defaulted. |
 | `auth.local.registration_open` | `/admin/auth` → Local | Live. |
 | `auth.oidc.{issuer,client_id,client_secret,trust_unverified_email,link_local_by_verified_email,auto_redirect,grant_all_libraries}` | `/admin/auth` → OIDC | Live; OIDC discovery cache is evicted on save. |
 | `auth.jwt.{access_ttl,refresh_ttl}` | `/admin/auth` → Tokens | Live for newly-minted tokens; existing tokens keep their original `exp`. |
@@ -85,10 +85,11 @@ the only way to indicate "no change."
 ### Dry-run validation
 
 Every `PATCH /admin/settings` runs the proposed Config through
-`Config::validate` *before* writing to DB. Invalid combinations
-(`auth.mode=oidc` without OIDC creds; `refresh_ttl < access_ttl`;
+`Config::resolve_auth` + `Config::validate` *before* writing to DB.
+Invalid combinations (`auth.mode=oidc` without OIDC creds; part of the
+OIDC block saved while no mode is chosen; `refresh_ttl < access_ttl`;
 worker counts out of `[1, 64]`; bogus `EnvFilter` directive) return
-`400 settings.invalid_combination` and persist nothing.
+`422 settings.invalid_combination` and persist nothing.
 
 ### Bootstrap (env → DB on first boot)
 
@@ -99,6 +100,11 @@ boots see the row and skip. This lets an existing
 `compose.prod.yml`-driven deployment upgrade in place without losing
 config — the admin UI sees the env-derived values and the operator can
 edit from there.
+
+The `auth.*` slice is the one exception to "copy the effective value":
+`auth.mode` is seeded only when `COMIC_AUTH_MODE` was set, so a defaulted
+mode stays unchosen and keeps following `resolve_auth_mode`. Its sentinel
+is `auth.mode` or `auth.local.registration_open`.
 
 ### Deferred (post-1.0)
 
@@ -145,7 +151,10 @@ edit from there.
    [`admin_settings::update`](../../crates/server/src/api/admin_settings.rs)
    that fires after `replace_cfg`.
 4. Add range / cross-field validation to `Config::validate`. Dry-run
-   will surface it as a 400 before any write.
+   will surface it as a 422 before any write. A setting whose effective
+   value is *derived* when unset (as `auth.mode` is) keeps the operator's
+   choice in its own `Option` field and resolves it in one function called
+   from `load`, `overlay_db` and the dry-run, never per reader.
 5. Wire a bootstrap seeder in
    [`settings/bootstrap.rs`](../../crates/server/src/settings/bootstrap.rs)
    so a fresh upgrade from env populates the row on first boot.
