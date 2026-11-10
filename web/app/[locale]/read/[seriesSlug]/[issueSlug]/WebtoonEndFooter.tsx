@@ -23,6 +23,7 @@ import { ChevronDown } from "lucide-react";
 
 import { Cover } from "@/components/Cover";
 import { Button } from "@/components/ui/button";
+import { issueLabel } from "@/lib/format";
 import type { NextUpView } from "@/lib/api/types";
 import { nextUpListSubtitle } from "@/lib/reader/list-context";
 import type { WrapUpProps } from "@/lib/reader/wrap-up";
@@ -53,11 +54,7 @@ export function WebtoonEndFooter({
   const target = data?.target;
   const source = data?.source ?? "none";
   const failed = isError && !data;
-  const heading =
-    target?.title ??
-    (target?.series_name && target?.number
-      ? `${target.series_name} #${target.number}`
-      : (target?.series_name ?? ""));
+  const heading = target ? issueLabel(target) : "";
   const listSubtitle = nextUpListSubtitle(data);
 
   return (

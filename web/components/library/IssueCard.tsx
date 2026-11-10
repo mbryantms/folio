@@ -23,7 +23,7 @@ import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { useUserProgress } from "@/lib/api/queries";
-import { formatIssueHeading } from "@/lib/format";
+import { issueCardTitle, issueLabel } from "@/lib/format";
 import { issueStateHint, issueStateLabel } from "@/lib/library/issue-state";
 import { cn } from "@/lib/utils";
 import type { IssueSummaryView } from "@/lib/api/types";
@@ -90,7 +90,8 @@ function IssueCardImpl({
   // A special carries its kind in the label ("Annual #1", "One-shot") so a
   // card never reads like the run's #1.
   const numberLabel = issueNumberLabel(issue);
-  const heading = formatIssueHeading(issue);
+  const heading = issueLabel(issue);
+  const cardTitle = issueCardTitle(issue);
   const router = useRouter();
   const upsertProgress = useUpsertIssueProgress();
   // Shared `/progress` query — one network call regardless of grid size,
@@ -107,7 +108,7 @@ function IssueCardImpl({
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue.id,
-    label: `${heading}${issue.number ? ` ${numberLabel}` : ""}`,
+    label: issueLabel(issue, { withNumber: true, numberLabel }),
   });
   const share = useShareLink();
   const morph = useCoverMorph(
@@ -291,8 +292,11 @@ function IssueCardImpl({
         <div className="text-muted-foreground text-xs font-medium">
           {numberLabel}
         </div>
-        <div className="truncate text-sm font-medium" title={heading}>
-          {heading}
+        <div
+          className="truncate text-sm font-medium"
+          title={cardTitle ?? undefined}
+        >
+          {cardTitle}
         </div>
       </div>
     </>

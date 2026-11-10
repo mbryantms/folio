@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/folio/empty-state";
 import { Progress } from "@/components/ui/progress";
-import { formatBytes, formatIssueHeading } from "@/lib/format";
+import { formatBytes, issueLabel } from "@/lib/format";
 import { getDownloadManager, type DownloadManager } from "@/lib/pwa/downloads";
 import {
   nextInOfflineList,
@@ -46,9 +46,9 @@ import {
 } from "@/lib/pwa/use-downloads";
 
 export function downloadLabel(record: DownloadRecord): string {
-  return formatIssueHeading(
+  return issueLabel(
     { title: record.title, number: record.number },
-    record.seriesName,
+    { seriesName: record.seriesName },
   );
 }
 

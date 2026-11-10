@@ -16,7 +16,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
-import { formatIssueHeading } from "@/lib/format";
+import { issueLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ContinueReadingCard } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
@@ -59,11 +59,14 @@ export function ProgressIssueCard({
     Math.min(100, Math.round(card.progress.percent * 100)),
   );
   const numberLabel = issue.number ? `#${issue.number}` : "—";
-  const headerTitle = formatIssueHeading(issue, card.series_name);
+  const headerTitle = issueLabel(issue, { seriesName: card.series_name });
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue.id,
-    label: `${headerTitle} ${numberLabel}`,
+    label: issueLabel(issue, {
+      seriesName: card.series_name,
+      withNumber: true,
+    }),
   });
   const resumeHref = readerUrl(issue);
   const detailsHref = issueUrl(issue);

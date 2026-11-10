@@ -93,6 +93,7 @@ import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
 import { readerUrl } from "@/lib/urls";
+import { issueLabel } from "@/lib/format";
 import { restoreOrder, showUndoToast } from "@/lib/ui/undo-toast";
 import { cn } from "@/lib/utils";
 import type {
@@ -757,7 +758,7 @@ export function CollectionContinueButton({
   const target = q.data?.target;
   if (!target) return null;
   const label = q.data?.started ? "Continue" : "Start reading";
-  const ariaLabel = `${label}: ${target.title ?? `${target.series_name ?? ""} #${target.number ?? ""}`}`;
+  const ariaLabel = `${label}: ${issueLabel(target)}`;
   const href = readerUrl(target, { collection: collectionId });
   if (iconOnly) {
     return (

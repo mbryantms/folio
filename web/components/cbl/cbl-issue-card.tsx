@@ -20,6 +20,7 @@ import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { useUserProgress } from "@/lib/api/queries";
+import { issueLabel } from "@/lib/format";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { cn } from "@/lib/utils";
 import type { CblEntryView, IssueSummaryView } from "@/lib/api/types";
@@ -80,7 +81,10 @@ export function CblIssueCard({
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue?.id ?? "",
-    label: `${heading} ${numberLabel}`,
+    label: issueLabel(
+      { title: issue?.title, number: entry.issue_number },
+      { seriesName: entry.series_name, withNumber: true },
+    ),
   });
   const menuActions: CoverMenuAction[] =
     issue && issue.state === "active"
