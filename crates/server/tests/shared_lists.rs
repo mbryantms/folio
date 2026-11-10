@@ -454,7 +454,7 @@ async fn shared_list_entries_respect_each_readers_library_access() {
 
     // Bob (library A, uncapped).
     let (_, detail) = http(&app, Method::GET, &detail_url, Some(&bob), None).await;
-    assert_eq!(stat_counts(&detail["stats"]), [5, 2, 1, 2], "{detail:#?}");
+    assert_eq!(stat_counts(&detail["stats"]), [5, 2, 0, 3], "{detail:#?}");
     let (_, body) = http(&app, Method::GET, &entries_url, Some(&bob), None).await;
     assert_eq!(body["total"].as_i64(), Some(5));
     assert_eq!(
@@ -463,12 +463,12 @@ async fn shared_list_entries_respect_each_readers_library_access() {
         "{body:#?}"
     );
     assert_eq!(entry_at(&body, 1)["match_status"], "missing");
-    let cands = entry_at(&body, 3)["ambiguous_candidates"]
-        .as_array()
-        .unwrap()
-        .clone();
-    assert_eq!(cands.len(), 1, "{body:#?}");
-    assert_eq!(cands[0]["issue_id"], open.as_str());
+    // One visible candidate of two reads as missing, not ambiguous.
+    assert_eq!(
+        match_facts(entry_at(&body, 3)),
+        match_facts(entry_at(&body, 2)),
+        "{body:#?}"
+    );
     let (_, found) = http(
         &app,
         Method::GET,
@@ -492,7 +492,7 @@ async fn shared_list_entries_respect_each_readers_library_access() {
 
     // Carol (library A, capped at Teen): the Mature match is hidden too.
     let (_, detail) = http(&app, Method::GET, &detail_url, Some(&carol), None).await;
-    assert_eq!(stat_counts(&detail["stats"]), [5, 1, 1, 3], "{detail:#?}");
+    assert_eq!(stat_counts(&detail["stats"]), [5, 1, 0, 4], "{detail:#?}");
     let (_, body) = http(&app, Method::GET, &entries_url, Some(&carol), None).await;
     assert_eq!(
         match_facts(entry_at(&body, 4)),

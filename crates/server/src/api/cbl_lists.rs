@@ -551,10 +551,23 @@ pub(crate) fn visible_match_exists(acl: &VisibleLibraries) -> sea_orm::sea_query
     Expr::exists(live)
 }
 
-/// `EXISTS` an `ambiguous_candidates[].issue_id` the caller can open. A
-/// non-array JSON value reads as no candidates instead of failing the
-/// statement.
-fn visible_candidate_exists(acl: &VisibleLibraries) -> sea_orm::sea_query::SimpleExpr {
+/// The fewest `ambiguous_candidates` a non-admin must be able to open for
+/// an `ambiguous` entry to read as ambiguous to them. The matcher only
+/// stores `ambiguous` with two or more candidates, so an entry left with
+/// one visible candidate would tell the caller a hidden one exists; with
+/// fewer than two it reads as missing instead. [`visible_candidates_exist`]
+/// (SQL) and [`visible_candidates`] (the entry payload) share this rule.
+const MIN_VISIBLE_AMBIGUOUS_CANDIDATES: usize = 2;
+
+/// `EXISTS` at least [`MIN_VISIBLE_AMBIGUOUS_CANDIDATES`] distinct
+/// `ambiguous_candidates[].issue_id`s the caller can open (`OFFSET n-1` on
+/// the visible-issue subquery). A non-array JSON value reads as no
+/// candidates instead of failing the statement.
+///
+/// The matcher keeps only its top candidates, so hidden candidates can
+/// crowd a visible one out of the stored list; that entry then reads as
+/// missing to the caller until a rematch.
+fn visible_candidates_exist(acl: &VisibleLibraries) -> sea_orm::sea_query::SimpleExpr {
     use sea_orm::sea_query::Expr;
     use sea_orm::{QuerySelect, QueryTrait};
     let visible = crate::library::access::visible_issues_select(acl)
@@ -563,6 +576,8 @@ fn visible_candidate_exists(acl: &VisibleLibraries) -> sea_orm::sea_query::Simpl
         .filter(Expr::cust(
             r#""issues"."id" IN (SELECT cand ->> 'issue_id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof("cbl_entries"."ambiguous_candidates"::jsonb) = 'array' THEN "cbl_entries"."ambiguous_candidates"::jsonb ELSE '[]'::jsonb END) AS cand)"#,
         ))
+        .limit(1)
+        .offset((MIN_VISIBLE_AMBIGUOUS_CANDIDATES - 1) as u64)
         .into_query();
     Expr::exists(visible)
 }
@@ -589,18 +604,20 @@ fn dead_match(acl: &VisibleLibraries) -> sea_orm::Condition {
 }
 
 /// An `ambiguous` entry as the caller sees it: a non-admin needs at least
-/// one candidate they can open, otherwise the entry reads as missing
-/// ([`hidden_ambiguous`]). Admins see every ambiguous entry.
+/// [`MIN_VISIBLE_AMBIGUOUS_CANDIDATES`] candidates they can open, otherwise
+/// the entry reads as missing ([`hidden_ambiguous`]). Admins see every
+/// ambiguous entry.
 fn visible_ambiguous(acl: &VisibleLibraries) -> sea_orm::Condition {
     let cond = sea_orm::Condition::all().add(cbl_entry::Column::MatchStatus.eq("ambiguous"));
     if acl.unrestricted {
         return cond;
     }
-    cond.add(visible_candidate_exists(acl))
+    cond.add(visible_candidates_exist(acl))
 }
 
-/// An `ambiguous` entry none of whose candidates a non-admin can open. Never
-/// matches for admins.
+/// An `ambiguous` entry with fewer than
+/// [`MIN_VISIBLE_AMBIGUOUS_CANDIDATES`] candidates a non-admin can open.
+/// Never matches for admins.
 fn hidden_ambiguous(acl: &VisibleLibraries) -> Option<sea_orm::Condition> {
     use sea_orm::sea_query::ExprTrait;
     if acl.unrestricted {
@@ -609,14 +626,14 @@ fn hidden_ambiguous(acl: &VisibleLibraries) -> Option<sea_orm::Condition> {
     Some(
         sea_orm::Condition::all()
             .add(cbl_entry::Column::MatchStatus.eq("ambiguous"))
-            .add(visible_candidate_exists(acl).not()),
+            .add(visible_candidates_exist(acl).not()),
     )
 }
 
 /// `?status=` subset as a condition, in the caller's view: `matched` /
 /// `manual` keep only matches the caller can open, `ambiguous` only
-/// entries with a candidate they can open, and `missing` also takes dead
-/// or hidden matches ([`dead_match`]) and hidden ambiguous entries.
+/// entries with enough candidates they can open, and `missing` also takes
+/// dead or hidden matches ([`dead_match`]) and hidden ambiguous entries.
 fn status_condition(parts: &[&str], acl: &VisibleLibraries) -> sea_orm::Condition {
     let mut cond = sea_orm::Condition::any();
     for part in parts {
@@ -651,7 +668,8 @@ fn blank_match(view: &mut CblEntryView) {
 }
 
 /// Keep only the `ambiguous_candidates` whose `issue_id` is in `visible`.
-/// `None` when nothing survives.
+/// `None` when fewer than [`MIN_VISIBLE_AMBIGUOUS_CANDIDATES`] distinct
+/// issues survive (the entry then reads as missing, as in SQL).
 fn visible_candidates(
     raw: Option<&serde_json::Value>,
     visible: &std::collections::HashSet<String>,
@@ -666,7 +684,11 @@ fn visible_candidates(
         })
         .cloned()
         .collect();
-    (!kept.is_empty()).then_some(serde_json::Value::Array(kept))
+    let distinct: std::collections::HashSet<&str> = kept
+        .iter()
+        .filter_map(|c| c.get("issue_id")?.as_str())
+        .collect();
+    (distinct.len() >= MIN_VISIBLE_AMBIGUOUS_CANDIDATES).then_some(serde_json::Value::Array(kept))
 }
 
 /// Candidate issue ids named by `entries`' `ambiguous_candidates`.
@@ -707,13 +729,15 @@ async fn visible_issue_ids(
 
 /// Composite key of an entry (the importer's `EntryKey`): survives the
 /// wholesale entry rewrite a refresh does.
-type EntryKey = (String, String, Option<String>, Option<String>);
+pub(crate) type EntryKey = (String, String, Option<String>, Option<String>);
 
 /// Keys of the entries the caller sees as auto-matched (`?status=matched`).
-/// Snapshotted before and after a non-admin's refresh so `rematched` only
-/// counts entries that newly resolved to an issue the caller can open.
-async fn caller_matched_keys(
-    db: &sea_orm::DatabaseConnection,
+/// Snapshotted before and after a non-admin's refresh (and inside a
+/// check's dry-run transaction, see [`crate::cbl::refresh::check`]) so
+/// `rematched` only counts entries that newly resolved to an issue the
+/// caller can open.
+pub(crate) async fn caller_matched_keys(
+    db: &impl sea_orm::ConnectionTrait,
     list_id: Uuid,
     acl: &VisibleLibraries,
 ) -> Result<std::collections::HashSet<EntryKey>, sea_orm::DbErr> {
@@ -1884,6 +1908,18 @@ async fn refreshable_lists(
         .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))
 }
 
+/// The ACL a check's dry run counts `rematched` under: `None` (the global
+/// matcher count) for a caller who sees the whole library, the caller's
+/// ACL otherwise, so neither `rematched` nor `changed` reflects a match
+/// they cannot open (see [`crate::cbl::refresh::check`]).
+async fn check_caller_view(app: &AppState, acl: VisibleLibraries) -> Option<VisibleLibraries> {
+    if crate::library::access::sees_whole_library(&app.db, &acl).await {
+        None
+    } else {
+        Some(acl)
+    }
+}
+
 fn item_from_check(
     list: &cbl_list::Model,
     o: &crate::cbl::refresh::CheckOutcome,
@@ -1973,7 +2009,9 @@ pub async fn check_one(
     if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
         return resp;
     }
-    match crate::cbl::refresh::check(&app.db, id).await {
+    let acl = crate::library::access::for_user(&app, &user).await;
+    let caller_view = check_caller_view(&app, acl).await;
+    match crate::cbl::refresh::check(&app.db, id, caller_view.as_ref()).await {
         Ok(outcome) => Json(item_from_check(&row, &outcome)).into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "cbl_lists: check failed");
@@ -1999,9 +2037,11 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
         Ok(l) => l,
         Err(resp) => return resp,
     };
+    let acl = crate::library::access::for_user(&app, &user).await;
+    let caller_view = check_caller_view(&app, acl).await;
     let mut items = Vec::with_capacity(lists.len());
     for list in &lists {
-        let item = match crate::cbl::refresh::check(&app.db, list.id).await {
+        let item = match crate::cbl::refresh::check(&app.db, list.id, caller_view.as_ref()).await {
             Ok(o) => item_from_check(list, &o),
             Err(e) => {
                 tracing::warn!(error = %e, list_id = %list.id, "cbl_lists: check-all item failed");
@@ -2083,8 +2123,24 @@ pub async fn refresh_log(
     }
     use sea_orm::QuerySelect;
     let limit = q.limit.unwrap_or(20).min(100);
-    let rows = match cbl_refresh_log::Entity::find()
-        .filter(cbl_refresh_log::Column::CblListId.eq(id))
+    // Log rows store global match facts (`rematched_count` counts entries
+    // resolved anywhere in the library, and a post-scan row exists only
+    // because something rematched), which cannot be recomputed per caller
+    // after the fact. A caller who does not see the whole library gets
+    // `rematched_count` as 0 and only rows with a structural change, the
+    // filter applied in SQL so the page limit counts what is returned.
+    let acl = crate::library::access::for_user(&app, &user).await;
+    let whole = crate::library::access::sees_whole_library(&app.db, &acl).await;
+    let mut sel = cbl_refresh_log::Entity::find().filter(cbl_refresh_log::Column::CblListId.eq(id));
+    if !whole {
+        sel = sel.filter(
+            sea_orm::Condition::any()
+                .add(cbl_refresh_log::Column::AddedCount.gt(0))
+                .add(cbl_refresh_log::Column::RemovedCount.gt(0))
+                .add(cbl_refresh_log::Column::ReorderedCount.gt(0)),
+        );
+    }
+    let rows = match sel
         .order_by_desc(cbl_refresh_log::Column::RanAt)
         .limit(limit)
         .all(&app.db)
@@ -2105,7 +2161,7 @@ pub async fn refresh_log(
             added_count: m.added_count,
             removed_count: m.removed_count,
             reordered_count: m.reordered_count,
-            rematched_count: m.rematched_count,
+            rematched_count: if whole { m.rematched_count } else { 0 },
             diff_summary: m.diff_summary,
         })
         .collect();
@@ -3327,21 +3383,20 @@ pub async fn reading_window_paginated(
 }
 
 /// The matched entries of `all_entries`, in order, as the caller sees them:
-/// for a non-admin only those whose issue they can open (one batched
-/// lookup), so `total_matched`, the anchor and the `has_more_*` flags never
-/// count a hidden match. Admins keep every matched entry (no query).
+/// only those whose issue they can open (one batched lookup), so
+/// `total_matched`, the anchor and the `has_more_*` flags never count a
+/// hidden match. Admins pass an unrestricted ACL and keep the liveness
+/// check only (a soft-removed match is dropped), as on `/issues` and
+/// next-up.
 async fn caller_matched_entries(
     db: &sea_orm::DatabaseConnection,
     acl: &VisibleLibraries,
     all_entries: Vec<cbl_entry::Model>,
 ) -> Result<Vec<cbl_entry::Model>, sea_orm::DbErr> {
-    let matched = all_entries
+    let matched: Vec<cbl_entry::Model> = all_entries
         .into_iter()
-        .filter(|e| e.matched_issue_id.is_some());
-    if acl.unrestricted {
-        return Ok(matched.collect());
-    }
-    let matched: Vec<cbl_entry::Model> = matched.collect();
+        .filter(|e| e.matched_issue_id.is_some())
+        .collect();
     let ids = matched
         .iter()
         .filter_map(|e| e.matched_issue_id.clone())

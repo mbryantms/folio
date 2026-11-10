@@ -518,24 +518,7 @@ async fn resolve_cbl_next(
         Ok(Some(l)) => l,
         _ => return Ok(CblBranchOutcome::NoMatch),
     };
-    // Matched entries the caller can open — a match into a library hidden
-    // from them is not part of their list's count.
-    let total = match cbl_entry::Entity::find()
-        .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
-        .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
-        .filter(crate::api::cbl_lists::visible_match_exists(acl))
-        .select_only()
-        .column_as(
-            Expr::from(Func::count(Expr::col(cbl_entry::Column::Id))),
-            "count",
-        )
-        .into_tuple::<i64>()
-        .one(&app.db)
-        .await
-    {
-        Ok(Some(n)) => n as i32,
-        _ => 0,
-    };
+    let (position, total) = cbl_ordinal_and_total(app, cbl_list_id, acl, position).await;
 
     let target =
         IssueSummaryView::from_model(issue_model, &series_slug).with_series_name(series_name);
@@ -1427,24 +1410,7 @@ async fn resolve_cbl_prev(
         Ok(Some(l)) => l,
         _ => return Ok(CblBranchOutcome::NoMatch),
     };
-    // Matched entries the caller can open — a match into a library hidden
-    // from them is not part of their list's count.
-    let total = match cbl_entry::Entity::find()
-        .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
-        .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
-        .filter(crate::api::cbl_lists::visible_match_exists(acl))
-        .select_only()
-        .column_as(
-            Expr::from(Func::count(Expr::col(cbl_entry::Column::Id))),
-            "count",
-        )
-        .into_tuple::<i64>()
-        .one(&app.db)
-        .await
-    {
-        Ok(Some(n)) => n as i32,
-        _ => 0,
-    };
+    let (position, total) = cbl_ordinal_and_total(app, cbl_list_id, acl, position).await;
 
     let target =
         IssueSummaryView::from_model(issue_model, &series_slug).with_series_name(series_name);
@@ -1464,6 +1430,48 @@ async fn resolve_cbl_prev(
         collection_finished: None,
         collection_param_was_stale: false,
     }))
+}
+
+/// The reader's "Issue {position} of {total}" pair for a CBL target, both
+/// on one scale: `total` is the matched entries the caller can open (a
+/// match into a library hidden from them, or a soft-removed one, is not
+/// part of their list), and `position` is the target's 1-based ordinal
+/// among those same entries. `entry_position` is the target's 1-based raw
+/// entry position (`entry.position + 1`). Display-only: nothing keys on
+/// either number.
+async fn cbl_ordinal_and_total(
+    app: &AppState,
+    cbl_list_id: Uuid,
+    acl: &access::VisibleLibraries,
+    entry_position: i32,
+) -> (i32, i32) {
+    let count = |before: Option<i32>| {
+        let mut sel = cbl_entry::Entity::find()
+            .filter(cbl_entry::Column::CblListId.eq(cbl_list_id))
+            .filter(cbl_entry::Column::MatchedIssueId.is_not_null())
+            .filter(crate::api::cbl_lists::visible_match_exists(acl));
+        if let Some(p) = before {
+            sel = sel.filter(cbl_entry::Column::Position.lt(p));
+        }
+        async move {
+            match sel
+                .select_only()
+                .column_as(
+                    Expr::from(Func::count(Expr::col(cbl_entry::Column::Id))),
+                    "count",
+                )
+                .into_tuple::<i64>()
+                .one(&app.db)
+                .await
+            {
+                Ok(Some(n)) => i32::try_from(n).unwrap_or(i32::MAX),
+                _ => 0,
+            }
+        }
+    };
+    let total = count(None).await;
+    let before = count(Some(entry_position - 1)).await;
+    ((before + 1).min(total.max(1)), total)
 }
 
 /// "Previous issue strictly before the given one" within the same
