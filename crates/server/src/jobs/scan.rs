@@ -3,14 +3,21 @@
 //! Worker entry point for the apalis `scan` queue. The HTTP-side handler in
 //! [`crate::api::libraries::scan`] only enqueues — the actual filesystem
 //! traversal happens here, via [`crate::library::scanner::scan_library`].
-//! After the scan completes, the runtime calls
-//! [`crate::jobs::JobRuntime::release_scan`] to clear coalescing state and
-//! re-enqueue if a trigger arrived during execution.
+//! While the scan runs, a [`ScanLease`] keeps the library's coalescing key
+//! alive for this run; after the scan, the runtime calls
+//! [`crate::jobs::JobRuntime::release_scan`] to release the key (only if
+//! this run still holds it) and re-enqueue if a trigger arrived during
+//! execution.
 
+use crate::jobs::scan_lease::{LeaseCheck, ScanLease, ScanLeaseTiming};
 use crate::state::AppState;
 use apalis::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Recorded on a run that stopped because another scan of the same library
+/// holds the coalescing key.
+pub const SUPERSEDED_REASON: &str = "Superseded: another scan of this library is running";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
@@ -38,6 +45,12 @@ pub struct Job {
 pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> {
     // Data<AppState> derefs to &AppState; clone the AppState to drop the Data wrapper.
     let state: AppState = (*state).clone();
+    run(&state, job, ScanLeaseTiming::PRODUCTION).await;
+    Ok(())
+}
+
+/// [`handle`] with an explicit lease timing (tests pass short lifetimes).
+pub async fn run(state: &AppState, job: Job, timing: ScanLeaseTiming) {
     tracing::info!(
         library_id = %job.library_id,
         scan_run_id = %job.scan_run_id,
@@ -46,36 +59,74 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> 
         "scan job started",
     );
 
+    // Hold the library's coalescing key for this run while it scans. A key
+    // that another run holds means that run owns the library now (this job
+    // was re-queued after a restart, or its queued claim lapsed): close this
+    // run as cancelled without scanning and leave the key alone.
+    let (lease, first_check) = ScanLease::start(
+        state.jobs.redis.clone(),
+        job.library_id,
+        job.scan_run_id,
+        timing,
+    )
+    .await;
+    if first_check == Some(LeaseCheck::Lost) {
+        tracing::warn!(
+            library_id = %job.library_id,
+            scan_run_id = %job.scan_run_id,
+            "scan job superseded before it started: another run holds the library",
+        );
+        crate::library::scanner::cancel_unstarted_run(
+            state,
+            job.library_id,
+            job.scan_run_id,
+            SUPERSEDED_REASON,
+        )
+        .await;
+        return;
+    }
+
+    let lease_lost = lease.lost_flag();
     let scan_result = match job.scope.as_deref() {
         Some(dirs) => {
             let scope: Vec<std::path::PathBuf> =
                 dirs.iter().map(std::path::PathBuf::from).collect();
-            crate::library::scanner::scan_library_scoped(
-                &state,
+            crate::library::scanner::scan_library_scoped_leased(
+                state,
                 job.library_id,
                 &scope,
                 Some(job.scan_run_id),
+                Some(lease_lost),
             )
             .await
         }
         None => {
-            crate::library::scanner::scan_library_with_run_id(
-                &state,
+            crate::library::scanner::scan_library_leased(
+                state,
                 job.library_id,
                 job.force,
                 Some(job.scan_run_id),
+                Some(lease_lost),
             )
             .await
         }
     };
 
+    // Stop refreshing before the release, so no refresh lands after it.
+    lease.stop().await;
     // Release coalescing state regardless of success — a failed scan still
     // needs to clear the in-flight marker so the next trigger isn't blocked.
-    if let Err(e) = state.jobs.release_scan(job.library_id).await {
+    // The release is compare-and-delete: a run that lost the key leaves the
+    // new holder's key in place.
+    if let Err(e) = state
+        .jobs
+        .release_scan(job.library_id, job.scan_run_id)
+        .await
+    {
         tracing::error!(
             library_id = %job.library_id,
             error = %e,
-            "release_scan failed (coalescing keys may be stale)",
+            "release_scan failed (the coalescing key expires on its own)",
         );
     }
 
@@ -89,7 +140,6 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> 
                 files_unchanged = stats.files_unchanged,
                 "scan job completed",
             );
-            Ok(())
         }
         Err(e) => {
             // Failure already recorded by the scanner finalize (scan_runs row +
@@ -105,13 +155,12 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> 
             // …except when it failed before opening the run (library gone,
             // validation): the pre-inserted `queued` row is still open.
             crate::library::scanner::fail_unstarted_run(
-                &state,
+                state,
                 job.library_id,
                 Some(job.scan_run_id),
                 &e.to_string(),
             )
             .await;
-            Ok(())
         }
     }
 }

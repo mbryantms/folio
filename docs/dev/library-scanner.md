@@ -106,6 +106,54 @@ reconcile so unscanned siblings stay untouched.
 | Scheduled scan | `library.scan_schedule_cron` per-library | [`jobs/scheduler.rs:224`](../../crates/server/src/jobs/scheduler.rs#L224) — `coalesce_scan(.., false)`. 5- or 6-field cron via `tokio_cron_scheduler`. |
 | File watcher | `library.file_watch_enabled` per library ([library/watcher.rs](../../crates/server/src/library/watcher.rs)) | inotify on local mounts, directory-mtime poll on NFS/SMB/CIFS/FUSE (picked by `statfs` at watcher start). Touched directories are collapsed over `scanner.watch_debounce_secs` (30 s) and enqueued via [`JobRuntime::coalesce_watch_scan`](../../crates/server/src/jobs/mod.rs) as a **scoped, non-forced** library scan of those directories only ([`scan_library_scoped`](../../crates/server/src/library/scanner/mod.rs)). Shares the full scan's `scan:in_flight` / `scan:queued` keys, so a storm is one scan plus at most one queued follow-up. See [File watcher](#file-watcher). |
 
+### Coalescing key
+
+Full-library scans (manual, scheduled, file watcher, scan-all) share one
+Redis key per library, `scan:in_flight:<library_id>`, whose value is the
+scan run id that holds it ([`jobs/scan_lease.rs`](../../crates/server/src/jobs/scan_lease.rs)).
+Every change to it is a single atomic command or Lua script:
+
+- **Claim.** `coalesce_scan` runs one script: `SET key <run id> NX PX
+  <ttl>`; if the key is already held, the same script records the queued
+  follow-up (`scan:queued:<lib>`, its force flag and its watcher
+  directories) and returns the holder's run id. Concurrent triggers
+  therefore produce exactly one queued run; the others get
+  `coalesced: true` with that run's `scan_id`, as before. A claim whose
+  job could not be queued is undone with a compare-and-delete.
+- **Lifetime.** A claimed scan waiting in the queue carries
+  `SCAN_QUEUED_TTL` (6 h): nothing runs to refresh it, and the job itself
+  survives a restart. When the job starts, a lease task beside the scan
+  resets the expiry to `SCAN_LEASE_TTL` (120 s) every
+  `SCAN_LEASE_REFRESH` (30 s, one worker heartbeat), only while the key
+  still holds the run's id. The task runs for the whole job, including the
+  blocking enumerate and plan phases and the reconcile, which the
+  scanner's own 750 ms progress heartbeat does not cover. A process that
+  dies mid-scan frees the library within 120 s; the boot sweep clears the
+  keys on restart anyway. A key that expired and is still free is taken
+  back by its run.
+- **Lost key.** If a refresh finds another run's id on the key (the key
+  lapsed and another trigger claimed it), the lease flags itself lost. The
+  scanner checks that flag at every phase boundary and on its phase-3
+  heartbeat and stops through the cooperative-cancel path: no new folders
+  start, the reconcile is skipped, and the run closes as `cancelled` with
+  the error "Superseded: another scan of this library is running" and a
+  terminal `ScanEvent::Failed`. A job that finds the key held by another
+  run before it starts closes its queued run the same way without
+  scanning.
+- **Release.** `release_scan(library, run id)` is compare-and-delete in
+  one script; when a follow-up was queued, the same script hands the key
+  to a new run id and the follow-up is enqueued. A run that no longer
+  holds the key changes nothing, so it can never delete a newer holder's
+  key. The lease task is stopped and awaited before the release, so no
+  refresh lands after it.
+- **Redis unavailable.** A trigger fails as before: `coalesce_scan`
+  returns the Redis error and nothing is queued. A running scan whose
+  refresh fails keeps scanning and retries on the next tick; it is only
+  stopped when a refresh succeeds and finds another holder.
+
+Series- and issue-scoped scans use their own `scan:in_flight:<lib>:series:…`
+keys with the 6 h lifetime and are not leases.
+
 ## Phase walkthrough
 
 The library path (`scan_library_with_run_id` at

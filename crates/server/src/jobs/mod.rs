@@ -32,6 +32,10 @@
 //!     a trigger arrived during an in-flight scan
 //!   - `scan:scan_id:<library_id>`   — current scan run id (for read-back)
 //!
+//! `scan:in_flight` is a lease held by one scan run id: claimed with
+//! `SET NX`, kept alive by the running scan, released or handed to the
+//! queued follow-up only by its holder. See [`scan_lease`].
+//!
 //! Watcher-scoped scans (WP-3.1) ride the same three keys, so an event
 //! storm collapses into one in-flight scan plus at most one queued
 //! follow-up. Two extra keys carry the follow-up's scope:
@@ -88,6 +92,7 @@ pub mod prune_auth_sessions;
 pub mod relationship_suggest;
 pub mod rewrite_sidecars;
 pub mod scan;
+pub mod scan_lease;
 pub mod scan_series;
 pub mod scheduler;
 pub mod sidecar_reemit;
@@ -227,63 +232,55 @@ impl JobRuntime {
         scope: Option<Vec<String>>,
     ) -> anyhow::Result<CoalesceOutcome> {
         let mut conn = self.redis.clone();
-        let in_flight_key = in_flight_key(library_id);
-        let queued_key = queued_key(library_id);
-        let scan_id_key = scan_id_key(library_id);
-
-        let in_flight: Option<String> = conn.get(&in_flight_key).await?;
-        if let Some(_existing) = in_flight {
-            // A scan is running. Mark another one queued and return the
-            // running id so the caller can advertise a stable scan_id.
-            let already_queued: Option<String> = conn.get(&queued_key).await?;
-            let scoped_key = queued_scoped_key(library_id);
-            let dirs_key = queued_dirs_key(library_id);
-            match &scope {
-                Some(dirs) => {
-                    // Scoped follow-up only if nothing (or only other scoped
-                    // triggers) queued it; a full queued follow-up stays full.
-                    let scoped_marker: Option<String> = conn.get(&scoped_key).await?;
-                    if already_queued.is_none() || scoped_marker.is_some() {
-                        let _: () = conn
-                            .set_ex(&scoped_key, "1", SCAN_COALESCE_TTL_SECS)
-                            .await?;
-                        let _: () = conn.sadd(&dirs_key, dirs).await?;
-                        let _: () = conn
-                            .expire(&dirs_key, SCAN_COALESCE_TTL_SECS as i64)
-                            .await?;
-                    }
-                }
-                None => {
-                    // Full trigger: the follow-up must cover the whole library.
-                    let _: () = conn.del(&scoped_key).await?;
-                    let _: () = conn.del(&dirs_key).await?;
-                }
+        // One script claims the key (`SET NX PX`) or, when another scan holds
+        // it, records the queued follow-up; see `scan_lease`.
+        let token = Uuid::now_v7();
+        let script = redis::Script::new(scan_lease::CLAIM_OR_QUEUE_LUA);
+        let mut invocation = script.prepare_invoke();
+        for key in coalesce_keys(library_id) {
+            invocation.key(key);
+        }
+        invocation
+            .arg(token.to_string())
+            .arg(scan_lease::ttl_ms(scan_lease::SCAN_QUEUED_TTL))
+            .arg(if force { "1" } else { "0" })
+            .arg(if scope.is_some() { "1" } else { "0" });
+        if let Some(dirs) = &scope {
+            for d in dirs {
+                invocation.arg(d);
             }
-            let _: () = conn
-                .set_ex(&queued_key, "1", SCAN_COALESCE_TTL_SECS)
-                .await?;
-            // Persist the queued-force flag so the post-completion re-enqueue
-            // honors the strongest request.
-            if force {
-                let _: () = conn
-                    .set_ex(format!("{queued_key}:force"), "1", SCAN_COALESCE_TTL_SECS)
-                    .await?;
-            }
-            let scan_id: Option<String> = conn.get(&scan_id_key).await?;
-            let scan_id = scan_id
-                .and_then(|s| Uuid::parse_str(&s).ok())
-                .unwrap_or_else(Uuid::now_v7);
+        }
+        let (claimed, current): (String, String) = invocation.invoke_async(&mut conn).await?;
+        if claimed != "1" {
+            // A scan is queued or running: the trigger was folded into its
+            // follow-up. Report the current id so the caller can advertise a
+            // stable scan_id.
+            let scan_id = Uuid::parse_str(&current).unwrap_or_else(|_| Uuid::now_v7());
             return Ok(CoalesceOutcome::Coalesced { scan_id });
         }
 
-        // No scan in flight — claim it (TTL'd; see SCAN_COALESCE_TTL_SECS).
-        let scan_id = Uuid::now_v7();
-        let _: () = conn
-            .set_ex(&scan_id_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
-            .await?;
-        let _: () = conn
-            .set_ex(&in_flight_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
-            .await?;
+        let scan_id = token;
+        if let Err(e) = self
+            .queue_claimed_scan(library_id, scan_id, force, batch_id, scope)
+            .await
+        {
+            // Nothing will run under this claim: give the key back so the
+            // next trigger can claim it.
+            self.undo_claim(library_id, scan_id).await;
+            return Err(e);
+        }
+        Ok(CoalesceOutcome::Enqueued { scan_id })
+    }
+
+    /// Insert the `queued` run row and push the scan job for a claim.
+    async fn queue_claimed_scan(
+        &self,
+        library_id: Uuid,
+        scan_id: Uuid,
+        force: bool,
+        batch_id: Option<Uuid>,
+        scope: Option<Vec<String>>,
+    ) -> anyhow::Result<()> {
         self.insert_queued_scan_run(
             library_id,
             scan_id,
@@ -293,8 +290,6 @@ impl JobRuntime {
             batch_id,
         )
         .await?;
-        // Push to apalis last; if push fails the in_flight key is stale, but
-        // the next request will see no apalis backlog and overwrite cleanly.
         use apalis::prelude::TaskSink;
         let mut storage = self.scan_storage.clone();
         storage
@@ -305,58 +300,87 @@ impl JobRuntime {
                 scope,
             })
             .await?;
-        Ok(CoalesceOutcome::Enqueued { scan_id })
+        Ok(())
     }
 
-    /// Called by the worker after a scan job finishes. Clears the in-flight
-    /// marker; if a queued trigger arrived during the scan, re-enqueues.
-    pub async fn release_scan(&self, library_id: Uuid) -> anyhow::Result<()> {
+    /// Compare-and-delete the key for a claim whose job was never queued.
+    async fn undo_claim(&self, library_id: Uuid, token: Uuid) {
         let mut conn = self.redis.clone();
-        let in_flight_key = in_flight_key(library_id);
-        let queued_key = queued_key(library_id);
-        let queued_force_key = format!("{queued_key}:force");
-        let scan_id_key = scan_id_key(library_id);
-        let scoped_key = queued_scoped_key(library_id);
-        let dirs_key = queued_dirs_key(library_id);
-
-        let _: () = conn.del(&in_flight_key).await?;
-
-        let queued: Option<String> = conn.get(&queued_key).await?;
-        if queued.is_some() {
-            let force_flag: Option<String> = conn.get(&queued_force_key).await?;
-            let scoped_marker: Option<String> = conn.get(&scoped_key).await?;
-            let scope = if scoped_marker.is_some() {
-                let mut dirs: Vec<String> = conn.smembers(&dirs_key).await?;
-                dirs.sort();
-                (!dirs.is_empty() && dirs.len() <= MAX_WATCH_SCOPE_DIRS).then_some(dirs)
-            } else {
-                None
-            };
-            let _: () = conn.del(&queued_key).await?;
-            let _: () = conn.del(&queued_force_key).await?;
-            let _: () = conn.del(&scoped_key).await?;
-            let _: () = conn.del(&dirs_key).await?;
-            let new_id = Uuid::now_v7();
-            let _: () = conn
-                .set_ex(&scan_id_key, new_id.to_string(), SCAN_COALESCE_TTL_SECS)
-                .await?;
-            let _: () = conn
-                .set_ex(&in_flight_key, new_id.to_string(), SCAN_COALESCE_TTL_SECS)
-                .await?;
-            self.insert_queued_scan_run(library_id, new_id, ScanRunKind::Library, None, None, None)
-                .await?;
-            use apalis::prelude::TaskSink;
-            let mut storage = self.scan_storage.clone();
-            storage
-                .push(scan::Job {
-                    library_id,
-                    scan_run_id: new_id,
-                    force: force_flag.is_some(),
-                    scope,
-                })
-                .await?;
+        let res: redis::RedisResult<i64> = redis::Script::new(scan_lease::COMPARE_AND_DELETE_LUA)
+            .key(in_flight_key(library_id))
+            .arg(token.to_string())
+            .invoke_async(&mut conn)
+            .await;
+        if let Err(e) = res {
+            tracing::warn!(
+                %library_id,
+                scan_run_id = %token,
+                error = %e,
+                "scan coalescing: could not undo a claim; the key expires on its own",
+            );
         }
-        Ok(())
+    }
+
+    /// The scan run id holding `library_id`'s coalescing key, if any.
+    pub async fn scan_in_flight(&self, library_id: Uuid) -> anyhow::Result<Option<Uuid>> {
+        let mut conn = self.redis.clone();
+        let v: Option<String> = conn.get(in_flight_key(library_id)).await?;
+        Ok(v.and_then(|s| Uuid::parse_str(&s).ok()))
+    }
+
+    /// Called by the worker after the scan run `scan_run_id` finishes.
+    /// Releases the coalescing key only if that run still holds it
+    /// (compare-and-delete); if a trigger was queued during the scan, the key
+    /// is handed to a new run id in the same script and that follow-up is
+    /// enqueued. A run that no longer holds the key changes nothing: the
+    /// queued flags belong to the current holder.
+    pub async fn release_scan(
+        &self,
+        library_id: Uuid,
+        scan_run_id: Uuid,
+    ) -> anyhow::Result<ReleaseOutcome> {
+        let mut conn = self.redis.clone();
+        let new_id = Uuid::now_v7();
+        let script = redis::Script::new(scan_lease::RELEASE_LUA);
+        let mut invocation = script.prepare_invoke();
+        for key in coalesce_keys(library_id) {
+            invocation.key(key);
+        }
+        invocation
+            .arg(scan_run_id.to_string())
+            .arg(new_id.to_string())
+            .arg(scan_lease::ttl_ms(scan_lease::SCAN_QUEUED_TTL));
+        let out: Vec<String> = invocation.invoke_async(&mut conn).await?;
+        match out.first().map(String::as_str) {
+            Some("0") => Ok(ReleaseOutcome::Released),
+            Some("1") => {
+                let force = out.get(1).is_some_and(|f| f == "1");
+                let scoped = out.get(2).is_some_and(|f| f == "1");
+                let scope = if scoped {
+                    let mut dirs: Vec<String> = out.iter().skip(3).cloned().collect();
+                    dirs.sort();
+                    (!dirs.is_empty() && dirs.len() <= MAX_WATCH_SCOPE_DIRS).then_some(dirs)
+                } else {
+                    None
+                };
+                if let Err(e) = self
+                    .queue_claimed_scan(library_id, new_id, force, None, scope)
+                    .await
+                {
+                    self.undo_claim(library_id, new_id).await;
+                    return Err(e);
+                }
+                Ok(ReleaseOutcome::HandedOver { scan_id: new_id })
+            }
+            _ => {
+                tracing::info!(
+                    %library_id,
+                    %scan_run_id,
+                    "release_scan: this run no longer holds the coalescing key; left it to the holder",
+                );
+                Ok(ReleaseOutcome::NotHolder)
+            }
+        }
     }
 
     /// Spawn workers for every queue, watching `shutdown` for a clean
@@ -725,10 +749,10 @@ impl JobRuntime {
         )
         .await?;
         let _: () = conn
-            .set_ex(&key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
+            .set_ex(&key, scan_id.to_string(), SCAN_QUEUED_TTL_SECS)
             .await?;
         let _: () = conn
-            .set_ex(&scan_id_key, scan_id.to_string(), SCAN_COALESCE_TTL_SECS)
+            .set_ex(&scan_id_key, scan_id.to_string(), SCAN_QUEUED_TTL_SECS)
             .await?;
 
         use apalis::prelude::TaskSink;
@@ -809,6 +833,18 @@ pub enum CoalesceOutcome {
     Coalesced { scan_id: Uuid },
 }
 
+/// Outcome of [`JobRuntime::release_scan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseOutcome {
+    /// The run held the key and nothing was queued; the key is gone.
+    Released,
+    /// The run held the key and a follow-up was queued; the key now holds
+    /// the follow-up's run id and its job is enqueued.
+    HandedOver { scan_id: Uuid },
+    /// Another run holds the key; nothing was changed.
+    NotHolder,
+}
+
 impl CoalesceOutcome {
     pub fn scan_id(self) -> Uuid {
         match self {
@@ -820,16 +856,14 @@ impl CoalesceOutcome {
     }
 }
 
-/// TTL on the scan-coalescing Redis keys (OPS-2). Without an expiry, a process
-/// crash between claiming `in_flight` and pushing the apalis job — or a
-/// retry-exhausted scan that never calls `release_scan` — leaves the key set
-/// forever, so every later trigger coalesces into a phantom run and the
-/// library's scans wedge permanently. The TTL is a self-healing backstop for a
-/// box that's never restarted; the boot sweep ([`JobRuntime::clear_stale_scan_keys`])
-/// clears them immediately on the common recovery path. Generous (6h) so it
-/// never expires under a legitimately long scan — and if it somehow did, the
-/// worst case is a redundant, idempotent re-scan, not data loss.
-const SCAN_COALESCE_TTL_SECS: u64 = 6 * 60 * 60;
+/// TTL on the series- and issue-scoped scan coalescing keys (OPS-2), the
+/// same as the library key's queued lifetime
+/// ([`scan_lease::SCAN_QUEUED_TTL`]). Without an expiry, a process crash
+/// between the claim and the job push leaves the key set forever; the boot
+/// sweep ([`JobRuntime::clear_stale_scan_keys`]) clears them on restart. The
+/// full-library key is a lease with a short running lifetime; see
+/// [`scan_lease`].
+const SCAN_QUEUED_TTL_SECS: u64 = scan_lease::SCAN_QUEUED_TTL.as_secs();
 
 /// Attempts a job whose handler returns `Err` gets before it is moved to the
 /// queue's `{queue}:dead` set (surfaced by [`JobRuntime::dead_letter_counts`]).
@@ -988,6 +1022,21 @@ fn queued_scoped_key(library_id: Uuid) -> String {
 }
 fn queued_dirs_key(library_id: Uuid) -> String {
     format!("scan:queued:{library_id}:dirs")
+}
+/// The six library coalescing keys in the order the `scan_lease` scripts
+/// take them: in_flight, scan_id, queued, queued:force, queued:scoped,
+/// queued:dirs.
+fn coalesce_keys(library_id: Uuid) -> [String; 6] {
+    let queued = queued_key(library_id);
+    let queued_force = format!("{queued}:force");
+    [
+        in_flight_key(library_id),
+        scan_id_key(library_id),
+        queued,
+        queued_force,
+        queued_scoped_key(library_id),
+        queued_dirs_key(library_id),
+    ]
 }
 
 /// Largest directory scope a watcher-triggered scan carries (WP-3.1). A
