@@ -97,7 +97,7 @@ async fn fallback_returns_502_envelope_when_upstream_is_dead() {
     let dead = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
 
-    let app = TestApp::spawn_with_web_upstream(dead).await;
+    let app = TestApp::spawn_with_web_upstream(dead.clone()).await;
     let resp = app
         .router
         .clone()
@@ -112,10 +112,71 @@ async fn fallback_returns_502_envelope_when_upstream_is_dead() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&body);
+    // No internal address in the body; the detail is in the server log.
+    assert!(!text.contains(&dead), "{text}");
+    assert!(!text.contains("127.0.0.1"), "{text}");
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     // The fallback uses the standard error envelope so client code
     // parsing JSON errors won't choke on an HTML body.
     assert_eq!(v["error"]["code"], "upstream_unreachable");
+}
+
+#[tokio::test]
+async fn fallback_forwarding_headers_come_from_the_server() {
+    // Through the full middleware stack, from an untrusted peer (the
+    // harness trusts no proxies): the client's own forwarding and
+    // Next-internal headers never reach the upstream; X-Forwarded-Host is
+    // the inbound Host (deliberately not the harness `public_url`) and
+    // X-Forwarded-Proto is `http`.
+    let upstream = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(None::<axum::http::HeaderMap>));
+    let sink = seen.clone();
+    Mock::given(method("GET"))
+        .and(path("/some/page"))
+        .respond_with(move |req: &wiremock::Request| {
+            *sink.lock().unwrap() = Some(req.headers.clone());
+            ResponseTemplate::new(200)
+        })
+        .mount(&upstream)
+        .await;
+
+    let app = TestApp::spawn_with_web_upstream(upstream.uri()).await;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/some/page")
+                .header(header::HOST, "192.168.1.20:8080")
+                .header("x-middleware-subrequest", "middleware")
+                .header("x-forwarded-host", "evil.example")
+                .header("x-forwarded-proto", "https")
+                .header("forwarded", "for=1.2.3.4;host=evil.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let h = seen.lock().unwrap().clone().expect("upstream was hit");
+    assert!(
+        h.keys().all(|k| !k.as_str().starts_with("x-middleware-")),
+        "{h:?}"
+    );
+    assert!(h.get("forwarded").is_none(), "{h:?}");
+    let all = |n: &str| -> Vec<String> {
+        h.get_all(n)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        all("x-forwarded-host"),
+        vec!["192.168.1.20:8080".to_owned()]
+    );
+    assert_eq!(all("x-forwarded-proto"), vec!["http".to_owned()]);
 }
 
 #[tokio::test]

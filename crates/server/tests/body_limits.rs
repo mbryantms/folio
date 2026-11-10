@@ -557,6 +557,7 @@ async fn proxy_cuts_off_streamed_oversize_body_with_413() {
         req,
         Duration::from_secs(5),
         None,
+        false,
         None,
         2048,
     )
@@ -593,6 +594,7 @@ async fn proxy_forwards_streamed_body_under_the_cap() {
         req,
         Duration::from_secs(5),
         None,
+        false,
         None,
         2048,
     )
