@@ -341,6 +341,25 @@ describe("a client clock that is wrong", () => {
     await apiFetch("/series", {});
     expect(serverNow() - Date.now()).toBe(learned);
   });
+
+  // Last in the file: it loads a second instance of the module.
+  it("a page load starts from the offset this tab last measured", async () => {
+    jar.clear();
+    fetchSpy.mockImplementation(
+      (async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { date: new Date(Date.now() + 3600_000).toUTCString() },
+        })) as typeof fetch,
+    );
+    await apiFetch("/series", {});
+    vi.resetModules();
+    const fresh = await import("@/lib/api/auth-refresh");
+    expect(Math.abs(fresh.serverNow() - (Date.now() + 3600_000))).toBeLessThan(
+      1_500,
+    );
+    fresh.resetClockOffsetForTests();
+  });
 });
 
 describe("no-answer backoff", () => {

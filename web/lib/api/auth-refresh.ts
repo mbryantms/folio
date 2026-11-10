@@ -70,9 +70,25 @@ export function readAccessExp(): number | null {
   return readAccessExpiry()?.exp ?? null;
 }
 
+/** Where the last measured offset is kept for this tab, so a page load
+ *  starts from it instead of from zero (a client clock far ahead would
+ *  otherwise cost one early refresh on every load). */
+const CLOCK_OFFSET_KEY = "folio:server-clock-offset";
+
+function storedClockOffset(): number {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(CLOCK_OFFSET_KEY);
+    const n = raw === null || raw === undefined ? NaN : Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Estimated `server time - client time` in ms, from the newest `Date`
- *  response header seen. Zero until a response carried one. */
-let clockOffsetMs = 0;
+ *  response header seen: this tab's last measurement, or zero until a
+ *  response carried one. */
+let clockOffsetMs = storedClockOffset();
 
 /** Learn the server's clock from a response's `Date` header (ignored when
  *  missing or unparsable). `Date` has one-second resolution and is
@@ -82,7 +98,16 @@ export function noteServerDate(res: Response, receivedAt = Date.now()): void {
   if (!raw) return;
   const serverMs = Date.parse(raw);
   if (!Number.isFinite(serverMs)) return;
-  clockOffsetMs = serverMs + 500 - receivedAt;
+  const next = serverMs + 500 - receivedAt;
+  // `Date` has one-second resolution: only a real change is worth a write.
+  const moved = Math.abs(next - clockOffsetMs) >= 1000;
+  clockOffsetMs = next;
+  if (!moved) return;
+  try {
+    globalThis.sessionStorage?.setItem(CLOCK_OFFSET_KEY, String(next));
+  } catch {
+    /* storage unavailable: the offset is relearned on the next load */
+  }
 }
 
 /** "Now" on the server's clock, in ms: every comparison against the expiry
@@ -94,6 +119,11 @@ export function serverNow(): number {
 /** Test hook: forget the measured offset. */
 export function resetClockOffsetForTests(): void {
   clockOffsetMs = 0;
+  try {
+    globalThis.sessionStorage?.removeItem(CLOCK_OFFSET_KEY);
+  } catch {
+    /* nothing stored */
+  }
 }
 
 let refreshInFlight: Promise<boolean | null> | null = null;

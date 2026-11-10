@@ -1232,6 +1232,25 @@ impl Config {
 /// the DB value; the bootstrap path that copies env→DB on first boot
 /// would otherwise be noisy on every restart even though the values
 /// agree.
+/// A stored auth duration above [`AUTH_DURATION_CAP`] (saved before the
+/// cap existed, or written to the table by hand) is read as the cap, with
+/// a warning. Refusing it here would fail validation of the whole overlay
+/// and drop every saved setting at boot. Values that do not parse are
+/// left for `validate` to report.
+fn stored_auth_duration(key: &str, stored: &str) -> String {
+    match Config::parse_duration(stored) {
+        Ok(d) if d > AUTH_DURATION_CAP => {
+            tracing::warn!(
+                key,
+                stored,
+                "stored duration is above the 3650d ceiling; using 3650d"
+            );
+            "3650d".to_owned()
+        }
+        _ => stored.to_owned(),
+    }
+}
+
 pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolved) {
     use serde_json::Value;
 
@@ -1484,21 +1503,21 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         "auth.jwt.access_ttl" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.jwt_access_ttl.as_str()), s);
-                cfg.jwt_access_ttl = s.to_owned();
+                cfg.jwt_access_ttl = stored_auth_duration(&row.key, s);
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
         "auth.jwt.refresh_ttl" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.jwt_refresh_ttl.as_str()), s);
-                cfg.jwt_refresh_ttl = s.to_owned();
+                cfg.jwt_refresh_ttl = stored_auth_duration(&row.key, s);
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
         "auth.session.max_age" => match row.value.as_str() {
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.session_max_age.as_str()), s);
-                cfg.session_max_age = s.to_owned();
+                cfg.session_max_age = stored_auth_duration(&row.key, s);
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
@@ -2303,5 +2322,39 @@ mod tests {
         cfg.jwt_refresh_ttl = "3651d".into();
         assert!(cfg.validate().is_err());
         assert_eq!(cfg.refresh_ttl(), AUTH_DURATION_CAP);
+    }
+
+    #[test]
+    fn a_stored_duration_above_the_cap_is_read_as_the_cap() {
+        let mut cfg = test_config_skeleton();
+        for key in [
+            "auth.jwt.access_ttl",
+            "auth.jwt.refresh_ttl",
+            "auth.session.max_age",
+        ] {
+            apply_overlay_row(
+                &mut cfg,
+                &crate::settings::Resolved {
+                    key: key.to_owned(),
+                    value: serde_json::Value::String("10000000000d".to_owned()),
+                    is_secret: false,
+                },
+            );
+        }
+        assert_eq!(cfg.jwt_access_ttl, "3650d");
+        assert_eq!(cfg.jwt_refresh_ttl, "3650d");
+        assert_eq!(cfg.session_max_age, "3650d");
+        // The overlay still validates, so the other saved settings load.
+        assert!(cfg.validate().is_ok());
+        // An ordinary value is stored as written.
+        apply_overlay_row(
+            &mut cfg,
+            &crate::settings::Resolved {
+                key: "auth.session.max_age".to_owned(),
+                value: serde_json::Value::String("30d".to_owned()),
+                is_secret: false,
+            },
+        );
+        assert_eq!(cfg.session_max_age, "30d");
     }
 }
