@@ -831,7 +831,10 @@ pub fn router_with_timeouts(state: AppState, timeouts: RouteTimeouts) -> Router 
         // panic escapes to stderr and drops the connection — invisible to the
         // JSON log stream, the /admin/logs ring buffer, and the client.
         .layer(tower_http::catch_panic::CatchPanicLayer::custom(handle_panic))
-        .layer(axum::middleware::from_fn(auth::csrf::require_csrf))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::csrf::require_csrf,
+        ))
         // M-1 (security audit) / WP-6.3: explicit deny-by-default CORS.
         // Rust is the single public origin — the web app, its JSON API,
         // OPDS, and the Komga/KOReader shims are all served from it — so no

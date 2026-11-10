@@ -157,6 +157,29 @@ Verified against the code at `1c51a486` on 2026-11-10.
 - Client reads cookie, includes value as `X-CSRF-Token` on POST/PUT/PATCH/DELETE.
 - Server compares cookie value to header; mismatch = 403.
 - Bearer-authenticated requests (mobile, API, OPDS-Bearer) skip CSRF entirely — there's no ambient credential to forge.
+- The sign-in POSTs that are exempt from the token check because no session exists yet (`/auth/local/login`, `/register`, `/request-password-reset`, `/reset-password`, `/resend-verification`) get the cross-site guard below instead.
+
+### Cross-site sign-in posts (login CSRF)
+
+Without a guard, another site could post the sign-in form with credentials it controls and sign the visitor into the attacker's account. For the five routes above, `auth::csrf` applies [`auth::origin::cross_site_reason`](../../crates/server/src/auth/origin.rs) before the handler runs:
+
+1. When the request carries `Sec-Fetch-Site`, that header alone decides: `same-origin` and `none` proceed without looking at `Origin`; `cross-site`, `same-site` and any other value are refused. It is a forbidden header name, set by the browser and never by a page, so it is trusted over `Origin`. `same-site` is refused deliberately: a sibling subdomain (another app on the same registrable domain) must not sign visitors in either, and nothing in Folio posts these forms from another subdomain.
+2. Only without `Sec-Fetch-Site` (older browsers) does `Origin` decide. It proceeds when it equals the configured public origin (`public_url`, scheme + host + port); or its host and port equal the request's own `Host` header (the HTTP/2 authority when there is no `Host`; a missing port means the `Origin` scheme's default), which keeps same-origin posts working over a LAN address or another host name; or, when the peer is a trusted proxy (`COMIC_TRUSTED_PROXIES`), its host and port equal the well-formed `X-Forwarded-Host` that proxy set. An untrusted peer's `X-Forwarded-Host` is never read. `Origin: null` is refused.
+3. A request with neither header (native clients) proceeds.
+
+A refused form navigation (a `application/x-www-form-urlencoded` or `multipart/form-data` body, or `Sec-Fetch-Mode: navigate`) gets a 303 back to the page the form lives on with `error=auth.csrf`: `/sign-in` for login, register and resend-verification, and `/forgot-password` for request-password-reset and reset-password (nothing from a refused request's body is echoed back, so the reset token is not carried over and the user asks for a fresh link). Those pages show "That request could not be verified. Reload the page and try again." Any other refused request gets the 403 `auth.csrf` envelope. The answer is the same whichever check failed (the reason is logged at INFO only), and a refused request never reaches the handler, so it is not counted by the failed-auth lockout. The OIDC callback is a `GET` (a cross-site redirect by design, gated by its state cookie) and is not affected, nor are the `GET` verify-email link and `/csp-report`. The `/api`-prefixed mounts of these routes are not exempt at all and need the CSRF token.
+
+**Referrer-Policy on the auth pages.** `/sign-in`, `/forgot-password` and `/reset-password` are served with `Referrer-Policy: same-origin` (every other response: `strict-origin-when-cross-origin`). No `Referer` goes to another site, so credentials that landed in the URL or a reset token cannot leak to the next site visited. It was `no-referrer` before; under that policy browsers send `Origin: null` on the pages' own form posts, which rule 2 refuses for browsers without `Sec-Fetch-Site`. The server does not log `Referer`.
+
+### Sign-in check order
+
+`POST /auth/local/login`: (1) refuse with 429 if the client IP or the submitted email is locked out; (2) verify the password, for every account: against the stored hash, or, for an unknown address or an account without a local password, against a dummy hash at the same cost, so all paths pay the same argon2 work; (3) a wrong password, unknown address or missing hash records a failure on both lockout axes and answers the generic 401 `auth.invalid`, whatever the account's state; (4) only after a correct password: a disabled account gets 403 `auth.disabled` and an unverified one 403 `auth.email_unverified`, and both still record a failure on both axes, as before; (5) otherwise the session is issued. The no-JavaScript form gets the same outcomes as a redirect to `/sign-in?error=<code>`.
+
+Registration still answers 409 for an address that has an account; that is an accepted trade-off of open registration (the email-change route reveals the same).
+
+Every argon2 hash and verify reached from an async handler (sign-in and its dummy verify, registration, password change, password reset, account deletion and the email/password re-checks through `failed_auth::verify_password_counted`, admin-created users) runs on tokio's blocking pool through `auth::password::{hash_blocking, verify_rotating_blocking, dummy_verify_blocking}`; app-password verification is handled in `auth::app_password` separately. A process-wide semaphore admits at most `password::hash_permits()` of these at once (the available parallelism, at least 2: the bound hashing had when it ran inline on the async workers); further callers wait in line, with no timeout. A failed hashing task (a panic or cancellation) answers 500 `internal` and is not counted as a wrong password; an unparsable stored hash counts as a non-match.
+
+Verified against the code at `9492ac1b` on 2026-11-10.
 
 ### WebSocket auth (one-shot ticket)
 
@@ -242,10 +265,58 @@ that consults the library ACL applies it:
 | Continue reading, On Deck, New issues, rail dismissals | `api/rails.rs` |
 | Reader Up Next / Prev Up (series + CBL walks) | `api/next_up.rs` |
 | Creators, people search, filter-option pickers (UNION arms) | `api/creators.rs`, `api/people.rs`, `api/filter_options.rs` |
+| Character / team / location / arc / publisher pages, browse indexes, insights | `api/entity_pages.rs` (shared by the OPDS entity feeds) |
+| Similar-series reasons, series "Appears in" arcs, reading-stats top creators | `api/series_similar.rs`, `api/appearances.rs`, `api/reading_sessions.rs` |
 | CBL entries, markers, ratings, progress writes, reading sessions, OCR | `api/cbl_lists.rs`, `api/markers.rs`, `api/ratings.rs`, `api/progress.rs`, `api/reading_sessions.rs`, `api/issue_ocr.rs` |
 | OPDS 1.2 + 2.0 feeds, facets, downloads, PSE page streaming, progression + KOReader sync | `api/opds.rs`, `api/opds_v2.rs`, `api/opds_pse.rs`, `api/opds_progression.rs` |
 | Komga-compatible progress shim | `api/komga_compat.rs` |
 | Metadata search / external ids / provider ranges (series gates) | `api/metadata_search.rs`, `api/external_ids.rs`, `api/provider_ranges.rs` |
+
+### Entity surfaces
+
+Creators, characters, teams, locations, story arcs, publishers, genres
+and tags are shown to a capped caller only through the issues and series
+that caller can see. An issue counts when it is not removed, is active,
+sits in a non-removed series of a granted library and passes the cap
+(`COALESCE(issue.age_rating, series.age_rating)`, unrated passes), and
+its series' own rating passes the cap too
+(`VisibleLibraries::entity_issue_cap_sql`): entity surfaces never name a
+series the caller cannot open, even through an issue rated below it.
+The issue routes keep their own rule: an issue rated within the cap
+still opens when its series is rated above it, and its page shows its
+own cast and credits; the entity pages those names link to answer
+not-found for that caller unless something else they can see carries
+the same name.
+
+- **Issue junctions** (`issue_credits`, `issue_characters`,
+  `issue_teams`, `issue_locations`, `issue_arcs`, `issue_genres`,
+  `issue_tags`): a row counts when its issue counts.
+- **Series rollups** (`series_credits`, `series_characters`,
+  `series_teams`, `series_locations`, `series_genres`, `series_tags`):
+  the scanner rebuilds these as the union of every issue in the series,
+  hidden ones included. For a caller whose cap hides any rung
+  (`VisibleLibraries::hides_any`) they are not read; the issue junction
+  over the issues that caller can see answers instead.
+- **Series-level metadata** (`series.publisher`, `series_arcs`,
+  `series_universes`, `series_concepts`, `series_objects`,
+  `series_group`): describes the series itself and follows series
+  visibility.
+
+So an entity is listed, searchable, offered as a filter value or counted
+only when something visible links to it; its detail routes
+(`/<kind>/{slug}` and the `/series`, `/issues`, `/insights` sub-routes,
+`/creators/{slug}`) answer the same 404 as an unknown slug otherwise.
+Counts, roles, year ranges, co-appearances and top-N lists cover visible
+issues only, and a creator's role held only on hidden issues is not
+listed. The same rule covers the browse indexes and their `?q=` search,
+`/people`, the filter-option pickers, the series-list credit, genre and
+tag filters, the series saved-view filters on credits, characters, teams,
+locations, genres and tags, the series "Appears in" arcs, OPDS author and genre facets
+and the by-creator feeds, the reading-stats top creators and the
+similar-series reasons (see
+[`docs/dev/similar-series.md`](../dev/similar-series.md#acl-and-per-user-filtering)).
+Admins and callers without a cap that hides anything keep the rollup
+queries unchanged.
 
 Regression suite: `crates/server/tests/age_rating_cap.rs` (a `Teen`-capped
 user against `Teen` / `Mature 17+` / unrated series, plus an issue-level

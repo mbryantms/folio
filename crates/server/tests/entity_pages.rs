@@ -414,14 +414,21 @@ async fn teams_include_series_level_membership() {
         vec![f.series_a.into()],
     )
     .await;
-    let (s, body) = get_json(&app, "/api/teams/justice-league", &f.user).await;
+    let (s, body) = get_json(&app, "/api/teams/justice-league", &f.admin).await;
     assert_eq!(s, StatusCode::OK, "{body}");
     assert_eq!(body["series_count"], 1);
     assert_eq!(body["issue_count"], 0);
-    let (_, body) = get_json(&app, "/api/teams/justice-league/series", &f.user).await;
+    let (_, body) = get_json(&app, "/api/teams/justice-league/series", &f.admin).await;
     assert_eq!(body["items"].as_array().unwrap().len(), 1);
-    let (_, body) = get_json(&app, "/api/teams", &f.user).await;
+    let (_, body) = get_json(&app, "/api/teams", &f.admin).await;
     assert_eq!(body["items"][0]["slug"], "justice-league");
+
+    // The `Teen`-capped reader: `series_teams` is a rollup of every issue
+    // in the series, so a row no visible issue carries does not count.
+    let (s, _) = get_json(&app, "/api/teams/justice-league", &f.user).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (_, body) = get_json(&app, "/api/teams", &f.user).await;
+    assert_eq!(body["items"], serde_json::json!([]), "{body}");
 }
 
 #[tokio::test]

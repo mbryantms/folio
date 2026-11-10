@@ -29,6 +29,7 @@ const RAIL_LABELS: Record<DismissalRail, string> = {
   random_picks: "Random picks",
   similar_series: "Similar series",
   opds_continue_reading: "OPDS Continue reading",
+  new_in_series: "New in series",
 };
 
 /** "Continue reading, Recently read" — the rails a dismissal hides from. */

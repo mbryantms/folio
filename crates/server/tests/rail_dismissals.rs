@@ -372,7 +372,7 @@ async fn hydrates_each_kind() {
     );
     assert_eq!(
         series["hidden_from"],
-        json!(["on_deck", "random_picks", "similar_series"])
+        json!(["on_deck", "random_picks", "similar_series", "new_in_series"])
     );
 
     let cbl = by_kind("cbl");
