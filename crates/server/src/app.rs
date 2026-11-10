@@ -607,6 +607,22 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         );
     }
 
+    // First-run exposure: with open local registration and no accounts
+    // yet, whoever registers first is granted admin (auth::local::register).
+    if cfg.local_registration_open
+        && matches!(
+            cfg.auth_mode,
+            crate::config::AuthMode::Local | crate::config::AuthMode::Both
+        )
+        && entity::user::Entity::find().count(&db).await.unwrap_or(1) == 0
+    {
+        tracing::warn!(
+            "local registration is open and no account exists yet — the first account to \
+             register becomes admin; keep the port unreachable by others until you have \
+             registered, then close registration under /admin/auth"
+        );
+    }
+
     let jobs = crate::jobs::JobRuntime::new(&cfg.redis_url, db.clone()).await?;
 
     let email = crate::email::build(&cfg)?;
