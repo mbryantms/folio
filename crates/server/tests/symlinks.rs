@@ -224,6 +224,7 @@ async fn series_replaced_by_a_link_is_soft_removed_then_restored() {
 
 struct User {
     session: String,
+    csrf: String,
     id: Uuid,
 }
 
@@ -244,22 +245,26 @@ async fn register(app: &TestApp, email: &str) -> User {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    let session = resp
-        .headers()
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .find_map(|c| {
-            c.split(';')
-                .next()
-                .and_then(|kv| kv.strip_prefix("__Host-comic_session="))
-                .map(str::to_owned)
-        })
-        .expect("session cookie");
+    let cookie = |name: &str| {
+        let prefix = format!("{name}=");
+        resp.headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find_map(|c| {
+                c.split(';')
+                    .next()
+                    .and_then(|kv| kv.strip_prefix(prefix.as_str()))
+                    .map(str::to_owned)
+            })
+            .expect("cookie")
+    };
+    let session = cookie("__Host-comic_session");
+    let csrf = cookie("__Host-comic_csrf");
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let id = Uuid::parse_str(json["user"]["id"].as_str().unwrap()).unwrap();
-    User { session, id }
+    User { session, csrf, id }
 }
 
 async fn set_role_admin(app: &TestApp, user_id: Uuid) {
@@ -469,4 +474,267 @@ async fn soft_removed_download_is_not_found() {
             StatusCode::NOT_FOUND
         );
     }
+}
+
+async fn get_status(app: &TestApp, user: &User, uri: String) -> StatusCode {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(uri)
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", user.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// The inline thumbnail, the OCR route and the `?w=` page variant refuse
+/// an archive replaced by a link (each checks the path before the archive
+/// reader opens it).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thumbnail_ocr_and_variant_refuse_a_link() {
+    let app = TestApp::spawn().await;
+    let l = served_library(&app).await;
+    let other = l.tmp.join("other.cbz");
+    write_cbz(&other, "Other", 9);
+    std::fs::rename(&l.archive, l.tmp.join("kept.cbz")).unwrap();
+    symlink(&other, &l.archive).unwrap();
+
+    let id = &l.issue_id;
+    assert_eq!(
+        get_status(
+            &app,
+            &l.admin,
+            format!("/issues/{id}/pages/0/thumb?variant=strip")
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get_status(&app, &l.admin, format!("/issues/{id}/pages/0?w=100")).await,
+        StatusCode::NOT_FOUND
+    );
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/me/issues/{id}/ocr"))
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        l.admin.session, l.admin.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &l.admin.csrf)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "page": 0,
+                        "region": { "x": 0, "y": 0, "w": 1, "h": 1 },
+                        "lang": "western"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// A library whose root is a link serves an issue row stored under the
+/// root's canonical spelling (written by older single-series rescans).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn linked_root_serves_rows_stored_under_the_canonical_spelling() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let real_root = tmp.path().join("real-root");
+    let series_dir = real_root.join("Saga (2012)");
+    std::fs::create_dir_all(&series_dir).unwrap();
+    write_cbz(&series_dir.join("Saga 001.cbz"), "Saga", 1);
+    let alias = tmp.path().join("alias-root");
+    symlink(&real_root, &alias).unwrap();
+    let lib_id = LibrarySeed::new(&alias).insert(&app.state().db).await;
+    scanner::scan_library(&app.state(), lib_id).await.unwrap();
+
+    let db = &app.state().db;
+    let row = issue::Entity::find()
+        .filter(issue::Column::LibraryId.eq(lib_id))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let canonical = std::fs::canonicalize(&real_root)
+        .unwrap()
+        .join("Saga (2012)")
+        .join("Saga 001.cbz");
+    assert_ne!(s(&canonical), row.file_path);
+    let id = row.id.clone();
+    let mut am: issue::ActiveModel = row.into();
+    am.file_path = Set(s(&canonical));
+    am.update(db).await.unwrap();
+
+    let admin = register(&app, "admin@example.com").await;
+    set_role_admin(&app, admin.id).await;
+    assert_eq!(
+        get_status(&app, &admin, format!("/issues/{id}/pages/0")).await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_status(&app, &admin, format!("/opds/v1/issues/{id}/file")).await,
+        StatusCode::OK
+    );
+}
+
+/// "Scan issue" on an archive replaced by a link does not ingest the link's
+/// target: the row is left as it was and the link is reported.
+#[tokio::test]
+async fn issue_rescan_does_not_follow_a_link() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("library");
+    let saga = root.join("Saga (2012)");
+    std::fs::create_dir_all(&saga).unwrap();
+    let archive = saga.join("Saga 001.cbz");
+    write_cbz(&archive, "Saga", 1);
+    let lib_id = LibrarySeed::new(&root).insert(&app.state().db).await;
+    scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    let db = &app.state().db;
+    let before = issue::Entity::find()
+        .filter(issue::Column::LibraryId.eq(lib_id))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let other = tmp.path().join("other.cbz");
+    write_cbz(&other, "Other", 9);
+    std::fs::rename(&archive, tmp.path().join("kept.cbz")).unwrap();
+    symlink(&other, &archive).unwrap();
+    scanner::scan_issue_file(&app.state(), lib_id, &before.id, true, None)
+        .await
+        .unwrap();
+
+    let after = issue::Entity::find_by_id(before.id.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.content_hash, before.content_hash,
+        "target not ingested"
+    );
+    assert_eq!(after.file_size, before.file_size);
+    assert!(after.removed_at.is_none(), "row left for the full scan");
+    assert_eq!(open_symlink_findings(&app, lib_id).await, vec![s(&archive)]);
+}
+
+/// Set a path's own mtime (not a link target's) to 2000-01-01.
+fn backdate(path: &Path) {
+    use rustix::fs::{AtFlags, Timespec, Timestamps, utimensat};
+    let old = Timespec {
+        tv_sec: 946_684_800,
+        tv_nsec: 0,
+    };
+    utimensat(
+        rustix::fs::CWD,
+        path,
+        &Timestamps {
+            last_access: old,
+            last_modification: old,
+        },
+        AtFlags::SYMLINK_NOFOLLOW,
+    )
+    .unwrap();
+}
+
+/// An unchanged series folder (mtime not past the last scan) in which an
+/// archive became a link is processed on the first scan after the link
+/// appears (row soft-removed, finding opened) and skipped again on the next.
+#[tokio::test]
+async fn unchanged_folder_with_a_new_link_is_processed_once() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("library");
+    let saga = root.join("Saga (2012)");
+    std::fs::create_dir_all(&saga).unwrap();
+    write_cbz(&saga.join("Saga 001.cbz"), "Saga", 1);
+    let second = saga.join("Saga 002.cbz");
+    write_cbz(&second, "Saga", 2);
+    for p in [&saga, &saga.join("Saga 001.cbz"), &second] {
+        backdate(p);
+    }
+    let lib_id = LibrarySeed::new(&root).insert(&app.state().db).await;
+    scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    assert_eq!(live_issue_paths(&app, lib_id).await.len(), 2);
+
+    let elsewhere = tmp.path().join("elsewhere.cbz");
+    std::fs::rename(&second, &elsewhere).unwrap();
+    symlink(&elsewhere, &second).unwrap();
+    backdate(&second);
+    backdate(&saga);
+
+    let stats = scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    assert_eq!(stats.series_skipped_unchanged, 0, "new link: processed");
+    assert_eq!(
+        live_issue_paths(&app, lib_id).await,
+        vec![s(&saga.join("Saga 001.cbz"))]
+    );
+    assert_eq!(open_symlink_findings(&app, lib_id).await, vec![s(&second)]);
+
+    let stats = scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    assert_eq!(stats.series_skipped_unchanged, 1, "reported link: skipped");
+    assert_eq!(open_symlink_findings(&app, lib_id).await, vec![s(&second)]);
+}
+
+/// A single-series rescan of a folder that was replaced by a link refuses
+/// the folder and soft-removes nothing.
+#[tokio::test]
+async fn series_rescan_refuses_a_linked_folder() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("library");
+    let saga = root.join("Saga (2012)");
+    std::fs::create_dir_all(&saga).unwrap();
+    write_cbz(&saga.join("Saga 001.cbz"), "Saga", 1);
+    let lib_id = LibrarySeed::new(&root).insert(&app.state().db).await;
+    scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    let series_row = series::Entity::find()
+        .filter(series::Column::LibraryId.eq(lib_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Points inside the root, at a copy: still a link, still refused.
+    let copy = root.join(".copy");
+    std::fs::create_dir(&copy).unwrap();
+    std::fs::copy(saga.join("Saga 001.cbz"), copy.join("Saga 001.cbz")).unwrap();
+    std::fs::rename(&saga, tmp.path().join("original")).unwrap();
+    symlink(&copy, &saga).unwrap();
+
+    let res = scanner::scan_series_folder(
+        &app.state(),
+        lib_id,
+        series_row.id,
+        &saga,
+        scanner::ScanKind::Series,
+        None,
+        true,
+        None,
+    )
+    .await;
+    assert!(res.is_err(), "linked folder refused");
+    assert_eq!(live_series_folders(&app, lib_id).await, vec![s(&saga)]);
+    assert_eq!(live_issue_paths(&app, lib_id).await.len(), 1);
 }

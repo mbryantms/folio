@@ -1567,7 +1567,10 @@ pub(crate) async fn download(
     headers: HeaderMap,
 ) -> Response {
     // Soft-removed issues (or issues of a soft-removed series) are not
-    // downloadable, the same as everywhere a reader opens an issue.
+    // downloadable, for every role: OPDS is a list surface and its catalogs
+    // hide removed rows, so the download does too. (The page-bytes and
+    // page-stream routes check access through `issue_visible`, which does
+    // not look at `removed_at`; they are unchanged here.)
     let acl = access::for_user(&app, &user).await;
     let row = match access::visible_issues_select(&acl)
         .filter(issue::Column::Id.eq(id))
@@ -1579,7 +1582,7 @@ pub(crate) async fn download(
     };
     // Never through a symbolic link, and only a regular file below the
     // library root; the response streams from this handle.
-    let Some(f) = crate::library::no_follow::open_issue(&app.db, &row).await else {
+    let Some(f) = crate::library::no_follow::open_issue(&app, &row).await else {
         return not_found();
     };
     let mut f = tokio::fs::File::from_std(f);

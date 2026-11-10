@@ -1478,6 +1478,84 @@ mod tests {
         assert!(scoped.tops.is_empty(), "{:?}", scoped.tops);
         assert_eq!(scoped.result.files_at_root.len(), 1);
     }
+
+    /// Links are never classified as what they point to: at the top level,
+    /// inside a publisher folder and inside a series walk, each is reported.
+    #[test]
+    fn links_are_reported_not_followed() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("lib");
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        write_empty(&outside.join("x.cbz"));
+        let real = root.join("Real");
+        fs::create_dir_all(&real).unwrap();
+        write_empty(&real.join("001.cbz"));
+        let marvel = root.join("Marvel");
+        fs::create_dir_all(marvel.join("Thor")).unwrap();
+        write_empty(&marvel.join("Thor").join("001.cbz"));
+        symlink(&outside, root.join("Out")).unwrap();
+        symlink(&real, root.join("In")).unwrap();
+        symlink(&outside, marvel.join("Linked")).unwrap();
+        symlink(outside.join("x.cbz"), real.join("002.cbz")).unwrap();
+
+        let result = enumerate(&root).unwrap();
+        let mut series: Vec<_> = result
+            .series_folders
+            .iter()
+            .map(|c| c.path.clone())
+            .collect();
+        series.sort();
+        assert_eq!(series, vec![marvel.join("Thor"), real.clone()]);
+        assert_eq!(
+            result.symlinks,
+            vec![root.join("In"), marvel.join("Linked"), root.join("Out")]
+        );
+        let walk = walk_archives_with(&real, &IgnoreRules::default());
+        assert_eq!(walk.archives, vec![real.join("001.cbz")]);
+        assert_eq!(walk.symlinks, vec![real.join("002.cbz")]);
+        // A walk rooted at a link does not descend into it.
+        let walk = walk_archives_with(&root.join("In"), &IgnoreRules::default());
+        assert!(walk.archives.is_empty());
+        assert_eq!(walk.symlinks, vec![root.join("In")]);
+    }
+
+    /// Scoped (watcher) enumeration: a known top-level series folder that
+    /// was replaced by a link is in scope (its series reconcile away), is
+    /// not present, and the link is reported.
+    #[test]
+    fn scoped_enumeration_treats_a_known_top_replaced_by_a_link_as_gone() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("lib");
+        let saga = root.join("Saga");
+        let other = root.join("Other");
+        for d in [&saga, &other] {
+            fs::create_dir_all(d).unwrap();
+            write_empty(&d.join("001.cbz"));
+        }
+        let known: std::collections::HashSet<PathBuf> =
+            [saga.clone(), other.clone()].into_iter().collect();
+        let moved = tmp.path().join("moved");
+        fs::rename(&saga, &moved).unwrap();
+        symlink(&moved, &saga).unwrap();
+
+        let scoped = enumerate_scoped(
+            &root,
+            &IgnoreRules::default(),
+            std::slice::from_ref(&root),
+            &known,
+        )
+        .unwrap();
+        assert_eq!(scoped.tops, vec![saga.clone()]);
+        assert!(
+            scoped.present_series.is_empty(),
+            "{:?}",
+            scoped.present_series
+        );
+        assert_eq!(scoped.result.symlinks, vec![saga.clone()]);
+    }
 }
 
 #[cfg(test)]

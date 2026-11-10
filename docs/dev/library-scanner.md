@@ -170,7 +170,40 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     [`library::no_follow`](../../crates/server/src/library/no_follow.rs),
     which walks from the root one name at a time with `O_NOFOLLOW` and
     accepts only a regular file; anything else answers not-found with a
-    WARN naming the issue and the reason.
+    WARN naming the issue and the reason (a missing file is logged at
+    DEBUG). A stored path may be spelled under the configured root or its
+    canonical path (older single-series rescans of a linked root wrote the
+    latter); the walk starts at the opened root either way. The library's
+    roots are kept in `AppState::library_roots` (one-minute expiry, dropped
+    when the library's settings are saved or it is deleted), so the check
+    costs no database query. The OPDS download also refuses soft-removed
+    issues, for every role (OPDS is a list surface); page bytes and the
+    page stream go by `issue_visible` and do not.
+  - **Issue rescans** ("Scan issue", and the per-issue rescan writeback
+    queues) check the stored path the same way before ingesting: a link
+    is reported as `SymlinkSkipped` and nothing is ingested; the row is
+    left for the next full scan to reconcile.
+  - **Unchanged folders.** The unchanged-folder fast path is turned off
+    for a folder whose walk meets a link that no open `SymlinkSkipped`
+    finding names yet (the open findings' paths are loaded once per
+    scan), so rows indexed through it are reconciled and the finding is
+    recorded; with the finding open the folder is skipped again as usual.
+  - **Still opened by name after a check, or with none** (closing these
+    is the next part of the work): the archive reader behind the page
+    routes, thumbnails, OCR and page hashes (`zip_lru`, which reopens the
+    path the check just proved); the issue rescan's ingest
+    (`process::ingest_one`, after its own `open_below_roots` check); the
+    scanner's ingest and hashing of walked files (`process.rs`,
+    `library/hash.rs`); the writeback read and rewrite of the archive
+    (`jobs/rewrite_sidecars.rs`); thumbnail generation
+    (`jobs/post_scan.rs`); deep validation
+    (`library/deep_validate.rs`); cover hashing (`metadata/phash.rs`); and
+    the admin archive editor (`api/archive_edit.rs`). Each would need
+    someone with write access to the library folder to swap a file for a
+    link in the window between the walk or check and the open.
+  - **Hard links** cannot be told apart from ordinary files and are
+    deliberately not refused: download tools commonly hard-link finished
+    files into a library.
 
 #### Two supported on-disk layouts
 

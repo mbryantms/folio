@@ -197,6 +197,17 @@ pub enum IssueKind {
         #[serde(default)]
         skipped_archive_count: u32,
     },
+    /// A symbolic link below the library root. Folio never follows links
+    /// (not to folders, not to files, wherever they point), so nothing
+    /// behind it is indexed; a series that was indexed through it is
+    /// reported missing and soft-removed like any other. Resolves on the
+    /// next full scan after the link is replaced by the real folder or file
+    /// (or removed). Emitted from enumeration (library top level, publisher
+    /// folders), from the archive walk inside series folders, and from an
+    /// issue rescan whose stored path is or runs through a link.
+    SymlinkSkipped {
+        path: PathBuf,
+    },
     /// A provider ID embedded in this archive's ComicInfo/MetronInfo is
     /// already owned by another *live* issue. Two situations, which the
     /// payload lets the UI tell apart: a second copy of the same issue
@@ -206,16 +217,6 @@ pub enum IssueKind {
     /// scanner skips that one ID rather than aborting. Base-only
     /// barcodes (a UPC/EAN without its 5-digit add-on names the series,
     /// not the issue) never raise this — `writers::is_base_only_barcode`.
-    /// A symbolic link below the library root. Folio never follows links
-    /// (not to folders, not to files, wherever they point), so nothing
-    /// behind it is indexed; a series that was indexed through it is
-    /// reported missing and soft-removed like any other. Resolves on the
-    /// next full scan after the link is replaced by the real folder or file
-    /// (or removed). Emitted from enumeration (library top level, publisher
-    /// folders) and from the archive walk inside series folders.
-    SymlinkSkipped {
-        path: PathBuf,
-    },
     DuplicateExternalId {
         path: PathBuf,
         source: String,

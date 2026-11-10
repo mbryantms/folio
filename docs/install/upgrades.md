@@ -152,13 +152,23 @@ docker compose -f compose.prod.yml up -d --no-deps app
   to a folder or a file, wherever it points. A library organised with
   symlinked series or publisher folders stops indexing them: after the
   first scan on this version those series are reported missing and
-  soft-removed (they go through the normal removal lifecycle, so nothing
-  is deleted for weeks), and each link is listed under the library's
-  health findings as *Symbolic link skipped*.
-- **What to do instead:** move the real folder into the library,
-  bind-mount it there (`mount --bind`, or a second volume in the compose
-  file), or add its location as its own library. Once the real folder is
-  in place, the next scan restores the series and its reading history.
+  soft-removed, and each link is listed under the library's health
+  findings as *Symbolic link skipped*.
+- **Those rows are then deleted on the normal schedule.** The removal
+  sweeps do not follow the link either, so they see the content as gone:
+  a soft-removed row is confirmed once the library's soft-delete window
+  has passed (`soft_delete_days`, 30 days by default) and permanently
+  deleted, reading progress, markers and collection entries included,
+  once the purge window has passed after that (the soft-delete window
+  times the `library.hard_purge_multiplier` server setting, 2 by default:
+  60 more days, about 90 in all). Setting the multiplier to `0` turns
+  the purge off and keeps the rows.
+- **What to do instead:** put the real folder, or a bind mount of it
+  (`mount --bind`, or a second volume in the compose file), at the
+  **same path** inside the library where the link was. The next scan
+  then restores the series with its reading history. Adding the link's
+  target as a separate library also works for reading, but it creates
+  new series there, without that history.
 - **The library root itself may still be a link** (`/data/comics ->
   /mnt/x`); only links *below* the root are refused.
 - Serving follows the same rule: an issue whose file (or a folder above

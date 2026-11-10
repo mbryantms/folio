@@ -21,11 +21,18 @@
 //! regular file is returned. Callers read through that handle, never by
 //! reopening the path.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::File;
 use std::os::fd::OwnedFd;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use uuid::Uuid;
+
+use crate::state::AppState;
 
 use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 use rustix::io::Errno;
@@ -78,7 +85,24 @@ fn refusal_for(dir: &OwnedFd, name: &OsStr, err: Errno) -> Refusal {
 /// following a symbolic link at or below the root. Blocking: run it on the
 /// blocking pool.
 pub fn open_below_root(root: &Path, path: &Path) -> Result<File, Refusal> {
-    let rel = path.strip_prefix(root).map_err(|_| Refusal::OutsideRoot)?;
+    open_below_roots(root, None, path)
+}
+
+/// [`open_below_root`] that also accepts `path` spelled under the root's
+/// canonical path (`root_canon`, the root with its own links resolved).
+/// Rows written by an older single-series rescan of a library whose root is
+/// a link carry that spelling. Either way the walk starts at the opened
+/// root and refuses every link below it.
+pub fn open_below_roots(
+    root: &Path,
+    root_canon: Option<&Path>,
+    path: &Path,
+) -> Result<File, Refusal> {
+    let rel = path
+        .strip_prefix(root)
+        .ok()
+        .or_else(|| root_canon.and_then(|c| path.strip_prefix(c).ok()))
+        .ok_or(Refusal::OutsideRoot)?;
     let mut names = Vec::new();
     for c in rel.components() {
         match c {
@@ -128,37 +152,106 @@ pub fn open_below_root(root: &Path, path: &Path) -> Result<File, Refusal> {
     Ok(File::from(fd))
 }
 
-/// The library root a stored issue path must lie below.
-async fn library_root(db: &sea_orm::DatabaseConnection, library_id: uuid::Uuid) -> Option<String> {
-    use sea_orm::{EntityTrait, QuerySelect};
-    entity::library::Entity::find_by_id(library_id)
-        .select_only()
-        .column(entity::library::Column::RootPath)
-        .into_tuple::<String>()
-        .one(db)
-        .await
-        .ok()
-        .flatten()
+/// A library's root as configured and as resolved (its own links followed).
+#[derive(Debug, Clone)]
+pub struct LibraryRoot {
+    pub configured: PathBuf,
+    /// `None` while the root cannot be resolved (missing, unmounted).
+    pub canonical: Option<PathBuf>,
+    loaded_at: Instant,
 }
 
-/// Open an issue's stored file through [`open_below_root`]; a refusal is
-/// logged at WARN with the issue id and the reason (never anything read
-/// from the file).
-async fn try_open_issue(
-    db: &sea_orm::DatabaseConnection,
-    row: &entity::issue::Model,
-) -> Result<File, Refusal> {
+/// How long a cached root is trusted before it is read again. Explicit
+/// invalidation (library settings saved, library deleted) covers the API;
+/// the TTL covers an edit made outside it and a remounted root.
+const ROOT_TTL: Duration = Duration::from_secs(60);
+
+/// In-memory map of library id → [`LibraryRoot`], on
+/// [`AppState`](crate::state::AppState) as `library_roots`, so the serving
+/// check costs no database query per page request.
+#[derive(Debug, Default)]
+pub struct LibraryRoots {
+    map: std::sync::Mutex<HashMap<Uuid, Arc<LibraryRoot>>>,
+}
+
+impl LibraryRoots {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Forget one library (its row was edited or deleted).
+    pub fn invalidate(&self, library_id: Uuid) {
+        if let Ok(mut m) = self.map.lock() {
+            m.remove(&library_id);
+        }
+    }
+
+    /// The library's root, from the map while fresh, else from the database
+    /// (one projected query) with the canonical path resolved on the
+    /// blocking pool. `None` when the library does not exist.
+    pub async fn get(
+        &self,
+        db: &sea_orm::DatabaseConnection,
+        library_id: Uuid,
+    ) -> Option<Arc<LibraryRoot>> {
+        if let Ok(m) = self.map.lock()
+            && let Some(r) = m.get(&library_id)
+            && r.loaded_at.elapsed() < ROOT_TTL
+        {
+            return Some(Arc::clone(r));
+        }
+        use sea_orm::{EntityTrait, QuerySelect};
+        let configured = entity::library::Entity::find_by_id(library_id)
+            .select_only()
+            .column(entity::library::Column::RootPath)
+            .into_tuple::<String>()
+            .one(db)
+            .await
+            .ok()
+            .flatten()?;
+        let configured = PathBuf::from(configured);
+        let for_block = configured.clone();
+        let canonical = tokio::task::spawn_blocking(move || std::fs::canonicalize(for_block).ok())
+            .await
+            .ok()
+            .flatten();
+        let root = Arc::new(LibraryRoot {
+            configured,
+            canonical,
+            loaded_at: Instant::now(),
+        });
+        if let Ok(mut m) = self.map.lock() {
+            m.insert(library_id, Arc::clone(&root));
+        }
+        Some(root)
+    }
+}
+
+/// Open an issue's stored file through [`open_below_roots`]. A refusal
+/// (symbolic link, outside the root, not a regular file) is logged at WARN
+/// with the issue id and the reason, never anything read from the file; a
+/// missing file only at DEBUG (the route has its own missing-file answer).
+async fn try_open_issue(state: &AppState, row: &entity::issue::Model) -> Result<File, Refusal> {
     let issue_id = row.id.as_str();
-    let Some(root) = library_root(db, row.library_id).await else {
-        tracing::warn!(issue_id, "issue file refused: library not found");
+    let Some(root) = state.library_roots.get(&state.db, row.library_id).await else {
+        tracing::debug!(issue_id, "issue file not opened: library not found");
         return Err(Refusal::Missing);
     };
     let path = row.file_path.clone();
-    let opened =
-        tokio::task::spawn_blocking(move || open_below_root(Path::new(&root), Path::new(&path)))
-            .await;
+    let opened = tokio::task::spawn_blocking(move || {
+        open_below_roots(
+            &root.configured,
+            root.canonical.as_deref(),
+            Path::new(&path),
+        )
+    })
+    .await;
     match opened {
         Ok(Ok(f)) => Ok(f),
+        Ok(Err(Refusal::Missing)) => {
+            tracing::debug!(issue_id, "issue file missing");
+            Err(Refusal::Missing)
+        }
         Ok(Err(reason)) => {
             tracing::warn!(issue_id, reason = %reason, "issue file refused");
             Err(reason)
@@ -172,11 +265,8 @@ async fn try_open_issue(
 
 /// Open an issue's stored file for a reader. `None` means the route answers
 /// not-found (missing file included).
-pub async fn open_issue(
-    db: &sea_orm::DatabaseConnection,
-    row: &entity::issue::Model,
-) -> Option<File> {
-    try_open_issue(db, row).await.ok()
+pub async fn open_issue(state: &AppState, row: &entity::issue::Model) -> Option<File> {
+    try_open_issue(state, row).await.ok()
 }
 
 /// Check an issue's stored path with the same rules, for a caller that must
@@ -184,8 +274,11 @@ pub async fn open_issue(
 /// handle is dropped; the path can still change between this check and the
 /// archive crate's own open. A file that is simply missing is not refused
 /// here: the route keeps its own missing-archive answer.
-pub async fn issue_path_ok(db: &sea_orm::DatabaseConnection, row: &entity::issue::Model) -> bool {
-    matches!(try_open_issue(db, row).await, Ok(_) | Err(Refusal::Missing))
+pub async fn issue_path_ok(state: &AppState, row: &entity::issue::Model) -> bool {
+    matches!(
+        try_open_issue(state, row).await,
+        Ok(_) | Err(Refusal::Missing)
+    )
 }
 
 /// Read a small sidecar (`series.json`) that sits in a folder the scan

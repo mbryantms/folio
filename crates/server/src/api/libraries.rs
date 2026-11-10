@@ -705,6 +705,8 @@ pub async fn update_settings(
         Err(resp) => return resp,
     };
     let uuid = row.id;
+    // The serving check's root map re-reads this library on next use.
+    app.library_roots.invalidate(uuid);
 
     // `soft_delete_days >= 0` and the loose 5-field cron check are
     // enforced by garde. `validate_globs` still runs here because it
@@ -1426,6 +1428,7 @@ pub async fn delete_one(
         Err(resp) => return resp,
     };
     let uuid = lib.id;
+    app.library_roots.invalidate(uuid);
 
     // ── 1. Wipe on-disk thumbnails for every issue in the library ──
     // Includes both active and removed issues — the FK cascade is about to

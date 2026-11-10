@@ -429,7 +429,7 @@ async fn load_page_image(
     page: u32,
 ) -> Result<image::DynamicImage, Box<Response>> {
     // Same rules as the page routes (`library::no_follow`).
-    if !crate::library::no_follow::issue_path_ok(&app.db, row).await {
+    if !crate::library::no_follow::issue_path_ok(app, row).await {
         return Err(Box::new(error(
             StatusCode::NOT_FOUND,
             "not_found",

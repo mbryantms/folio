@@ -75,7 +75,7 @@ pub async fn serve(
     // not-found. Checked on every request, before any cached reader or
     // cached variant is used. The pread fast path below reads through this
     // handle; the archive reader (`zip_lru`) still opens the path itself.
-    let Some(file) = crate::library::no_follow::open_issue(&app.db, &row).await else {
+    let Some(file) = crate::library::no_follow::open_issue(&app, &row).await else {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     };
 

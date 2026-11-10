@@ -115,7 +115,7 @@ pub async fn stream(
     // Regular file below the library root, no symbolic link on the way
     // (`library::no_follow`), or not-found. The pread fast path reads
     // through this handle.
-    let Some(file) = crate::library::no_follow::open_issue(&app.db, &issue_row).await else {
+    let Some(file) = crate::library::no_follow::open_issue(&app, &issue_row).await else {
         return error(StatusCode::NOT_FOUND, "not_found");
     };
 

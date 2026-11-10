@@ -1281,6 +1281,28 @@ async fn known_series_by_folder(
         .collect())
 }
 
+/// Paths named by the library's open (unresolved) `SymlinkSkipped`
+/// findings.
+async fn open_symlink_findings(
+    db: &sea_orm::DatabaseConnection,
+    library_id: Uuid,
+) -> anyhow::Result<HashSet<String>> {
+    use entity::library_health_issue as lhi;
+    let payloads: Vec<serde_json::Value> = lhi::Entity::find()
+        .select_only()
+        .column(lhi::Column::Payload)
+        .filter(lhi::Column::LibraryId.eq(library_id))
+        .filter(lhi::Column::Kind.eq(lhi::HealthIssueKind::SymlinkSkipped))
+        .filter(lhi::Column::ResolvedAt.is_null())
+        .into_tuple()
+        .all(db)
+        .await?;
+    Ok(payloads
+        .iter()
+        .filter_map(|p| p.get("data")?.get("path")?.as_str().map(str::to_owned))
+        .collect())
+}
+
 /// One INFO line and one `SymlinkSkipped` finding per symbolic link the
 /// scan met and did not follow.
 fn report_skipped_symlink(library_id: Uuid, path: PathBuf, health: &mut HealthCollector) {
@@ -1359,6 +1381,11 @@ async fn build_library_scan_plan(
     // walk finds one of them is processed instead.
     let removal_paths = crate::library::reconcile::series_removal_paths(&state.db, lib.id).await?;
     let removal_paths = &removal_paths;
+    // Paths of the library's open `SymlinkSkipped` findings, one query per
+    // scan: the unchanged-folder skip below is turned off for a folder whose
+    // walk meets a link not reported yet.
+    let reported_links = open_symlink_findings(&state.db, lib.id).await?;
+    let reported_links = &reported_links;
     // Post-audit T1.2: folders in flight per scan are their own knob —
     // queue concurrency (`scan_worker_count`) × per-scan fan-out used to
     // multiply into up to n² open transactions.
@@ -1397,7 +1424,17 @@ async fn build_library_scan_plan(
                         })
                         .await
                         .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))?;
+                        // A link the walk met that no open `SymlinkSkipped`
+                        // finding names yet turns the skip off once, so rows
+                        // indexed through it are reconciled and the finding
+                        // recorded; with the finding open, the folder is
+                        // skipped again as usual.
+                        let new_link = walk
+                            .symlinks
+                            .iter()
+                            .any(|l| !reported_links.contains(l.to_string_lossy().as_ref()));
                         skipped_unchanged = !walk.changed_since
+                            && !new_link
                             && !walk_needs_processing(&walk.archives, removed, paths);
                         walk
                     } else {
@@ -1669,6 +1706,52 @@ async fn run_issue_phase(
     )
     .await;
     let path = PathBuf::from(&row.file_path);
+    // Links below the root are never followed, here either: a stored path
+    // that is (or runs through) a link is not ingested, and the row is left
+    // for the next full scan to reconcile. Missing / I/O errors fall through
+    // to the checks below, which already handle them.
+    let root = PathBuf::from(&lib.root_path);
+    let check_path = path.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        let canon = std::fs::canonicalize(&root).ok();
+        crate::library::no_follow::open_below_roots(&root, canon.as_deref(), &check_path).map(drop)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("issue path check task failed: {e}"))?;
+    let refused = match checked {
+        Err(crate::library::no_follow::Refusal::Symlink) => {
+            report_skipped_symlink(lib.id, path.clone(), health);
+            true
+        }
+        Err(
+            reason @ (crate::library::no_follow::Refusal::NotRegular
+            | crate::library::no_follow::Refusal::OutsideRoot),
+        ) => {
+            health.emit(crate::library::health::IssueKind::UnreadableFile {
+                path: path.clone(),
+                error: reason.to_string(),
+            });
+            true
+        }
+        _ => false,
+    };
+    if refused {
+        stats.files_skipped += 1;
+        progress.completed = 1;
+        progress.health_issues = health.count() as u64;
+        emit_progress(
+            state,
+            lib.id,
+            scan_id,
+            &progress,
+            "complete",
+            "file",
+            Some(row.file_path.clone()),
+            stats,
+        )
+        .await;
+        return Ok(());
+    }
     // Post-audit T1.1: only `NotFound` is "the file is gone". A permission
     // or mount error leaves the file unknown — report it, don't remove it.
     if let Err(e) = std::fs::metadata(&path)
