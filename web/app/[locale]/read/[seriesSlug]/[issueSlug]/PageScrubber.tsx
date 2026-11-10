@@ -38,8 +38,11 @@ type Preview = { page: number; left: number };
  *
  * The hit area straddles the header's bottom edge — 8px inside (the
  * header's bottom padding, clear of its buttons) and the rest below —
- * taller on touch (24px / 32px: the WCAG 2.2 target-size floor). It opts out of the reader's page-turn drag
- * (`SWIPE_IGNORE_ATTR`).
+ * taller on touch (24px / 30px, above the WCAG 2.2 target-size floor). It opts out of the reader's page-turn drag
+ * (`SWIPE_IGNORE_ATTR`). On touch the header buttons' 44px tap areas
+ * (`folio-tap`) reach 4px into that 8px band, and this bar, painted above
+ * them, would take all 4px; it starts 2px lower instead (30px tall, rail
+ * and knob held in place) so the overlap is split evenly.
  */
 export function PageScrubber({
   issueId,
@@ -102,7 +105,7 @@ export function PageScrubber({
       data-testid="page-scrubber"
       data-dragging={dragging ? "" : undefined}
       {...{ [SWIPE_IGNORE_ATTR]: "" }}
-      className="group absolute inset-x-0 -bottom-4 z-10 h-6 cursor-pointer touch-none select-none focus-visible:outline-none pointer-coarse:-bottom-6 pointer-coarse:h-8"
+      className="group absolute inset-x-0 -bottom-4 z-10 h-6 cursor-pointer touch-none select-none focus-visible:outline-none pointer-coarse:-bottom-6 pointer-coarse:h-7.5"
       onPointerDown={(e) => {
         if (e.pointerType === "mouse" && e.button !== 0) return;
         e.preventDefault();
@@ -165,18 +168,18 @@ export function PageScrubber({
        * (8px down the hit area); thickens on hover / drag / focus. */}
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-1.5 h-0.5 bg-transparent transition-[height,background-color] duration-150 group-hover:h-1 group-hover:bg-white/15 group-focus-visible:h-1 group-focus-visible:bg-white/15 group-data-dragging:h-1 group-data-dragging:bg-white/15 motion-reduce:transition-none"
+        className="pointer-events-none absolute inset-x-0 top-1.5 h-0.5 bg-transparent transition-[height,background-color] duration-150 group-hover:h-1 group-hover:bg-white/15 group-focus-visible:h-1 group-focus-visible:bg-white/15 group-data-dragging:h-1 group-data-dragging:bg-white/15 motion-reduce:transition-none pointer-coarse:top-1"
       />
       <span
         aria-hidden="true"
-        className="bg-accent pointer-events-none absolute top-2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0 shadow ring-2 ring-neutral-950 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 group-focus-visible:ring-white group-data-dragging:opacity-100 motion-reduce:transition-none"
+        className="bg-accent pointer-events-none absolute top-2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-0 shadow ring-2 ring-neutral-950 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 group-focus-visible:ring-white group-data-dragging:opacity-100 motion-reduce:transition-none pointer-coarse:top-1.5"
         style={{ left: `${knobPct}%` }}
       />
       {preview ? (
         <span
           aria-hidden="true"
           data-testid="page-scrubber-preview"
-          className="pointer-events-none absolute top-7 flex flex-col items-center gap-1 rounded-lg border border-neutral-700/80 bg-neutral-950/90 p-1.5 shadow-xl backdrop-blur pointer-coarse:top-9"
+          className="pointer-events-none absolute top-7 flex flex-col items-center gap-1 rounded-lg border border-neutral-700/80 bg-neutral-950/90 p-1.5 shadow-xl backdrop-blur pointer-coarse:top-8.5"
           style={{ left: preview.left, width: CARD_W }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -184,7 +184,7 @@ export function ReaderChrome({
               type="button"
               onClick={onExit}
               aria-label="Exit reader"
-              className="focus-visible:ring-ring inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
+              className="folio-tap focus-visible:ring-ring inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
             >
               <ArrowLeft />
             </button>
@@ -219,8 +219,10 @@ export function ReaderChrome({
             bar; marker tools, page text, the markers list and fullscreen
             collapse into one "More" menu. Seven 36px buttons plus the page
             counter overflowed a 390pt iPhone and wrapped the counter onto
-            three lines. */}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
+            three lines. The row's gap is 4px, so each button's touch area
+            (`folio-tap`) reaches 2px into it, not the default 4px:
+            neighbours meet in the middle of the gap. */}
+        <span className="ml-auto flex shrink-0 items-center gap-1 [--folio-tap-x:2px]">
           <BookmarkToggleButton issueId={issueId} pageIndex={currentPage} />
           <FavoriteToggleButton issueId={issueId} pageIndex={currentPage} />
           {narrow ? (
@@ -359,7 +361,7 @@ function PageJumpDisplay({
       <button
         type="button"
         onClick={beginEdit}
-        className="focus-visible:ring-ring ml-1 shrink-0 cursor-text rounded px-1 whitespace-nowrap text-neutral-200 tabular-nums transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none"
+        className="folio-tap focus-visible:ring-ring ml-1 shrink-0 cursor-text rounded px-1 whitespace-nowrap text-neutral-200 tabular-nums transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none"
         aria-label={label}
       >
         {isPair ? (
@@ -465,7 +467,7 @@ function MarkerMenuButton({
             <button
               type="button"
               aria-label="Marker tools"
-              className="focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
+              className="folio-tap focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
             >
               <StickyNote />
             </button>
@@ -574,7 +576,7 @@ function MoreMenuButton({ pageIndex }: { pageIndex: number }) {
             <button
               type="button"
               aria-label="More reader tools"
-              className="focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
+              className="folio-tap focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
             >
               <MoreHorizontal />
             </button>
@@ -664,7 +666,7 @@ function ChromeIconButton({
           aria-label={label}
           aria-pressed={active}
           className={
-            "focus-visible:ring-ring inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4 " +
+            "folio-tap focus-visible:ring-ring inline-flex h-9 w-9 items-center justify-center rounded-md transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4 " +
             (active ? "text-amber-300" : "text-neutral-100")
           }
         >
@@ -735,7 +737,7 @@ function SettingsButton({
               onPointerEnter={preloadSettingsOnIntent}
               onFocus={preloadSettingsOnIntent}
               onPointerDown={preloadSettingsOnIntent}
-              className="focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
+              className="folio-tap focus-visible:ring-ring data-[state=open]:bg-accent/25 data-[state=open]:text-accent inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-100 transition-colors hover:bg-white/15 hover:text-white focus-visible:ring-2 focus-visible:outline-none [&_svg]:size-4"
             >
               <Settings />
             </button>

@@ -947,8 +947,13 @@ body {
     content: "";
     position: absolute;
     top: 50%;
-    right: -4px;
-    left: -4px;
+    /* 4px each side by default. A row packed tighter than the 8px gap
+     * sets `--folio-tap-x` to half its gap so neighbouring areas meet
+     * in the middle instead of the later one taking the whole gap (the
+     * reader header's 4px icon row); `--folio-tap-l` / `--folio-tap-r`
+     * set one side, e.g. the two half-star zones of `RatingStars`. */
+    right: calc(-1 * var(--folio-tap-r, var(--folio-tap-x, 4px)));
+    left: calc(-1 * var(--folio-tap-l, var(--folio-tap-x, 4px)));
     height: max(100%, 44px);
     transform: translateY(-50%);
   }

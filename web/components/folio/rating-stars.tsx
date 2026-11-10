@@ -40,10 +40,29 @@ export function RatingStars({
 }) {
   const [hover, setHover] = React.useState<number | null>(null);
   const display = hover ?? value ?? 0;
+  // `tapL` / `tapR`: on touch each half-star zone carries the shared
+  // 44px-tall `folio-tap` area, widened outward by half the gap so the
+  // whole star cell (gaps included) is a hit, while the two halves meet
+  // at the star's midline and never overlap each other or a neighbour.
   const sizes = {
-    sm: { star: "size-3.5", gap: "gap-0.5" },
-    md: { star: "size-5", gap: "gap-0.5" },
-    lg: { star: "h-7 w-7", gap: "gap-1" },
+    sm: {
+      star: "size-3.5",
+      gap: "gap-0.5",
+      tapL: "[--folio-tap-l:1px] [--folio-tap-r:0px]",
+      tapR: "[--folio-tap-l:0px] [--folio-tap-r:1px]",
+    },
+    md: {
+      star: "size-5",
+      gap: "gap-0.5",
+      tapL: "[--folio-tap-l:1px] [--folio-tap-r:0px]",
+      tapR: "[--folio-tap-l:0px] [--folio-tap-r:1px]",
+    },
+    lg: {
+      star: "h-7 w-7",
+      gap: "gap-1",
+      tapL: "[--folio-tap-l:2px] [--folio-tap-r:0px]",
+      tapR: "[--folio-tap-l:0px] [--folio-tap-r:2px]",
+    },
   } as const;
   const dim = sizes[size];
 
@@ -134,7 +153,10 @@ export function RatingStars({
               <>
                 <button
                   type="button"
-                  className="absolute inset-y-0 left-0 w-1/2 cursor-pointer focus-visible:outline-none"
+                  className={cn(
+                    "folio-tap absolute inset-y-0 left-0 w-1/2 cursor-pointer focus-visible:outline-none",
+                    dim.tapL,
+                  )}
                   aria-label={`${halfValue} stars`}
                   role="radio"
                   aria-checked={value === halfValue}
@@ -144,7 +166,10 @@ export function RatingStars({
                 />
                 <button
                   type="button"
-                  className="absolute inset-y-0 right-0 w-1/2 cursor-pointer focus-visible:outline-none"
+                  className={cn(
+                    "folio-tap absolute inset-y-0 right-0 w-1/2 cursor-pointer focus-visible:outline-none",
+                    dim.tapR,
+                  )}
                   aria-label={`${fullValue} stars`}
                   role="radio"
                   aria-checked={value === fullValue}
