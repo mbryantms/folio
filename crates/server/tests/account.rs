@@ -377,3 +377,16 @@ async fn password_change_revokes_other_sessions_but_keeps_caller() {
         "the caller's own refresh must survive the password change",
     );
 }
+
+/// An account update keeps the caller's CSRF value (see
+/// `preferences_keep_the_csrf_value`), on the no-op path and on a change.
+#[tokio::test]
+async fn account_updates_keep_the_csrf_value() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "keep-csrf@example.com", "correctly-horse-battery").await;
+    for body in ["{}", r#"{"display_name":"Kept"}"#] {
+        let (status, json) = patch_account(&app, &auth, body).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(json["csrf_token"], auth.csrf.as_str(), "{body}");
+    }
+}

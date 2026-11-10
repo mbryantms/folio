@@ -540,6 +540,39 @@ async fn callback_happy_path_upserts_user_and_sets_cookies() {
     assert!(extract_set_cookie(&resp, "__Host-comic_session").is_some());
     assert!(extract_set_cookie(&resp, "__Host-comic_refresh").is_some());
 
+    // The readable access-expiry cookie rides along with the session
+    // cookie: same Max-Age, not HttpOnly, value = now + access TTL.
+    let line = |name: &str| -> String {
+        resp.headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|c| c.starts_with(&format!("{name}=")))
+            .unwrap_or_else(|| panic!("{name} set"))
+            .to_owned()
+    };
+    let attr = |line: &str, key: &str| -> Option<String> {
+        line.split(';')
+            .map(str::trim)
+            .find_map(|p| p.strip_prefix(&format!("{key}=")).map(str::to_owned))
+    };
+    let exp_line = line("__Host-comic_access_exp");
+    let session_line = line("__Host-comic_session");
+    assert_eq!(attr(&exp_line, "Max-Age"), attr(&session_line, "Max-Age"));
+    assert!(!exp_line.contains("HttpOnly"), "{exp_line}");
+    assert!(exp_line.contains("Secure") && exp_line.contains("SameSite=Lax"));
+    let value = extract_set_cookie(&resp, "__Host-comic_access_exp").unwrap();
+    let (exp, lifetime) = value.split_once('.').expect("exp.lifetime");
+    let exp: i64 = exp.parse().unwrap();
+    let ttl = app.state().cfg().access_ttl().as_secs() as i64;
+    assert_eq!(lifetime.parse::<i64>().unwrap(), ttl);
+    let now = chrono::Utc::now().timestamp();
+    assert!(
+        (exp - (now + ttl)).abs() <= 5,
+        "exp {exp} vs now+ttl {}",
+        now + ttl
+    );
+
     // User row must exist with the right external_id.
     use sea_orm::EntityTrait;
     let state = app.state();

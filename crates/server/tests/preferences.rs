@@ -226,3 +226,49 @@ async fn reader_display_prefs_out_of_range_rejected() {
     let me = get_me(&app, &auth).await;
     assert!(me["reader_brightness"].is_null());
 }
+
+/// A preference save keeps the caller's CSRF value and only extends its
+/// lifetime: minting a new one would fail with 403 any request (a refresh
+/// included) that another tab already has in flight with the old value.
+#[tokio::test]
+async fn preferences_keep_the_csrf_value() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/me/preferences")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        auth.session, auth.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &auth.csrf)
+                .body(Body::from(r#"{"default_reading_direction":"rtl"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let set = resp
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|c| c.starts_with("__Host-comic_csrf="))
+        .expect("CSRF cookie re-sent with a fresh lifetime")
+        .to_owned();
+    assert!(
+        set.starts_with(&format!("__Host-comic_csrf={};", auth.csrf)),
+        "{set}"
+    );
+    assert!(set.contains("Max-Age="), "{set}");
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["csrf_token"], auth.csrf.as_str());
+}
