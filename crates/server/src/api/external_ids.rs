@@ -28,7 +28,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::{external_id, issue, series};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use utoipa_axum::router::OpenApiRouter;
@@ -37,6 +37,7 @@ use uuid::Uuid;
 
 use super::error;
 use super::extractors::Validated;
+use crate::api::issue_card::IssueCardRow;
 use crate::audit::{self, AuditEntry};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::metadata::identifier::{Identifier, Source};
@@ -235,16 +236,23 @@ pub async fn list_issue(
     user: CurrentUser,
     Path((slug, issue_slug)): Path<(String, String)>,
 ) -> Response {
-    let Some((s, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((s, issue_row)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
+    let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
             "library access denied",
         );
     }
+    // WP-2.7: an issue rated above the caller's cap answers like an
+    // unknown slug, even inside a visible series.
+    if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    }
+    let issue_id = issue_row.id;
     let rows = fetch_rows(&app, "issue", &issue_id).await;
     Json(ExternalIdsListResp {
         entity_type: "issue".into(),
@@ -276,9 +284,10 @@ pub async fn add_issue(
     Path((slug, issue_slug)): Path<(String, String)>,
     Validated(req): Validated<AddExternalIdReq>,
 ) -> Response {
-    let Some((_, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, issue_row)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
+    let issue_id = issue_row.id;
     match upsert_user_identifier(&app, &user, &ctx, "issue", &issue_id, &req).await {
         Ok(done) => {
             audit::record(&app.db, done.audit).await;
@@ -307,9 +316,10 @@ pub async fn delete_issue(
     Extension(ctx): Extension<RequestContext>,
     Path((slug, issue_slug, source)): Path<(String, String, String)>,
 ) -> Response {
-    let Some((_, issue_id)) = find_series_issue(&app, &slug, &issue_slug).await else {
+    let Some((_, issue_row)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
+    let issue_id = issue_row.id;
     match delete_identifier(&app, &user, &ctx, "issue", &issue_id, &source).await {
         Ok(done) => {
             audit::record(&app.db, done.audit).await;
@@ -592,19 +602,18 @@ async fn find_series_issue(
     app: &AppState,
     series_slug: &str,
     issue_slug: &str,
-) -> Option<(series::Model, String)> {
+) -> Option<(series::Model, IssueCardRow)> {
     let s = crate::api::series::find_by_slug(&app.db, series_slug)
         .await
         .ok()?;
-    let issue_id = issue::Entity::find()
-        .select_only()
-        .column(issue::Column::Id)
+    // Card projection: the id plus the ACL columns the read path checks.
+    let row = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(s.id))
         .filter(issue::Column::Slug.eq(issue_slug))
-        .into_tuple::<String>()
+        .into_partial_model::<IssueCardRow>()
         .one(&app.db)
         .await
         .ok()
         .flatten()?;
-    Some((s, issue_id))
+    Some((s, row))
 }

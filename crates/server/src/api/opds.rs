@@ -57,6 +57,7 @@ use crate::state::AppState;
 use crate::views::{
     compile::{self, CompileInput, IssueCompileInput},
     dsl::{FilterDsl, MatchMode, SortField, SortOrder},
+    timebox::{self, FilterQueryError},
 };
 
 use super::{error, not_found};
@@ -439,7 +440,7 @@ async fn series_list(
     };
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let facets = fetch_series_facets(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
@@ -669,7 +670,7 @@ async fn browse(
         Err(e) => return server_error(e.to_string()),
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let series_facets = fetch_series_facets(&app.db, &series_ids).await;
     let mut entries = String::new();
     for s in &rows {
@@ -782,7 +783,7 @@ async fn series_one(
     // shows just the title and the issue grid. M5 follow-up to
     // close that gap (observed in Panels on 2026-05-16).
     let series_facets = fetch_series_facets(&app.db, &[s.id]).await;
-    let cover_map = fetch_cover_issues(&app.db, &[s.id]).await;
+    let cover_map = crate::api::series::series_cover_issue_ids(&app.db, &[s.id], &acl).await;
     let cover = cover_map.get(&s.id).map(String::as_str);
     let key = app.secrets.url_signing_key.as_ref();
     let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
@@ -1361,7 +1362,7 @@ async fn by_creator(
     };
 
     let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &result_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &result_ids, &allowed).await;
     let facets = fetch_series_facets(&app.db, &result_ids).await;
     let mut entries = String::new();
     for s in &rows {
@@ -1474,7 +1475,7 @@ async fn search(
     };
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let facets = fetch_series_facets(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
@@ -2258,9 +2259,10 @@ fn render_pse_stream_link(
 /// `image` rels pointing at that issue's page-0 art. Clients use
 /// these to display series cover art in browse views; without them
 /// they fall back to a generic folder icon. Resolved in bulk via
-/// [`fetch_cover_issues`] one query per feed render. `None` means
-/// the series has no active issues (in-progress import, fully-
-/// removed library) — emit the entry without image links and let
+/// [`crate::api::series::series_cover_issue_ids`] (the web grid's pick
+/// rule, under the caller's ACL so a cover is never an issue the client
+/// can't open) once per feed render. `None` means the series has no
+/// active issue the caller can see — emit the entry without image links and let
 /// the client render its placeholder.
 fn render_series_subsection_entry(
     s: &series::Model,
@@ -2385,73 +2387,6 @@ fn entry_metadata_series(s: &series::Model, facets: Option<&SeriesFacets>) -> St
         }
     }
     out
-}
-
-/// Resolve a "cover issue" per series for OPDS feeds — the issue
-/// whose page-0 thumbnail should represent the series in clients
-/// like Panels, Chunky, KOReader. Without this, OPDS clients fall
-/// back to a generic folder icon for every series entry.
-///
-/// Pick rule: the same one as the web grid / detail hero
-/// (`api::series::hydrate_series`), so OPDS and web see the same
-/// image — main run before specials (an `Annuals/… Annual 001` must
-/// not win over the regular run), numbered issues (`sort_number >= 1`)
-/// before #0 / #½ preludes, then `sort_number ASC NULLS LAST,
-/// file_path ASC`.
-///
-/// One DB round-trip regardless of input length via Postgres'
-/// `DISTINCT ON`. Empty inputs short-circuit. Failures degrade
-/// gracefully — return an empty map and let the renderer emit a
-/// folder-icon fallback rather than 500ing the whole feed.
-pub(crate) async fn fetch_cover_issues(
-    db: &sea_orm::DatabaseConnection,
-    series_ids: &[Uuid],
-) -> HashMap<Uuid, String> {
-    if series_ids.is_empty() {
-        return HashMap::new();
-    }
-    let mut ids: Vec<Uuid> = series_ids.to_vec();
-    ids.sort();
-    ids.dedup();
-    #[derive(FromQueryResult)]
-    struct Row {
-        series_id: Uuid,
-        id: String,
-    }
-    // Postgres `DISTINCT ON (series_id)` keeps the first row per
-    // group as ordered by the outer ORDER BY clause. sea-orm doesn't
-    // model this directly so we drop to a raw statement; the
-    // alternative (a LATERAL join or a window function) is more
-    // code for the same plan.
-    let stmt = Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        r#"
-        SELECT DISTINCT ON (series_id) series_id, id
-        FROM issues
-        WHERE series_id = ANY($1)
-          AND state = 'active'
-          AND removed_at IS NULL
-        ORDER BY series_id,
-                 (special_type IS NOT NULL),
-                 (CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END),
-                 sort_number ASC NULLS LAST,
-                 file_path ASC
-        "#,
-        [ids.clone().into()],
-    );
-    let mut map: HashMap<Uuid, String> = match Row::find_by_statement(stmt).all(db).await {
-        Ok(rows) => rows.into_iter().map(|r| (r.series_id, r.id)).collect(),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "opds: cover-issue lookup failed; series entries will fall back to folder icons"
-            );
-            HashMap::new()
-        }
-    };
-    // An explicit series cover pick (post-audit T4.2) beats the heuristic.
-    map.extend(crate::api::cover_pick::user_cover_picks(db, &ids).await);
-    map
 }
 
 /// Bulk-load the caller's `progress_record` rows for every issue id in
@@ -3215,7 +3150,7 @@ async fn view_acq(
         limit: view_limit,
         cursor: None,
         user_id: user.id,
-        visible_libraries: visible,
+        visible_libraries: visible.clone(),
     };
     let stmt = match compile::compile(&input) {
         Ok(s) => s,
@@ -3224,9 +3159,9 @@ async fn view_acq(
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let backend = app.db.get_database_backend();
     let raw = Statement::from_sql_and_values(backend, sql, values);
-    let mut rows = match series::Model::find_by_statement(raw).all(&app.db).await {
+    let mut rows = match run_series_view_query(&app, id, raw).await {
         Ok(r) => r,
-        Err(e) => return server_error(e.to_string()),
+        Err(e) => return server_error(e),
     };
     // Compile fetches limit+1 for cursor purposes; we drop the trailing
     // sentinel row so the feed advertises exactly `result_limit` entries.
@@ -3234,7 +3169,7 @@ async fn view_acq(
         rows.truncate(view_limit as usize);
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &visible).await;
     let facets = fetch_series_facets(&app.db, &series_ids).await;
     let entries: String = rows
         .iter()
@@ -3526,7 +3461,8 @@ async fn render_collection_acq(
     // Per-series facets so they also carry dc:publisher / author /
     // category metadata (M2).
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
-    let series_covers = fetch_cover_issues(&app.db, &collection_series_ids).await;
+    let series_covers =
+        crate::api::series::series_cover_issue_ids(&app.db, &collection_series_ids, &visible).await;
     let series_facets = fetch_series_facets(&app.db, &collection_series_ids).await;
     let issue_id_list: Vec<String> = issue_by_id.keys().cloned().collect();
     let progress = fetch_user_progress(&app.db, user.id, &issue_id_list).await;
@@ -3618,10 +3554,40 @@ pub(crate) fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde
         Some(j) => serde_json::from_value(j.clone())?,
         None => Vec::new(),
     };
-    Ok(FilterDsl {
+    let dsl = FilterDsl {
         match_mode: mode,
         conditions,
-    })
+    };
+    // Stored views are exempt from the write-time size bounds; log one
+    // that is over them (see `FilterDsl::log_if_over_bounds`).
+    dsl.log_if_over_bounds(view.id);
+    Ok(dsl)
+}
+
+/// Run a series filter view's compiled select for an OPDS feed under the
+/// filter time box. A feed has no error UI a reader app would show, so a
+/// timed-out query serves the feed empty (WARN logged) instead of a 500;
+/// any other database error stays an error.
+pub(crate) async fn run_series_view_query(
+    app: &AppState,
+    view_id: Uuid,
+    stmt: Statement,
+) -> Result<Vec<series::Model>, String> {
+    match timebox::query_one_statement(&app.db, app.cfg().filter_statement_timeout, stmt).await {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| series::Model::from_query_result(r, ""))
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string()),
+        Err(FilterQueryError::TimedOut) => {
+            tracing::warn!(
+                view_id = %view_id,
+                "opds: series view feed hit the filter statement timeout; serving it empty"
+            );
+            Ok(Vec::new())
+        }
+        Err(FilterQueryError::Db(e)) => Err(e.to_string()),
+    }
 }
 
 /// WP-8.4: run an issue-level (`filter_issues`) saved view for an OPDS
@@ -3663,10 +3629,29 @@ pub(crate) async fn issue_view_issues(
     let stmt = compile::compile_issues(&input).map_err(|e| e.to_string())?;
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
-    let rows = IdRow::find_by_statement(raw)
-        .all(&app.db)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<IdRow> = match timebox::query_one_statement(
+        &app.db,
+        app.cfg().filter_statement_timeout,
+        raw,
+    )
+    .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| IdRow::from_query_result(r, ""))
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?,
+        // A feed has no error UI a reader app would show: answer an
+        // empty feed (WARN logged) rather than a 500.
+        Err(FilterQueryError::TimedOut) => {
+            tracing::warn!(
+                view_id = %view.id,
+                "opds: issue view feed hit the filter statement timeout; serving it empty"
+            );
+            Vec::new()
+        }
+        Err(FilterQueryError::Db(e)) => return Err(e.to_string()),
+    };
     // The compiler over-fetches one row for its cursor; drop it.
     let ids: Vec<String> = rows
         .into_iter()

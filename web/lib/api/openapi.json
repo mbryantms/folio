@@ -2047,6 +2047,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "invalid body or filter over the size bounds"
           }
         }
       }
@@ -2099,6 +2102,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "invalid body or filter over the size bounds"
           }
         }
       }
@@ -4943,11 +4949,8 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
-            "description": "issue not found"
+            "description": "issue not found, or not visible to the caller"
           }
         }
       }
@@ -9229,6 +9232,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "invalid body or filter over the size bounds"
           }
         }
       }
@@ -9255,6 +9261,12 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "invalid filter, filter over the size bounds, or `filter_too_slow`"
+          },
+          "429": {
+            "description": "saved-view preview rate limit"
           }
         }
       }
@@ -9282,6 +9294,12 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "invalid filter, filter over the size bounds, or `filter_too_slow`"
+          },
+          "429": {
+            "description": "saved-view preview rate limit"
           }
         }
       }
@@ -9355,6 +9373,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "invalid body or filter over the size bounds"
           },
           "429": {
             "description": "saved-view write rate limit"
@@ -9431,6 +9452,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "not a filter_issues view, or `filter_too_slow`"
           }
         }
       }
@@ -9514,6 +9538,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "not a filter_series view, or `filter_too_slow`"
           }
         }
       }
@@ -18824,7 +18851,7 @@
             "$ref": "#/components/schemas/Op"
           },
           "value": {
-            "description": "Shape varies by `(field, op)`. The compiler validates and rejects\nmismatches with a clear error. See [`super::registry`] for the\nmatrix of allowed combinations."
+            "description": "Shape varies by `(field, op)`. The compiler validates and rejects\nmismatches with a clear error. See [`super::registry`] for the\nmatrix of allowed combinations. Bounded by\n[`MAX_FILTER_LIST_VALUES`] / [`MAX_FILTER_VALUE_LEN`]."
           }
         }
       },
@@ -24401,7 +24428,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Condition"
-            }
+            },
+            "description": "At most [`MAX_FILTER_CONDITIONS`] on a write or preview."
           },
           "match_mode": {
             "$ref": "#/components/schemas/MatchMode"
@@ -29851,7 +29879,8 @@
         ],
         "properties": {
           "filter": {
-            "$ref": "#/components/schemas/FilterDsl"
+            "$ref": "#/components/schemas/FilterDsl",
+            "description": "Bounded like a saved filter (`views::dsl::MAX_FILTER_*`)."
           },
           "result_limit": {
             "type": "integer",
@@ -37642,7 +37671,8 @@
           "filter": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/FilterDsl"
+                "$ref": "#/components/schemas/FilterDsl",
+                "description": "Bounded like every written filter (`views::dsl::MAX_FILTER_*`)."
               },
               {
                 "type": "null"
@@ -38012,13 +38042,13 @@
           "forbidden": {
             "type": "integer",
             "format": "int32",
-            "description": "Issues the caller doesn't have library access to read. Silent\nfrom the user's perspective; surfaced here so an admin\ndebugging a \"mark read did nothing\" report can see the\nfilter fired.",
+            "description": "Always 0. Kept for response shape: an issue the caller can't see\nis counted in `not_found`, indistinguishable from an unknown id.",
             "minimum": 0
           },
           "not_found": {
             "type": "integer",
             "format": "int32",
-            "description": "Issues whose id didn't resolve to a row (removed / never\nexisted / typo). Treated the same as forbidden — the caller\ndoesn't get to distinguish a missing row from one they're\nnot allowed to see.",
+            "description": "Issues whose id didn't resolve to a row (removed / never\nexisted / typo) or that the caller can't see — the caller\ndoesn't get to distinguish a missing row from one they're\nnot allowed to see.",
             "minimum": 0
           },
           "skipped": {
@@ -38156,13 +38186,13 @@
           "forbidden_series": {
             "type": "integer",
             "format": "int32",
-            "description": "Series the caller can't see (library access denied).",
+            "description": "Always 0. Kept for response shape: a series the caller can't see\nis counted in `not_found_series`.",
             "minimum": 0
           },
           "not_found_series": {
             "type": "integer",
             "format": "int32",
-            "description": "Series whose id didn't resolve.",
+            "description": "Series whose id didn't resolve, or that the caller can't see.",
             "minimum": 0
           },
           "skipped": {

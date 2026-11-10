@@ -6,7 +6,10 @@
 //!   - bringing the file back + rescanning clears `removed_at`
 //!   - `POST /issues/{id}/restore` requires the file to be back (409 otherwise)
 //!   - `POST /issues/{id}/confirm-removal` flips `removal_confirmed_at`
-//!   - the auto-confirm sweep job confirms removals past `soft_delete_days`
+//!   - the auto-confirm sweep job confirms removals past `soft_delete_days`,
+//!     but never a row whose file is back on disk (it queues a series rescan
+//!     instead) nor anything in a library whose root fails validation
+//!   - the library reconcile chunks its series-id lists
 
 mod common;
 
@@ -105,7 +108,7 @@ async fn create_library(app: &TestApp, root: &Path, soft_delete_days: i32) -> Uu
     let now = Utc::now().fixed_offset();
     LibraryAM {
         id: Set(id),
-        name: Set("Reconcile Lib".into()),
+        name: Set(format!("Reconcile Lib {id}")),
         root_path: Set(root.to_string_lossy().into_owned()),
         default_language: Set("eng".into()),
         default_reading_direction: Set("ltr".into()),
@@ -331,7 +334,10 @@ async fn auto_confirm_sweep_processes_expired() {
     ));
     am.update(&state.db).await.unwrap();
 
-    let confirmed = reconcile::auto_confirm_sweep(&state.db).await.unwrap();
+    let confirmed = reconcile::auto_confirm_sweep(&state)
+        .await
+        .unwrap()
+        .confirmed;
     assert!(
         confirmed >= 1,
         "expected at least 1 confirmation, got {confirmed}"
@@ -1777,4 +1783,711 @@ async fn series_with_missing_folder_does_not_flap_in_one_reconcile() {
         "never restored, so never re-removed: {stats:?}"
     );
     assert_eq!(series_restored_events(&app, lib_id, series.id).await, 0);
+}
+
+// ───── Removal guards: confirm only what is really gone ─────
+
+/// Stamp `removed_at` `days` ago (unconfirmed) on the issue at `path`.
+async fn mark_removed_days_ago(app: &TestApp, path: &Path, days: i64) -> entity::issue::Model {
+    let db = &app.state().db;
+    let row = IssueEntity::find()
+        .filter(entity::issue::Column::FilePath.eq(path.to_string_lossy().into_owned()))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap_or_else(|| panic!("no issue at {}", path.display()));
+    let mut am: IssueAM = row.into();
+    am.removed_at = Set(Some(
+        Utc::now().fixed_offset() - chrono::Duration::days(days),
+    ));
+    am.removal_confirmed_at = Set(None);
+    am.update(db).await.unwrap()
+}
+
+async fn issue_row(app: &TestApp, id: &str) -> entity::issue::Model {
+    IssueEntity::find_by_id(id.to_owned())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+/// Series-scoped scan runs queued (or run) for `series_id`.
+async fn series_scan_runs(app: &TestApp, series_id: Uuid) -> usize {
+    entity::scan_run::Entity::find()
+        .filter(entity::scan_run::Column::SeriesId.eq(series_id))
+        .filter(entity::scan_run::Column::Kind.eq(entity::scan_run::ScanRunKind::Series))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .len()
+}
+
+/// A soft-removed issue past the window whose file is back on disk is not
+/// confirmed and its series gets one rescan; a file that is really gone is
+/// confirmed; a symlink at the stored path is not "present" (a scan would
+/// never index it) so it is confirmed too.
+#[tokio::test]
+async fn auto_confirm_skips_files_back_on_disk_and_queues_a_rescan() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Sigma (2025)");
+    write_old_folder(&folder, "Sigma", 3, 900);
+    let lib_id = create_library(&app, tmp.path(), 1).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "Sigma").await;
+
+    // 001: removed by a scan that could not see it, file present again.
+    let back = mark_removed_days_ago(&app, &folder.join("Sigma 001.cbz"), 5).await;
+    // 002: really gone.
+    let gone_path = folder.join("Sigma 002.cbz");
+    std::fs::remove_file(&gone_path).unwrap();
+    let gone = mark_removed_days_ago(&app, &gone_path, 5).await;
+    // 003: replaced by a symlink to a real archive outside the library.
+    let outside = tempfile::tempdir().unwrap();
+    let target = outside.path().join("elsewhere.cbz");
+    write_cbz(&target, 999);
+    let link_path = folder.join("Sigma 003.cbz");
+    std::fs::remove_file(&link_path).unwrap();
+    std::os::unix::fs::symlink(&target, &link_path).unwrap();
+    let linked = mark_removed_days_ago(&app, &link_path, 5).await;
+    age_series_scan(&app, series.id).await;
+    assert_eq!(series_scan_runs(&app, series.id).await, 0);
+
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.confirmed, 2, "{stats:?}");
+    assert_eq!(stats.kept_present, 1, "{stats:?}");
+    assert_eq!(stats.rescans_queued, 1, "{stats:?}");
+    assert_eq!(stats.libraries_skipped, 0, "{stats:?}");
+
+    let back = issue_row(&app, &back.id).await;
+    assert!(back.removed_at.is_some(), "still removed until the rescan");
+    assert!(
+        back.removal_confirmed_at.is_none(),
+        "file on disk: not confirmed"
+    );
+    assert!(
+        issue_row(&app, &gone.id)
+            .await
+            .removal_confirmed_at
+            .is_some(),
+        "absent file: confirmed"
+    );
+    assert!(
+        issue_row(&app, &linked.id)
+            .await
+            .removal_confirmed_at
+            .is_some(),
+        "a symlink is never indexed, so it is not present"
+    );
+    assert_eq!(
+        series_scan_runs(&app, series.id).await,
+        1,
+        "one scoped rescan queued for the series"
+    );
+
+    // A second run before the rescan ran coalesces into the queued one.
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.confirmed, 0, "{stats:?}");
+    assert_eq!(stats.kept_present, 1, "{stats:?}");
+    assert_eq!(series_scan_runs(&app, series.id).await, 1, "coalesced");
+
+    // The normal restore path brings the issue back.
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let back = issue_row(&app, &back.id).await;
+    assert!(back.removed_at.is_none(), "restored by the rescan");
+}
+
+/// A library whose root is unavailable is skipped whole (nothing confirmed,
+/// one skipped event); another library in the same run is swept normally.
+#[tokio::test]
+async fn auto_confirm_skips_a_library_whose_root_is_missing() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+
+    let parent = tempfile::tempdir().unwrap();
+    let root_a = parent.path().join("lib-a");
+    let folder_a = root_a.join("Series Upsilon (2025)");
+    write_old_folder(&folder_a, "Upsilon", 2, 910);
+    let lib_a = create_library(&app, &root_a, 1).await;
+    scanner::scan_library(&state, lib_a).await.unwrap();
+
+    let tmp_b = tempfile::tempdir().unwrap();
+    let folder_b = tmp_b.path().join("Series Phi (2025)");
+    write_old_folder(&folder_b, "Phi", 2, 920);
+    let lib_b = create_library(&app, tmp_b.path(), 1).await;
+    scanner::scan_library(&state, lib_b).await.unwrap();
+
+    // Both libraries hold a removal past the window whose file is gone.
+    let a1 = folder_a.join("Upsilon 001.cbz");
+    std::fs::remove_file(&a1).unwrap();
+    let a1 = mark_removed_days_ago(&app, &a1, 5).await;
+    let b1 = folder_b.join("Phi 001.cbz");
+    std::fs::remove_file(&b1).unwrap();
+    let b1 = mark_removed_days_ago(&app, &b1, 5).await;
+
+    // Library A's root disappears (an unmounted share), and so every one
+    // of its files looks absent.
+    std::fs::rename(&root_a, parent.path().join("lib-a-unmounted")).unwrap();
+    let a2 = mark_removed_days_ago(&app, &folder_a.join("Upsilon 002.cbz"), 5).await;
+
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.libraries_skipped, 1, "{stats:?}");
+    assert_eq!(stats.confirmed, 1, "only library B's row: {stats:?}");
+    for id in [&a1.id, &a2.id] {
+        assert!(
+            issue_row(&app, id).await.removal_confirmed_at.is_none(),
+            "library A skipped: nothing confirmed"
+        );
+    }
+    assert!(issue_row(&app, &b1.id).await.removal_confirmed_at.is_some());
+
+    let skipped = entity::library_event::Entity::find()
+        .filter(entity::library_event::Column::LibraryId.eq(lib_a))
+        .filter(entity::library_event::Column::Action.eq("skipped"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(skipped.len(), 1, "one skipped event: {skipped:?}");
+    assert!(
+        skipped[0].summary.contains("library root unavailable"),
+        "{}",
+        skipped[0].summary
+    );
+}
+
+/// Snapshot `(issue removed?, series removed?)` keyed by file name /
+/// series name, for comparing two libraries with the same layout.
+async fn removal_snapshot(
+    app: &TestApp,
+    lib_id: Uuid,
+) -> (Vec<(String, bool)>, Vec<(String, bool)>) {
+    let db = &app.state().db;
+    let mut issues: Vec<(String, bool)> = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|i| {
+            let name = Path::new(&i.file_path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            (name, i.removed_at.is_some())
+        })
+        .collect();
+    issues.sort();
+    let mut series: Vec<(String, bool)> = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.name, s.removed_at.is_some()))
+        .collect();
+    series.sort();
+    (issues, series)
+}
+
+/// The library reconcile binds its series-id lists in chunks. With a chunk
+/// of 2 over five series (three chunks) it reaches the same state as the
+/// default chunk: a missing file removed, an emptied series removed, and a
+/// hidden series holding live issues healed.
+#[tokio::test]
+async fn library_reconcile_chunks_series_id_lists() {
+    let app = TestApp::spawn().await;
+
+    async fn run(
+        app: &TestApp,
+        chunk: Option<usize>,
+    ) -> (Vec<(String, bool)>, Vec<(String, bool)>) {
+        let state = app.state();
+        let tmp = tempfile::tempdir().unwrap();
+        let names = ["Alef", "Bet", "Gimel", "Dalet", "He"];
+        for (n, name) in names.iter().enumerate() {
+            write_old_folder(
+                &tmp.path().join(format!("Series {name} (2025)")),
+                name,
+                2,
+                1000 + 10 * n as u32,
+            );
+        }
+        let lib_id = create_library(app, tmp.path(), 30).await;
+        scanner::scan_library(&state, lib_id).await.unwrap();
+
+        // Alef loses one file; Bet loses both; Gimel is hidden with live
+        // issues (heal); Dalet and He are untouched.
+        std::fs::remove_file(tmp.path().join("Series Alef (2025)/Alef 001.cbz")).unwrap();
+        std::fs::remove_file(tmp.path().join("Series Bet (2025)/Bet 001.cbz")).unwrap();
+        std::fs::remove_file(tmp.path().join("Series Bet (2025)/Bet 002.cbz")).unwrap();
+        let gimel = SeriesEntity::find()
+            .filter(entity::series::Column::LibraryId.eq(lib_id))
+            .filter(entity::series::Column::Name.contains("Gimel"))
+            .one(&state.db)
+            .await
+            .unwrap()
+            .unwrap();
+        set_series_removed(app, gimel.id).await;
+
+        let series_rows = SeriesEntity::find()
+            .filter(entity::series::Column::LibraryId.eq(lib_id))
+            .all(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(series_rows.len(), 5);
+        let scanned: std::collections::HashSet<Uuid> = series_rows.iter().map(|s| s.id).collect();
+        let folders: std::collections::HashSet<String> = series_rows
+            .iter()
+            .filter_map(|s| s.folder_path.clone())
+            .collect();
+        let seen: std::collections::HashSet<String> = IssueEntity::find()
+            .filter(entity::issue::Column::LibraryId.eq(lib_id))
+            .all(&state.db)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|i| i.file_path)
+            .filter(|p| Path::new(p).exists())
+            .collect();
+        let mut stats = scanner::ScanStats::default();
+        let mut events = server::library::event_log::EventCollector::new(lib_id, None);
+        let unreadable = std::collections::HashSet::new();
+        let restored = match chunk {
+            Some(c) => reconcile::reconcile_library_seen_with_chunk(
+                &state.db,
+                lib_id,
+                &scanned,
+                &seen,
+                &folders,
+                &folders,
+                None,
+                &unreadable,
+                &mut stats,
+                &mut events,
+                c,
+            )
+            .await
+            .unwrap(),
+            None => reconcile::reconcile_library_seen(
+                &state.db,
+                lib_id,
+                &scanned,
+                &seen,
+                &folders,
+                &folders,
+                None,
+                &unreadable,
+                &mut stats,
+                &mut events,
+            )
+            .await
+            .unwrap(),
+        };
+        events.flush(&state.db).await;
+        assert_eq!(restored, 1, "Gimel healed (chunk {chunk:?})");
+        assert_eq!(stats.issues_removed, 3, "{stats:?}");
+        assert_eq!(stats.series_removed, 1, "{stats:?}");
+        removal_snapshot(app, lib_id).await
+    }
+
+    let chunked = run(&app, Some(2)).await;
+    let unchunked = run(&app, None).await;
+    assert_eq!(chunked, unchunked);
+    let (issues, series) = chunked;
+    assert_eq!(
+        issues.iter().filter(|(_, removed)| *removed).count(),
+        3,
+        "{issues:?}"
+    );
+    let removed: Vec<&str> = series
+        .iter()
+        .filter(|(_, removed)| *removed)
+        .map(|(n, _)| n.as_str())
+        .collect();
+    assert!(
+        removed.len() == 1 && removed[0].contains("Bet"),
+        "only the emptied series: {series:?}"
+    );
+}
+
+// ───── Unknown is not gone, bounds, throttle ─────
+
+async fn sql(app: &TestApp, q: &str, values: Vec<sea_orm::Value>) {
+    use sea_orm::ConnectionTrait;
+    app.state()
+        .db
+        .execute_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            q,
+            values,
+        ))
+        .await
+        .unwrap_or_else(|e| panic!("{q}: {e}"));
+}
+
+/// Pretend the series was last scanned a week ago, past the sweep's
+/// rescan throttle.
+async fn age_series_scan(app: &TestApp, series_id: Uuid) {
+    sql(
+        app,
+        "UPDATE series SET last_scanned_at = now() - interval '7 days' WHERE id = $1",
+        vec![series_id.into()],
+    )
+    .await;
+}
+
+async fn library_scan_runs(app: &TestApp, lib_id: Uuid) -> usize {
+    entity::scan_run::Entity::find()
+        .filter(entity::scan_run::Column::LibraryId.eq(lib_id))
+        .filter(entity::scan_run::Column::Kind.eq(entity::scan_run::ScanRunKind::Library))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .len()
+}
+
+/// Restores a directory's mode when dropped, so a failed assertion still
+/// lets the tempdir clean up.
+struct ModeGuard(std::path::PathBuf);
+impl Drop for ModeGuard {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// Make `dir` unreadable. Returns `None` (the caller skips the test) when
+/// the process can still read it, i.e. when running as root.
+fn lock_dir(dir: &Path) -> Option<ModeGuard> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let guard = ModeGuard(dir.to_path_buf());
+    if std::fs::read_dir(dir).is_ok() {
+        // Skipped: running with privileges (root) that ignore directory
+        // modes, so the folder cannot be made unreadable.
+        return None;
+    }
+    Some(guard)
+}
+
+/// An issue whose series folder cannot be read is unknown, not gone: the
+/// confirm sweep keeps it unconfirmed and queues no rescan. A file under a
+/// readable folder that is really gone is still confirmed.
+#[tokio::test]
+async fn auto_confirm_keeps_rows_it_cannot_read() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let locked = tmp.path().join("Series Chi (2025)");
+    let open = tmp.path().join("Series Psi (2025)");
+    write_old_folder(&locked, "Chi", 2, 1100);
+    write_old_folder(&open, "Psi", 2, 1110);
+    let lib_id = create_library(&app, tmp.path(), 1).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let chi = series_named(&app, "Chi").await;
+    age_series_scan(&app, chi.id).await;
+
+    let unreadable = mark_removed_days_ago(&app, &locked.join("Chi 001.cbz"), 5).await;
+    let gone_path = open.join("Psi 001.cbz");
+    std::fs::remove_file(&gone_path).unwrap();
+    let gone = mark_removed_days_ago(&app, &gone_path, 5).await;
+    let Some(_guard) = lock_dir(&locked) else {
+        return;
+    };
+
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.kept_unknown, 1, "{stats:?}");
+    assert_eq!(stats.kept_present, 0, "{stats:?}");
+    assert_eq!(stats.confirmed, 1, "{stats:?}");
+    assert_eq!(stats.rescans_queued, 0, "unknown is never rescanned");
+    assert!(
+        issue_row(&app, &unreadable.id)
+            .await
+            .removal_confirmed_at
+            .is_none()
+    );
+    assert!(
+        issue_row(&app, &gone.id)
+            .await
+            .removal_confirmed_at
+            .is_some()
+    );
+    assert_eq!(series_scan_runs(&app, chi.id).await, 0);
+}
+
+/// The batch helper refuses a root that is empty (an unmounted share's
+/// mount point): nothing from the batch may be acted on. With the root
+/// populated it answers per path.
+#[tokio::test]
+async fn probe_batch_refuses_an_empty_root() {
+    let ignore = server::library::ignore::IgnoreRules::default();
+    let empty = tempfile::tempdir().unwrap();
+    let ghost = empty
+        .path()
+        .join("Series Gone (2025)/Gone 001.cbz")
+        .to_string_lossy()
+        .into_owned();
+    let err = reconcile::probe_files_blocking(empty.path(), &ignore, &[ghost]).unwrap_err();
+    assert!(
+        err.downcast_ref::<reconcile::RootVanished>().is_some(),
+        "{err}"
+    );
+    let err = reconcile::probe_folders_blocking(
+        empty.path(),
+        &ignore,
+        &[empty
+            .path()
+            .join("Series Gone (2025)")
+            .to_string_lossy()
+            .into_owned()],
+        &std::collections::HashSet::new(),
+    )
+    .unwrap_err();
+    assert!(err.downcast_ref::<reconcile::RootVanished>().is_some());
+
+    let full = tempfile::tempdir().unwrap();
+    let folder = full.path().join("Series Here (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let here = folder.join("Here 001.cbz");
+    write_cbz(&here, 1);
+    let paths = [
+        here.to_string_lossy().into_owned(),
+        folder.join("Here 002.cbz").to_string_lossy().into_owned(),
+        full.path()
+            .join("Series Nope (2025)/Nope 001.cbz")
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    let got = reconcile::probe_files_blocking(full.path(), &ignore, &paths).unwrap();
+    assert_eq!(
+        got,
+        vec![
+            reconcile::Presence::Present,
+            reconcile::Presence::Absent,
+            reconcile::Presence::Absent,
+        ]
+    );
+}
+
+/// The series branch: a removed series (no issue rows left) whose folder
+/// holds an archive again is not confirmed and gets a rescan.
+#[tokio::test]
+async fn auto_confirm_keeps_a_series_whose_folder_holds_archives() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Lambda (2025)");
+    write_old_folder(&folder, "Lambda", 1, 1200);
+    let lib_id = create_library(&app, tmp.path(), 1).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let lambda = series_named(&app, "Lambda").await;
+    sql(
+        &app,
+        "DELETE FROM issues WHERE series_id = $1",
+        vec![lambda.id.into()],
+    )
+    .await;
+    sql(
+        &app,
+        "UPDATE series SET removed_at = now() - interval '5 days', \
+         last_scanned_at = now() - interval '7 days' WHERE id = $1",
+        vec![lambda.id.into()],
+    )
+    .await;
+
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.confirmed, 0, "{stats:?}");
+    assert_eq!(stats.kept_present, 1, "{stats:?}");
+    assert_eq!(stats.rescans_queued, 1, "{stats:?}");
+    let row = SeriesEntity::find_by_id(lambda.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.removal_confirmed_at.is_none());
+    assert_eq!(series_scan_runs(&app, lambda.id).await, 1);
+}
+
+/// A Duplicates-page removal is deliberate: both sweeps act on it without
+/// a stat although its file is on disk.
+#[tokio::test]
+async fn duplicate_removal_is_confirmed_and_purged_without_a_stat() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Omega (2025)");
+    write_old_folder(&folder, "Omega", 2, 1300);
+    let lib_id = create_library(&app, tmp.path(), 1).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let dup = mark_removed_days_ago(&app, &folder.join("Omega 001.cbz"), 5).await;
+    sql(
+        &app,
+        "INSERT INTO issue_duplicate_decision (issue_id, library_id, decision, decided_at) \
+         VALUES ($1, $2, 'remove', now())",
+        vec![dup.id.clone().into(), lib_id.into()],
+    )
+    .await;
+
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.confirmed, 1, "{stats:?}");
+    assert_eq!(stats.kept_present, 0, "{stats:?}");
+    assert!(
+        issue_row(&app, &dup.id)
+            .await
+            .removal_confirmed_at
+            .is_some()
+    );
+
+    // Purge window: 1 day × 2. Age the confirmation past it.
+    sql(
+        &app,
+        "UPDATE issues SET removal_confirmed_at = now() - interval '10 days' WHERE id = $1",
+        vec![dup.id.clone().into()],
+    )
+    .await;
+    let stats = server::jobs::hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 1, "{stats:?}");
+    assert_eq!(stats.kept_present, 0, "{stats:?}");
+    assert!(
+        IssueEntity::find_by_id(dup.id.clone())
+            .one(&state.db)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// Keyset paging: rows kept at the head of the queue do not block the rest.
+/// Page 2, at most 4 rows a run: the two oldest (present) rows are kept,
+/// the next two (gone) are confirmed across the page boundary, the fifth
+/// waits for the next run, which confirms it.
+#[tokio::test]
+async fn auto_confirm_pages_past_kept_rows() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Kappa (2025)");
+    write_old_folder(&folder, "Kappa", 5, 1400);
+    let lib_id = create_library(&app, tmp.path(), 1).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let kappa = series_named(&app, "Kappa").await;
+    age_series_scan(&app, kappa.id).await;
+
+    let mut rows = Vec::new();
+    for n in 1..=5u32 {
+        let p = folder.join(format!("Kappa {n:03}.cbz"));
+        if n > 2 {
+            std::fs::remove_file(&p).unwrap();
+        }
+        rows.push(mark_removed_days_ago(&app, &p, 20 - i64::from(n)).await);
+    }
+    let limits = reconcile::SweepLimits {
+        page: 2,
+        max_issue_rows: 4,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.kept_present, 2, "{stats:?}");
+    assert_eq!(stats.confirmed, 2, "{stats:?}");
+    let confirmed = |m: &entity::issue::Model| m.removal_confirmed_at.is_some();
+    let now: Vec<bool> = {
+        let mut v = Vec::new();
+        for r in &rows {
+            v.push(confirmed(&issue_row(&app, &r.id).await));
+        }
+        v
+    };
+    assert_eq!(now, vec![false, false, true, true, false]);
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.confirmed, 1, "the fifth row next run: {stats:?}");
+    assert!(confirmed(&issue_row(&app, &rows[4].id).await));
+}
+
+/// Over the per-run series cap, one library scan is queued instead of a
+/// scan per series (cap injected as 2 with three series).
+#[tokio::test]
+async fn many_series_to_rescan_queue_one_library_scan() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let names = ["Nu", "Xi", "Pi"];
+    for (n, name) in names.iter().enumerate() {
+        write_old_folder(
+            &tmp.path().join(format!("Series Many{name} (2025)")),
+            &format!("Many{name}"),
+            1,
+            1500 + 10 * n as u32,
+        );
+    }
+    let lib_id = create_library(&app, tmp.path(), 1).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let before = library_scan_runs(&app, lib_id).await;
+    let mut ids = Vec::new();
+    for name in names {
+        let s = series_named(&app, &format!("Many{name}")).await;
+        age_series_scan(&app, s.id).await;
+        let folder = tmp.path().join(format!("Series Many{name} (2025)"));
+        mark_removed_days_ago(&app, &folder.join(format!("Many{name} 001.cbz")), 5).await;
+        ids.push(s.id);
+    }
+    let limits = reconcile::SweepLimits {
+        max_series_rescans: 2,
+        ..reconcile::SweepLimits::default()
+    };
+
+    let stats = reconcile::auto_confirm_sweep_with(&state, limits)
+        .await
+        .unwrap();
+    assert_eq!(stats.kept_present, 3, "{stats:?}");
+    assert_eq!(stats.rescans_queued, 0, "{stats:?}");
+    assert_eq!(stats.library_scans_queued, 1, "{stats:?}");
+    for id in ids {
+        assert_eq!(series_scan_runs(&app, id).await, 0);
+    }
+    assert_eq!(library_scan_runs(&app, lib_id).await, before + 1);
+}
+
+/// A series scanned within the throttle window is not rescanned again; its
+/// present row is still kept.
+#[tokio::test]
+async fn recently_scanned_series_is_not_rescanned() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series TauTwo (2025)");
+    write_old_folder(&folder, "TauTwo", 1, 1600);
+    let lib_id = create_library(&app, tmp.path(), 1).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "TauTwo").await;
+    let row = mark_removed_days_ago(&app, &folder.join("TauTwo 001.cbz"), 5).await;
+    // `last_scanned_at` is the scan above: inside the window.
+
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.kept_present, 1, "{stats:?}");
+    assert_eq!(stats.rescans_throttled, 1, "{stats:?}");
+    assert_eq!(stats.rescans_queued, 0, "{stats:?}");
+    assert!(
+        issue_row(&app, &row.id)
+            .await
+            .removal_confirmed_at
+            .is_none()
+    );
+    assert_eq!(series_scan_runs(&app, series.id).await, 0);
+
+    // Past the window, the next run queues one.
+    age_series_scan(&app, series.id).await;
+    let stats = reconcile::auto_confirm_sweep(&state).await.unwrap();
+    assert_eq!(stats.rescans_queued, 1, "{stats:?}");
+    assert_eq!(series_scan_runs(&app, series.id).await, 1);
 }

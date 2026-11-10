@@ -151,10 +151,15 @@ describe("EntityProfile states", () => {
     expect(html).toContain("Refresh");
   });
 
-  it("points at the admin provider settings when nothing can fill it", () => {
-    const html = render(detail({ enrichment: "unavailable" }));
+  it("points an admin at the provider settings when nothing can fill it", () => {
+    const html = render(detail({ enrichment: "unavailable" }), true);
     expect(html).toContain("Add a metadata provider");
-    // Non-admins never see the refresh control.
+  });
+
+  it("shows a reader no admin prompt and no refresh control", () => {
+    const html = render(detail({ enrichment: "unavailable" }));
+    expect(html).not.toContain("Add a metadata provider");
+    expect(html).not.toContain("Admin");
     expect(html).not.toContain("Refresh");
   });
 });

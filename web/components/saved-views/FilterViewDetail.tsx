@@ -8,7 +8,6 @@ import {
   ListChecks,
   Sparkles,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
@@ -39,6 +38,7 @@ import {
 } from "@/lib/api/mutations";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { useMe, useSavedViewResultsInfinite } from "@/lib/api/queries";
+import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { SavedViewView } from "@/lib/api/types";
@@ -65,7 +65,6 @@ const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const results = useSavedViewResultsInfinite(view.id);
-  const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
   const isAdmin = useMe().data?.role === "admin";
 
@@ -97,23 +96,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const fetchViewMetadata = () => {
-    createBatch.mutate(
-      { saved_view_id: view.id },
-      {
-        onSuccess: (resp) => {
-          if (!resp) return;
-          toast.success(`Searching ${resp.items_total} items for metadata`, {
-            action: {
-              label: "Review",
-              onClick: () =>
-                router.push(
-                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
-                ),
-            },
-          });
-        },
-      },
-    );
+    createBatch.mutate({ saved_view_id: view.id });
   };
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
@@ -364,6 +347,11 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
 
       {isInitialLoading ? (
         <SeriesGridSkeleton style={gridStyle} />
+      ) : results.isError && items.length === 0 ? (
+        <EmptyState
+          size="sm"
+          description={filterQueryErrorMessage(results.error)}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           size="sm"

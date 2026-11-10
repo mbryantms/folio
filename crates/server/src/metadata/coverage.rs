@@ -708,17 +708,46 @@ pub async fn load_local<C: ConnectionTrait>(
     Ok(load_local_with_specials(db, series_id).await?.0)
 }
 
+/// [`load_local`] as one reader sees the series: issues rated above the
+/// caller's age cap (`acl`, WP-2.7) are left out, so a reader-facing
+/// answer never counts or names them. The coverage job and Accept keep
+/// the full view through [`load_local`].
+pub async fn load_local_for<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+    acl: &crate::library::access::VisibleLibraries,
+) -> Result<Vec<LocalCovIssue>, sea_orm::DbErr> {
+    Ok(load_local_rows(db, series_id, acl).await?.0)
+}
+
 /// [`load_local`] plus the tagged specials it left out, for the analysis
 /// view ("not analyzed: 3 annuals").
 pub async fn load_local_with_specials<C: ConnectionTrait>(
     db: &C,
     series_id: Uuid,
 ) -> Result<(Vec<LocalCovIssue>, Vec<ExcludedSpecial>), sea_orm::DbErr> {
+    load_local_rows(
+        db,
+        series_id,
+        &crate::library::access::VisibleLibraries::unrestricted(),
+    )
+    .await
+}
+
+async fn load_local_rows<C: ConnectionTrait>(
+    db: &C,
+    series_id: Uuid,
+    acl: &crate::library::access::VisibleLibraries,
+) -> Result<(Vec<LocalCovIssue>, Vec<ExcludedSpecial>), sea_orm::DbErr> {
     /// `(number_raw, year, month, special_type)`.
     type Row = (Option<String>, Option<i32>, Option<i32>, Option<String>);
-    let rows: Vec<Row> = issue::Entity::find()
+    let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
-        .filter(issue::Column::State.eq(issue::IssueState::Active))
+        .filter(issue::Column::State.eq(issue::IssueState::Active));
+    if let Some(cap) = acl.issue_cap_condition() {
+        select = select.filter(cap);
+    }
+    let rows: Vec<Row> = select
         .order_by_asc(issue::Column::SortNumber)
         .select_only()
         .column(issue::Column::NumberRaw)

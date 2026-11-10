@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { toast } from "sonner";
 
 import {
   useCreateMarker,
@@ -109,10 +108,11 @@ export function useIssueShortcuts(
                 }),
             });
           } else {
-            createMarker.mutate(
-              { issue_id: issue.id, page_index: 0, kind: "bookmark" },
-              { onSuccess: () => toast.success("Bookmarked") },
-            );
+            createMarker.mutate({
+              issue_id: issue.id,
+              page_index: 0,
+              kind: "bookmark",
+            });
           }
           break;
         }

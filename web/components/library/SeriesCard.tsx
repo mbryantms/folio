@@ -31,7 +31,7 @@ import {
   HoverCardTrigger,
 } from "@/components/folio/hover-card";
 import { Badge } from "@/components/ui/badge";
-import { jsonFetch } from "@/lib/api/queries";
+import { jsonFetch, useMe } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
 import type { SeriesResumeView, SeriesView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -417,6 +417,9 @@ export function MetaNeedsBadge({
 }) {
   const dotPref = useCoverCollectionDot();
   const router = useRouter();
+  // Admin hint: the fix is the admin-only match dialog.
+  const isAdmin = useMe().data?.role === "admin";
+  if (!isAdmin) return null;
   if (!dotPref.enabled) return null;
   if (series.metadata_completeness_tier !== "needs_metadata") return null;
   const badgeClass = cn(

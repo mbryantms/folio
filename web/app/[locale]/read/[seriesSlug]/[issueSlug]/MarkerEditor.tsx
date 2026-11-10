@@ -266,18 +266,7 @@ export function MarkerEditor({
         is_favorite: isFavorite,
         tags,
       },
-      {
-        onSuccess: () => {
-          const label =
-            pendingMarker.kind === "bookmark"
-              ? `Bookmarked page ${pendingMarker.page_index + 1}`
-              : pendingMarker.kind === "highlight"
-                ? `Highlight saved`
-                : `Note saved`;
-          toast.success(label);
-          close();
-        },
-      },
+      { onSuccess: () => close() },
     );
   }
 
@@ -356,17 +345,13 @@ export function MarkerEditor({
       setDetectedConfidence(ocr.confidence);
       setCapturedOpen(true);
       if (editingMarkerId) {
-        update.mutate(
-          {
-            selection: {
-              text: ocr.text,
-              ocr_confidence: ocr.confidence,
-            },
+        // The hook toasts "Text captured" for a selection-only patch.
+        update.mutate({
+          selection: {
+            text: ocr.text,
+            ocr_confidence: ocr.confidence,
           },
-          {
-            onSuccess: () => toast.success("Text captured"),
-          },
-        );
+        });
       } else {
         toast.success("Text captured — save the marker to keep it.");
       }
@@ -388,10 +373,10 @@ export function MarkerEditor({
     setDetectedConfidence(null);
     setCapturedOpen(false);
     if (editingMarkerId) {
-      update.mutate(
-        { selection: selectionWithoutText(pendingMarker?.selection) },
-        { onSuccess: () => toast.success("Detected text cleared") },
-      );
+      // The hook toasts "Detected text cleared" for this patch.
+      update.mutate({
+        selection: selectionWithoutText(pendingMarker?.selection),
+      });
     }
   }
 

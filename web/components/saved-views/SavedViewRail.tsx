@@ -21,6 +21,7 @@ import {
   useSavedViewIssueResults,
   useSavedViewResults,
 } from "@/lib/api/queries";
+import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import type { SavedViewView } from "@/lib/api/types";
 
 import {
@@ -258,6 +259,8 @@ function FilterRailBody({
       </>
     );
   }
+  if (results.isError)
+    return <RailEmptyState message={filterQueryErrorMessage(results.error)} />;
   const items = results.data?.items ?? [];
   if (items.length === 0)
     return <RailEmptyState message="Nothing matches yet." />;
@@ -294,6 +297,8 @@ export function IssueFilterRailBody({
       </>
     );
   }
+  if (results.isError)
+    return <RailEmptyState message={filterQueryErrorMessage(results.error)} />;
   const items = results.data?.items ?? [];
   if (items.length === 0)
     return <RailEmptyState message="Nothing matches yet." />;

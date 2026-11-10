@@ -259,6 +259,7 @@ function IssueCardImpl({
         )}
         {issue.state === "active" && finished && (
           <span
+            role="img"
             aria-label="Read"
             title="Read"
             className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"

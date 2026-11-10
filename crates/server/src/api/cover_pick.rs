@@ -17,7 +17,8 @@
 //!   `series_cover` row (`kind = "pick"`, `source_provider = "user"`,
 //!   `source_external_id` = the issue id). Every series cover lookup
 //!   ([`user_cover_picks`]) overlays it on the heuristic pick
-//!   (`opds::fetch_cover_issues`, the series detail hero, the reading
+//!   (`series::series_cover_issue_ids` for cards, OPDS and the series
+//!   detail hero, and the reading
 //!   log); a pick whose issue is gone or removed falls back silently.
 //!   `issue_id: null` clears the pick.
 //!

@@ -272,6 +272,14 @@ export const SEARCH_ACTIONS: readonly SearchAction[] = [
     keywords: ["lists", "manual"],
   },
   {
+    id: "go-reading-lists",
+    label: "Reading lists",
+    group: "Library",
+    icon: ListOrdered,
+    href: "/lists",
+    keywords: ["cbl", "reading order", "imported lists"],
+  },
+  {
     id: "go-want-to-read",
     label: "Want to Read",
     group: "Library",

@@ -5,7 +5,10 @@ on the Rust origin (e.g. `http://localhost:8080/metrics`). Every series carries 
 `service="folio"` label; all metric names use the `folio_` prefix.
 
 The recorder is installed once at boot ([`observability::init`](../../crates/server/src/observability.rs));
-the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs).
+the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs). A background
+task (`observability::spawn_metrics_upkeep`, every 5 s, stopped with the server) runs the
+recorder's upkeep, which drains histogram samples into their buckets; without it, histogram
+memory grows with request count whenever nothing scrapes `/metrics`.
 
 > **Lazy registration:** counters/histograms appear only after the relevant code
 > path runs at least once. Boot-time gauges (`folio_process_*`,
@@ -22,8 +25,11 @@ the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs).
 | `folio_http_request_duration_seconds` | histogram | `method`, `route` |
 
 `route` is the matched route **pattern** (e.g. `/series/{series_slug}/issues/{issue_slug}`),
-never the raw URI — unmatched/proxied requests bucket under `"<unmatched>"`. The
-`/metrics` scrape itself is not counted.
+never the raw URI — unmatched/proxied requests bucket under `"<unmatched>"`.
+`method` is one of `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, or
+`OTHER` for any other method token, so a client cannot mint series by sending
+made-up methods. `status` is the numeric response status. The `/metrics` scrape
+itself is not counted.
 
 ### Process / runtime — `metrics-process` collector, sampled per scrape
 `folio_process_cpu_seconds_total`, `folio_process_resident_memory_bytes`,

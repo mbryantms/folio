@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { toast } from "sonner";
 
 import {
   useCreateMarker,
@@ -18,22 +17,24 @@ import type { MarkerKind, MarkerView } from "@/lib/api/types";
  * to be copy-pasted in two places — the reader's `b`/`s` keybinds
  * (Reader.tsx) and the chrome's icon buttons (ReaderChrome.tsx), which
  * drifted (different delete-hook shapes, slightly different toast copy).
- * This is the single source of truth; callers supply their own toast
- * strings so each surface keeps its exact wording.
+ * This is the single source of truth; callers supply the removal toast's
+ * wording, and creating toasts through `useCreateMarker`.
  *
  * - `existing` is the matching page-level (region-less) marker, or
  *   undefined — drives the active/icon state.
  * - `toggle(labels)` removes it (Undo toast titled `labels.removed`) or
- *   creates it (success toast `labels.created`, omitted = silent create,
- *   matching the chrome buttons' original no-toast-on-create behaviour).
+ *   creates it (the hook's "Bookmarked page N" / "Starred page N" toast;
+ *   `silentCreate` keeps the chrome buttons' no-toast-on-create
+ *   behaviour).
  */
 export function usePageMarkerToggle(
   issueId: string,
   pageIndex: number,
   kind: MarkerKind,
+  opts?: { silentCreate?: boolean },
 ): {
   existing: MarkerView | undefined;
-  toggle: (labels: { created?: string; removed: string }) => void;
+  toggle: (labels: { removed: string }) => void;
 } {
   const markers = useIssueMarkers(issueId);
   const existing = useMemo(
@@ -43,7 +44,7 @@ export function usePageMarkerToggle(
       ),
     [markers.data, pageIndex, kind],
   );
-  const create = useCreateMarker();
+  const create = useCreateMarker({ silent: opts?.silentCreate });
   const restore = useRestoreMarkers();
   // Id arrives at mutate() time, so the hook is never bound to "" and
   // doesn't re-derive on every page turn. `silent` so the caller's
@@ -51,7 +52,7 @@ export function usePageMarkerToggle(
   const del = useDeleteMarkerById(issueId, { silent: true });
 
   const toggle = useCallback(
-    (labels: { created?: string; removed: string }) => {
+    (labels: { removed: string }) => {
       if (existing) {
         const snapshot = existing;
         del.mutate(snapshot.id, {
@@ -63,11 +64,7 @@ export function usePageMarkerToggle(
         });
         return;
       }
-      const created = labels.created;
-      create.mutate(
-        { issue_id: issueId, page_index: pageIndex, kind },
-        created ? { onSuccess: () => toast.success(created) } : undefined,
-      );
+      create.mutate({ issue_id: issueId, page_index: pageIndex, kind });
     },
     [existing, del, create, restore, issueId, pageIndex, kind],
   );

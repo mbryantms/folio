@@ -396,8 +396,9 @@ pub async fn list(
         Err(resp) => return resp,
     };
     // Same gate as `GET /series/{slug}`: invisible ⇒ 404 (don't confirm
-    // the series exists).
-    if !access::series_visible(&app, &user, &s).await {
+    // the series exists). The caller's ACL also scopes every card below.
+    let acl = access::for_user(&app, &user).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return respond(
             StatusCode::NOT_FOUND,
             ApiErrorCode::NotFound,
@@ -422,16 +423,17 @@ pub async fn list(
     let mut ids: HashSet<Uuid> = edges.iter().filter_map(|e| e.to_series_id).collect();
     ids.extend(chain.iter().map(|n| n.series_id));
     ids.remove(&s.id);
-    let mut visible: Vec<series::Model> = match visible_series(&app, &user, ids).await {
+    let mut visible: Vec<series::Model> = match visible_series_with(&app, &user, &acl, ids).await {
         Ok(v) => v.into_values().collect(),
         Err(e) => return internal(&e),
     };
     visible.push(s.clone());
-    let views: HashMap<String, SeriesView> = super::series::hydrate_series(&app, visible, user.id)
-        .await
-        .into_iter()
-        .map(|v| (v.id.clone(), v))
-        .collect();
+    let views: HashMap<String, SeriesView> =
+        super::series::hydrate_series(&app, visible, user.id, &acl)
+            .await
+            .into_iter()
+            .map(|v| (v.id.clone(), v))
+            .collect();
 
     let relationships = edges
         .into_iter()
@@ -627,11 +629,15 @@ pub async fn create(
         );
     }
 
-    let Some(view) = super::series::hydrate_series(&app, vec![target], actor.id)
-        .await
-        .into_iter()
-        .next()
-    else {
+    let Some(view) = super::series::hydrate_series(
+        &app,
+        vec![target],
+        actor.id,
+        &access::VisibleLibraries::unrestricted(),
+    )
+    .await
+    .into_iter()
+    .next() else {
         return readback_failed();
     };
     let body = edge_view(outcome.forward, view);
@@ -826,11 +832,15 @@ pub async fn update(
         Ok(None) => return readback_failed(),
         Err(e) => return internal(&e),
     };
-    let Some(view) = super::series::hydrate_series(&app, vec![target], actor.id)
-        .await
-        .into_iter()
-        .next()
-    else {
+    let Some(view) = super::series::hydrate_series(
+        &app,
+        vec![target],
+        actor.id,
+        &access::VisibleLibraries::unrestricted(),
+    )
+    .await
+    .into_iter()
+    .next() else {
         return readback_failed();
     };
     Json(edge_view(out.forward, view)).into_response()
@@ -1061,7 +1071,7 @@ pub(crate) async fn arc_tie_ins_handler(
         Err(e) => return internal(&e),
     };
     let views: HashMap<String, SeriesView> =
-        super::series::hydrate_series(app, series_rows, user.id)
+        super::series::hydrate_series(app, series_rows, user.id, &visible)
             .await
             .into_iter()
             .map(|v| (v.id.clone(), v))
@@ -1186,11 +1196,24 @@ async fn visible_series(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
+    let acl = access::for_user(app, user).await;
+    visible_series_with(app, user, &acl, ids).await
+}
+
+/// [`visible_series`] for a caller that already holds its ACL.
+async fn visible_series_with(
+    app: &AppState,
+    user: &CurrentUser,
+    acl: &access::VisibleLibraries,
+    ids: HashSet<Uuid>,
+) -> Result<HashMap<Uuid, series::Model>, sea_orm::DbErr> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
     let rows = series::Entity::find()
         .filter(series::Column::Id.is_in(ids.into_iter().collect::<Vec<_>>()))
         .all(&app.db)
         .await?;
-    let acl = access::for_user(app, user).await;
     let is_admin = user.role == UserRole::Admin;
     Ok(rows
         .into_iter()
