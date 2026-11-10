@@ -57,18 +57,28 @@ pub fn content_disposition(kind: Disposition, name: &str) -> HeaderValue {
     HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static("attachment"))
 }
 
-/// Replace path separators and control characters (CR, LF, NUL, …) in
-/// the full name; they have no place in a file name on any client.
+/// Replace path separators, control characters (CR, LF, NUL, …) and
+/// bidirectional formatting characters in the full name. None has a
+/// place in a file name on any client, and a direction override can make
+/// a name display with a different extension than it has.
 fn strip_unsafe(name: &str) -> String {
     name.chars()
         .map(|c| {
-            if c.is_control() || c == '/' || c == '\\' {
+            if c.is_control() || c == '/' || c == '\\' || is_bidi_format(c) {
                 '_'
             } else {
                 c
             }
         })
         .collect()
+}
+
+/// Direction marks, embeddings, overrides and isolates.
+fn is_bidi_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 /// Cap at [`MAX_NAME_BYTES`], keeping an extension of up to 16 bytes.
@@ -178,6 +188,15 @@ mod tests {
         assert!(!h.contains('\r') && !h.contains('\n') && !h.contains('\0'));
         assert_eq!(fallback(&h), "a__Set-Cookie: x=1_.cbz");
         assert_eq!(extended(&h), "a__Set-Cookie: x=1_.cbz");
+    }
+
+    #[test]
+    fn direction_overrides_are_replaced() {
+        // "cbz" reversed after an override would display as an image name.
+        let h = header("pages\u{202E}gnp.cbz");
+        assert_eq!(extended(&h), "pages_gnp.cbz");
+        assert_eq!(fallback(&h), "pages_gnp.cbz");
+        assert_eq!(extended(&header("a\u{2066}b\u{200F}c")), "a_b_c");
     }
 
     #[test]
