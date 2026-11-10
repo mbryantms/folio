@@ -26,6 +26,9 @@ type SearchParams = {
   error?: string;
   /** Set by sign-out; never resume a session after it. */
   signed_out?: string;
+  /** `0`: render the form without trying to resume (the no-script way
+   *  out of the "Signing you in…" card). */
+  resume?: string;
 };
 
 export default async function SignInPage({
@@ -72,7 +75,8 @@ export default async function SignInPage({
   // then resumes it, so render that state first instead of the form.
   const mayResume =
     Boolean((await cookies()).get("__Host-comic_csrf")) &&
-    sp.signed_out !== "1";
+    sp.signed_out !== "1" &&
+    sp.resume !== "0";
 
   return (
     <SignInClient

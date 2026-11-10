@@ -561,11 +561,11 @@ async fn callback_happy_path_upserts_user_and_sets_cookies() {
     assert_eq!(attr(&exp_line, "Max-Age"), attr(&session_line, "Max-Age"));
     assert!(!exp_line.contains("HttpOnly"), "{exp_line}");
     assert!(exp_line.contains("Secure") && exp_line.contains("SameSite=Lax"));
-    let exp: i64 = extract_set_cookie(&resp, "__Host-comic_access_exp")
-        .unwrap()
-        .parse()
-        .unwrap();
+    let value = extract_set_cookie(&resp, "__Host-comic_access_exp").unwrap();
+    let (exp, lifetime) = value.split_once('.').expect("exp.lifetime");
+    let exp: i64 = exp.parse().unwrap();
     let ttl = app.state().cfg().access_ttl().as_secs() as i64;
+    assert_eq!(lifetime.parse::<i64>().unwrap(), ttl);
     let now = chrono::Utc::now().timestamp();
     assert!(
         (exp - (now + ttl)).abs() <= 5,

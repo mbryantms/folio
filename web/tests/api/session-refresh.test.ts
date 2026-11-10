@@ -27,8 +27,16 @@ const signIn = (expOffset: number | null) => {
   if (expOffset !== null) jar.set(EXP, String(epoch(expOffset)));
 };
 
-const { ensureFreshSession, refreshDelayMs, startSessionRefresh } =
-  await import("@/lib/api/session-refresh");
+const {
+  ensureFreshSession,
+  minRefreshIntervalMs,
+  needsRefresh,
+  refreshDelayMs,
+  resetRefreshFloorForTests,
+  startSessionRefresh,
+} = await import("@/lib/api/session-refresh");
+const { apiFetch, resetClockOffsetForTests, serverNow } =
+  await import("@/lib/api/auth-refresh");
 
 let refreshes = 0;
 let fetchSpy: ReturnType<typeof vi.spyOn>;
@@ -41,6 +49,8 @@ let onRefresh: () => Promise<Response> = async () => {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-11-10T12:00:00Z"));
+  resetRefreshFloorForTests();
+  resetClockOffsetForTests();
   refreshes = 0;
   onRefresh = async () => {
     jar.set(EXP, String(epoch(3600)));
@@ -132,6 +142,8 @@ describe("the refresh scheduler", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
     expect(refreshes).toBe(1);
+    // Past the refresh floor (60 s for this cookie form).
+    await vi.advanceTimersByTimeAsync(61_000);
 
     // Past expiry: the cookie's Max-Age ran out, only the CSRF cookie
     // says a session may exist.
@@ -201,5 +213,165 @@ describe("ensureFreshSession", () => {
     await ensureFreshSession();
     expect(refreshes).toBe(1);
     expect(jar.get(CSRF)).toBe("c");
+  });
+});
+
+/** The server's clock is the real one; the client's runs `skewMs` off. */
+function skewedServer(skewMs: number, lifetime = 3600, sendDate = true) {
+  const serverMs = () => Date.now() - skewMs;
+  const exp = (offset: number) => Math.floor(serverMs() / 1000) + offset;
+  const setExp = () => jar.set(EXP, `${exp(lifetime)}.${lifetime}`);
+  jar.clear();
+  jar.set(CSRF, "c");
+  setExp();
+  onRefresh = async () => {
+    setExp();
+    return new Response("{}", {
+      status: 200,
+      headers: sendDate ? { date: new Date(serverMs()).toUTCString() } : {},
+    });
+  };
+  return { serverMs };
+}
+
+describe("a client clock that is wrong", () => {
+  for (const hours of [1, 3]) {
+    it(`+${hours} h with Date headers: one early refresh, then the server's schedule`, async () => {
+      skewedServer(hours * 3600_000);
+      // Before any estimate, a fresh token looks expired.
+      expect(needsRefresh()).toBe(true);
+      const stop = startSessionRefresh();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refreshes).toBe(1);
+      // The refresh response's Date header taught the offset.
+      expect(needsRefresh()).toBe(false);
+      await vi.advanceTimersByTimeAsync(3600_000);
+      // One more, about 48 min later on the server's clock.
+      expect(refreshes).toBe(2);
+      stop();
+    });
+
+    it(`+${hours} h without any Date header: at most one refresh per floor interval`, async () => {
+      skewedServer(hours * 3600_000, 3600, false);
+      // 10% of the 1 h lifetime from the cookie.
+      expect(minRefreshIntervalMs()).toBe(360_000);
+      const stop = startSessionRefresh();
+      const times: number[] = [];
+      let last = refreshes;
+      for (let t = 0; t < 3600; t += 10) {
+        await vi.advanceTimersByTimeAsync(10_000);
+        if (refreshes !== last) {
+          times.push(Date.now());
+          last = refreshes;
+        }
+      }
+      expect(refreshes).toBeLessThanOrEqual(1 + 3600 / 360);
+      for (let i = 1; i < times.length; i++)
+        expect(times[i]! - times[i - 1]!).toBeGreaterThanOrEqual(360_000);
+      // `ensureFreshSession` inside the floor lets the request go at once.
+      fetchSpy.mockClear();
+      const before = refreshes;
+      await ensureFreshSession();
+      expect(refreshes).toBe(before);
+      stop();
+    });
+  }
+
+  it("−1 h: no proactive refresh storm, and a 401 still renews", async () => {
+    skewedServer(-3600_000);
+    const stop = startSessionRefresh();
+    await vi.advanceTimersByTimeAsync(3600_000);
+    // The token looks two hours long: at most the one scheduled refresh.
+    expect(refreshes).toBeLessThanOrEqual(1);
+    stop();
+
+    let call = 0;
+    fetchSpy.mockImplementation((async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/auth/refresh")) {
+        refreshes += 1;
+        return onRefresh();
+      }
+      call += 1;
+      return call === 1
+        ? new Response("unauth", { status: 401 })
+        : new Response("ok", { status: 200 });
+    }) as typeof fetch);
+    const before = refreshes;
+    const res = await apiFetch("/series", {});
+    expect(res.ok).toBe(true);
+    expect(refreshes).toBe(before + 1);
+  });
+
+  it("learns the offset from any API response's Date header", async () => {
+    jar.clear();
+    fetchSpy.mockImplementation(
+      (async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { date: new Date(Date.now() + 3600_000).toUTCString() },
+        })) as typeof fetch,
+    );
+    await apiFetch("/series", {});
+    expect(Math.abs(serverNow() - (Date.now() + 3600_000))).toBeLessThan(1_500);
+  });
+
+  it("a response without a Date header changes nothing", async () => {
+    jar.clear();
+    fetchSpy.mockImplementation(
+      (async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { date: new Date(Date.now() + 3600_000).toUTCString() },
+        })) as typeof fetch,
+    );
+    await apiFetch("/series", {});
+    const learned = serverNow() - Date.now();
+    fetchSpy.mockImplementation(
+      (async () => new Response("{}", { status: 200 })) as typeof fetch,
+    );
+    await apiFetch("/series", {});
+    expect(serverNow() - Date.now()).toBe(learned);
+    fetchSpy.mockImplementation(
+      (async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { date: "not a date" },
+        })) as typeof fetch,
+    );
+    await apiFetch("/series", {});
+    expect(serverNow() - Date.now()).toBe(learned);
+  });
+});
+
+describe("no-answer backoff", () => {
+  it("doubles the retry delay up to ten minutes, and resets on visible", async () => {
+    signIn(10);
+    onRefresh = async () => new Response("down", { status: 502 });
+    const stop = startSessionRefresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshes).toBe(1);
+    // 30 s would be inside the 60 s floor: the floor wins, then 60 s ...
+    const at: number[] = [Date.now()];
+    let last = refreshes;
+    for (let t = 0; t < 40 * 60; t += 5) {
+      await vi.advanceTimersByTimeAsync(5_000);
+      if (refreshes !== last) {
+        at.push(Date.now());
+        last = refreshes;
+      }
+    }
+    const gaps = at.slice(1).map((t, i) => (t - at[i]!) / 1000);
+    // Growing gaps, never more than ten minutes apart.
+    for (let i = 1; i < gaps.length; i++)
+      expect(gaps[i]!).toBeGreaterThanOrEqual(gaps[i - 1]!);
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(600);
+    expect(gaps.at(-1)).toBe(600);
+
+    const before = refreshes;
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshes).toBe(before + 1);
+    stop();
   });
 });

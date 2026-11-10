@@ -17,6 +17,30 @@ vi.mock("next/link", () => ({
     React.createElement("a", { href }, children),
 }));
 const resumeSession = vi.fn(async () => false);
+// For the server page: a CSRF cookie is present, nobody is signed in.
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) =>
+      name === "__Host-comic_csrf" ? { name, value: "c" } : undefined,
+  }),
+}));
+vi.mock("@/lib/api/fetch", () => {
+  class ApiError extends Error {
+    constructor(
+      public readonly status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+  return {
+    ApiError,
+    apiGet: async (path: string) => {
+      if (path === "/auth/me") throw new ApiError(401, "unauth");
+      throw new ApiError(500, "no config in tests");
+    },
+  };
+});
 vi.mock("@/lib/api/auth-refresh", () => ({
   getCsrfToken: () =>
     /(?:^|;\s*)__Host-comic_csrf=([^;]+)/.exec(document.cookie)?.[1] ?? null,
@@ -149,5 +173,46 @@ describe("shouldResumeSession", () => {
       />,
     );
     expect(plain).toContain("<form");
+  });
+
+  it("the resume card carries a way out that needs no script", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const html = renderToStaticMarkup(
+      <SignInClient
+        config={config}
+        next="/series/x"
+        banner={null}
+        errorMessage={null}
+        mayResume
+      />,
+    );
+    const href = "/sign-in?resume=0&amp;next=%2Fseries%2Fx";
+    expect(html).toMatch(
+      new RegExp(
+        `<noscript>.*href="${href.replace(/[?]/g, "\\?")}".*</noscript>`,
+      ),
+    );
+    // And, for a page whose script never started, the CSS-revealed link.
+    expect(html).toContain(`class="delayed-reveal`);
+    expect(html).toContain("Sign in instead");
+  });
+
+  it("`?resume=0` renders the form, with no banner, and never resumes", async () => {
+    window.history.replaceState(null, "", "/sign-in?resume=0");
+    expect(shouldResumeSession(null, null)).toBe(false);
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { default: SignInPage } = await import("@/app/[locale]/sign-in/page");
+    const page = await SignInPage({
+      searchParams: Promise.resolve({ resume: "0" }),
+    });
+    const html = renderToStaticMarkup(page);
+    expect(html).toContain("<form");
+    expect(html).not.toContain("Restoring your session");
+    expect(html).not.toContain('role="alert"');
+    // Without the parameter the same cookie gets the resume card first.
+    const resumed = renderToStaticMarkup(
+      await SignInPage({ searchParams: Promise.resolve({}) }),
+    );
+    expect(resumed).toContain("Restoring your session");
   });
 });

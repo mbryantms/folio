@@ -48,8 +48,13 @@ function setExp(exp: number | null) {
   else jar.set(EXP, String(exp));
 }
 
-const { apiFetch, resumeSession, REFRESH_TIMEOUT_MS } =
-  await import("@/lib/api/auth-refresh");
+const {
+  apiFetch,
+  resumeSession,
+  REFRESH_TIMEOUT_MS,
+  noteServerDate,
+  resetClockOffsetForTests,
+} = await import("@/lib/api/auth-refresh");
 
 type Capture = { url: string; init: RequestInit };
 
@@ -327,6 +332,74 @@ describe("apiFetch when another tab wins the refresh", () => {
     const res = await apiFetch("/series", {});
     expect(res.status).toBe(401);
     expect(events).toContain("authentication");
+  });
+});
+
+describe("refusals and clock skew", () => {
+  let events: string[] = [];
+  beforeEach(() => {
+    events = [];
+    vi.stubGlobal("window", {
+      dispatchEvent: (e: Event) => {
+        events.push(String((e as CustomEvent).detail));
+        return true;
+      },
+    });
+    vi.stubGlobal("navigator", {}); // no Web Locks
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    resetClockOffsetForTests();
+  });
+
+  it("a 403 from the refresh is a CSRF failure, not a sign-out", async () => {
+    setCookie("X");
+    setExp(epoch(10));
+    vi.spyOn(globalThis, "fetch").mockImplementation((async (
+      input: RequestInfo | URL,
+    ) =>
+      String(input).includes("/auth/refresh")
+        ? new Response("csrf", { status: 403 })
+        : new Response("unauth", { status: 401 })) as typeof fetch);
+
+    const res = await apiFetch("/series", {});
+
+    expect(res.status).toBe(401);
+    expect(events).not.toContain("authentication");
+    expect(jar.get(CSRF)).toBe("X");
+    expect(jar.has(EXP)).toBe(true);
+  });
+
+  it("recognises a lost race when the client clock runs hours fast", async () => {
+    const skew = 3 * 3600_000;
+    // Learned from an earlier response: the server is three hours behind.
+    noteServerDate(
+      new Response(null, {
+        headers: { date: new Date(Date.now() - skew).toUTCString() },
+      }),
+    );
+    const serverEpoch = (o: number) =>
+      Math.floor((Date.now() - skew) / 1000) + o;
+    setCookie("OLD");
+    setExp(serverEpoch(10));
+    let call = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((async () => {
+      call += 1;
+      if (call === 1) return new Response("unauth", { status: 401 });
+      if (call === 2) {
+        // Another tab won: an expiry an hour ahead on the server's clock,
+        // which the client clock alone would call two hours past.
+        setExp(serverEpoch(3600));
+        return new Response("replay", { status: 401 });
+      }
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch);
+
+    const res = await apiFetch("/series", {});
+
+    expect(res.ok).toBe(true);
+    expect(events).not.toContain("authentication");
   });
 });
 

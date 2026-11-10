@@ -89,14 +89,20 @@ pub async fn list(
     jar: CookieJar,
 ) -> impl IntoResponse {
     let now = chrono::Utc::now().fixed_offset();
-    let max_age = chrono::Duration::seconds(app.cfg().session_max_age().as_secs() as i64);
+    // Sessions created before this are past their absolute age. Checked
+    // arithmetic: no configured age can panic or wrap here.
+    let oldest_live = now
+        .checked_sub_signed(crate::auth::cookies::chrono_delta(
+            app.cfg().session_max_age(),
+        ))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC.fixed_offset());
     let rows = match SessionEntity::find()
         .filter(auth_session::Column::UserId.eq(user.id))
         .filter(auth_session::Column::RevokedAt.is_null())
         .filter(auth_session::Column::ExpiresAt.gt(now))
         // A session past its absolute age can't refresh any more; it is
         // revoked lazily on its next refresh attempt, so hide it here.
-        .filter(auth_session::Column::CreatedAt.gt(now - max_age))
+        .filter(auth_session::Column::CreatedAt.gt(oldest_live))
         .order_by_desc(auth_session::Column::LastUsedAt)
         .all(&app.db)
         .await

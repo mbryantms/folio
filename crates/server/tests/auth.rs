@@ -771,10 +771,11 @@ fn assert_access_exp_cookie(resp: &axum::http::Response<Body>, access_ttl: i64) 
         max_age_of(resp, "__Host-comic_session")
     );
     assert_eq!(max_age_of(resp, "__Host-comic_access_exp"), access_ttl);
-    let exp: i64 = extract_cookie(resp, "__Host-comic_access_exp")
-        .unwrap()
-        .parse()
-        .unwrap();
+    // `<exp>.<lifetime seconds>`.
+    let value = extract_cookie(resp, "__Host-comic_access_exp").unwrap();
+    let (exp, lifetime) = value.split_once('.').expect("exp.lifetime");
+    let exp: i64 = exp.parse().unwrap();
+    assert_eq!(lifetime.parse::<i64>().unwrap(), access_ttl);
     let expected = chrono::Utc::now().timestamp() + access_ttl;
     assert!(
         (exp - expected).abs() <= 5,
@@ -887,8 +888,8 @@ async fn refreshes_queued_on_a_locked_row_have_exactly_one_winner() {
         refresh_call(&app, &refresh, &csrf),
         refresh_call(&app, &refresh, &csrf),
         async {
-            // Both requests reach the UPDATE and wait on the row lock.
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            // Release only once both requests are queued on the row lock.
+            wait_for_lock_waiters(&db, 2).await;
             holder.commit().await.unwrap();
         }
     );
@@ -930,7 +931,7 @@ async fn the_loser_of_a_race_whose_winner_rolled_back_is_refused_too() {
         refresh_call(&app, &refresh, &csrf),
         refresh_call(&app, &refresh, &csrf),
         async {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            wait_for_lock_waiters(&db, 2).await;
             holder.commit().await.unwrap();
         }
     );
@@ -951,4 +952,111 @@ async fn the_loser_of_a_race_whose_winner_rolled_back_is_refused_too() {
     .unwrap();
     let resp = refresh_call(&app, &refresh, &csrf).await;
     assert_eq!(resp.status(), StatusCode::OK, "the session survived");
+}
+
+/// Wait until `n` sessions in this test's database are blocked on a lock
+/// while running the refresh rotation, so a test proves its requests really
+/// queued on the held row. Panics after 20 s.
+async fn wait_for_lock_waiters(db: &sea_orm::DatabaseConnection, n: i64) {
+    use sea_orm::ConnectionTrait;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let row = db
+            .query_one_raw(sea_orm::Statement::from_string(
+                sea_orm::DbBackend::Postgres,
+                "SELECT count(*)::bigint AS waiting FROM pg_stat_activity \
+                  WHERE datname = current_database() \
+                    AND wait_event_type = 'Lock' \
+                    AND query LIKE 'UPDATE auth_sessions%'",
+            ))
+            .await
+            .unwrap()
+            .expect("count row");
+        let waiting: i64 = row.try_get("", "waiting").unwrap();
+        if waiting >= n {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "only {waiting} of {n} refreshes queued on the row lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// At the very end of the absolute age a refresh that is still accepted
+/// must not hand out a zero (immediately expired) refresh or CSRF cookie;
+/// the CSRF cookie lasts at least as long as the access cookie.
+#[tokio::test]
+async fn a_refresh_at_the_age_limit_sets_no_zero_max_age() {
+    use sea_orm::ConnectionTrait;
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "edge@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    db.execute_unprepared(&format!(
+        "UPDATE auth_sessions \
+            SET created_at = now() - interval '90 days' + interval '20 seconds' \
+          WHERE user_id = '{user_id}'"
+    ))
+    .await
+    .unwrap();
+
+    let resp = refresh_call(&app, &refresh, &csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let refresh_age = max_age_of(&resp, "__Host-comic_refresh");
+    assert!(
+        (1..=20).contains(&refresh_age),
+        "refresh Max-Age {refresh_age}"
+    );
+    let access = app.state().cfg().access_ttl().as_secs() as i64;
+    assert_eq!(max_age_of(&resp, "__Host-comic_csrf"), access);
+    assert_eq!(max_age_of(&resp, "__Host-comic_session"), access);
+}
+
+/// Durations above the cap that reached the config without the PATCH
+/// validation (a row saved before the cap existed) are clamped: refresh and
+/// `/me/sessions` keep working instead of panicking or overflowing.
+#[tokio::test]
+async fn over_cap_durations_that_bypassed_validation_do_not_break_refresh() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "overcap@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+
+    let mut cfg = (*app.state().cfg()).clone();
+    cfg.session_max_age = "10000000000d".into();
+    cfg.jwt_refresh_ttl = "18446744073709551615s".into();
+    app.state().replace_cfg(cfg);
+
+    let resp = refresh_call(&app, &refresh, &csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let session = extract_cookie(&resp, "__Host-comic_session").unwrap();
+    let csrf = extract_cookie(&resp, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&resp, "__Host-comic_refresh").unwrap();
+
+    let list = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/me/sessions")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={session}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
+                    ),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let body = body_json(list.into_body()).await;
+    assert_eq!(body["sessions"].as_array().unwrap().len(), 1);
 }

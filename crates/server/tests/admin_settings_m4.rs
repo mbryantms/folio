@@ -310,6 +310,27 @@ async fn session_max_age_empty_or_non_ascii_rejected_pre_write() {
     assert_eq!(app.state().cfg().session_max_age, "90d");
 }
 
+/// Durations above 3650 days would overflow timestamp arithmetic.
+#[tokio::test]
+async fn auth_durations_above_the_cap_rejected_pre_write() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    for bad in ["10000000000d", "18446744073709551615s"] {
+        for key in ["auth.session.max_age", "auth.jwt.refresh_ttl"] {
+            let resp = patch_settings(&app, &admin, json!({ key: bad })).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{key}={bad}"
+            );
+            let body = body_json(resp.into_body()).await;
+            assert_eq!(body["error"]["code"], "settings.invalid_combination");
+        }
+    }
+    assert_eq!(app.state().cfg().session_max_age, "90d");
+}
+
 /// An access token must not outlive its session.
 #[tokio::test]
 async fn session_max_age_below_the_access_lifetime_rejected_pre_write() {

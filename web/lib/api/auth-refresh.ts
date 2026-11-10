@@ -31,21 +31,69 @@ export function getCsrfToken(): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
-/** The readable access-expiry cookie: the current access token's `exp` in
- *  epoch seconds. Set and cleared by the server with the session cookie. */
+/** The readable access-expiry cookie, `<exp>.<lifetime>`: the current
+ *  access token's `exp` (epoch seconds, server clock) and its lifetime in
+ *  seconds. Set and cleared by the server with the session cookie. An older
+ *  server sent `<exp>` alone. */
 export const ACCESS_EXP_COOKIE = "__Host-comic_access_exp";
 
-/** The access token's expiry in epoch seconds, or `null` when the cookie is
- *  absent (signed out, or the access token already lapsed: the cookie's
- *  Max-Age is the access lifetime) or unreadable. */
-export function readAccessExp(): number | null {
+export type AccessExpiry = {
+  /** `exp`, epoch seconds on the server's clock. */
+  exp: number;
+  /** The token's lifetime in seconds, `null` from the old one-number form. */
+  lifetime: number | null;
+};
+
+/** Parse the access-expiry cookie, or `null` when it is absent (signed out,
+ *  or the access token already lapsed: its Max-Age is the access lifetime)
+ *  or unreadable. */
+export function readAccessExpiry(): AccessExpiry | null {
   if (typeof document === "undefined") return null;
   const m = document.cookie.match(
-    /(?:^|;\s*)__Host-comic_access_exp=([0-9]+)(?:;|$)/,
+    /(?:^|;\s*)__Host-comic_access_exp=([0-9]+)(?:\.([0-9]+))?(?:;|$)/,
   );
   if (!m) return null;
   const exp = Number(m[1]);
-  return Number.isFinite(exp) && exp > 0 ? exp : null;
+  if (!Number.isFinite(exp) || exp <= 0) return null;
+  const lifetime = m[2] === undefined ? null : Number(m[2]);
+  return {
+    exp,
+    lifetime:
+      lifetime !== null && Number.isFinite(lifetime) && lifetime > 0
+        ? lifetime
+        : null,
+  };
+}
+
+/** The access token's expiry in epoch seconds (server clock), or `null`. */
+export function readAccessExp(): number | null {
+  return readAccessExpiry()?.exp ?? null;
+}
+
+/** Estimated `server time - client time` in ms, from the newest `Date`
+ *  response header seen. Zero until a response carried one. */
+let clockOffsetMs = 0;
+
+/** Learn the server's clock from a response's `Date` header (ignored when
+ *  missing or unparsable). `Date` has one-second resolution and is
+ *  truncated, so the estimate takes the middle of that second. */
+export function noteServerDate(res: Response, receivedAt = Date.now()): void {
+  const raw = res.headers?.get?.("date");
+  if (!raw) return;
+  const serverMs = Date.parse(raw);
+  if (!Number.isFinite(serverMs)) return;
+  clockOffsetMs = serverMs + 500 - receivedAt;
+}
+
+/** "Now" on the server's clock, in ms: every comparison against the expiry
+ *  cookie (which the server wrote) uses this, never the bare client clock. */
+export function serverNow(): number {
+  return Date.now() + clockOffsetMs;
+}
+
+/** Test hook: forget the measured offset. */
+export function resetClockOffsetForTests(): void {
+  clockOffsetMs = 0;
 }
 
 let refreshInFlight: Promise<boolean | null> | null = null;
@@ -120,9 +168,12 @@ function expireReadableAuthCookies() {
  *   - With Web Locks, refreshes are serialized across tabs; a tab that
  *     acquires the lock after another tab refreshed sees the later expiry
  *     and skips its own refresh.
- *   - Without them (or if the race still happens), a 401/403 from the
+ *   - Without them (or if the race still happens), a 401 from the
  *     refresh is a lost race when the expiry moved, checked again once
  *     after a short wait for the winner's response.
+ * Only a 401 is a refusal. A 403 is a CSRF failure (the cookie changed
+ * under the request), which says nothing about the session: "no answer".
+ * "Future" is judged on the server's clock (`serverNow`).
  */
 async function attemptRefresh(): Promise<boolean | null> {
   if (refreshInFlight) return refreshInFlight;
@@ -131,20 +182,24 @@ async function attemptRefresh(): Promise<boolean | null> {
     const now = readAccessExp();
     if (now === null) return false;
     if (before !== null && now <= before) return false;
-    return now * 1000 > Date.now();
+    return now * 1000 > serverNow();
   };
   const p = withRefreshLock(async (): Promise<boolean | null> => {
     if (someoneElseRefreshed()) return true;
+    const csrf = getCsrfToken();
+    // Without the CSRF cookie the refresh cannot pass the CSRF check: the
+    // session is gone (sign-out cleared it).
+    if (!csrf) return false;
     try {
-      const csrf = getCsrfToken();
       const res = await connectionFetch("/api/auth/refresh", {
         method: "POST",
         credentials: "include",
-        headers: csrf ? { "X-CSRF-Token": csrf } : undefined,
+        headers: { "X-CSRF-Token": csrf },
         signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
       });
+      noteServerDate(res);
       if (res.ok) return true;
-      if (res.status !== 401 && res.status !== 403) return null;
+      if (res.status !== 401) return null;
       if (someoneElseRefreshed()) return true;
       await new Promise((resolve) => setTimeout(resolve, LOST_RACE_SETTLE_MS));
       if (someoneElseRefreshed()) return true;
@@ -199,6 +254,7 @@ export async function apiFetch(
   const url = `/api${path}`;
   const opts: RequestInit = { credentials: "include", ...init };
   const res = await connectionFetch(url, opts);
+  noteServerDate(res);
   if (res.status !== 401) return res;
   // Don't try to refresh the refresh endpoint itself — that would loop.
   if (path === "/auth/refresh") return res;

@@ -43,7 +43,7 @@ use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 use super::{error, respond_with_field_errors};
 use crate::api::form_or_json::{FormOrJson, ResponseFormat, redirect_with_error};
 use crate::audit::{self, AuditEntry};
-use crate::auth::cookies::{csrf_cookie, new_csrf_token, sha256_hex};
+use crate::auth::cookies::{csrf_cookie, sha256_hex};
 use crate::auth::email_token;
 use crate::auth::failed_auth::PasswordCheck;
 use crate::auth::local::{
@@ -471,9 +471,10 @@ pub async fn update(
 
     if changed.is_empty() && pending.is_none() && cancelled.is_none() {
         drop(txn);
-        let csrf = new_csrf_token();
+        // Keep the caller's CSRF value; only extend its lifetime.
+        let (csrf, _) = crate::auth::cookies::existing_or_new_csrf(&jar);
         let body = with_pending_email(&app.db, me_resp_from_row(&locked, csrf.clone())).await;
-        let jar = jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()));
+        let jar = jar.add(csrf_cookie(csrf, crate::auth::local::me_csrf_max_age(&app)));
         return match format {
             ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
             ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),
@@ -593,9 +594,11 @@ pub async fn update(
         send_email_change_mail(&app, &updated, new_addr, tok).await;
     }
 
-    let csrf = new_csrf_token();
+    // Keep the caller's CSRF value (a new one would fail any request in
+    // flight with 403); only extend its lifetime.
+    let (csrf, _) = crate::auth::cookies::existing_or_new_csrf(&jar);
     let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
-    let jar = jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()));
+    let jar = jar.add(csrf_cookie(csrf, crate::auth::local::me_csrf_max_age(&app)));
     let form_target = if pending.is_some() {
         "/settings/account?email_change=sent"
     } else {

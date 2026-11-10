@@ -20,7 +20,6 @@ use axum::{
     response::{IntoResponse, Redirect},
 };
 use axum_extra::extract::CookieJar;
-use chrono::Duration as ChronoDuration;
 use entity::user::{UserRole, UserState};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, Set,
@@ -41,8 +40,8 @@ use crate::state::AppState;
 
 use super::CurrentUser;
 use super::cookies::{
-    self, CSRF_COOKIE, REFRESH_COOKIE, csrf_cookie, new_csrf_token, new_refresh_token_raw,
-    refresh_cookie, session_cookie, sha256_hex,
+    self, REFRESH_COOKIE, csrf_cookie, new_csrf_token, new_refresh_token_raw, refresh_cookie,
+    session_cookie, sha256_hex,
 };
 use super::email_token::{self, TokenPurpose};
 use super::password;
@@ -937,14 +936,13 @@ pub async fn refresh(
         (Ok(user_id), Ok(created_at)) => (user_id, created_at),
         _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    // What is left of the session's absolute age; the refresh and CSRF
-    // cookies never outlive it.
-    let remaining_age = (created_at
-        + chrono::Duration::seconds(app.cfg().session_max_age().as_secs() as i64)
-        - chrono::Utc::now().fixed_offset())
-    .to_std()
-    .unwrap_or_default();
-    let session_lifetime = app.cfg().refresh_ttl().min(remaining_age);
+    // What is left of the session's absolute age; the refresh cookie never
+    // outlives it (see `finalize_session`).
+    let remaining_age = crate::auth::cookies::remaining_session_age(
+        created_at,
+        app.cfg().session_max_age(),
+        chrono::Utc::now(),
+    );
 
     let user_row = match UserEntity::find()
         .filter(user::Column::Id.eq(user_id))
@@ -981,7 +979,7 @@ pub async fn refresh(
     finalize_session(
         &app,
         &user_row,
-        session_lifetime,
+        remaining_age,
         new_rt_raw,
         jar,
         StatusCode::OK,
@@ -1173,11 +1171,7 @@ pub async fn me(
     // freshness is what the original comment cared about, and the
     // first /auth/me after a clean session still mints because no
     // cookie exists yet.
-    let existing = jar.get(CSRF_COOKIE).map(|c| c.value().to_owned());
-    let (csrf, set_cookie) = match existing {
-        Some(v) if !v.is_empty() => (v, false),
-        _ => (new_csrf_token(), true),
-    };
+    let (csrf, set_cookie) = crate::auth::cookies::existing_or_new_csrf(&jar);
 
     // Re-fetch the row to pick up profile fields not carried on CurrentUser
     // (e.g. default_reading_direction, M4 reader prefs). Tolerate a transient
@@ -1194,11 +1188,21 @@ pub async fn me(
     )
     .await;
     let jar = if set_cookie {
-        jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()))
+        // The session row is not loaded here, so its remaining age is not
+        // known: use the refresh lifetime. A CSRF cookie that outlives its
+        // session only costs the sign-in page one refused resume.
+        jar.add(csrf_cookie(csrf, me_csrf_max_age(&app)))
     } else {
         jar
     };
     (StatusCode::OK, jar, Json(body)).into_response()
+}
+
+/// CSRF cookie lifetime for handlers that don't load the session row
+/// (`/auth/me`, preferences, account updates): the session's creation time
+/// is not at hand, so the refresh lifetime stands in for its remaining age.
+pub(crate) fn me_csrf_max_age(app: &AppState) -> Duration {
+    crate::auth::cookies::csrf_max_age(app.cfg().access_ttl(), app.cfg().refresh_ttl(), None)
 }
 
 /// `PATCH /me/preferences` — update the calling user's preferences.
@@ -1438,9 +1442,11 @@ pub async fn update_preferences(
         }
     };
 
-    let csrf = new_csrf_token();
+    // Keep the caller's CSRF value (a new one would fail any request this
+    // tab or another has in flight); only extend its lifetime.
+    let (csrf, _) = crate::auth::cookies::existing_or_new_csrf(&jar);
     let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
-    let mut jar = jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()));
+    let mut jar = jar.add(csrf_cookie(csrf, me_csrf_max_age(&app)));
     // If the language preference changed, refresh `NEXT_LOCALE` so the next
     // navigation picks up the new locale immediately (no relog needed).
     if req.language.is_some() {
@@ -2127,7 +2133,9 @@ async fn issue_session(
     let hash = sha256_hex(&raw_rt);
     let now = chrono::Utc::now();
     let lifetime = app.cfg().refresh_ttl().min(app.cfg().session_max_age());
-    let expires = now + chrono::Duration::seconds(lifetime.as_secs() as i64);
+    let expires = now
+        .checked_add_signed(crate::auth::cookies::chrono_delta(lifetime))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
 
     let am = SessionAM {
         id: Set(session_id),
@@ -2150,7 +2158,7 @@ async fn issue_session(
     finalize_session(
         app,
         user_row,
-        lifetime,
+        app.cfg().session_max_age(),
         raw_rt,
         jar,
         success_status,
@@ -2159,14 +2167,15 @@ async fn issue_session(
     )
 }
 
-/// Mint the access token and set the session cookies. `session_lifetime`
-/// is the refresh-cookie lifetime: the refresh TTL, clamped to what is left
-/// of the session's absolute age.
+/// Mint the access token and set the session cookies. `remaining_age` is
+/// what is left of the session's absolute age: the refresh cookie gets the
+/// refresh TTL clamped to it (never below one second, since the row was
+/// just accepted), the CSRF cookie [`csrf_max_age`] of it.
 #[expect(clippy::too_many_arguments)]
 fn finalize_session(
     app: &AppState,
     user_row: &user::Model,
-    session_lifetime: Duration,
+    remaining_age: Duration,
     raw_rt: String,
     jar: CookieJar,
     success_status: StatusCode,
@@ -2176,12 +2185,18 @@ fn finalize_session(
     let keys = &app.jwt_keys;
 
     let access_ttl = app.cfg().access_ttl();
-    let access_exp = chrono::Utc::now().timestamp() + access_ttl.as_secs() as i64;
+    let refresh_ttl = app.cfg().refresh_ttl();
+    let refresh_lifetime = refresh_ttl.min(remaining_age).max(Duration::from_secs(1));
+    let csrf_lifetime =
+        crate::auth::cookies::csrf_max_age(access_ttl, refresh_ttl, Some(remaining_age));
+    let access_exp = chrono::Utc::now()
+        .timestamp()
+        .saturating_add(crate::auth::cookies::secs_i64(access_ttl));
     let access = match keys.issue_access(
         user_row.id,
         user_row.role.as_str(),
         user_row.token_version,
-        ChronoDuration::seconds(access_ttl.as_secs() as i64),
+        crate::auth::cookies::chrono_delta(access_ttl),
     ) {
         Ok(t) => t,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
@@ -2202,11 +2217,11 @@ fn finalize_session(
         // Readable expiry of that access token, so the web client can
         // refresh before it lapses.
         .add(crate::auth::cookies::access_exp_cookie(access_exp, access_ttl))
-        .add(refresh_cookie(cookie_rt, session_lifetime))
+        .add(refresh_cookie(cookie_rt, refresh_lifetime))
         // The CSRF cookie lives as long as the refresh cookie, not the
         // access cookie: `/auth/refresh` itself needs it, so tying it to the
         // short access TTL would make the silent refresh fail with 403.
-        .add(csrf_cookie(csrf, session_lifetime))
+        .add(csrf_cookie(csrf, csrf_lifetime))
         // Mirror the user's stored language onto `NEXT_LOCALE` so next-intl
         // picks it up on the next nav. Authenticated locale wins over any
         // pre-existing `Accept-Language`-derived cookie value.

@@ -3,7 +3,9 @@ import {
   getCsrfToken,
   onSessionRenewed,
   readAccessExp,
+  readAccessExpiry,
   refreshSession,
+  serverNow,
 } from "./auth-refresh";
 
 /**
@@ -23,21 +25,34 @@ import {
  * again (timers in background tabs are throttled, and a sleeping machine
  * misses them entirely) and when the browser comes back online. Without
  * the CSRF cookie (signed out) it does nothing and arms no timer.
+ *
+ * Clocks: the expiry is on the server's clock, so every comparison uses
+ * `serverNow()` (the client clock plus the offset learned from response
+ * `Date` headers). Whatever the clocks say, a proactive refresh (the
+ * scheduler's or `ensureFreshSession`'s) never starts within
+ * `minRefreshIntervalMs` of the previous one in this tab, so a wrong
+ * offset costs at most one early refresh per interval.
  */
 
 /** Never refresh later than this before the access token expires. */
 export const MIN_LEAD_MS = 30_000;
 /** Share of the remaining lifetime to wait before refreshing. */
 const LEAD_FRACTION = 0.8;
-/** After a refresh that got no answer, try again this much later. */
+/** After a refresh that got no answer, try again this much later, doubling
+ *  up to `MAX_NO_ANSWER_BACKOFF_MS` while the server stays silent. */
 const RETRY_AFTER_NO_ANSWER_MS = 30_000;
+const MAX_NO_ANSWER_BACKOFF_MS = 10 * 60_000;
+/** Floor between two proactive refreshes: at least this, and at least
+ *  `MIN_INTERVAL_FRACTION` of the token's lifetime. */
+const MIN_REFRESH_INTERVAL_MS = 60_000;
+const MIN_INTERVAL_FRACTION = 0.1;
 /** `setTimeout` clamps larger delays to 0; cap and re-arm instead. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
 /** Tabs announce a completed refresh here, so others re-arm at once. */
 const RENEWED_CHANNEL = "folio:session-renewed";
 
 /** Milliseconds until the scheduler should refresh, given the expiry. */
-export function refreshDelayMs(expSeconds: number, now = Date.now()): number {
+export function refreshDelayMs(expSeconds: number, now = serverNow()): number {
   const remaining = expSeconds * 1000 - now;
   const delay = Math.min(remaining * LEAD_FRACTION, remaining - MIN_LEAD_MS);
   return Math.max(0, delay);
@@ -45,10 +60,44 @@ export function refreshDelayMs(expSeconds: number, now = Date.now()): number {
 
 /** True when the access token is missing or within `MIN_LEAD_MS` of
  *  expiring while a session may exist (a CSRF cookie is present). */
-export function needsRefresh(now = Date.now()): boolean {
+export function needsRefresh(now = serverNow()): boolean {
   if (!getCsrfToken()) return false;
   const exp = readAccessExp();
   return exp === null || exp * 1000 - now <= MIN_LEAD_MS;
+}
+
+/** The floor between two proactive refreshes: max(60 s, 10% of the token's
+ *  lifetime). The lifetime comes from the cookie, never from the client
+ *  clock; the old one-number cookie form gets the 60 s floor. */
+export function minRefreshIntervalMs(): number {
+  const lifetime = readAccessExpiry()?.lifetime ?? null;
+  return Math.max(
+    MIN_REFRESH_INTERVAL_MS,
+    lifetime === null ? 0 : lifetime * 1000 * MIN_INTERVAL_FRACTION,
+  );
+}
+
+/** Client time (elapsed-time only) of this tab's last proactive refresh. */
+let lastProactiveAt: number | null = null;
+
+/** Milliseconds until a proactive refresh may start (0 = now). */
+function floorWaitMs(): number {
+  if (lastProactiveAt === null) return 0;
+  const elapsed = Date.now() - lastProactiveAt;
+  // A clock set backwards makes `elapsed` negative: don't wait on it.
+  if (elapsed < 0) return 0;
+  return Math.max(0, minRefreshIntervalMs() - elapsed);
+}
+
+/** Start a proactive refresh, recording it for the floor. */
+function proactiveRefresh(): Promise<boolean | null> {
+  lastProactiveAt = Date.now();
+  return refreshSession();
+}
+
+/** Test hook: forget the last proactive refresh. */
+export function resetRefreshFloorForTests(): void {
+  lastProactiveAt = null;
 }
 
 function isOffline(): boolean {
@@ -60,11 +109,13 @@ function isOffline(): boolean {
  * (or when no session exists), otherwise after a refresh. Resolves promptly
  * when the browser is offline or the refresh fails on the network; it never
  * rejects, so callers can simply `await` it before retrying a request.
+ * Inside the refresh floor it resolves at once and lets the request go: a
+ * token that really expired is then handled by the 401 path.
  */
 export async function ensureFreshSession(): Promise<void> {
-  if (isOffline() || !needsRefresh()) return;
+  if (isOffline() || !needsRefresh() || floorWaitMs() > 0) return;
   try {
-    await refreshSession();
+    await proactiveRefresh();
   } catch {
     /* no answer: the caller retries with what it has */
   }
@@ -79,6 +130,8 @@ export function startSessionRefresh(): () => void {
   let stopped = false;
   /** The expiry the pending timer was armed for. */
   let armedFor: number | null = null;
+  /** Current wait after a refresh with no answer (exponential backoff). */
+  let noAnswerDelay = RETRY_AFTER_NO_ANSWER_MS;
 
   const clear = () => {
     if (timer !== null) clearTimeout(timer);
@@ -120,17 +173,35 @@ export function startSessionRefresh(): () => void {
       return;
     }
     if (isOffline()) return; // `online` re-arms
+    // The floor holds whatever the clocks say.
+    const wait = floorWaitMs();
+    if (wait > 0) {
+      schedule(wait);
+      return;
+    }
     firing = true;
     let result: boolean | null = null;
     try {
-      result = await refreshSession();
+      result = await proactiveRefresh();
     } finally {
       firing = false;
     }
     if (stopped) return;
-    if (result === true) arm();
-    else if (result === null) schedule(RETRY_AFTER_NO_ANSWER_MS);
+    if (result === true) {
+      noAnswerDelay = RETRY_AFTER_NO_ANSWER_MS;
+      arm();
+    } else if (result === null) {
+      schedule(noAnswerDelay);
+      noAnswerDelay = Math.min(noAnswerDelay * 2, MAX_NO_ANSWER_BACKOFF_MS);
+    }
     // `false`: signed out; the readable cookies are gone, nothing to arm.
+  };
+
+  /** Visible again or back online: the server may be back, so retry soon
+   *  instead of waiting out the backoff. */
+  const rearmFresh = () => {
+    noAnswerDelay = RETRY_AFTER_NO_ANSWER_MS;
+    arm();
   };
 
   const channel =
@@ -144,10 +215,10 @@ export function startSessionRefresh(): () => void {
     arm();
   });
   const onVisible = () => {
-    if (document.visibilityState === "visible") arm();
+    if (document.visibilityState === "visible") rearmFresh();
   };
   document.addEventListener("visibilitychange", onVisible);
-  window.addEventListener("online", arm);
+  window.addEventListener("online", rearmFresh);
 
   arm();
 
@@ -157,6 +228,6 @@ export function startSessionRefresh(): () => void {
     unsubscribe();
     channel?.close();
     document.removeEventListener("visibilitychange", onVisible);
-    window.removeEventListener("online", arm);
+    window.removeEventListener("online", rearmFresh);
   };
 }
