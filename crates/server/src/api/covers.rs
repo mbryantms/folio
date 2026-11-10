@@ -79,8 +79,7 @@ pub struct IssueCoversResp {
     params(("id" = String, Path)),
     responses(
         (status = 200, body = IssueCoversResp),
-        (status = 403, description = "library access denied"),
-        (status = 404, description = "issue not found"),
+        (status = 404, description = "issue not found, or not visible to the caller"),
     )
 )]
 #[handler]
@@ -97,12 +96,10 @@ pub async fn list_issue_covers(
     else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
+    // Hidden answers exactly like an unknown id (WP-2.7: an issue rated
+    // above the caller's cap is hidden even inside a visible series).
     if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     }
     let rows = issue_cover::Entity::find()
         .filter(issue_cover::Column::IssueId.eq(&id))

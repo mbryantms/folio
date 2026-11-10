@@ -7,6 +7,7 @@ import {
 } from "@/components/admin/library/LibraryTabs";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { LibraryView } from "@/lib/api/types";
+import { apiPath, routeParam } from "@/lib/api/path";
 
 export default async function LibraryDetailLayout({
   children,
@@ -15,10 +16,10 @@ export default async function LibraryDetailLayout({
   children: React.ReactNode;
   params: Promise<{ slug: string }>;
 }) {
-  const { slug } = await params;
+  const slug = routeParam((await params).slug);
   let library: LibraryView;
   try {
-    library = await apiGet<LibraryView>(`/libraries/${slug}`);
+    library = await apiGet<LibraryView>(apiPath`/libraries/${slug}`);
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) notFound();
     throw e;

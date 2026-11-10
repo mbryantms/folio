@@ -47,10 +47,10 @@ Each line is a trust boundary. Anything inside the dotted box is the same trust 
 | **T**ampering | Cookie session is signed; CSRF double-submit on unsafe verbs; CSP + COOP/COEP/CORP. |
 | **R**epudiation | `audit_log` (§5.9) for admin/security actions; trace IDs in every log line. |
 | **I**nformation disclosure | ACL predicate on every read query (§5.1.1); content-type sniffing on page bytes; signed URLs for OPDS-PSE; `nosniff` everywhere. |
-| **D**oS | The limits in [rate-limits.md](rate-limits.md) (attached per route, not to every route); CSP report endpoint capped (64 KiB body, selected fields logged); request bodies capped (2 MiB default); JSON `/api` routes time out after 60 s. No Postgres `statement_timeout` is set (not implemented); statements slower than 500 ms are logged at WARN. |
+| **D**oS | The limits in [rate-limits.md](rate-limits.md) (attached per route, not to every route); CSP report endpoint capped (64 KiB body, selected fields logged); request bodies capped (2 MiB default); JSON `/api` routes time out after 60 s. Queries compiled from a saved-view filter run under `SET LOCAL statement_timeout = 5s` in a read-only transaction (`views::timebox`; a cancelled one answers 422 `filter_too_slow`, OPDS serves the feed empty), and the filter itself is capped at 50 conditions and 200 values per list on writes and previews, with a per-user `saved_view_preview` bucket on the previews. Every other query still runs with no `statement_timeout` (not implemented); statements slower than 500 ms are logged at WARN. |
 | **E**levation | Role check on admin endpoints; admin bootstrap warning (§12.8); never honor issuer claims for role assignment. |
 
-Verified against the code at `1c51a486` on 2026-11-10 (DoS row).
+Verified against the code at `ed5d9019` on 2026-11-10 (DoS row).
 
 ### Library scanner
 
@@ -107,10 +107,10 @@ Verified against the code at `1c51a486` on 2026-11-10.
 | Threat | Mitigation |
 |---|---|
 | SQL injection in raw-SQL allowlist | Strict policy (§E6 of review): no string interpolation of user values; sort columns from server allowlist. |
-| Search-DoS via complex `tsquery` | `websearch_to_tsquery` only; query length cap 200 bytes; per-user `search` bucket (10/s, burst 60) on the search routes. No `statement_timeout` (not implemented). |
+| Search-DoS via complex `tsquery` | `websearch_to_tsquery` only; query length cap 200 bytes; per-user `search` bucket (10/s, burst 60) on the search routes. No `statement_timeout` on the search queries (not implemented); only the saved-view filter queries are time-boxed (5 s, see the DoS row). |
 | Migration race on multi-replica | `COMIC_AUTO_MIGRATE=false` documented in `docs/install/scaling.md`. |
 
-Verified against the code at `1c51a486` on 2026-11-10 (search row).
+Verified against the code at `ed5d9019` on 2026-11-10 (search row).
 
 ### `/data` mount
 

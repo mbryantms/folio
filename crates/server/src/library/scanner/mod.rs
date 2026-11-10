@@ -3061,10 +3061,14 @@ async fn process_planned_folder(
     // per library by the broadcaster (spec §14.3); the cover lookup (one
     // indexed query) only runs for an event that will go out.
     if state.events.series_updated_due(lib.id, series_created) {
-        let cover_url = crate::api::series::series_cover_issue_ids(&state.db, &[series_id])
-            .await
-            .remove(&series_id)
-            .map(|issue_id| format!("/issues/{issue_id}/pages/0/thumb"));
+        let cover_url = crate::api::series::series_cover_issue_ids(
+            &state.db,
+            &[series_id],
+            &crate::library::access::VisibleLibraries::unrestricted(),
+        )
+        .await
+        .remove(&series_id)
+        .map(|issue_id| format!("/issues/{issue_id}/pages/0/thumb"));
         state.events.emit(ScanEvent::SeriesUpdated {
             library_id: lib.id,
             series_id,

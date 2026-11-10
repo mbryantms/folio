@@ -1421,7 +1421,12 @@ async fn resolve_job_targets<'a>(
     }
     if !series_ids.is_empty() {
         let ids: Vec<uuid::Uuid> = series_ids.iter().copied().collect();
-        out.series_covers = crate::api::series::series_cover_issue_ids(&app.db, &ids).await;
+        out.series_covers = crate::api::series::series_cover_issue_ids(
+            &app.db,
+            &ids,
+            &crate::library::access::VisibleLibraries::unrestricted(),
+        )
+        .await;
         let rows: Vec<(uuid::Uuid, uuid::Uuid)> = series::Entity::find()
             .select_only()
             .column(series::Column::Id)

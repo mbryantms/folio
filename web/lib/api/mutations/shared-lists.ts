@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 /** `POST /admin/saved-views/{id}/share` — the admin's own reading list
  *  becomes a shared list every user can read (admins manage it). */
@@ -13,7 +14,10 @@ export function useShareReadingList(viewId: string) {
   const qc = useQueryClient();
   const router = useRouter();
   return useApiMutation<unknown, void>(
-    () => ({ path: `/admin/saved-views/${viewId}/share`, method: "POST" }),
+    () => ({
+      path: apiPath`/admin/saved-views/${viewId}/share`,
+      method: "POST",
+    }),
     {
       successMessage: "Reading list shared with everyone",
       onSuccess: () => {

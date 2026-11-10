@@ -150,13 +150,14 @@ export function NewFilterViewDialog({
                       }
                     }
                   }
-                  toast.success("View created");
                   onOpenChange(false);
                   router.refresh();
                 } catch (e) {
                   toast.error(
                     e instanceof Error ? e.message : "Failed to save view",
                   );
+                  // The builder binds a 422's field errors inline.
+                  throw e;
                 }
               }}
             />

@@ -520,3 +520,132 @@ async fn shared_list_entries_respect_each_readers_library_access() {
     assert_eq!(entry_at(&body, 1)["matched_issue_id"], closed.as_str());
     assert!(entry_at(&body, 1)["issue"].is_object());
 }
+
+// ───── Audit: admin writes to shared lists through `/me` routes ─────
+
+async fn cbl_audit_rows(app: &TestApp) -> Vec<entity::audit_log::Model> {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let mut rows: Vec<_> = entity::audit_log::Entity::find()
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.action.starts_with("admin.cbl_list."))
+        .collect();
+    // Ids are UUIDv7: id order is write order.
+    rows.sort_by_key(|r| r.id);
+    rows
+}
+
+/// An admin changing a shared list (no owner) through `/me/cbl-lists` is an
+/// admin action on a list that is not theirs: each write leaves one audit
+/// row naming the admin, the list and its (absent) owner.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_writes_to_a_shared_list_are_audited() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "shared-audit-admin@example.com").await;
+    let list_id = seed_cbl_list_mixed(&app, "Shared Audit", &[(1, None)]).await;
+
+    let (status, _) = http(
+        &app,
+        Method::PATCH,
+        &format!("/api/me/cbl-lists/{list_id}"),
+        Some(&admin),
+        Some(serde_json::json!({ "description": "Read these first" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let rows = cbl_audit_rows(&app).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row.action, "admin.cbl_list.update");
+    assert_eq!(row.actor_id, admin.user_id);
+    assert_eq!(row.target_type.as_deref(), Some("cbl_list"));
+    assert_eq!(row.target_id, Some(list_id.to_string()));
+    assert!(row.payload["owner_user_id"].is_null(), "{}", row.payload);
+    assert_eq!(row.payload["name"], "Shared Audit");
+    assert_eq!(
+        row.payload["changed"]["description"], "Read these first",
+        "{}",
+        row.payload
+    );
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let entry_id = cbl_entry::Entity::find()
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.cbl_list_id == list_id)
+        .unwrap()
+        .id;
+    let (status, _) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/entries/{entry_id}/clear-match"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = http(
+        &app,
+        Method::DELETE,
+        &format!("/api/me/cbl-lists/{list_id}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let actions: Vec<String> = cbl_audit_rows(&app)
+        .await
+        .into_iter()
+        .map(|r| r.action)
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            "admin.cbl_list.update",
+            "admin.cbl_list.entry.clear_match",
+            "admin.cbl_list.delete",
+        ]
+    );
+}
+
+/// An owner editing their own list is not an admin action, whatever the
+/// owner's role: no audit row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn owners_editing_their_own_list_are_not_audited() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "own-list-admin@example.com").await;
+    let reader = register(&app, "own-list-reader@example.com").await;
+    demote_to_user(&app, reader.user_id).await;
+    let (admin_list, _) = seed_owned_cbl_view(&app, admin.user_id, "Admin Own", &[(1, None)]).await;
+    let (reader_list, _) =
+        seed_owned_cbl_view(&app, reader.user_id, "Reader Own", &[(1, None)]).await;
+
+    for (who, list) in [(&admin, admin_list), (&reader, reader_list)] {
+        let (status, _) = http(
+            &app,
+            Method::PATCH,
+            &format!("/api/me/cbl-lists/{list}"),
+            Some(who),
+            Some(serde_json::json!({ "description": "mine" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = http(
+            &app,
+            Method::DELETE,
+            &format!("/api/me/cbl-lists/{list}"),
+            Some(who),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+    assert!(cbl_audit_rows(&app).await.is_empty());
+}

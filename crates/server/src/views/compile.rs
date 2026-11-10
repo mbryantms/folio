@@ -113,7 +113,7 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
         let alias = active_issue_count_alias();
         q.join_subquery(
             JoinType::LeftJoin,
-            active_issue_count_subquery(),
+            active_issue_count_subquery(&input.visible_libraries),
             alias.clone(),
             Expr::col((alias, Alias::new("series_id")))
                 .equals((series::Entity, series::Column::Id)),
@@ -150,7 +150,7 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
         let alias = metadata_completeness_alias();
         q.join_subquery(
             JoinType::LeftJoin,
-            metadata_completeness_subquery(),
+            metadata_completeness_subquery(&input.visible_libraries),
             alias.clone(),
             Expr::col((alias, Alias::new("series_id")))
                 .equals((series::Entity, series::Column::Id)),
@@ -854,10 +854,13 @@ fn metadata_completeness_alias() -> Alias {
 /// `assess_issue_view` exactly — credits from the per-role CSV columns, the
 /// provider match from a CV/Metron `external_ids` row — so the saved-view
 /// filter, the series rollup, and the per-issue detail report never disagree.
-fn metadata_completeness_subquery() -> SelectStatement {
+///
+/// Counts only issues under the caller's age cap (`acl`, WP-2.7), the same
+/// set as the series card's badge.
+fn metadata_completeness_subquery(acl: &VisibleLibraries) -> SelectStatement {
     use entity::issue;
-    Query::select()
-        .column(issue::Column::SeriesId)
+    let mut q = Query::select();
+    q.column(issue::Column::SeriesId)
         .expr_as(
             Func::count(Expr::col((issue::Entity, issue::Column::Id))),
             Alias::new("active_count"),
@@ -890,8 +893,11 @@ fn metadata_completeness_subquery() -> SelectStatement {
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq(issue::IssueState::Active.as_str()))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
-        .add_group_by([Expr::col(issue::Column::SeriesId)])
-        .to_owned()
+        .add_group_by([Expr::col(issue::Column::SeriesId)]);
+    if let Some(cap) = acl.issue_cap_condition() {
+        q.cond_where(cap);
+    }
+    q.to_owned()
 }
 
 /// `SELECT series_id, COUNT(*) AS active_count, COUNT(*) FILTER (WHERE
@@ -902,11 +908,12 @@ fn metadata_completeness_subquery() -> SelectStatement {
 /// `main_count` is the main run alone — what `series.total_issues`
 /// describes — matching `SeriesView.main_issue_count`; the completeness
 /// predicate adds `special_count` only when the caller counts specials
-/// (B9).
-fn active_issue_count_subquery() -> SelectStatement {
+/// (B9). Counts only issues under the caller's age cap (`acl`, WP-2.7),
+/// matching the card's `issue_count`.
+fn active_issue_count_subquery(acl: &VisibleLibraries) -> SelectStatement {
     use entity::issue;
-    Query::select()
-        .column(issue::Column::SeriesId)
+    let mut q = Query::select();
+    q.column(issue::Column::SeriesId)
         .expr_as(
             Func::count(Expr::col((issue::Entity, issue::Column::Id))),
             Alias::new("active_count"),
@@ -922,8 +929,11 @@ fn active_issue_count_subquery() -> SelectStatement {
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq(issue::IssueState::Active.as_str()))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
-        .add_group_by([Expr::col(issue::Column::SeriesId)])
-        .to_owned()
+        .add_group_by([Expr::col(issue::Column::SeriesId)]);
+    if let Some(cap) = acl.issue_cap_condition() {
+        q.cond_where(cap);
+    }
+    q.to_owned()
 }
 
 fn compile_condition(cond: &Condition, ctx: &Ctx) -> Result<SeaCondition, CompileError> {

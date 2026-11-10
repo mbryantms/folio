@@ -604,7 +604,8 @@ pub(crate) async fn find_by_slug_or_id(
 #[handler]
 pub async fn create(
     State(app): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     Validated(req): Validated<CreateLibraryReq>,
 ) -> impl IntoResponse {
     // `name` + `root_path` validated by garde; nothing further to check here.
@@ -659,6 +660,18 @@ pub async fn create(
     };
     match am.insert(&app.db).await {
         Ok(m) => {
+            crate::record_admin_action!(
+                db = &app.db,
+                ctx = &ctx,
+                actor = actor.id,
+                action = "admin.library.create",
+                target = ("library", m.id.to_string()),
+                payload = serde_json::json!({
+                    "name": m.name,
+                    "slug": m.slug,
+                    "root_path": m.root_path,
+                }),
+            );
             // File watcher (WP-3.1): start watching if the library opts in.
             app.watchers.nudge();
             if req.scan_now
