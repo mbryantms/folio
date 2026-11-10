@@ -93,7 +93,7 @@ pub async fn require_csrf(State(app): State<AppState>, req: Request, next: Next)
                 peer_trusted,
             )
         {
-            return cross_site_refusal(req, reason).await;
+            return cross_site_refusal(&req, reason);
         }
         return next.run(req).await;
     }
@@ -314,7 +314,7 @@ pub const CROSS_SITE_GUARDED_PATHS: &[&str] = &[
 /// the form lives on with `error=auth.csrf`, which those pages show as a
 /// banner; any other caller gets the 403 `auth.csrf` envelope. Either way
 /// the answer is the same whichever check failed (the reason is logged).
-async fn cross_site_refusal(req: Request, reason: &'static str) -> Response {
+fn cross_site_refusal(req: &Request, reason: &'static str) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_owned();
     let content_type = req
@@ -323,8 +323,7 @@ async fn cross_site_refusal(req: Request, reason: &'static str) -> Response {
         .and_then(|h| h.to_str().ok())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let urlencoded = content_type.starts_with("application/x-www-form-urlencoded");
-    let is_form = urlencoded
+    let is_form = content_type.starts_with("application/x-www-form-urlencoded")
         || content_type.starts_with("multipart/form-data")
         || req
             .headers()
@@ -338,37 +337,11 @@ async fn cross_site_refusal(req: Request, reason: &'static str) -> Response {
     const CODE: &str = "auth.csrf";
     const MESSAGE: &str = "request could not be verified";
     let target = match path.as_str() {
-        "/auth/local/request-password-reset" => {
+        // The reset form's token is not carried back: a refused request
+        // may not be the user's own, so nothing from its body is echoed.
+        // The user asks for a fresh link.
+        "/auth/local/request-password-reset" | "/auth/local/reset-password" => {
             crate::api::form_or_json::redirect_with_error("/forgot-password", CODE, MESSAGE, None)
-        }
-        // The reset page needs its token back; it travels in the form body.
-        "/auth/local/reset-password" => {
-            let token = if urlencoded {
-                to_bytes(req.into_body(), MAX_FORM_BODY_FOR_CSRF)
-                    .await
-                    .ok()
-                    .and_then(|b| {
-                        serde_urlencoded::from_bytes::<Vec<(String, String)>>(&b)
-                            .ok()?
-                            .into_iter()
-                            .find_map(|(k, v)| (k == "token").then_some(v))
-                    })
-            } else {
-                None
-            };
-            match token {
-                Some(t) => format!(
-                    "/reset-password?token={}&error={CODE}&message={}",
-                    urlencoding::encode(&t),
-                    urlencoding::encode(MESSAGE)
-                ),
-                None => crate::api::form_or_json::redirect_with_error(
-                    "/forgot-password",
-                    CODE,
-                    MESSAGE,
-                    None,
-                ),
-            }
         }
         _ => crate::api::form_or_json::redirect_with_error("/sign-in", CODE, MESSAGE, None),
     };

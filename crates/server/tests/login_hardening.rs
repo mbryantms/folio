@@ -499,7 +499,7 @@ async fn refused_form_posts_redirect_back_and_json_gets_the_envelope() {
         (
             "/auth/local/reset-password",
             "token=tok-123&new_password=pw",
-            "/reset-password?token=tok-123&error=auth.csrf",
+            "/forgot-password?error=auth.csrf",
         ),
     ];
     for (i, (route, body, target)) in cases.into_iter().enumerate() {
