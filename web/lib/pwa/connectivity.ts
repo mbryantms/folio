@@ -1,12 +1,12 @@
 export type Connectivity =
   "reachable" | "offline" | "unreachable" | "authentication";
+/** Window event carrying a `Connectivity` as `detail`, fired on change. */
+export const CONNECTIVITY_EVENT = "folio:connectivity";
 let last: Connectivity | undefined;
 export function reportConnectivity(status: Connectivity) {
   if (typeof window === "undefined" || status === last) return;
   last = status;
-  window.dispatchEvent(
-    new CustomEvent("folio:connectivity", { detail: status }),
-  );
+  window.dispatchEvent(new CustomEvent(CONNECTIVITY_EVENT, { detail: status }));
 }
 export async function connectionFetch(
   input: RequestInfo | URL,

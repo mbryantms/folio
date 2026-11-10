@@ -24,6 +24,7 @@ import {
   isEmptySpreadOverrides,
 } from "@/lib/reader/spreads";
 import { useSpreadOverrides } from "@/lib/reader/use-spread-overrides";
+import { ProgressSyncStatus } from "./ProgressSyncStatus";
 import {
   useResetIssuePageOverrides,
   useSetIssuePageOverrides,
@@ -103,6 +104,7 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
   const setMarkersHidden = useReaderStore((s) => s.setMarkersHidden);
   const setZoomPersist = useReaderStore((s) => s.setZoomPersist);
   const fitHintId = useId();
+  const issueId = useReaderStore((s) => s.issueId);
 
   return (
     <div className="space-y-4 text-sm">
@@ -273,6 +275,8 @@ export function ReaderSettings({ seriesId }: { seriesId: string | null }) {
       </Section>
 
       <SeriesOverridesRow seriesId={seriesId} />
+
+      {issueId ? <ProgressSyncStatus issueId={issueId} /> : null}
     </div>
   );
 }

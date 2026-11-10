@@ -14,7 +14,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
 });
-it("flushes on hidden, retains a failed POST, and retries on online", async () => {
+it("flushes on hidden, retains a failed POST, and re-sends it on the next flush", async () => {
   vi.useFakeTimers();
   api.send
     .mockResolvedValueOnce(new Response("error", { status: 503 }))
@@ -43,8 +43,16 @@ it("flushes on hidden, retains a failed POST, and retries on online", async () =
   });
   expect(api.send).toHaveBeenCalledTimes(1);
   expect(api.send.mock.calls[0]![1].keepalive).toBe(true);
+  // `online` is the outbox replayer's trigger (`startOutboxReplay`), not
+  // the writer's: two retry loops used to send the same write twice.
   await act(async () => {
     window.dispatchEvent(new Event("online"));
+  });
+  expect(api.send).toHaveBeenCalledTimes(1);
+  // The failed write is still pending in memory, so the next flush
+  // carries it; once delivered a further flush sends nothing.
+  await act(async () => {
+    window.dispatchEvent(new Event("pagehide"));
   });
   expect(api.send).toHaveBeenCalledTimes(2);
   await act(async () => {

@@ -9,6 +9,8 @@ import { OutboxReplayer } from "./OutboxReplayer";
 import { OfflineBootstrap } from "./offline/OfflineBootstrap";
 
 import { HttpError } from "@/lib/api/queries";
+import { TOAST } from "@/lib/api/toast-strings";
+import { CONNECTIVITY_EVENT } from "@/lib/pwa/connectivity";
 
 export function QueryProvider({
   children,
@@ -48,7 +50,7 @@ export function QueryProvider({
     if (typeof window === "undefined") return;
 
     const onOffline = () => {
-      toast.warning("You're offline — changes may fail until you reconnect", {
+      toast.warning(TOAST.OFFLINE, {
         id: "network-status",
         duration: 5000,
       });
@@ -85,15 +87,15 @@ export function QueryProvider({
         status === "authentication"
           ? "Your session expired. Sign in again to continue."
           : status === "offline"
-            ? "You’re offline. Changes cannot be saved."
-            : "Folio can’t reach your server. Try again shortly.";
+            ? TOAST.OFFLINE
+            : TOAST.SERVER_UNREACHABLE;
       toast.warning(message, { id: "network-status", duration: 5000 });
     };
-    window.addEventListener("folio:connectivity", onConnectivity);
+    window.addEventListener(CONNECTIVITY_EVENT, onConnectivity);
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     return () => {
-      window.removeEventListener("folio:connectivity", onConnectivity);
+      window.removeEventListener(CONNECTIVITY_EVENT, onConnectivity);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
     };
