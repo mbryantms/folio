@@ -1,10 +1,16 @@
 "use client";
 
 import { BookOpen, Check, Flame, Lock, Star } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Dialog as DialogPrimitive } from "radix-ui";
+import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogPortal,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { Milestone, MilestoneIcon } from "@/lib/log/overview";
 import { cn } from "@/lib/utils";
 import { useReducedMotion } from "@/lib/visual-effects";
@@ -113,7 +119,10 @@ export function Milestones({
 
 /**
  * A milestone celebration: covers burst out from the centre around a card
- * with the milestone. Esc, the button or a click outside closes it.
+ * with the milestone. Built on the Radix dialog, so focus stays inside,
+ * Esc closes it and focus goes back to what opened it; the button or a
+ * click outside the card closes it too. The full-screen content is the
+ * dialog itself so the burst can fly across the whole viewport.
  * Reduced motion: the card alone, no burst.
  */
 export function Celebration({
@@ -130,88 +139,88 @@ export function Celebration({
   const reduced = useReducedMotion();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [leaving, setLeaving] = useState(false);
+  // What had focus when it opened (the Replay button): the dialog has no
+  // Radix trigger to send focus back to, so it is restored by hand.
+  const [opener] = useState(() =>
+    typeof document === "undefined"
+      ? null
+      : (document.activeElement as HTMLElement | null),
+  );
   const close = () => {
+    if (leaving) return;
     if (reduced) return onClose();
     setLeaving(true);
     window.setTimeout(onClose, 220);
   };
-  useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
-    buttonRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      if (prev?.isConnected) prev.focus();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const burst = reduced ? [] : covers.slice(0, 8);
-  return createPortal(
-    <div
-      className={cn(
-        "celebrate fixed inset-0 z-[60] grid place-items-center bg-black/55 p-4 backdrop-blur-sm",
-        leaving && "is-leaving",
-      )}
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
     >
-      {/* The backdrop is a real (unfocusable) button: a click outside the
-          card closes it; keyboard users have Esc and the Nice button. */}
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label="Close"
-        className="absolute inset-0 cursor-default"
-        onClick={close}
-      />
-      <div aria-hidden className="pointer-events-none absolute inset-0">
-        {burst.map((src, i) => {
-          const a = (i / burst.length) * Math.PI * 2 - Math.PI / 2;
-          return (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={`${src}-${i}`}
-              src={src}
-              alt=""
-              className="celebrate-cover absolute top-1/2 left-1/2 aspect-[2/3] w-20 rounded-md object-cover shadow-xl sm:w-24"
-              style={
-                {
-                  "--dx": `${Math.cos(a) * 230}px`,
-                  "--dy": `${Math.sin(a) * 170}px`,
-                  "--r": `${(i % 2 ? 1 : -1) * (6 + i * 3)}deg`,
-                  animationDelay: `${i * 40}ms`,
-                } as React.CSSProperties
-              }
-            />
-          );
-        })}
-      </div>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="celebrate-title"
-        className="celebrate-card bg-card relative w-full max-w-xs rounded-2xl border p-6 text-center shadow-2xl"
-      >
-        <p className="text-primary text-xs font-bold tracking-[0.08em] uppercase">
-          Milestone
-        </p>
-        <h2
-          id="celebrate-title"
-          className="mt-1 text-xl font-semibold text-balance"
+      <DialogPortal>
+        <DialogPrimitive.Content
+          className={cn(
+            "celebrate fixed inset-0 z-[60] grid place-items-center bg-black/55 p-4 backdrop-blur-sm outline-none",
+            leaving && "is-leaving",
+          )}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            buttonRef.current?.focus();
+          }}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            if (opener?.isConnected) opener.focus();
+          }}
         >
-          {title}
-        </h2>
-        <p className="text-muted-foreground mt-1 text-sm">{sub}</p>
-        <Button ref={buttonRef} className="mt-5 w-full" onClick={close}>
-          Nice
-        </Button>
-      </div>
-    </div>,
-    document.body,
+          {/* The backdrop is a real (unfocusable) button: a click outside the
+              card closes it; keyboard users have Esc and the Nice button. */}
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="Close"
+            className="absolute inset-0 cursor-default"
+            onClick={close}
+          />
+          <div aria-hidden className="pointer-events-none absolute inset-0">
+            {burst.map((src, i) => {
+              const a = (i / burst.length) * Math.PI * 2 - Math.PI / 2;
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`${src}-${i}`}
+                  src={src}
+                  alt=""
+                  className="celebrate-cover absolute top-1/2 left-1/2 aspect-[2/3] w-20 rounded-md object-cover shadow-xl sm:w-24"
+                  style={
+                    {
+                      "--dx": `${Math.cos(a) * 230}px`,
+                      "--dy": `${Math.sin(a) * 170}px`,
+                      "--r": `${(i % 2 ? 1 : -1) * (6 + i * 3)}deg`,
+                      animationDelay: `${i * 40}ms`,
+                    } as React.CSSProperties
+                  }
+                />
+              );
+            })}
+          </div>
+          <div className="celebrate-card bg-card relative w-full max-w-xs rounded-2xl border p-6 text-center shadow-2xl">
+            <p className="text-primary text-xs font-bold tracking-[0.08em] uppercase">
+              Milestone
+            </p>
+            <DialogTitle className="mt-1 text-xl font-semibold text-balance">
+              {title}
+            </DialogTitle>
+            <DialogDescription className="mt-1">{sub}</DialogDescription>
+            <Button ref={buttonRef} className="mt-5 w-full" onClick={close}>
+              Nice
+            </Button>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
   );
 }
