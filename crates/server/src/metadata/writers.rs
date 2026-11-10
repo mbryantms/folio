@@ -1004,37 +1004,58 @@ upsert_entity_helper!(
 // ─────────────────────────────────────────────────────────────────
 
 /// `(entity table, SELECT of candidate display names for one series)`.
-/// Each SELECT binds the series id as `$1` and yields `nm`; names that
+/// Each SELECT binds the series id as `$1` (plus the per-list cap as `$2`
+/// when the flag is set) and yields `nm`; names that
 /// already resolve (by `normalized_name`) are filtered out in SQL so
 /// the common case — every name known — costs one query per table and
-/// zero inserts.
-const SERIES_ENTITY_NAME_SOURCES: &[(&str, &str)] = &[
+/// zero inserts. Junction rows that already carry their entity FK (a
+/// provider apply or user edit, whose name column holds the FK's UUID
+/// text) are skipped: they need no row minted from their name.
+const SERIES_ENTITY_NAME_SOURCES: &[(&str, &str, bool)] = &[
     (
         "character",
         "SELECT DISTINCT j.character AS nm FROM issue_characters j \
          JOIN issues i ON i.id = j.issue_id \
          WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL \
+           AND j.character_id IS NULL \
            AND NOT EXISTS (SELECT 1 FROM character e \
                            WHERE e.normalized_name = btrim(lower(j.character)))",
+        false,
     ),
     (
         "team",
         "SELECT DISTINCT j.team AS nm FROM issue_teams j \
          JOIN issues i ON i.id = j.issue_id \
          WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL \
+           AND j.team_id IS NULL \
            AND NOT EXISTS (SELECT 1 FROM team e \
                            WHERE e.normalized_name = btrim(lower(j.team)))",
+        false,
+    ),
+    (
+        "location",
+        "SELECT DISTINCT j.location AS nm FROM issue_locations j \
+         JOIN issues i ON i.id = j.issue_id \
+         WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL \
+           AND j.location_id IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM location e \
+                           WHERE e.normalized_name = btrim(lower(j.location)))",
+        false,
     ),
     (
         "story_arc",
-        // Same split rule as `metadata_rollup::split_csv`.
+        // Same split rule as `metadata_rollup::split_csv`, and the same
+        // per-list cap (`$2` = `MAX_SIDECAR_LIST_ITEMS`) the scanner applies
+        // to every other ComicInfo list.
         "SELECT DISTINCT btrim(x.nm) AS nm FROM issues i \
          CROSS JOIN LATERAL regexp_split_to_table(i.story_arc, \
-             CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END) AS x(nm) \
+             CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END) \
+             WITH ORDINALITY AS x(nm, ord) \
          WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL \
-           AND i.story_arc IS NOT NULL AND i.story_arc <> '' \
+           AND i.story_arc IS NOT NULL AND i.story_arc <> '' AND x.ord <= $2 \
            AND NOT EXISTS (SELECT 1 FROM story_arc e \
                            WHERE e.normalized_name = btrim(lower(x.nm)))",
+        true,
     ),
     (
         "publisher",
@@ -1042,12 +1063,13 @@ const SERIES_ENTITY_NAME_SOURCES: &[(&str, &str)] = &[
          WHERE s.id = $1 AND s.publisher IS NOT NULL \
            AND NOT EXISTS (SELECT 1 FROM publisher e \
                            WHERE e.normalized_name = btrim(lower(s.publisher)))",
+        false,
     ),
 ];
 
-/// Ensure a `character` / `team` / `story_arc` / `publisher` row exists
-/// for every name this series' active issues (or the series row, for the
-/// publisher) carry, so each name has a slug for its landing page
+/// Ensure a `character` / `team` / `location` / `story_arc` / `publisher`
+/// row exists for every name this series' active issues (or the series
+/// row, for the publisher) carry, so each name has a slug for its landing page
 /// (`/characters/{slug}` …, WP-5.5). Mirrors the scanner rollup's
 /// `ensure_persons_for_series` for creators.
 ///
@@ -1067,14 +1089,16 @@ pub async fn ensure_series_entity_rows<C: ConnectionTrait>(
         nm: Option<String>,
     }
     let backend = db.get_database_backend();
-    for &(table, sql) in SERIES_ENTITY_NAME_SOURCES {
-        let rows = NameRow::find_by_statement(Statement::from_sql_and_values(
-            backend,
-            sql,
-            [series_id.into()],
-        ))
-        .all(db)
-        .await?;
+    for &(table, sql, binds_cap) in SERIES_ENTITY_NAME_SOURCES {
+        let cap = crate::library::scanner::metadata_rollup::MAX_SIDECAR_LIST_ITEMS as i64;
+        let values: Vec<sea_orm::Value> = if binds_cap {
+            vec![series_id.into(), cap.into()]
+        } else {
+            vec![series_id.into()]
+        };
+        let rows = NameRow::find_by_statement(Statement::from_sql_and_values(backend, sql, values))
+            .all(db)
+            .await?;
         let mut seen = HashSet::<String>::new();
         for row in rows {
             let Some(raw) = row.nm else { continue };

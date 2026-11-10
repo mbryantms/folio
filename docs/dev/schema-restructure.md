@@ -394,7 +394,16 @@ landing pages.
   `ensure_persons_for_series`), then
   `metadata_rollup::link_series_entity_ids` runs the same link statements
   scoped to the series (mirror of the `issue_credits.person_id` fill), and
-  the `series_characters` / `series_teams` rebuild carries the FK along.
+  the `series_characters` / `series_teams` / `series_locations` rebuild
+  carries the FK along. Locations are covered the same way as characters
+  and teams (file-only locations had no entity row before, so the
+  Locations page stayed empty for file-tagged libraries; existing
+  libraries pick the rows up on the next rollup of each series, e.g. a
+  forced rescan). Junction rows that already carry their FK mint no row.
+  - One ComicInfo list contributes at most
+    `metadata_rollup::MAX_SIDECAR_LIST_ITEMS` names per issue (the rest
+    are dropped and logged), and the per-issue junction inserts run in
+    `JUNCTION_INSERT_CHUNK_ROWS`-row statements.
   - FKs are filled **only while NULL** — a provider apply links by
     external identifier, so its entity may carry a different normalized
     name than the junction text; a name match must never re-point it.

@@ -112,6 +112,69 @@ impl<'a> IssueMetadataInputs<'a> {
     }
 }
 
+/// Most names the scanner takes from one ComicInfo list field (one
+/// role's credits, `<Characters>`, `<Teams>`, `<Locations>`, `<Genre>`,
+/// `<Tags>`, `<StoryArc>`) for one issue. Real books stay far below it —
+/// a crossover event's cast runs to a few hundred names — while a
+/// malformed or hostile sidecar with tens of thousands of comma-separated
+/// names would otherwise mint that many junction and entity rows per
+/// issue. Names past the cap are dropped in file order and logged
+/// ([`split_sidecar_list`]); the story-arc split in SQL applies the same
+/// cap (`metadata::writers::ensure_series_entity_rows`,
+/// [`link_series_entity_ids`]).
+pub const MAX_SIDECAR_LIST_ITEMS: usize = 1_000;
+
+/// Rows per `insert_many` statement for the per-issue junction writes.
+/// Postgres caps one statement at 65,535 bind parameters and the widest
+/// junction row binds 6 columns, so 1,000 rows (6,000 parameters) stays
+/// far inside the limit whatever [`MAX_SIDECAR_LIST_ITEMS`] is set to
+/// (credits combine eight roles into one insert).
+pub const JUNCTION_INSERT_CHUNK_ROWS: usize = 1_000;
+
+/// [`split_csv`] for a list read from a sidecar: at most
+/// [`MAX_SIDECAR_LIST_ITEMS`] names, the rest dropped with a warning
+/// naming the issue and field (the way the scanner logs other input it
+/// skips).
+pub fn split_sidecar_list(issue_id: &str, field: &str, value: &str) -> Vec<String> {
+    let mut names = split_csv(value);
+    if names.len() > MAX_SIDECAR_LIST_ITEMS {
+        let dropped = names.len() - MAX_SIDECAR_LIST_ITEMS;
+        names.truncate(MAX_SIDECAR_LIST_ITEMS);
+        tracing::warn!(
+            issue_id,
+            field,
+            kept = MAX_SIDECAR_LIST_ITEMS,
+            dropped,
+            "metadata_rollup: sidecar list over the per-issue cap; extra names skipped",
+        );
+    }
+    names
+}
+
+/// `insert_many` in [`JUNCTION_INSERT_CHUNK_ROWS`]-row statements with the
+/// same `ON CONFLICT` clause on each, so a long list never exceeds the
+/// Postgres bind-parameter cap.
+async fn insert_junction_rows<C, A>(
+    db: &C,
+    rows: Vec<A>,
+    on_conflict: OnConflict,
+) -> Result<(), sea_orm::DbErr>
+where
+    C: ConnectionTrait,
+    A: sea_orm::ActiveModelTrait + Send,
+{
+    let mut rows = rows.into_iter().peekable();
+    while rows.peek().is_some() {
+        let chunk: Vec<A> = rows.by_ref().take(JUNCTION_INSERT_CHUNK_ROWS).collect();
+        <A::Entity as EntityTrait>::insert_many(chunk)
+            .on_conflict(on_conflict.clone())
+            .try_insert()
+            .exec(db)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Split a CSV-shaped ComicInfo field into trimmed, deduped pieces.
 ///
 /// ComicInfo's `<Teams>` / `<Characters>` / `<Genre>` / etc. are flat
@@ -266,7 +329,10 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
 
     // ───── genres ─────
     if !skip.contains(&F::Genres) {
-        let desired_genres: Vec<String> = inputs.genre.map(split_csv).unwrap_or_default();
+        let desired_genres: Vec<String> = inputs
+            .genre
+            .map(|v| split_sidecar_list(issue_id, "genre", v))
+            .unwrap_or_default();
         let existing_genres: HashSet<String> = issue_genre::Entity::find()
             .filter(issue_genre::Column::IssueId.eq(issue_id))
             .all(db)
@@ -290,25 +356,24 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
                         genre: Set(g),
                     })
                     .collect();
-                issue_genre::Entity::insert_many(rows)
-                    .on_conflict(
-                        OnConflict::columns([
-                            issue_genre::Column::IssueId,
-                            issue_genre::Column::Genre,
-                        ])
+                insert_junction_rows(
+                    db,
+                    rows,
+                    OnConflict::columns([issue_genre::Column::IssueId, issue_genre::Column::Genre])
                         .do_nothing()
                         .to_owned(),
-                    )
-                    .try_insert()
-                    .exec(db)
-                    .await?;
+                )
+                .await?;
             }
         }
     }
 
     // ───── tags ─────
     if !skip.contains(&F::Tags) {
-        let desired_tags: Vec<String> = inputs.tags.map(split_csv).unwrap_or_default();
+        let desired_tags: Vec<String> = inputs
+            .tags
+            .map(|v| split_sidecar_list(issue_id, "tags", v))
+            .unwrap_or_default();
         let existing_tags: HashSet<String> = issue_tag::Entity::find()
             .filter(issue_tag::Column::IssueId.eq(issue_id))
             .all(db)
@@ -332,15 +397,14 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
                         tag: Set(t),
                     })
                     .collect();
-                issue_tag::Entity::insert_many(rows)
-                    .on_conflict(
-                        OnConflict::columns([issue_tag::Column::IssueId, issue_tag::Column::Tag])
-                            .do_nothing()
-                            .to_owned(),
-                    )
-                    .try_insert()
-                    .exec(db)
-                    .await?;
+                insert_junction_rows(
+                    db,
+                    rows,
+                    OnConflict::columns([issue_tag::Column::IssueId, issue_tag::Column::Tag])
+                        .do_nothing()
+                        .to_owned(),
+                )
+                .await?;
             }
         }
     }
@@ -352,7 +416,7 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
             let Some(csv) = inputs.credit_csv(*role) else {
                 continue;
             };
-            for person in split_csv(csv) {
+            for person in split_sidecar_list(issue_id, role.as_str(), csv) {
                 desired_credits.push((role.as_str().to_string(), person));
             }
         }
@@ -402,26 +466,28 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
                         }
                     })
                     .collect();
-                issue_credit::Entity::insert_many(rows)
-                    .on_conflict(
-                        OnConflict::columns([
-                            issue_credit::Column::IssueId,
-                            issue_credit::Column::Role,
-                            issue_credit::Column::Person,
-                        ])
-                        .do_nothing()
-                        .to_owned(),
-                    )
-                    .try_insert()
-                    .exec(db)
-                    .await?;
+                insert_junction_rows(
+                    db,
+                    rows,
+                    OnConflict::columns([
+                        issue_credit::Column::IssueId,
+                        issue_credit::Column::Role,
+                        issue_credit::Column::Person,
+                    ])
+                    .do_nothing()
+                    .to_owned(),
+                )
+                .await?;
             }
         }
     }
 
     // ───── characters ─────
     if !skip.contains(&F::Characters) {
-        let desired_characters: Vec<String> = inputs.characters.map(split_csv).unwrap_or_default();
+        let desired_characters: Vec<String> = inputs
+            .characters
+            .map(|v| split_sidecar_list(issue_id, "characters", v))
+            .unwrap_or_default();
         let existing_characters: HashSet<String> = issue_character::Entity::find()
             .filter(issue_character::Column::IssueId.eq(issue_id))
             .all(db)
@@ -453,25 +519,27 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
                         died_in_issue: Set(false),
                     })
                     .collect();
-                issue_character::Entity::insert_many(rows)
-                    .on_conflict(
-                        OnConflict::columns([
-                            issue_character::Column::IssueId,
-                            issue_character::Column::Character,
-                        ])
-                        .do_nothing()
-                        .to_owned(),
-                    )
-                    .try_insert()
-                    .exec(db)
-                    .await?;
+                insert_junction_rows(
+                    db,
+                    rows,
+                    OnConflict::columns([
+                        issue_character::Column::IssueId,
+                        issue_character::Column::Character,
+                    ])
+                    .do_nothing()
+                    .to_owned(),
+                )
+                .await?;
             }
         }
     }
 
     // ───── teams ─────
     if !skip.contains(&F::Teams) {
-        let desired_teams: Vec<String> = inputs.teams.map(split_csv).unwrap_or_default();
+        let desired_teams: Vec<String> = inputs
+            .teams
+            .map(|v| split_sidecar_list(issue_id, "teams", v))
+            .unwrap_or_default();
         let existing_teams: HashSet<String> = issue_team::Entity::find()
             .filter(issue_team::Column::IssueId.eq(issue_id))
             .all(db)
@@ -501,25 +569,24 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
                         disbanded_in_issue: Set(false),
                     })
                     .collect();
-                issue_team::Entity::insert_many(rows)
-                    .on_conflict(
-                        OnConflict::columns([
-                            issue_team::Column::IssueId,
-                            issue_team::Column::Team,
-                        ])
+                insert_junction_rows(
+                    db,
+                    rows,
+                    OnConflict::columns([issue_team::Column::IssueId, issue_team::Column::Team])
                         .do_nothing()
                         .to_owned(),
-                    )
-                    .try_insert()
-                    .exec(db)
-                    .await?;
+                )
+                .await?;
             }
         }
     }
 
     // ───── locations ─────
     if !skip.contains(&F::Locations) {
-        let desired_locations: Vec<String> = inputs.locations.map(split_csv).unwrap_or_default();
+        let desired_locations: Vec<String> = inputs
+            .locations
+            .map(|v| split_sidecar_list(issue_id, "locations", v))
+            .unwrap_or_default();
         let existing_locations: HashSet<String> = issue_location::Entity::find()
             .filter(issue_location::Column::IssueId.eq(issue_id))
             .all(db)
@@ -547,18 +614,17 @@ pub async fn replace_issue_metadata_skipping<C: ConnectionTrait>(
                         is_first_appearance: Set(false),
                     })
                     .collect();
-                issue_location::Entity::insert_many(rows)
-                    .on_conflict(
-                        OnConflict::columns([
-                            issue_location::Column::IssueId,
-                            issue_location::Column::Location,
-                        ])
-                        .do_nothing()
-                        .to_owned(),
-                    )
-                    .try_insert()
-                    .exec(db)
-                    .await?;
+                insert_junction_rows(
+                    db,
+                    rows,
+                    OnConflict::columns([
+                        issue_location::Column::IssueId,
+                        issue_location::Column::Location,
+                    ])
+                    .do_nothing()
+                    .to_owned(),
+                )
+                .await?;
             }
         }
     }
@@ -618,8 +684,8 @@ const SERIES_TEAMS: SeriesUnion = (
 );
 const SERIES_LOCATIONS: SeriesUnion = (
     "series_locations",
-    r#"INSERT INTO series_locations (series_id, "location")
-        SELECT DISTINCT $1, il."location"
+    r#"INSERT INTO series_locations (series_id, "location", location_id)
+        SELECT DISTINCT $1, il."location", il.location_id
         FROM issue_locations il
         JOIN issues i ON i.id = il.issue_id
         WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
@@ -799,7 +865,7 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     // issues are the only path that introduces unknown names, so most
     // calls do zero inserts and just refresh the issue_credits join.
     step!("ensure_persons", ensure_persons_for_series(db, series_id));
-    // WP-5.5: same for the character / team / story-arc / publisher
+    // WP-5.5: same for the character / team / location / story-arc / publisher
     // names, so every chip on the series + issue pages has a slug for
     // its entity landing page. Entity rows only — no junction writes.
     step!(
@@ -1077,8 +1143,9 @@ pub(crate) fn arcs_file_owned(issue_id: &str) -> String {
 /// [`crate::metadata::writers::ensure_series_entity_rows`] so every name
 /// has a row to link to.
 ///
-/// - `issue_characters.character_id` / `issue_teams.team_id` and
-///   `series.publisher_id` are filled **only while NULL**. Provider
+/// - `issue_characters.character_id` / `issue_teams.team_id` /
+///   `issue_locations.location_id` and `series.publisher_id` are filled
+///   **only while NULL**. Provider
 ///   applies write these FKs by identifier match, where the provider's
 ///   entity can legitimately carry a different normalized name than the
 ///   junction text — a name match must never re-point those. (The
@@ -1091,6 +1158,7 @@ pub(crate) fn arcs_file_owned(issue_id: &str) -> String {
 ///   `story_arc_number` when the issue names a single arc), rows for arcs
 ///   no longer in the CSV removed. Provider- / user-owned issues are
 ///   untouched (their `issue_arcs` are the source the CSV was built from).
+///   Only the first [`MAX_SIDECAR_LIST_ITEMS`] names of the CSV count.
 async fn link_series_entity_ids<C: ConnectionTrait>(
     db: &C,
     series_id: Uuid,
@@ -1098,9 +1166,12 @@ async fn link_series_entity_ids<C: ConnectionTrait>(
     let backend = db.get_database_backend();
     let owned = arcs_file_owned("i.id");
     let active = "i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL";
+    // `x.ord <= $2`: the per-list cap (`MAX_SIDECAR_LIST_ITEMS`) the
+    // scanner applies to every other ComicInfo list.
     let arc_split = "regexp_split_to_table(i.story_arc, \
-         CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END)";
-    let statements = [
+         CASE WHEN i.story_arc LIKE '%;%' THEN ';' ELSE ',' END) \
+         WITH ORDINALITY";
+    let link_statements = [
         format!(
             "UPDATE issue_characters j SET character_id = e.id \
                FROM character e, issues i \
@@ -1113,11 +1184,29 @@ async fn link_series_entity_ids<C: ConnectionTrait>(
               WHERE j.issue_id = i.id AND {active} AND j.team_id IS NULL \
                 AND e.normalized_name = btrim(lower(j.team))"
         ),
+        format!(
+            "UPDATE issue_locations j SET location_id = e.id \
+               FROM location e, issues i \
+              WHERE j.issue_id = i.id AND {active} AND j.location_id IS NULL \
+                AND e.normalized_name = btrim(lower(j.location))"
+        ),
         "UPDATE series s SET publisher_id = e.id \
            FROM publisher e \
           WHERE s.id = $1 AND s.publisher_id IS NULL \
             AND e.normalized_name = btrim(lower(s.publisher))"
             .to_owned(),
+    ];
+    for sql in link_statements {
+        db.execute_raw(Statement::from_sql_and_values(
+            backend,
+            sql,
+            [series_id.into()],
+        ))
+        .await?;
+    }
+    // Arc reconcile binds the per-list cap as `$2`.
+    let cap = MAX_SIDECAR_LIST_ITEMS as i64;
+    let arc_statements = [
         format!(
             "INSERT INTO issue_arcs (issue_id, arc_id, position_in_arc) \
              SELECT DISTINCT ON (i.id, e.id) i.id, e.id, \
@@ -1125,9 +1214,10 @@ async fn link_series_entity_ids<C: ConnectionTrait>(
                           AND i.story_arc_number ~ '^\\s*[0-9]{{1,9}}\\s*$' \
                          THEN btrim(i.story_arc_number)::int4 END \
                FROM issues i \
-               CROSS JOIN LATERAL {arc_split} AS x(nm) \
+               CROSS JOIN LATERAL {arc_split} AS x(nm, ord) \
                JOIN story_arc e ON e.normalized_name = btrim(lower(x.nm)) \
               WHERE {active} AND i.story_arc IS NOT NULL AND i.story_arc <> '' \
+                AND x.ord <= $2 \
                 AND {owned} \
              ON CONFLICT DO NOTHING"
         ),
@@ -1136,15 +1226,15 @@ async fn link_series_entity_ids<C: ConnectionTrait>(
               WHERE ia.issue_id = i.id AND e.id = ia.arc_id AND {active} \
                 AND {owned} \
                 AND NOT EXISTS ( \
-                    SELECT 1 FROM {arc_split} AS x(nm) \
-                     WHERE btrim(lower(x.nm)) = e.normalized_name)"
+                    SELECT 1 FROM {arc_split} AS x(nm, ord) \
+                     WHERE x.ord <= $2 AND btrim(lower(x.nm)) = e.normalized_name)"
         ),
     ];
-    for sql in statements {
+    for sql in arc_statements {
         db.execute_raw(Statement::from_sql_and_values(
             backend,
             sql,
-            [series_id.into()],
+            [series_id.into(), cap.into()],
         ))
         .await?;
     }
