@@ -131,11 +131,7 @@ pub async fn list(
     };
     // WP-2.7: age-rating cap per UNION branch (mirrors `creators`).
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
-    let issue_cap = visible.raw_cap_clause(
-        "s.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
+    let issue_cap = visible.entity_issue_cap_sql("i", "s", &mut params);
 
     // Aggregate (UNION over both credit tables → distinct names with
     // role + count rollup) inside the `agg` CTE so the outer SELECT

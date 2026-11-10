@@ -202,7 +202,8 @@ const SERIES_COLLECTIONS: &str = "\
 /// Story arcs tagged on the series' issues. `cap` is the caller's
 /// issue-level age cap over `i` ([`crate::library::access::VisibleLibraries::issue_cap_sql`],
 /// empty when nothing is capped): an arc tagged only on issues above the
-/// cap is not listed, and no count includes them.
+/// cap is not listed, and no count includes them. Soft-removed and
+/// inactive issues never count (the arc page drops them too).
 fn series_arcs_sql(cap: &str) -> String {
     format!(
         "SELECT sa.slug AS id, sa.name AS name, NULL::int AS position, \
@@ -210,7 +211,8 @@ fn series_arcs_sql(cap: &str) -> String {
          FROM issue_arcs ia \
          JOIN issues i ON i.id = ia.issue_id \
          JOIN story_arc sa ON sa.id = ia.arc_id \
-         WHERE i.series_id = $1{cap} \
+         WHERE i.series_id = $1 AND i.removed_at IS NULL \
+           AND i.state = 'active'{cap} \
          GROUP BY sa.slug, sa.name \
          ORDER BY sa.name"
     )

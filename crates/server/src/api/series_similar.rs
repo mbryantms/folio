@@ -314,6 +314,37 @@ async fn build_page(
     limit: u64,
     seed: Option<Uuid>,
 ) -> Result<(Vec<SimilarSeriesItem>, Option<String>, Option<i64>), sea_orm::DbErr> {
+    // A caller whose cap hides anything: drop every reason it could only
+    // know from a hidden issue, drop a neighbour left with no reason, and
+    // score and order the rest by the reasons that remain. Per request,
+    // over the cached list (at most `MAX_NEIGHBORS`), one query; the
+    // cache itself is never re-keyed. Everyone else: the cached list.
+    let rescored: Vec<Neighbor>;
+    let visible: Vec<&Neighbor> = if acl.hides_any() {
+        let reasons = visible_reasons(app, acl, target, &visible).await?;
+        let mut kept: Vec<Neighbor> = visible
+            .iter()
+            .zip(reasons)
+            .filter(|(_, because)| !because.is_empty())
+            .map(|(n, because)| {
+                let sum: f64 = because.iter().map(|r| r.weight).sum();
+                Neighbor {
+                    score: (sum * 1000.0).round() / 1000.0,
+                    because,
+                    ..(*n).clone()
+                }
+            })
+            .collect();
+        kept.sort_by(|a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then_with(|| a.series_id.cmp(&b.series_id))
+        });
+        rescored = kept;
+        rescored.iter().collect()
+    } else {
+        visible
+    };
     let total = cursor.is_none().then_some(visible.len() as i64);
     let after: Vec<&Neighbor> = match cursor {
         None => visible,
@@ -350,19 +381,17 @@ async fn build_page(
         .filter_map(|n| by_id.remove(&n.series_id))
         .collect();
     let views = hydrate_series(app, ordered, viewer, acl).await;
-    let mut reasons = visible_reasons(app, acl, target, &page).await?;
     let mut view_by_id: HashMap<String, SeriesView> =
         views.into_iter().map(|v| (v.id.clone(), v)).collect();
     let items = page
         .into_iter()
-        .zip(reasons.iter_mut())
-        .filter_map(|(n, because)| {
+        .filter_map(|n| {
             view_by_id
                 .remove(&n.series_id.to_string())
                 .map(|series| SimilarSeriesItem {
                     series,
                     score: n.score,
-                    because: std::mem::take(because),
+                    because: n.because.clone(),
                 })
         })
         .collect();
@@ -421,7 +450,7 @@ fn reason_check_sql(ivis: &str) -> String {
     )
 }
 
-/// The "because" lists of `page`, minus every reason that names an entity
+/// The "because" lists of `page` (the visible neighbours), minus every reason that names an entity
 /// the caller only could know from an issue above its age cap. The
 /// neighbour cache is shared and built from the `series_*` rollups (the
 /// union of every issue in a series), so for a caller whose cap hides

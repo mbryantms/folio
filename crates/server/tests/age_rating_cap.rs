@@ -2744,3 +2744,467 @@ async fn saved_view_junction_filters_follow_the_cap() {
     .await;
     assert_eq!(got, both);
 }
+
+// ───── entity surfaces never name a series the caller cannot open ─────
+//
+// "Dark Saga" is rated `Mature 17+` (hidden from the `Teen` reader) but its
+// #1 carries its own `Teen` rating. Its "Bob", "Dark Writer", "Dark Genre"
+// and "Dark Tag" occur nowhere else; it also carries "Shared Sidekick".
+
+async fn dark_world() -> EntityWorld {
+    let e = entity_world().await;
+    let db = Database::connect(&e.w.app.db_url).await.unwrap();
+    let root = e.w.app._data_dir.path().join("cap-lib");
+    let dark = seed_series(
+        &db,
+        e.w.fx.lib_id,
+        "Dark Saga",
+        "dark-saga",
+        Some("Mature 17+"),
+    )
+    .await;
+    let dark_one = seed_issue(
+        &db,
+        &root,
+        e.w.fx.lib_id,
+        dark,
+        1,
+        "dark-1",
+        "Dark One",
+        Some("Teen"),
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &dark_one,
+        "Cap Writer, Dark Writer",
+        None,
+        Some("Bob, Shared Sidekick"),
+        None,
+        None,
+        Some("Dark Genre"),
+        Some("Dark Tag"),
+        None,
+    )
+    .await;
+    server::library::scanner::metadata_rollup::rollup_series_metadata(&db, dark)
+        .await
+        .unwrap();
+    e
+}
+
+#[tokio::test]
+async fn an_issue_of_a_hidden_series_names_nothing_on_entity_surfaces() {
+    let e = dark_world().await;
+    let w = &e.w;
+    let lists: [(&str, &str, &str); 8] = [
+        ("/api/characters", "name", "Bob"),
+        ("/api/characters?q=bob", "name", "Bob"),
+        ("/api/creators", "person", "Dark Writer"),
+        ("/api/people?q=dark", "person", "Dark Writer"),
+        ("/api/filter-options/credits", "", "Dark Writer"),
+        ("/api/filter-options/genres", "", "Dark Genre"),
+        ("/api/filter-options/tags", "", "Dark Tag"),
+        ("/api/filter-options/characters", "", "Bob"),
+    ];
+    let values = |body: &serde_json::Value, key: &str| -> Vec<String> {
+        if key.is_empty() {
+            body["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        } else {
+            item_strings(body, key)
+        }
+    };
+    for (path, key, name) in lists {
+        let (st, body) = get_json(&w.app, path, &w.capped).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {body}");
+        assert!(
+            !values(&body, key).contains(&name.to_owned()),
+            "{path}: {body}"
+        );
+        for user in [&w.uncapped, &w.admin] {
+            let (_, body) = get_json(&w.app, path, user).await;
+            assert!(
+                values(&body, key).contains(&name.to_owned()),
+                "{path}: {body}"
+            );
+        }
+    }
+
+    // Detail routes answer like an unknown slug.
+    let bob = admin_slug(w, "/api/characters", "name", "Bob").await;
+    let writer = admin_slug(w, "/api/creators", "person", "Dark Writer").await;
+    for (base, slug, subs) in [
+        (
+            "/api/characters",
+            &bob,
+            vec!["", "/insights", "/series", "/issues"],
+        ),
+        ("/api/creators", &writer, vec![""]),
+    ] {
+        for sub in subs {
+            let (_, unknown) =
+                get_json(&w.app, &format!("{base}/no-such-entity{sub}"), &w.capped).await;
+            let path = format!("{base}/{slug}{sub}");
+            let (st, body) = get_json(&w.app, &path, &w.capped).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}: {body}");
+            assert_eq!(body, unknown, "{path}");
+            for user in [&w.uncapped, &w.admin] {
+                let (st, _) = get_json(&w.app, &path, user).await;
+                assert_eq!(st, StatusCode::OK, "{path}");
+            }
+        }
+    }
+    for path in [
+        format!("/opds/v1/characters/{bob}"),
+        format!("/opds/v2/characters/{bob}"),
+    ] {
+        let (st, _) = raw(&w.app, Method::GET, &path, &w.capped, None).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+        let (st, _) = raw(&w.app, Method::GET, &path, &w.uncapped, None).await;
+        assert_eq!(st, StatusCode::OK, "{path}");
+    }
+
+    // The shared character: grids, counts and insights leave Dark Saga out.
+    let sidekick = admin_slug(w, "/api/characters", "name", "Shared Sidekick").await;
+    let base = format!("/api/characters/{sidekick}");
+    let (_, body) = get_json(&w.app, &base, &w.capped).await;
+    assert_eq!(body["series_count"], 2, "{body}");
+    let (_, body) = get_json(&w.app, &base, &w.uncapped).await;
+    assert_eq!(body["series_count"], 3, "{body}");
+    let (_, body) = get_json(&w.app, &format!("{base}/series"), &w.capped).await;
+    let mut got = item_strings(&body, "slug");
+    got.sort();
+    assert_eq!(got, vec!["gap-run", "twin-run"], "{body}");
+    assert_eq!(body["total"], 2, "{body}");
+    let (_, body) = get_json(&w.app, &format!("{base}/issues"), &w.capped).await;
+    assert!(!body.to_string().contains("Dark"), "{body}");
+    let (_, body) = get_json(&w.app, &format!("{base}/insights"), &w.capped).await;
+    assert!(!body.to_string().contains("Dark Saga"), "{body}");
+    assert!(!body.to_string().contains("Dark Writer"), "{body}");
+    let (_, body) = get_json(&w.app, &format!("{base}/insights"), &w.uncapped).await;
+    assert!(body.to_string().contains("Dark Saga"), "{body}");
+
+    // Saved-view junction filter (guard: the series root is hidden anyway).
+    let got = saved_view_multi(
+        &w.app,
+        &w.capped,
+        "writer",
+        "includes_any",
+        serde_json::json!(["Dark Writer"]),
+    )
+    .await;
+    assert!(got.is_empty(), "{got:?}");
+    let got = saved_view_multi(
+        &w.app,
+        &w.uncapped,
+        "writer",
+        "includes_any",
+        serde_json::json!(["Dark Writer"]),
+    )
+    .await;
+    assert_eq!(got, vec!["dark-saga"]);
+}
+
+#[tokio::test]
+async fn series_appearances_leave_out_an_arc_of_a_removed_issue() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    entity::issue::ActiveModel {
+        id: Unchanged(e.gap.two.clone()),
+        removed_at: Set(Some(Utc::now().fixed_offset())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    for user in [&w.uncapped, &w.admin] {
+        let (st, body) = get_json(&w.app, "/api/series/gap-run/appearances", user).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["arcs"], serde_json::json!([]), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn similar_series_drops_a_neighbour_known_only_through_a_hidden_issue() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let shadow = seed_series(&db, w.fx.lib_id, "Shadow Run", "shadow-run", Some("Teen")).await;
+    let one = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        shadow,
+        1,
+        "shadow-1",
+        "Shadow One",
+        None,
+        None,
+    )
+    .await;
+    let two = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        shadow,
+        2,
+        "shadow-2",
+        "Shadow Two",
+        Some("Mature 17+"),
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &one,
+        "Shadow Writer",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &two,
+        "Shadow Writer",
+        None,
+        Some("Secret Agent"),
+        Some("Hidden Squad"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    server::library::scanner::metadata_rollup::rollup_series_metadata(&db, shadow)
+        .await
+        .unwrap();
+    let slugs = |body: &serde_json::Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["series"]["slug"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let path = "/api/series/gap-run/similar";
+    let (_, body) = get_json(&w.app, path, &w.uncapped).await;
+    assert!(slugs(&body).contains(&"shadow-run".to_owned()), "{body}");
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(!slugs(&body).contains(&"shadow-run".to_owned()), "{body}");
+    assert_eq!(
+        body["total"].as_u64(),
+        Some(slugs(&body).len() as u64),
+        "{body}"
+    );
+    // Every listed neighbour has a reason, and its score is their sum.
+    for item in body["items"].as_array().unwrap() {
+        let because = item["because"].as_array().unwrap();
+        assert!(!because.is_empty(), "{item}");
+        let sum: f64 = because.iter().map(|r| r["weight"].as_f64().unwrap()).sum();
+        assert!(
+            (item["score"].as_f64().unwrap() - sum).abs() < 0.01,
+            "{item}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn opds_entity_feeds_404_for_a_hidden_only_entity() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let character = admin_slug(w, "/api/characters", "name", "Secret Agent").await;
+    let team = admin_slug(w, "/api/teams", "name", "Hidden Squad").await;
+    let arc = admin_slug(w, "/api/arcs", "name", "Hidden Arc").await;
+    for v in ["v1", "v2"] {
+        for path in [
+            format!("/opds/{v}/characters/{character}"),
+            format!("/opds/{v}/teams/{team}"),
+            format!("/opds/{v}/arcs/{arc}"),
+        ] {
+            let (st, _) = raw(&w.app, Method::GET, &path, &w.capped, None).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+            for user in [&w.uncapped, &w.admin] {
+                let (st, _) = raw(&w.app, Method::GET, &path, user, None).await;
+                assert_eq!(st, StatusCode::OK, "{path}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn credit_counts_cover_visible_issues_only() {
+    let e = entity_world().await;
+    let w = &e.w;
+    // Cap Writer is credited on all 16 issues; `series_credits` rows exist
+    // for the two rolled-up series (Gap Run, Twin Run). The capped reader
+    // sees 9 of the issues and both rollup rows (each backed by a visible
+    // issue).
+    for path in ["/api/creators", "/api/people?q=cap%20writer"] {
+        let count = |body: &serde_json::Value| {
+            body["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["person"] == "Cap Writer")
+                .and_then(|i| i["credit_count"].as_i64())
+        };
+        let (_, body) = get_json(&w.app, path, &w.capped).await;
+        assert_eq!(count(&body), Some(11), "{path}: {body}");
+        for user in [&w.uncapped, &w.admin] {
+            let (_, body) = get_json(&w.app, path, user).await;
+            assert_eq!(count(&body), Some(18), "{path}: {body}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn saved_view_excludes_and_is_not_empty_follow_the_cap() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let has = |got: &[String], slug: &str| got.iter().any(|s| s == slug);
+    let v = serde_json::json!(["Secret Agent"]);
+    let got = saved_view_multi(&w.app, &w.capped, "characters", "excludes", v.clone()).await;
+    assert!(has(&got, "gap-run") && has(&got, "twin-run"), "{got:?}");
+    let got = saved_view_multi(&w.app, &w.uncapped, "characters", "excludes", v).await;
+    assert!(!has(&got, "gap-run") && !has(&got, "twin-run"), "{got:?}");
+    let null = serde_json::Value::Null;
+    let got = saved_view_multi(&w.app, &w.capped, "teams", "is_not_empty", null.clone()).await;
+    assert!(got.is_empty(), "{got:?}");
+    let got = saved_view_multi(&w.app, &w.uncapped, "teams", "is_not_empty", null).await;
+    assert_eq!(got, vec!["gap-run", "twin-run"]);
+}
+
+/// A bare library row (no series), for the mixed-grant test.
+async fn insert_library(db: &sea_orm::DatabaseConnection, root: &std::path::Path) -> Uuid {
+    let now = Utc::now().fixed_offset();
+    let id = Uuid::now_v7();
+    library::ActiveModel {
+        id: Set(id),
+        name: Set("Second Lib".into()),
+        root_path: Set(root.to_string_lossy().into_owned()),
+        default_language: Set("en".into()),
+        default_reading_direction: Set("ltr".into()),
+        dedupe_by_content: Set(true),
+        slug: Set(id.to_string()),
+        scan_schedule_cron: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        last_scan_at: Set(None),
+        ignore_globs: Set(serde_json::json!([])),
+        report_missing_comicinfo: Set(false),
+        file_watch_enabled: Set(true),
+        soft_delete_days: Set(30),
+        thumbnails_enabled: Set(true),
+        thumbnail_format: Set("webp".to_owned()),
+        thumbnail_cover_quality: Set(server::library::thumbnails::DEFAULT_COVER_QUALITY as i32),
+        thumbnail_page_quality: Set(server::library::thumbnails::DEFAULT_STRIP_QUALITY as i32),
+        generate_page_thumbs_on_scan: Set(false),
+        allow_archive_writeback: Set(false),
+        metadata_writeback_enabled: Set(false),
+        archive_backup_retain_count: Set(1),
+        archive_backup_retain_days: Set(30),
+        archive_writeback_jpeg_quality: Set(92),
+        cbr_convert_confirmed_at: Set(None),
+        metadata_publisher_blacklist: Set(serde_json::json!([])),
+        filename_ignore_leading_numbers: Set(false),
+        filename_assume_issue_one: Set(false),
+        metadata_auto_apply_strong_matches: Set(false),
+        auto_convert_cbr_on_scan: Set(false),
+        auto_convert_cb7_on_scan: Set(false),
+        trust_fingerprint_on_first_import: Set(false),
+        auto_search_new_series: Set(false),
+        show_in_sidebar_by_default: Set(true),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn a_cap_in_one_library_leaves_an_uncapped_library_whole() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("lib-b");
+    std::fs::create_dir_all(&root).unwrap();
+    let lib_b = insert_library(&db, &root).await;
+    let bee = seed_series(&db, lib_b, "Bee Run", "bee-run", None).await;
+    let bee_one = seed_issue(
+        &db,
+        &root,
+        lib_b,
+        bee,
+        1,
+        "bee-1",
+        "Bee One",
+        Some("Mature 17+"),
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &bee_one,
+        "Bee Writer",
+        None,
+        Some("Bee Villain"),
+        None,
+        None,
+        Some("Bee Genre"),
+        None,
+        None,
+    )
+    .await;
+    server::library::scanner::metadata_rollup::rollup_series_metadata(&db, bee)
+        .await
+        .unwrap();
+    // Library A keeps its Teen cap; library B is granted without one.
+    grant(&w.app, w.capped.user_id, lib_b, None).await;
+
+    let (_, body) = get_json(&w.app, "/api/characters", &w.capped).await;
+    let names_seen = item_strings(&body, "name");
+    assert!(names_seen.contains(&"Bee Villain".to_owned()), "{body}");
+    assert!(!names_seen.contains(&"Secret Agent".to_owned()), "{body}");
+    let bee_counts = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "Bee Villain")
+        .map(|i| (i["series_count"].as_i64(), i["issue_count"].as_i64()));
+    assert_eq!(bee_counts, Some((Some(1), Some(1))), "{body}");
+
+    let writer = admin_slug(w, "/api/creators", "person", "Bee Writer").await;
+    let (st, body) = get_json(&w.app, &format!("/api/creators/{writer}"), &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["roles"], serde_json::json!(["writer"]), "{body}");
+    let hidden = admin_slug(w, "/api/creators", "person", "Hidden Hand").await;
+    let (st, _) = get_json(&w.app, &format!("/api/creators/{hidden}"), &w.capped).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let (_, body) = get_json(&w.app, "/api/filter-options/credits", &w.capped).await;
+    let values: Vec<String> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_owned))
+        .collect();
+    assert!(values.contains(&"Bee Writer".to_owned()), "{body}");
+    assert!(!values.contains(&"Hidden Hand".to_owned()), "{body}");
+    let (_, body) = get_json(&w.app, "/api/filter-options/genres", &w.capped).await;
+    assert!(body.to_string().contains("Bee Genre"), "{body}");
+    assert!(!body.to_string().contains("Hidden Genre"), "{body}");
+}

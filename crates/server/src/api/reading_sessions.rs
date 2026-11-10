@@ -1408,10 +1408,11 @@ async fn compute_top_creators(app: &AppState, filter: &StatsFilter<'_>) -> Vec<T
     // viewer whose cap hides anything, a credit counts only when an issue
     // of the series that viewer can see carries it (uncapped: unchanged).
     if filter.acl.hides_any() {
-        let cap = filter.acl.issue_cap_sql("ci", &mut params);
+        let cap = filter.acl.entity_issue_cap_sql("ci", "cs", &mut params);
         inner.push_str(&format!(
             " AND EXISTS (SELECT 1 FROM issue_credits ic \
                JOIN issues ci ON ci.id = ic.issue_id \
+               JOIN series cs ON cs.id = ci.series_id \
               WHERE ci.series_id = sc.series_id AND ic.role = sc.role \
                 AND ic.person = sc.person AND ci.state = 'active' \
                 AND ci.removed_at IS NULL{cap})"

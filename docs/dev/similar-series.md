@@ -208,9 +208,12 @@ Applied per request, never cached:
   (creator, character, team, genre, tag, an arc that is not a tie-in) is
   kept only when an issue the caller can see carries that entity, on the
   target and on the neighbour (checked in libraries where the cap hides a
-  rung; `series_arcs` rows count as series-level). One extra query per
-  page; uncapped callers get the cached reasons unchanged. The score and
-  the order of the neighbours are not recomputed.
+  rung; `series_arcs` rows count as series-level). A neighbour left with
+  no reason is dropped, and the others are scored by the sum of their
+  kept reasons' weights and reordered by that score before paging, so
+  the cursor and `total` follow the caller's own list. One extra query
+  per request over the cached list (at most 100 neighbours); the cache is
+  not re-keyed, and uncapped callers get the cached list unchanged.
 - **Home rail only**: excludes every series the caller has started
   (progress with `last_page > 0` or `finished` on a live issue), and the seed. The seed
   is the most recently read visible, unhidden series; if its neighbours

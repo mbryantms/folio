@@ -255,7 +255,10 @@ Creators, characters, teams, locations, story arcs, publishers, genres
 and tags are shown to a capped caller only through the issues and series
 that caller can see. An issue counts when it is not removed, is active,
 sits in a non-removed series of a granted library and passes the cap
-(`COALESCE(issue.age_rating, series.age_rating)`, unrated passes).
+(`COALESCE(issue.age_rating, series.age_rating)`, unrated passes), and
+its series' own rating passes the cap too
+(`VisibleLibraries::entity_issue_cap_sql`): entity surfaces never name a
+series the caller cannot open, even through an issue rated below it.
 
 - **Issue junctions** (`issue_credits`, `issue_characters`,
   `issue_teams`, `issue_locations`, `issue_arcs`, `issue_genres`,

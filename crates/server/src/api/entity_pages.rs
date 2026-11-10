@@ -369,11 +369,9 @@ fn acl_sql(visible: &VisibleLibraries, params: &mut Vec<Value>) -> Option<AclSql
             .collect();
         format!(" AND s.library_id IN ({})", placeholders.join(","))
     };
-    let issue_cap = visible.raw_cap_clause(
-        "s.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        params,
-    );
+    // Entity surfaces: the issue's rating AND its series' own rating, so a
+    // visible-rated issue of a hidden series never counts.
+    let issue_cap = visible.entity_issue_cap_sql("i", "s", params);
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", params);
     Some(AclSql {
         lib,
