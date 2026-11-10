@@ -433,6 +433,19 @@ fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<B
     }
 }
 
+/// The 429 `rate_limited` envelope this middleware answers with, for a
+/// limit checked inside a handler (the email-change request limit), so
+/// both carry `retry_after_seconds` and `Retry-After` alike.
+pub fn rate_limited_response(message: &str, retry_after_seconds: u64) -> Response<Body> {
+    envelope_response(
+        StatusCode::TOO_MANY_REQUESTS,
+        "rate_limited",
+        message,
+        retry_after_seconds.max(1),
+        None,
+    )
+}
+
 fn envelope_response(
     status: StatusCode,
     code: &str,

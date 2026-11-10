@@ -31,6 +31,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const PASSWORD: &str = "correctly-horse-battery";
+const NEW_PASSWORD: &str = "a-whole-new-passphrase";
 
 struct Authed {
     session: String,
@@ -560,17 +561,39 @@ async fn pending_rows(app: &TestApp, user_id: Uuid) -> usize {
 
 /// The link of a request made before a credential change answers `invalid`,
 /// leaves the email alone and its row is gone.
-async fn assert_link_void(app: &TestApp, token: &str, user_id: Uuid) {
+async fn assert_link_void(app: &TestApp, token: &str, user_id: Uuid, password: &str) {
+    // The account no longer reports the change as pending (a fresh sign-in,
+    // since the credential change ended the old sessions or their tokens).
+    let fresh = login_with(app, "owner@example.com", password).await;
+    assert!(get_me(app, &fresh).await.1["pending_email"].is_null());
     assert_eq!(open_link(app, token, None).await, INVALID);
     assert_eq!(
         user_row(app, user_id).await.email.as_deref(),
         Some("owner@example.com")
     );
-    assert_eq!(
-        pending_rows(app, user_id).await,
-        0,
-        "the stale row is deleted"
-    );
+    // The row stays (expired) so its hourly count is kept.
+    assert_eq!(pending_rows(app, user_id).await, 1);
+    assert!(get_me(app, &fresh).await.1["pending_email"].is_null());
+}
+
+async fn login_with(app: &TestApp, email: &str, password: &str) -> Authed {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"email": email, "password": password}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    authed(resp).await
 }
 
 #[tokio::test]
@@ -586,7 +609,7 @@ async fn password_change_voids_a_pending_link() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_link_void(&app, &token, a.user_id).await;
+    assert_link_void(&app, &token, a.user_id, NEW_PASSWORD).await;
 }
 
 #[tokio::test]
@@ -643,7 +666,7 @@ async fn password_reset_voids_a_pending_link() {
         .await
         .unwrap();
     assert!(resp.status().is_success(), "reset: {}", resp.status());
-    assert_link_void(&app, &token, a.user_id).await;
+    assert_link_void(&app, &token, a.user_id, NEW_PASSWORD).await;
 }
 
 #[tokio::test]
@@ -654,7 +677,7 @@ async fn sign_out_everywhere_voids_a_pending_link() {
 
     let status = post_authed(&app, &a, "/api/me/sessions/revoke-all", json!({})).await;
     assert!(status.is_success(), "revoke-all: {status}");
-    assert_link_void(&app, &token, a.user_id).await;
+    assert_link_void(&app, &token, a.user_id, PASSWORD).await;
 }
 
 #[tokio::test]
@@ -729,10 +752,10 @@ async fn at_most_five_requests_an_hour() {
         .parse()
         .unwrap();
     assert!(retry > 0 && retry <= 3600, "Retry-After {retry}");
-    assert_eq!(
-        body_json(resp.into_body()).await["error"]["code"],
-        "rate_limited"
-    );
+    // The rate-limit middleware's envelope, `retry_after_seconds` included.
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "rate_limited");
+    assert_eq!(body["error"]["retry_after_seconds"], json!(retry));
 
     // Cancelling does not reset the count.
     let (status, body) = patch_account(&app, &a, json!({"email": "owner@example.com"})).await;
@@ -880,4 +903,201 @@ async fn link_opened_as_another_user_keeps_only_that_users_session() {
     );
     assert_eq!(refresh_status(&app, &a).await, StatusCode::UNAUTHORIZED);
     assert_eq!(refresh_status(&app, &x).await, StatusCode::OK);
+}
+
+/// PATCH /me/account as a JSON request, for parallel use.
+async fn patch_status(app: &TestApp, auth: &Authed, body: Value) -> StatusCode {
+    patch_account(app, auth, body).await.0
+}
+
+async fn request_count(app: &TestApp, user_id: Uuid) -> i32 {
+    email_change_request::Entity::find()
+        .filter(email_change_request::Column::UserId.eq(user_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("request row")
+        .request_count
+}
+
+/// Fire `n` email-change requests at once; return (accepted, limited).
+async fn burst(app: &TestApp, auth: &Authed, tag: &str, n: usize) -> (usize, usize) {
+    let statuses = futures::future::join_all((0..n).map(|i| {
+        patch_status(
+            app,
+            auth,
+            json!({"email": format!("{tag}{i}@example.com"), "current_password": PASSWORD}),
+        )
+    }))
+    .await;
+    for st in &statuses {
+        assert!(
+            *st == StatusCode::OK || *st == StatusCode::TOO_MANY_REQUESTS,
+            "unexpected {st}"
+        );
+    }
+    let ok = statuses.iter().filter(|s| **s == StatusCode::OK).count();
+    (ok, n - ok)
+}
+
+#[tokio::test]
+async fn parallel_requests_are_counted_under_a_lock() {
+    // No row yet: the first requests race to create it.
+    let app = TestApp::spawn_with_smtp().await;
+    let a = register(&app, "owner@example.com").await;
+    let (ok, limited) = burst(&app, &a, "fresh", 8).await;
+    assert_eq!((ok, limited), (5, 3));
+    assert_eq!(request_count(&app, a.user_id).await, 5);
+    assert_eq!(app.email.outbox().await.len(), 10, "two mails per accepted");
+
+    // An existing row with two requests in its window.
+    let app = TestApp::spawn_with_smtp().await;
+    let a = register(&app, "owner@example.com").await;
+    request_change(&app, &a, "one@example.com").await;
+    request_change(&app, &a, "two@example.com").await;
+    let (ok, limited) = burst(&app, &a, "more", 6).await;
+    assert_eq!((ok, limited), (3, 3));
+    assert_eq!(request_count(&app, a.user_id).await, 5);
+}
+
+async fn audit_rows(app: &TestApp, action: &str) -> Vec<Value> {
+    entity::audit_log::Entity::find()
+        .filter(entity::audit_log::Column::Action.eq(action))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.payload)
+        .collect()
+}
+
+#[tokio::test]
+async fn combined_password_and_email_change_over_the_limit_changes_nothing() {
+    let app = TestApp::spawn_with_smtp().await;
+    let a = register(&app, "owner@example.com").await;
+    let b = login(&app, "owner@example.com").await;
+    for n in 1..=5 {
+        request_change(&app, &a, &format!("new{n}@example.com")).await;
+    }
+    let audits_before = audit_rows(&app, "user.account.update").await.len();
+    let hash_before = user_row(&app, a.user_id).await.password_hash;
+
+    let (status, body) = patch_account(
+        &app,
+        &a,
+        json!({
+            "email": "new6@example.com",
+            "current_password": PASSWORD,
+            "new_password": NEW_PASSWORD,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+
+    let row = user_row(&app, a.user_id).await;
+    assert_eq!(row.password_hash, hash_before, "password unchanged");
+    assert_eq!(
+        refresh_status(&app, &b).await,
+        StatusCode::OK,
+        "other session alive"
+    );
+    assert_eq!(
+        audit_rows(&app, "user.account.update").await.len(),
+        audits_before,
+        "nothing audited"
+    );
+    login_with(&app, "owner@example.com", PASSWORD).await;
+}
+
+#[tokio::test]
+async fn combined_password_and_email_change_applies_both() {
+    let app = TestApp::spawn_with_smtp().await;
+    let a = register(&app, "owner@example.com").await;
+    let b = login(&app, "owner@example.com").await;
+
+    let (status, body) = patch_account(
+        &app,
+        &a,
+        json!({
+            "email": "new@example.com",
+            "current_password": PASSWORD,
+            "new_password": NEW_PASSWORD,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["pending_email"], "new@example.com");
+
+    assert_eq!(refresh_status(&app, &b).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(refresh_status(&app, &a).await, StatusCode::OK);
+    assert_eq!(login_status(&app, PASSWORD).await, StatusCode::UNAUTHORIZED);
+    login_with(&app, "owner@example.com", NEW_PASSWORD).await;
+
+    let audit = audit_payload(&app, "user.account.update").await;
+    assert_eq!(audit["password"], "changed");
+    assert_eq!(audit["email_change"], "requested");
+    assert_eq!(audit["pending_email"], "new@example.com");
+
+    // The link was made after the password change, so it still works.
+    let token = link_token_sent_to(&app, "new@example.com").await;
+    assert_eq!(open_link(&app, &token, None).await, CONFIRMED_SIGNED_OUT);
+}
+
+async fn login_status(app: &TestApp, password: &str) -> StatusCode {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"email": "owner@example.com", "password": password}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn a_lone_current_password_is_ignored() {
+    let app = TestApp::spawn_with_smtp().await;
+    let a = register(&app, "owner@example.com").await;
+    let hash_before = user_row(&app, a.user_id).await.password_hash;
+    // A password manager filled the profile form's password field.
+    let (status, body) = patch_account(
+        &app,
+        &a,
+        json!({
+            "display_name": "Renamed",
+            "email": "owner@example.com",
+            "current_password": PASSWORD,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["display_name"], "Renamed");
+    assert_eq!(user_row(&app, a.user_id).await.password_hash, hash_before);
+}
+
+#[tokio::test]
+async fn oidc_only_mode_refuses_the_request_up_front() {
+    let app = TestApp::spawn_with_smtp().await;
+    let a = register(&app, "owner@example.com").await;
+    let mut cfg = (*app.state().cfg()).clone();
+    cfg.auth_mode = server::config::AuthMode::Oidc;
+    app.state().replace_cfg(cfg);
+
+    let (status, body) = patch_account(
+        &app,
+        &a,
+        json!({"email": "new@example.com", "current_password": PASSWORD}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["code"], "auth.email_managed_by_issuer");
+    assert!(app.email.outbox().await.is_empty(), "no mail");
+    assert_eq!(pending_rows(&app, a.user_id).await, 0);
 }

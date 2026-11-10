@@ -59,9 +59,11 @@ Verified against the code at `1c51a486` on 2026-11-10.
 
 ### Email-change requests
 
-Each accepted email change sends two emails (the link to the new address, a notice to the old one), so a user may make at most 5 requests per hour ([`api/account.rs`](../../crates/server/src/api/account.rs), `EMAIL_CHANGE_HOURLY_LIMIT`). Not a token bucket: the route also carries display-name and password edits, which this limit must not touch. The count lives on the user's `email_change_requests` row (`window_started_at`, `request_count`) and is carried over when a new request replaces the row or the user cancels it (a cancel keeps the row, expired). The window is fixed: it starts at the first request and lasts an hour. The 6th request inside it gets 429 `rate_limited` with `Retry-After` set to the rest of the window, before anything is written or sent. Because the count is in Postgres it neither fails open with Redis nor follows the `auth.rate_limit_enabled` switch. Without mail delivery an email change applies at once and sends nothing, so it is not counted.
+Each accepted email change sends two emails (the link to the new address, a notice to the old one), so a user may make at most 5 requests per hour while mail delivery is configured ([`api/account.rs`](../../crates/server/src/api/account.rs), `EMAIL_CHANGE_HOURLY_LIMIT`). Without mail delivery an email change applies at once and sends nothing, so it is not counted. Not a token bucket: the route also carries display-name and password edits, which this limit must not touch.
 
-Verified against the code at `8c13f331` on 2026-11-10.
+The count lives on the user's single `email_change_requests` row (`window_started_at`, `request_count`). The window is fixed: it starts at the first request and lasts one hour. A new request updates that row in place (new token, new address, count + 1); a cancel or a credential change expires the row but keeps it, so the count is never lost (only an immediate change without mail delivery deletes it, and nothing is counted then). The handler checks the limit inside the PATCH's transaction after locking the user row (`SELECT … FOR UPDATE`), which serializes concurrent requests of one account, and before writing anything: a refused request changes nothing, including a password change sent in the same request. The 6th request inside the window gets the standard 429 `rate_limited` envelope below, with `retry_after_seconds` and `Retry-After` set to the rest of the window. Because the count is in Postgres it neither fails open with Redis nor follows the `auth.rate_limit_enabled` switch.
+
+Verified against the code at `f6696e94` on 2026-11-10.
 
 ## Per-user web-app buckets
 

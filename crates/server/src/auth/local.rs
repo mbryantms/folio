@@ -1792,7 +1792,7 @@ const EMAIL_CHANGE_TAKEN: &str = "/settings/account?email_change=taken";
 /// Opens the link `PATCH /me/account` mailed to a new address. The token
 /// must match an unconsumed, unexpired `email_change_requests` row of the
 /// same user, made under the account's current `token_version` (a
-/// credential change since voids it: the row is deleted), and the address
+/// credential change since voids it: the row is expired), and the address
 /// must still be free. Then, in one transaction: `users.email` = the new
 /// address, `email_verified = true`, `token_version` bumped, the row
 /// consumed, and every refresh session revoked except the opening
@@ -1841,6 +1841,20 @@ pub async fn confirm_email_change(
         }
     };
     let now = chrono::Utc::now().fixed_offset();
+    // Lock order: the user row first, then the request, the same order
+    // `PATCH /me/account` takes, so the two never deadlock.
+    let row = match UserEntity::find_by_id(user_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await
+    {
+        Ok(Some(r)) if r.external_id.starts_with("local:") && r.state != UserState::Disabled => r,
+        Ok(_) => return invalid(),
+        Err(e) => {
+            tracing::error!(error = %e, "email-change user lookup failed");
+            return invalid();
+        }
+    };
     let request = match EmailChangeEntity::find_by_id(token_id)
         .filter(email_change_request::Column::UserId.eq(user_id))
         .filter(email_change_request::Column::TokenHash.eq(sha256_hex(&q.token)))
@@ -1860,23 +1874,15 @@ pub async fn confirm_email_change(
             return invalid();
         }
     };
-    let row = match UserEntity::find_by_id(user_id)
-        .lock_exclusive()
-        .one(&txn)
-        .await
-    {
-        Ok(Some(r)) if r.external_id.starts_with("local:") && r.state != UserState::Disabled => r,
-        _ => return invalid(),
-    };
     // The account's credentials changed since the request (password change
     // or reset, sign-out-everywhere, admin disable): the request is void.
+    // The row is expired, not deleted, so its hourly count survives.
     if request.token_version != row.token_version {
         tracing::info!(user_id = %user_id, "email-change link outlived a credential change");
-        if let Err(e) = EmailChangeEntity::delete_by_id(request.token_id)
-            .exec(&txn)
-            .await
-        {
-            tracing::error!(error = %e, user_id = %user_id, "email-change stale request delete failed");
+        let mut void: email_change_request::ActiveModel = request.into();
+        void.expires_at = Set(now);
+        if let Err(e) = void.update(&txn).await {
+            tracing::error!(error = %e, user_id = %user_id, "email-change stale request void failed");
             return invalid();
         }
         if let Err(e) = txn.commit().await {
@@ -1975,20 +1981,38 @@ pub async fn confirm_email_change(
     }
 }
 
-/// The unconfirmed address of the user's pending email change, if any
-/// (unconsumed and unexpired).
+/// True when the request's link would still work: unconsumed, unexpired,
+/// and made under the account's current `token_version` (a password change
+/// or reset, sign-out-everywhere or admin disable since then voids it).
+pub(crate) fn request_is_live(
+    r: &email_change_request::Model,
+    user_token_version: i64,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> bool {
+    r.consumed_at.is_none() && r.expires_at > now && r.token_version == user_token_version
+}
+
+/// The unconfirmed address of the user's pending email change, if its link
+/// would still work ([`request_is_live`]).
 pub(crate) async fn pending_email_change<C: sea_orm::ConnectionTrait>(
     db: &C,
     user_id: Uuid,
 ) -> Option<String> {
+    let token_version: i64 = UserEntity::find_by_id(user_id)
+        .select_only()
+        .column(user::Column::TokenVersion)
+        .into_tuple()
+        .one(db)
+        .await
+        .ok()
+        .flatten()?;
     EmailChangeEntity::find()
         .filter(email_change_request::Column::UserId.eq(user_id))
-        .filter(email_change_request::Column::ConsumedAt.is_null())
-        .filter(email_change_request::Column::ExpiresAt.gt(chrono::Utc::now().fixed_offset()))
         .one(db)
         .await
         .ok()
         .flatten()
+        .filter(|r| request_is_live(r, token_version, chrono::Utc::now().fixed_offset()))
         .map(|r| r.new_email)
 }
 

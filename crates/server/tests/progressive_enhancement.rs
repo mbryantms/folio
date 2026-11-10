@@ -503,6 +503,19 @@ async fn form_profile_post_changes_the_email() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(location, "/settings/account?ok=1");
 
+    // A password manager filled the field on a display-name-only save: no
+    // new password, so it is not a password change and the save goes through.
+    let (status, location) = form_account_post(
+        &app,
+        &cookies,
+        format!(
+            "csrf_token={token}&display_name=Again&email=first%40example.com&current_password=correctly-horse-battery"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location, "/settings/account?ok=1");
+
     // A new address without the password bounces back with the error.
     let (status, location) = form_account_post(
         &app,

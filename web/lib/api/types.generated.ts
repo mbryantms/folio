@@ -1636,7 +1636,7 @@ export interface paths {
          * @description Opens the link `PATCH /me/account` mailed to a new address. The token
          *     must match an unconsumed, unexpired `email_change_requests` row of the
          *     same user, made under the account's current `token_version` (a
-         *     credential change since voids it: the row is deleted), and the address
+         *     credential change since voids it: the row is expired), and the address
          *     must still be free. Then, in one transaction: `users.email` = the new
          *     address, `email_verified = true`, `token_version` bumped, the row
          *     consumed, and every refresh session revoked except the opening

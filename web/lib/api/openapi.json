@@ -3575,7 +3575,7 @@
     "/api/auth/local/confirm-email-change": {
       "get": {
         "summary": "`GET /auth/local/confirm-email-change?token=...`",
-        "description": "Opens the link `PATCH /me/account` mailed to a new address. The token\nmust match an unconsumed, unexpired `email_change_requests` row of the\nsame user, made under the account's current `token_version` (a\ncredential change since voids it: the row is deleted), and the address\nmust still be free. Then, in one transaction: `users.email` = the new\naddress, `email_verified = true`, `token_version` bumped, the row\nconsumed, and every refresh session revoked except the opening\nbrowser's, kept only when it belongs to the same user. Always answers\nwith a redirect to `/settings/account` carrying\n`email_change=confirmed|confirmed_signed_out|invalid|taken`.",
+        "description": "Opens the link `PATCH /me/account` mailed to a new address. The token\nmust match an unconsumed, unexpired `email_change_requests` row of the\nsame user, made under the account's current `token_version` (a\ncredential change since voids it: the row is expired), and the address\nmust still be free. Then, in one transaction: `users.email` = the new\naddress, `email_verified = true`, `token_version` bumped, the row\nconsumed, and every refresh session revoked except the opening\nbrowser's, kept only when it belongs to the same user. Always answers\nwith a redirect to `/settings/account` carrying\n`email_change=confirmed|confirmed_signed_out|invalid|taken`.",
         "operationId": "local_confirm_email_change",
         "parameters": [
           {

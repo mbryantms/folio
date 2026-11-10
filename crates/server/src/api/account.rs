@@ -47,10 +47,11 @@ use crate::auth::cookies::{csrf_cookie, new_csrf_token, sha256_hex};
 use crate::auth::email_token;
 use crate::auth::failed_auth::PasswordCheck;
 use crate::auth::local::{
-    EMAIL_CHANGE_TTL, MeResp, has_local_password, me_resp_from_row, pending_email_change,
+    EMAIL_CHANGE_TTL, MeResp, has_local_password, me_resp_from_row, request_is_live,
     with_pending_email,
 };
 use crate::auth::{CurrentUser, failed_auth, password};
+use crate::config::AuthMode;
 use crate::email::templates;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
@@ -210,6 +211,16 @@ pub async fn update(
         if current.as_deref() == Some(lower.as_str()) {
             cancel_pending = true;
         } else {
+            // The confirm link only works while local auth is on (OIDC-only
+            // mode refuses it), so refuse the change up front, before any
+            // mail goes out.
+            if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
+                return fail(
+                    StatusCode::FORBIDDEN,
+                    "auth.email_managed_by_issuer",
+                    "email is managed by your identity provider",
+                );
+            }
             new_email = Some(lower);
         }
     }
@@ -245,10 +256,11 @@ pub async fn update(
         }
     }
 
-    // `current_password` alone (no email change) still means "change the
-    // password" so the missing-`new_password` error below keeps firing.
-    let password_change = new_pw.is_some() || (current_pw.is_some() && new_email.is_none());
-    if password_change {
+    // Only `new_password` makes a password change. A lone
+    // `current_password` (the profile form always carries the field, and a
+    // password manager may fill it) is ignored when the email is unchanged.
+    let password_change = new_pw.is_some();
+    if let Some(new_pw) = new_pw {
         if !is_local {
             return fail(
                 StatusCode::FORBIDDEN,
@@ -256,13 +268,6 @@ pub async fn update(
                 "password is managed by your identity provider",
             );
         }
-        let Some(new_pw) = new_pw else {
-            return fail(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation.new_password",
-                "new_password is required when current_password is provided",
-            );
-        };
         let Some(current_pw) = current_pw else {
             return fail(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -345,27 +350,74 @@ pub async fn update(
     // The address a confirmation link goes to (mail configured).
     let pending = new_email.as_ref().filter(|_| mail_configured).cloned();
 
-    // The hourly limit, before anything is written. Re-checked under the
-    // row lock when the request is stored.
-    if pending.is_some() {
-        let prev = EmailChangeEntity::find()
-            .filter(email_change_request::Column::UserId.eq(user.id))
-            .one(&app.db)
-            .await;
-        match prev {
-            Ok(prev) => {
-                if let Err(retry) = next_window(prev.as_ref(), chrono::Utc::now().fixed_offset()) {
-                    return fail_retry(rate_limited(retry), "rate_limited", RATE_LIMITED_MSG);
-                }
-            }
+    // Hash outside the transaction (argon2 is slow; the row lock is not
+    // held for it).
+    let new_hash = match new_pw.filter(|_| password_change) {
+        Some(new_pw) => match password::hash(
+            new_pw,
+            app.secrets.pepper.as_ref(),
+            app.cfg().password_hash_cost,
+        ) {
+            Ok(h) => Some(h),
             Err(e) => {
-                tracing::error!(error = %e, "email-change request lookup failed");
+                tracing::error!(error = %e, "argon2 rehash failed");
                 return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
+        },
+        None => None,
+    };
+
+    // All-or-nothing from here: the user row, the email-change request,
+    // the session revocation and the audit row commit together, and the
+    // hourly limit is checked before any of them is written. The user row
+    // is locked first; it serializes concurrent PATCHes of one account
+    // (and the confirm link, which locks in the same order).
+    let internal = || fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    let txn = match app.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "account update: begin failed");
+            return internal();
+        }
+    };
+    let locked = match UserEntity::find_by_id(user.id)
+        .lock_exclusive()
+        .one(&txn)
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => return internal(),
+        Err(e) => {
+            tracing::error!(error = %e, "account update: user lock failed");
+            return internal();
+        }
+    };
+    let now = chrono::Utc::now().fixed_offset();
+    let prev = if pending.is_some() || cancel_pending {
+        match EmailChangeEntity::find()
+            .filter(email_change_request::Column::UserId.eq(user.id))
+            .one(&txn)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "email-change request lookup failed");
+                return internal();
+            }
+        }
+    } else {
+        None
+    };
+    let mut window = None;
+    if pending.is_some() {
+        match next_window(prev.as_ref(), now) {
+            Ok(w) => window = Some(w),
+            // Dropping `txn` rolls back; nothing was written.
+            Err(retry) => return fail_retry(rate_limited(retry), "rate_limited", RATE_LIMITED_MSG),
         }
     }
 
-    let mut am: UserAM = row.clone().into();
+    let mut am: UserAM = locked.clone().into();
     // Audit payload; `row_changed` tracks writes to the user row itself.
     let mut changed = serde_json::Map::new();
     let mut row_changed = false;
@@ -373,14 +425,14 @@ pub async fn update(
 
     if let Some(name) = req.display_name.as_deref() {
         let trimmed = name.trim().to_owned();
-        if trimmed != row.display_name {
+        if trimmed != locked.display_name {
             changed.insert("display_name".into(), serde_json::json!(trimmed));
             am.display_name = Set(trimmed);
             row_changed = true;
         }
     }
-    let mut immediate_email_change = false;
-    if let Some(lower) = new_email.as_ref().filter(|_| !mail_configured) {
+    let immediate_email_change = new_email.is_some() && !mail_configured;
+    if let Some(lower) = new_email.as_ref().filter(|_| immediate_email_change) {
         // No way to confirm: apply now, unverified, and sign the other
         // sessions out as a password change does.
         tracing::warn!(
@@ -388,56 +440,29 @@ pub async fn update(
             "email changed without confirmation: mail delivery is not configured"
         );
         changed.insert("email".into(), serde_json::json!(lower));
-        changed.insert("previous_email".into(), serde_json::json!(row.email));
+        changed.insert("previous_email".into(), serde_json::json!(locked.email));
         changed.insert("email_verified".into(), serde_json::json!(false));
         am.email = Set(Some(lower.clone()));
         am.email_verified = Set(false);
         bump_token_version = true;
-        immediate_email_change = true;
         row_changed = true;
     }
-    if let Some(new_pw) = new_pw.filter(|_| password_change) {
-        let hashed = match password::hash(
-            new_pw,
-            app.secrets.pepper.as_ref(),
-            app.cfg().password_hash_cost,
-        ) {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::error!(error = %e, "argon2 rehash failed");
-                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        };
+    if let Some(hashed) = new_hash {
         changed.insert("password".into(), serde_json::json!("changed"));
         am.password_hash = Set(Some(hashed));
         bump_token_version = true;
         row_changed = true;
     }
-
     // Submitting the current address while a change is pending cancels it.
-    // The row stays (expired) so the hourly count survives the cancel.
-    if cancel_pending && let Some(addr) = pending_email_change(&app.db, user.id).await {
-        let now = chrono::Utc::now().fixed_offset();
-        if let Err(e) = EmailChangeEntity::update_many()
-            .col_expr(
-                email_change_request::Column::ExpiresAt,
-                sea_orm::sea_query::Expr::value(now),
-            )
-            .filter(email_change_request::Column::UserId.eq(user.id))
-            .filter(email_change_request::Column::ConsumedAt.is_null())
-            .exec(&app.db)
-            .await
-        {
-            tracing::error!(error = %e, user_id = %user.id, "email-change cancel failed");
-            return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
-        changed.insert("email_change".into(), serde_json::json!("cancelled"));
-        changed.insert("pending_email".into(), serde_json::json!(addr));
-    }
+    let cancelled = prev
+        .as_ref()
+        .filter(|p| cancel_pending && request_is_live(p, locked.token_version, now))
+        .map(|p| p.new_email.clone());
 
-    if changed.is_empty() && pending.is_none() {
+    if changed.is_empty() && pending.is_none() && cancelled.is_none() {
+        drop(txn);
         let csrf = new_csrf_token();
-        let body = with_pending_email(&app.db, me_resp_from_row(&row, csrf.clone())).await;
+        let body = with_pending_email(&app.db, me_resp_from_row(&locked, csrf.clone())).await;
         let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
         return match format {
             ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
@@ -446,11 +471,11 @@ pub async fn update(
     }
 
     let updated = if row_changed {
-        am.updated_at = Set(chrono::Utc::now().fixed_offset());
+        am.updated_at = Set(now);
         if bump_token_version {
-            am.token_version = Set(row.token_version + 1);
+            am.token_version = Set(locked.token_version + 1);
         }
-        match am.update(&app.db).await {
+        match am.update(&txn).await {
             Ok(m) => m,
             Err(e) if is_unique_violation(&e) => {
                 // The unique index on lower(email) closes the race with the
@@ -459,31 +484,61 @@ pub async fn update(
             }
             Err(e) => {
                 tracing::error!(error = %e, "account update failed");
-                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                return internal();
             }
         }
     } else {
-        row.clone()
+        locked.clone()
     };
 
     if immediate_email_change {
         // A request left over from when mail was configured is moot now.
-        let _ = EmailChangeEntity::delete_many()
+        if let Err(e) = EmailChangeEntity::delete_many()
             .filter(email_change_request::Column::UserId.eq(user.id))
-            .exec(&app.db)
-            .await;
+            .exec(&txn)
+            .await
+        {
+            tracing::error!(error = %e, user_id = %user.id, "email-change request delete failed");
+            return internal();
+        }
     }
-    if let Some(new_addr) = pending.as_deref() {
+    if let Some(addr) = cancelled.as_deref() {
+        // The row stays (expired) so the hourly count survives the cancel.
+        if let Err(e) = EmailChangeEntity::update_many()
+            .col_expr(
+                email_change_request::Column::ExpiresAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .filter(email_change_request::Column::UserId.eq(user.id))
+            .exec(&txn)
+            .await
+        {
+            tracing::error!(error = %e, user_id = %user.id, "email-change cancel failed");
+            return internal();
+        }
+        changed.insert("email_change".into(), serde_json::json!("cancelled"));
+        changed.insert("pending_email".into(), serde_json::json!(addr));
+    }
+    // The link to mail once the transaction commits.
+    let mut link: Option<(String, String)> = None;
+    if let (Some(new_addr), Some(window)) = (pending.as_deref(), window) {
         // `updated` carries the token_version a password change in this
-        // same request produced, so that change does not cancel the link.
-        match store_and_send_email_change(&app, &updated, new_addr).await {
-            Ok(Stored::Sent) => {}
-            Ok(Stored::RateLimited(retry)) => {
-                return fail_retry(rate_limited(retry), "rate_limited", RATE_LIMITED_MSG);
-            }
+        // same request produced, so that change does not void the link.
+        match write_email_change_request(
+            &app,
+            &txn,
+            &updated,
+            new_addr,
+            prev.is_some(),
+            window,
+            now,
+        )
+        .await
+        {
+            Ok(tok) => link = Some((new_addr.to_owned(), tok)),
             Err(e) => {
-                tracing::error!(error = %e, user_id = %user.id, "email-change request failed");
-                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                tracing::error!(error = %e, user_id = %user.id, "email-change request write failed");
+                return internal();
             }
         }
         changed.insert("email_change".into(), serde_json::json!("requested"));
@@ -499,11 +554,11 @@ pub async fn update(
         let keep = jar
             .get(crate::auth::cookies::REFRESH_COOKIE)
             .map(|c| crate::auth::cookies::sha256_hex(c.value()));
-        crate::auth::local::revoke_sessions_for_user(&app.db, user.id, keep.as_deref()).await;
+        crate::auth::local::revoke_sessions_for_user(&txn, user.id, keep.as_deref()).await;
     }
 
-    audit::record(
-        &app.db,
+    if let Err(e) = audit::record_in(
+        &txn,
         AuditEntry {
             actor_id: user.id,
             action: "user.account.update",
@@ -514,7 +569,19 @@ pub async fn update(
             user_agent: ctx.user_agent.clone(),
         },
     )
-    .await;
+    .await
+    {
+        tracing::error!(error = %e, user_id = %user.id, "account update audit write failed");
+        return internal();
+    }
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, user_id = %user.id, "account update commit failed");
+        return internal();
+    }
+
+    if let Some((new_addr, tok)) = link.as_ref() {
+        send_email_change_mail(&app, &updated, new_addr, tok).await;
+    }
 
     let csrf = new_csrf_token();
     let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
@@ -532,19 +599,10 @@ pub async fn update(
 
 const RATE_LIMITED_MSG: &str = "too many email-change requests; try again later";
 
-/// 429 `rate_limited` with `Retry-After`, the envelope the rate-limit
-/// middleware answers with.
+/// 429 `rate_limited` with `Retry-After` and `retry_after_seconds`: the
+/// rate-limit middleware's own envelope.
 fn rate_limited(retry_after_seconds: u64) -> axum::response::Response {
-    let mut resp = error(
-        StatusCode::TOO_MANY_REQUESTS,
-        "rate_limited",
-        RATE_LIMITED_MSG,
-    );
-    if let Ok(v) = axum::http::HeaderValue::from_str(&retry_after_seconds.to_string()) {
-        resp.headers_mut()
-            .insert(axum::http::header::RETRY_AFTER, v);
-    }
-    resp
+    crate::middleware::rate_limit::rate_limited_response(RATE_LIMITED_MSG, retry_after_seconds)
 }
 
 /// True when another account holds `lower` (compared as `lower(email)`,
@@ -591,20 +649,21 @@ fn next_window(
     }
 }
 
-enum Stored {
-    Sent,
-    RateLimited(u64),
-}
-
-/// Replace the user's pending email change with one for `new_addr`, then
-/// mail the confirmation link to `new_addr` and a notice to the current
-/// address. Send failures are logged, not returned: the request is stored
-/// and a new PATCH replaces it. Refuses past the hourly limit.
-async fn store_and_send_email_change(
+/// Point the user's single `email_change_requests` row at `new_addr`
+/// with a fresh token, inside the caller's transaction (which holds the
+/// user row lock). The row is updated in place when it exists, so its
+/// hourly window and count are never lost; otherwise it is inserted.
+/// Returns the token for the link.
+async fn write_email_change_request(
     app: &AppState,
+    txn: &sea_orm::DatabaseTransaction,
     row: &user::Model,
     new_addr: &str,
-) -> Result<Stored, sea_orm::DbErr> {
+    exists: bool,
+    (window_started_at, request_count): (chrono::DateTime<chrono::FixedOffset>, i32),
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> Result<String, sea_orm::DbErr> {
+    use sea_orm::sea_query::Expr;
     let token_id = uuid::Uuid::now_v7();
     let tok = email_token::issue_email_change(
         row.id,
@@ -612,45 +671,68 @@ async fn store_and_send_email_change(
         EMAIL_CHANGE_TTL,
         app.secrets.email_token_key.as_ref(),
     );
-    let now = chrono::Utc::now().fixed_offset();
     let expires_at = now + chrono::Duration::seconds(EMAIL_CHANGE_TTL.as_secs() as i64);
-    let txn = app.db.begin().await?;
-    let prev = EmailChangeEntity::find()
-        .filter(email_change_request::Column::UserId.eq(row.id))
-        .lock_exclusive()
-        .one(&txn)
-        .await?;
-    let (window_started_at, request_count) = match next_window(prev.as_ref(), now) {
-        Ok(w) => w,
-        Err(retry) => {
-            txn.rollback().await?;
-            return Ok(Stored::RateLimited(retry));
+    if exists {
+        // A new token id voids the previous link.
+        EmailChangeEntity::update_many()
+            .col_expr(email_change_request::Column::TokenId, Expr::value(token_id))
+            .col_expr(
+                email_change_request::Column::NewEmail,
+                Expr::value(new_addr.to_owned()),
+            )
+            .col_expr(
+                email_change_request::Column::TokenHash,
+                Expr::value(sha256_hex(&tok)),
+            )
+            .col_expr(
+                email_change_request::Column::ExpiresAt,
+                Expr::value(expires_at),
+            )
+            .col_expr(
+                email_change_request::Column::ConsumedAt,
+                Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+            )
+            .col_expr(email_change_request::Column::CreatedAt, Expr::value(now))
+            .col_expr(
+                email_change_request::Column::TokenVersion,
+                Expr::value(row.token_version),
+            )
+            .col_expr(
+                email_change_request::Column::WindowStartedAt,
+                Expr::value(window_started_at),
+            )
+            .col_expr(
+                email_change_request::Column::RequestCount,
+                Expr::value(request_count),
+            )
+            .filter(email_change_request::Column::UserId.eq(row.id))
+            .exec(txn)
+            .await?;
+    } else {
+        EmailChangeAM {
+            token_id: Set(token_id),
+            user_id: Set(row.id),
+            new_email: Set(new_addr.to_owned()),
+            token_hash: Set(sha256_hex(&tok)),
+            expires_at: Set(expires_at),
+            consumed_at: Set(None),
+            created_at: Set(now),
+            token_version: Set(row.token_version),
+            window_started_at: Set(window_started_at),
+            request_count: Set(request_count),
         }
-    };
-    // One pending request per user (unique `user_id`): the new one replaces
-    // the old, whose link stops working.
-    EmailChangeEntity::delete_many()
-        .filter(email_change_request::Column::UserId.eq(row.id))
-        .exec(&txn)
+        .insert(txn)
         .await?;
-    EmailChangeAM {
-        token_id: Set(token_id),
-        user_id: Set(row.id),
-        new_email: Set(new_addr.to_owned()),
-        token_hash: Set(sha256_hex(&tok)),
-        expires_at: Set(expires_at),
-        consumed_at: Set(None),
-        created_at: Set(now),
-        token_version: Set(row.token_version),
-        window_started_at: Set(window_started_at),
-        request_count: Set(request_count),
     }
-    .insert(&txn)
-    .await?;
-    txn.commit().await?;
+    Ok(tok)
+}
 
+/// Mail the confirmation link to `new_addr` and a notice to the account's
+/// current address. Runs after the request committed; send failures are
+/// logged, not returned (a new PATCH sends a new link).
+async fn send_email_change_mail(app: &AppState, row: &user::Model, new_addr: &str, tok: &str) {
     let public_url = app.cfg().public_url.clone();
-    let confirm = templates::email_change_confirm(&public_url, new_addr, &tok);
+    let confirm = templates::email_change_confirm(&public_url, new_addr, tok);
     if let Err(e) = app.send_email(confirm).await {
         tracing::warn!(error = %e, user_id = %row.id, "email-change confirmation send failed");
     }
@@ -661,5 +743,4 @@ async fn store_and_send_email_change(
         }
     }
     tracing::info!(user_id = %row.id, "email-change confirmation sent");
-    Ok(Stored::Sent)
 }
