@@ -243,6 +243,56 @@ async fn switching_to_oidc_with_all_creds_succeeds() {
     );
 }
 
+/// Mode never chosen (fresh install): saving only part of the OIDC block
+/// is rejected with the missing values named, and saving all of it without
+/// picking a mode follows the same rule as boot (`resolve_auth_mode`):
+/// unchosen + complete single sign-on = `both`. The admin page itself
+/// always saves a mode alongside OIDC values, because its OIDC fields only
+/// unlock after the admin picks OIDC or Both.
+#[tokio::test]
+async fn defaulted_mode_follows_the_boot_rule_on_save() {
+    let app = TestApp::spawn_with_default_auth_mode().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    assert_eq!(app.state().cfg().auth_mode.to_string(), "local");
+
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::PATCH,
+        "/api/admin/settings",
+        Some(json!({ "auth.oidc.issuer": "https://idp.example.test" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "settings.invalid_combination");
+    let msg = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(msg.contains("client id"), "{msg}");
+    assert!(msg.contains("client secret"), "{msg}");
+    assert_eq!(app.state().cfg().auth_mode.to_string(), "local");
+
+    let resp = send_authed(
+        &app,
+        &admin,
+        Method::PATCH,
+        "/api/admin/settings",
+        Some(json!({
+            "auth.oidc.issuer": "https://idp.example.test",
+            "auth.oidc.client_id": "folio-test",
+            "auth.oidc.client_secret": "super-secret-client-secret",
+        })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cfg = app.state().cfg();
+    assert!(cfg.auth_mode_choice.is_none());
+    assert_eq!(cfg.auth_mode.to_string(), "both");
+    let resp = get_anon(&app, "/api/auth/config").await;
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["auth_mode"], "both");
+    assert_eq!(body["oidc_enabled"], true);
+}
+
 #[tokio::test]
 async fn password_recovery_flag_flips_when_smtp_configured() {
     // Positive companion to the assertion above: PATCH a smtp.host into

@@ -129,6 +129,18 @@ export function OfflineLibrary() {
     };
   }, [manager, recordId]);
 
+  // Whether this document has shown the list (no issue in the URL): a
+  // reader opened from it sits one history entry above it, so the exit
+  // goes back there (audit U-02). Opened straight from a link or the
+  // worker's redirect, the exit replaces the reader with the list instead,
+  // so Back does not reopen it.
+  const [listShown, setListShown] = useState(!requested);
+  if (!requested && !listShown) setListShown(true);
+  const exitReader = useCallback(() => {
+    if (listShown) window.history.back();
+    else window.history.replaceState(null, "", OFFLINE_SHELL_PATH);
+  }, [listShown]);
+
   const open = useCallback((d: DownloadRecord, listId?: string | null) => {
     window.history.pushState(null, "", offlineReadHref(d.issueId, listId));
   }, []);
@@ -148,6 +160,7 @@ export function OfflineLibrary() {
           record={record}
           list={list}
           manager={manager}
+          onExit={exitReader}
         />
       </>
     );

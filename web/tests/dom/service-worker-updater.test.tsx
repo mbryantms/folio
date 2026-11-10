@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, render } from "@testing-library/react";
-import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   listeners: {} as Record<string, () => void>,
   register: vi.fn(),
@@ -116,4 +116,51 @@ it("keeps the registration on an ordinary load", async () => {
   await act(async () => {});
   expect(unregister).not.toHaveBeenCalled();
   expect(state.register).toHaveBeenCalledOnce();
+});
+
+describe("reload over an edited form", () => {
+  async function offerReload() {
+    render(
+      <>
+        <form>
+          <input aria-label="Name" />
+        </form>
+        <ServiceWorkerUpdater />
+      </>,
+    );
+    await act(async () => {
+      state.listeners.waiting!();
+    });
+    fireEvent.input(screen.getByLabelText("Name"), {
+      target: { value: "edited" },
+    });
+    await act(async () => {
+      state.toast.mock.calls.at(-1)![1].action.onClick();
+    });
+  }
+
+  it("asks in a dialog and activates the worker only on Reload", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    await offerReload();
+    expect(
+      screen.getByRole("alertdialog", { name: "Reload Folio?" }),
+    ).toBeTruthy();
+    expect(state.skip).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    expect(state.skip).toHaveBeenCalledOnce();
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  it("does nothing on Cancel or Escape", async () => {
+    await offerReload();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await act(async () => {
+      state.toast.mock.calls.at(-1)![1].action.onClick();
+    });
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(state.skip).not.toHaveBeenCalled();
+  });
 });

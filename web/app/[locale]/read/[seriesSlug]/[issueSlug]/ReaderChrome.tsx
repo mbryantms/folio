@@ -71,6 +71,7 @@ export function ReaderChrome({
   seriesId,
   issueId,
   exitUrl,
+  onExit: exit,
   totalPages,
   visiblePages,
   progressCurrent,
@@ -86,6 +87,9 @@ export function ReaderChrome({
    * issue detail page. Computed by the parent so chrome doesn't need to
    * know the slug shape. */
   exitUrl: string;
+  /** Leaves the reader (the Reader's `exitReader`: back to where reading
+   *  started, else `exitUrl`). Omitted: a plain push to `exitUrl`. */
+  onExit?: () => void;
   totalPages: number;
   /** Pages currently visible on screen (length 2 in double-page mode when
    * the active group is a pair). When omitted, the chrome falls back to
@@ -141,8 +145,9 @@ export function ReaderChrome({
   }, []);
 
   const onExit = useCallback(() => {
-    router.push(exitUrl);
-  }, [exitUrl, router]);
+    if (exit) exit();
+    else router.push(exitUrl);
+  }, [exit, exitUrl, router]);
 
   const narrow = useNarrowChrome();
 

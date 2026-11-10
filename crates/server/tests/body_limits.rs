@@ -557,6 +557,7 @@ async fn proxy_cuts_off_streamed_oversize_body_with_413() {
         req,
         Duration::from_secs(5),
         None,
+        false,
         None,
         2048,
     )
@@ -593,6 +594,7 @@ async fn proxy_forwards_streamed_body_under_the_cap() {
         req,
         Duration::from_secs(5),
         None,
+        false,
         None,
         2048,
     )
@@ -645,6 +647,7 @@ async fn ws_scan_events_closes_client_sending_oversize_frame() {
          Connection: upgrade\r\n\
          Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
          Sec-WebSocket-Version: 13\r\n\
+         Origin: http://localhost:8080\r\n\
          Cookie: {}\r\n\
          \r\n",
         auth.cookie()

@@ -8,7 +8,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PageImage } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/PageImage";
+import {
+  PageImage,
+  retryTopPx,
+} from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/PageImage";
 
 const SRC = "/issues/i1/pages/5";
 
@@ -66,5 +69,40 @@ describe("PageImage load failure", () => {
     const { img } = page();
     expect(img().getAttribute("src")).toBe(SRC);
     expect(retry()).toBeNull();
+  });
+});
+
+describe("PageImage retry stays in view", () => {
+  it("sits in the middle of the part of the page on screen", () => {
+    // A 3000 px page scrolled 2000 px down in an 800 px window: the
+    // visible band is box 2000..2800, so the retry centres at 2400.
+    expect(retryTopPx({ top: -2000, bottom: 1000 }, 800)).toBe(2400);
+    // Page shorter than the window: the middle of the page.
+    expect(retryTopPx({ top: 100, bottom: 500 }, 800)).toBe(200);
+    // Zoomed 2x: screen px halve into box px.
+    expect(retryTopPx({ top: -2000, bottom: 1000 }, 800, 2)).toBe(1200);
+  });
+
+  it("pins the shown retry to the viewport, following scroll", () => {
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 1;
+    });
+    let top = 0;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ top, bottom: top + 3000, height: 3000 }) as DOMRect,
+    );
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 800,
+    });
+    const { img } = page();
+    fireEvent.error(img());
+    fireEvent.error(img());
+    expect(retry()!.style.top).toBe("400px");
+
+    top = -2000;
+    fireEvent.scroll(window);
+    expect(retry()!.style.top).toBe("2400px");
   });
 });

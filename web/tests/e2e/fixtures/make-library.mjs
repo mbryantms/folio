@@ -4,7 +4,7 @@
  *
  *   node web/tests/e2e/fixtures/make-library.mjs [outDir]
  *
- * Writes three series folders, one issue each:
+ * Writes four series folders:
  *
  *   - `Test Series (2020)/Test Series 001.cbz` — what `reader-flow.spec.ts`
  *     reads: three pages, no ComicInfo (folder-name inference only).
@@ -15,6 +15,10 @@
  *     name-continuation detector proposes "Relay (2016) continues Relay
  *     (2011)" (consecutive volumes → 0.9, the high bucket), which
  *     `relationship-review.spec.ts` accepts from `/admin/relationships`.
+ *   - `Two Step (2018)/Two Step 001.cbz` and `Two Step 002.cbz` — the one
+ *     series with a next issue, for the reader-exit case in
+ *     `reader-flow.spec.ts` (no ComicInfo, so nothing links it to the
+ *     others).
  *
  * Each archive is a STORED zip of real, decodable portrait PNGs (100x150,
  * solid colour, distinct bytes per page and per archive). Mirrors the Rust
@@ -162,6 +166,16 @@ writeCbz("Test Series (2020)", "Test Series 001.cbz", [
   ["page-001.png", png(100, 150, [200, 40, 40])],
   ["page-002.png", png(100, 150, [40, 160, 60])],
   ["page-003.png", png(100, 150, [40, 80, 220])],
+]);
+
+// Two issues of one series: the reader's next issue.
+writeCbz("Two Step (2018)", "Two Step 001.cbz", [
+  ["page-001.png", png(100, 150, [90, 90, 30])],
+  ["page-002.png", png(100, 150, [30, 90, 90])],
+]);
+writeCbz("Two Step (2018)", "Two Step 002.cbz", [
+  ["page-001.png", png(100, 150, [90, 30, 90])],
+  ["page-002.png", png(100, 150, [60, 60, 60])],
 ]);
 
 // Two volumes of one title → a pending `continues` suggestion after the scan.

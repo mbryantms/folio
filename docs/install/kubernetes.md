@@ -143,6 +143,13 @@ spec:
               value: https://comics.example.com
             - name: COMIC_TRUSTED_PROXIES
               value: 10.0.0.0/8
+            # No COMIC_AUTH_MODE: without single sign-on settings the
+            # server uses local (email and password) sign-in. Open
+            # registration for the first boot so you can create the
+            # first account, which becomes the admin; then turn off
+            # "Self-serve registration" under /admin/auth.
+            - name: COMIC_LOCAL_REGISTRATION_OPEN
+              value: "true"
             # SSR fallback upstream. Resolved via cluster DNS to the
             # `folio-web` Service. See the topology diagram above.
             - name: COMIC_WEB_UPSTREAM_URL

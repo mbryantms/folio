@@ -145,6 +145,39 @@ function save(slice: PersistedSlice, seriesId: string | null, value: string) {
 
 export const loadFitMode = (seriesId: string | null): FitMode =>
   load("fitMode", seriesId, isFitMode) ?? "width";
+/**
+ * The fit a reader opens in when nothing chose one: no per-series override
+ * (server row or local cache) and no account default (audit U-05). A
+ * window wider than the page would be at full height (a desktop or a
+ * landscape tablet) gets Screen fit, so the whole page is visible; a
+ * narrow or portrait window (a phone) keeps width fit. Webtoon is width-fit
+ * by construction. Double view compares against the two-page spread.
+ *
+ * Never persisted: `init` only `set`s it, so the reader re-decides on the
+ * next open and on another device.
+ */
+export function autoFitMode({
+  viewMode,
+  pageAspect,
+  viewportWidth,
+  viewportHeight,
+}: {
+  viewMode: ViewMode;
+  /** Width / height of the page the reader opens on; portrait 2:3 when
+   *  the scanner recorded no dimensions. */
+  pageAspect?: number | null;
+  viewportWidth: number;
+  viewportHeight: number;
+}): FitMode {
+  if (viewMode === "webtoon") return "width";
+  const aspect =
+    pageAspect && Number.isFinite(pageAspect) && pageAspect > 0
+      ? pageAspect
+      : 2 / 3;
+  const across = viewMode === "double" ? 2 : 1;
+  return viewportWidth > viewportHeight * aspect * across ? "contain" : "width";
+}
+
 export const loadViewMode = (seriesId: string | null): ViewMode | null =>
   load("viewMode", seriesId, isViewMode);
 export const loadDirection = (seriesId: string | null): Direction | null =>
@@ -358,8 +391,12 @@ export interface ReaderState {
     initialPage: number;
     initialDirection: Direction;
     initialViewMode: ViewMode;
-    /** M4: user-default fit mode; per-series localStorage still wins. */
-    initialFitMode?: FitMode;
+    /** M4: user-default fit mode; per-series localStorage still wins.
+     *  Omitted or null: no saved fit, so `autoFitMode` picks from the
+     *  viewport. */
+    initialFitMode?: FitMode | null;
+    /** Width / height of the page the reader opens on (`autoFitMode`). */
+    initialPageAspect?: number | null;
     /** M4: user preference for whether the page strip starts visible. */
     initialPageStripVisible?: boolean;
     /** Per-user default for cover-solo in double-page view. Per-series
@@ -394,7 +431,13 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
   seriesId: null,
   currentPage: 0,
   totalPages: 0,
-  fitMode: "width",
+  // What the server render and the hydration pass lay out before `init`
+  // runs. `contain` sizes a single page to min(width, height × aspect),
+  // which is exactly the fit `autoFitMode` then picks on either side of
+  // its threshold (Screen on a wide window, width on a narrow one), so a
+  // first open with no saved fit does not jump; webtoon renders contain
+  // as width.
+  fitMode: "contain",
   viewMode: "single",
   direction: "ltr",
   // Resolved per mount in `init` (`initialChromeVisible`): hidden on fine
@@ -573,6 +616,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     initialDirection,
     initialViewMode,
     initialFitMode,
+    initialPageAspect,
     initialPageStripVisible,
     initialCoverSolo,
     serverSeriesPrefs,
@@ -597,10 +641,22 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
     }
     // Stored per-series choice always wins over the auto-detected default and
     // over the user's global preference. Resolution order:
-    //   server(per-series) > localStorage(per-series) > user default > built-in.
+    //   server(per-series) > localStorage(per-series) > user default >
+    //   built-in (fit: the viewport, `autoFitMode`, never saved).
     const stripEnabled = sessionPageStrip ?? initialPageStripVisible ?? false;
     const stored = load("fitMode", seriesId, isFitMode);
-    const fit: FitMode = stored ?? initialFitMode ?? "width";
+    const viewMode = loadViewMode(seriesId) ?? initialViewMode;
+    const fit: FitMode =
+      stored ??
+      initialFitMode ??
+      (typeof window === "undefined"
+        ? "width"
+        : autoFitMode({
+            viewMode,
+            pageAspect: initialPageAspect,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+          }));
     set({
       initSeq: get().initSeq + 1,
       issueId,
@@ -608,7 +664,7 @@ export const useReaderStore = create<ReaderState>((set, get) => ({
       totalPages,
       currentPage: Math.max(0, Math.min(totalPages - 1, initialPage)),
       fitMode: fit,
-      viewMode: loadViewMode(seriesId) ?? initialViewMode,
+      viewMode,
       direction: loadDirection(seriesId) ?? initialDirection,
       // Fine pointers open with chrome hidden so each new issue lands on
       // a pure-image surface (a tap on the page or `t` reveals it). Touch

@@ -165,7 +165,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
       form.reset(formValuesFromLibrary(lib.data));
     }
   }, [lib.data, form]);
-  useUnsavedChangesGuard(form.formState.isDirty);
+  const leaveGuard = useUnsavedChangesGuard(form.formState.isDirty);
 
   if (lib.isLoading) return <LibrarySettingsSkeleton />;
   if (lib.error || !lib.data) {
@@ -860,6 +860,7 @@ export function LibrarySettingsForm({ id }: { id: string }) {
           }
         />
       </div>
+      {leaveGuard}
     </Form>
   );
 }

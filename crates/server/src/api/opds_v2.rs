@@ -535,7 +535,14 @@ async fn series_one(
     AxPath(id): AxPath<Uuid>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    let s = match series::Entity::find_by_id(id).one(&app.db).await {
+    // A soft-removed series answers the same not-found as an unknown id,
+    // for every role: OPDS is a list surface (`access::active_series`),
+    // and the admin Removed tab is the only place removed rows appear.
+    let s = match access::active_series_select()
+        .filter(series::Column::Id.eq(id))
+        .one(&app.db)
+        .await
+    {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
@@ -544,11 +551,10 @@ async fn series_one(
     if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return not_found();
     }
-    // WP-2.7: issues carrying their own rating above the cap are hidden.
-    let mut issues_base = issue::Entity::find().filter(issue::Column::SeriesId.eq(id));
-    if let Some(cond) = acl.issue_cap_condition() {
-        issues_base = issues_base.filter(cond);
-    }
+    // `visible_issues_select`: soft-removed issues drop out, and the grant
+    // + age cap (WP-2.7: an issue's own rating above the cap hides it)
+    // apply exactly as on every other OPDS issue listing.
+    let issues_base = access::visible_issues_select(&acl).filter(issue::Column::SeriesId.eq(id));
     let total = match issues_base.clone().count(&app.db).await {
         Ok(n) => n,
         Err(e) => return server_error(e.to_string()),

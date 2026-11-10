@@ -2,7 +2,8 @@
 
 import * as React from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { userStateTone } from "@/components/admin/status-tones";
 import { Button } from "@/components/ui/button";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { Input } from "@/components/ui/input";
@@ -13,16 +14,8 @@ import {
   useUpdateUser,
 } from "@/lib/api/mutations";
 import { useMe } from "@/lib/api/queries";
-import type { AdminUserDetailView, UserRole, UserState } from "@/lib/api/types";
+import type { AdminUserDetailView, UserRole } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-
-function stateVariant(
-  state: UserState,
-): "default" | "secondary" | "destructive" {
-  if (state === "disabled") return "destructive";
-  if (state === "pending_verification") return "secondary";
-  return "default";
-}
 
 export function UserProfileForm({ user }: { user: AdminUserDetailView }) {
   const { data: me } = useMe();
@@ -136,9 +129,12 @@ export function UserProfileForm({ user }: { user: AdminUserDetailView }) {
           <div>
             <p className="text-sm font-medium">Account state</p>
             <div className="flex items-center gap-2 pt-1">
-              <Badge variant={stateVariant(user.state)} className="uppercase">
+              <StatusBadge
+                tone={userStateTone(user.state)}
+                className="uppercase"
+              >
                 {user.state.replace("_", " ")}
-              </Badge>
+              </StatusBadge>
               <span className="text-muted-foreground text-xs">
                 Created {new Date(user.created_at).toLocaleDateString()}
                 {user.last_login_at

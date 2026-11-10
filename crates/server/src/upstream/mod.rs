@@ -12,12 +12,25 @@
 //!
 //! - Streaming request body forward to `${cfg.web_upstream_url}{path}`.
 //! - Hop-by-hop header stripping (RFC 7230 §6.1).
-//! - `X-Forwarded-{For,Proto,Host}` injection on the outbound request.
-//!   `X-Forwarded-For` honors the resolved client IP from
-//!   `RequestContext` (post-trusted-proxy walk).
+//! - `X-Forwarded-{For,Proto,Host}` set on the outbound request by the
+//!   server, never copied from an untrusted client. `X-Forwarded-For` /
+//!   `X-Real-IP` carry the resolved client IP from `RequestContext`
+//!   (post-trusted-proxy walk). `X-Forwarded-Host` / `X-Forwarded-Proto`
+//!   are kept only when the immediate peer is a trusted proxy
+//!   (`RequestContext::peer_trusted`) and the value is well-formed (one
+//!   valid `host[:port]`; proto exactly `http` or `https`); otherwise they
+//!   are the inbound `Host` and `http`. So a TLS-terminating proxy in
+//!   `COMIC_TRUSTED_PROXIES` must set `X-Forwarded-Proto`, and should pass
+//!   `Host` through or set `X-Forwarded-Host`. Next builds absolute
+//!   redirect URLs from these, so they follow the host the client used
+//!   (LAN IP, extra host names) rather than one configured name.
+//! - Stripping every `x-middleware-*` header in both directions: those
+//!   names are Next.js-internal, so a client may not send them to Next and
+//!   Next's own may not reach the client.
 //! - Streaming response body back to the caller without buffering.
 //! - 502 on upstream connection failure or timeout, with the standard
-//!   `{"error": {"code", "message"}}` envelope.
+//!   `{"error": {"code", "message"}}` envelope and a fixed message; the
+//!   transport detail goes to the server log only.
 //! - Raw byte-level WebSocket-upgrade passthrough via
 //!   [`proxy_websocket`]. The proxy completes the HTTP/1.1 upgrade
 //!   handshake on both sides, then bridges the two TCP streams with
@@ -38,13 +51,11 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use axum::{
-    Json,
     body::Body,
     extract::State,
     http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, Uri, header},
-    response::{IntoResponse, Response},
+    response::Response,
 };
-use serde_json::json;
 
 use crate::middleware::request_context::RequestContext;
 use crate::middleware::security_headers::CspHeader;
@@ -123,13 +134,13 @@ const HOP_BY_HOP: &[&str] = &[
 /// to [`proxy_websocket`] and everything else to [`forward`].
 pub async fn proxy(State(app): State<AppState>, req: Request<Body>) -> Response {
     let cfg = app.cfg();
-    if is_websocket_upgrade(req.headers()) {
-        return proxy_websocket(&cfg.web_upstream_url, req).await;
-    }
-    let client_ip = req
+    let (client_ip, peer_trusted) = req
         .extensions()
         .get::<RequestContext>()
-        .and_then(|c| c.client_ip);
+        .map_or((None, false), |c| (c.client_ip, c.peer_trusted));
+    if is_websocket_upgrade(req.headers()) {
+        return proxy_websocket(&cfg.web_upstream_url, req, client_ip, peer_trusted).await;
+    }
     let csp = req.extensions().get::<CspHeader>().map(|c| c.0.clone());
     forward(
         &app.web_proxy_client,
@@ -137,6 +148,7 @@ pub async fn proxy(State(app): State<AppState>, req: Request<Body>) -> Response 
         req,
         PROXY_TIMEOUT,
         client_ip,
+        peer_trusted,
         csp,
     )
     .await
@@ -147,13 +159,16 @@ pub async fn proxy(State(app): State<AppState>, req: Request<Body>) -> Response 
 /// drive-testable against a wiremock upstream without booting the
 /// server. The state-bound `proxy()` handler is the only call site
 /// in production; the function is `pub` so the integration suite at
-/// `tests/upstream.rs` can exercise it directly.
+/// `tests/upstream.rs` can exercise it directly. `peer_trusted` says
+/// whether the immediate peer is a trusted proxy, whose
+/// `X-Forwarded-Host` / `X-Forwarded-Proto` may then be kept.
 pub async fn forward(
     client: &reqwest::Client,
     upstream_url: &str,
     req: Request<Body>,
     timeout: Duration,
     client_ip: Option<IpAddr>,
+    peer_trusted: bool,
     csp: Option<HeaderValue>,
 ) -> Response {
     forward_with_body_limit(
@@ -162,6 +177,7 @@ pub async fn forward(
         req,
         timeout,
         client_ip,
+        peer_trusted,
         csp,
         MAX_PROXY_BODY_BYTES,
     )
@@ -172,12 +188,14 @@ pub async fn forward(
 /// always goes through [`forward`] ([`MAX_PROXY_BODY_BYTES`]); the
 /// parameter exists so `tests/body_limits.rs` can exercise the streamed
 /// cut-off without pushing 64 MiB through a mock.
+#[allow(clippy::too_many_arguments)]
 pub async fn forward_with_body_limit(
     client: &reqwest::Client,
     upstream_url: &str,
     req: Request<Body>,
     timeout: Duration,
     client_ip: Option<IpAddr>,
+    peer_trusted: bool,
     csp: Option<HeaderValue>,
     max_body: u64,
 ) -> Response {
@@ -203,17 +221,11 @@ pub async fn forward_with_body_limit(
         }
     };
 
-    let orig_host = parts
-        .headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .map(String::from);
-
     // Build the outbound header set: inbound minus hop-by-hop / Host /
-    // Content-Length / spoofable forwarding headers, with `X-Forwarded-*`
-    // re-injected from the authoritatively-resolved client IP (SEC-6).
-    let mut outbound_headers =
-        build_forwarded_headers(&parts.headers, client_ip, orig_host.as_deref());
+    // Content-Length / client-supplied forwarding and `x-middleware-*`
+    // headers, with `X-Forwarded-*` set from the resolved client IP (SEC-6)
+    // and, for host / proto, the trusted proxy's values or our own view.
+    let mut outbound_headers = build_forwarded_headers(&parts.headers, client_ip, peer_trusted);
 
     // Content-Security-Policy: forward the per-request CSP value
     // (built in `security_headers::set_headers` with the nonce slot
@@ -254,14 +266,23 @@ pub async fn forward_with_body_limit(
         Ok(r) => r,
         Err(e) if is_body_too_large(&e) => return body_too_large(),
         Err(e) => {
-            let code = if e.is_timeout() {
-                "upstream_timeout"
+            let (code, message) = if e.is_timeout() {
+                ("upstream_timeout", "The web app did not respond in time")
             } else if e.is_connect() {
-                "upstream_unreachable"
+                ("upstream_unreachable", "The web app is not reachable")
             } else {
-                "upstream_error"
+                ("upstream_error", "The web app request failed")
             };
-            return error_response(StatusCode::BAD_GATEWAY, code, &e.to_string());
+            // The detail stays in the server log. `without_url` drops the
+            // request URL from the error: its query string can hold a
+            // single-use token (a reset or verification link).
+            tracing::warn!(
+                code,
+                upstream = %upstream_url,
+                error = ?e.without_url(),
+                "upstream proxy request failed"
+            );
+            return error_response(StatusCode::BAD_GATEWAY, code, message);
         }
     };
 
@@ -271,7 +292,7 @@ pub async fn forward_with_body_limit(
         StatusCode::from_u16(upstream_resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut builder = Response::builder().status(status);
     for (name, value) in upstream_resp.headers().iter() {
-        if is_hop_by_hop(name) {
+        if is_hop_by_hop(name) || is_next_internal(name) {
             continue;
         }
         builder = builder.header(name, value);
@@ -293,61 +314,122 @@ fn is_hop_by_hop(name: &HeaderName) -> bool {
     HOP_BY_HOP.iter().any(|h| n.eq_ignore_ascii_case(h))
 }
 
-/// Construct the outbound header set for a proxied request.
+/// Next.js-internal header names (`x-middleware-subrequest`,
+/// `x-middleware-rewrite`, `x-middleware-set-cookie`, ...). Next uses them
+/// between its own layers; neither a client nor the outside world has any
+/// business sending or seeing them, so the proxy drops them both ways.
+fn is_next_internal(name: &HeaderName) -> bool {
+    name.as_str().starts_with("x-middleware-")
+}
+
+/// Request headers the proxy never copies from the client because it sets
+/// them itself (the forwarding set) or because they are Next-internal.
+fn is_client_forwarding_or_internal(name: &HeaderName) -> bool {
+    name == header::FORWARDED
+        || matches!(
+            name.as_str(),
+            "x-forwarded-for" | "x-forwarded-host" | "x-forwarded-proto" | "x-real-ip"
+        )
+        || is_next_internal(name)
+}
+
+/// The single value of `name` when exactly one is present and it is
+/// visible ASCII.
+fn single_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    let mut it = headers.get_all(name).iter();
+    let v = it.next()?;
+    if it.next().is_some() {
+        return None;
+    }
+    v.to_str().ok().map(str::trim)
+}
+
+/// A well-formed `host[:port]` authority: parses as an `http::uri::Authority`
+/// with no userinfo and no list separator.
+fn valid_host(v: &str) -> bool {
+    !v.is_empty()
+        && !v.contains([',', '@', ' ', '/'])
+        && v.parse::<axum::http::uri::Authority>().is_ok()
+}
+
+/// `(proto, host)` for `X-Forwarded-Proto` / `X-Forwarded-Host`.
 ///
-/// Copies the inbound headers minus hop-by-hop, `Host`, `Content-Length`, and
-/// the client-supplied forwarding headers (`X-Forwarded-For`, `Forwarded`,
-/// `X-Real-IP`), then injects the `X-Forwarded-*` set. The forwarding headers
-/// are stripped-and-reset rather than appended-to so a client connecting
-/// directly (untrusted peer) cannot smuggle a spoofed chain to the upstream —
-/// `X-Forwarded-For` / `X-Real-IP` carry exactly the one client IP we resolved
-/// via the trusted-proxy walk (`xff::client_ip`), keeping the leftmost-entry
-/// "real client" convention non-spoofable (SEC-6).
-///
-/// `X-Forwarded-Proto` / `X-Forwarded-Host` are preserved if an upstream proxy
-/// already set them (the Cloudflare-terminating-TLS case) and otherwise
-/// defaulted. CSP injection is left to the caller (it depends on the per-request
-/// nonce value).
-fn build_forwarded_headers(
+/// A trusted proxy's own values are kept when well-formed (one value; a
+/// valid `host[:port]`; proto exactly `http` or `https`). Anything else
+/// (an untrusted peer, an absent or malformed value) falls back to the
+/// inbound `Host` and `http`: the Rust server only listens on a plain TCP
+/// socket (`axum::serve` over `TcpListener` in `app::serve`) and never
+/// terminates TLS itself, so the scheme it received is always `http`.
+fn forwarded_host_proto(inbound: &HeaderMap, peer_trusted: bool) -> (&str, Option<&str>) {
+    let from_proxy = |name| {
+        if peer_trusted {
+            single_value(inbound, name)
+        } else {
+            None
+        }
+    };
+    let proto = from_proxy("x-forwarded-proto")
+        .filter(|p| matches!(*p, "http" | "https"))
+        .unwrap_or("http");
+    let host = from_proxy("x-forwarded-host")
+        .filter(|h| valid_host(h))
+        .or_else(|| single_value(inbound, "host").filter(|h| valid_host(h)));
+    (proto, host)
+}
+
+/// Set the forwarding headers on `out`, which must already have had every
+/// client-supplied copy removed. `inbound` is the original request's
+/// header map (read for `Host` and a trusted proxy's values).
+fn insert_forwarding(
+    out: &mut HeaderMap,
     inbound: &HeaderMap,
     client_ip: Option<IpAddr>,
-    orig_host: Option<&str>,
-) -> HeaderMap {
-    let mut out = HeaderMap::new();
-    for (name, value) in inbound.iter() {
-        if is_hop_by_hop(name)
-            || name == header::HOST
-            || name == header::CONTENT_LENGTH
-            || name == header::FORWARDED
-            || name.as_str() == "x-forwarded-for"
-            || name.as_str() == "x-real-ip"
-        {
-            continue;
-        }
-        out.append(name.clone(), value.clone());
+    peer_trusted: bool,
+) {
+    let (proto, host) = forwarded_host_proto(inbound, peer_trusted);
+    if let Ok(v) = HeaderValue::from_str(proto) {
+        out.insert(HeaderName::from_static("x-forwarded-proto"), v);
     }
-
-    if !out.contains_key("x-forwarded-proto") {
-        out.insert(
-            HeaderName::from_static("x-forwarded-proto"),
-            HeaderValue::from_static("http"),
-        );
-    }
-
-    if !out.contains_key("x-forwarded-host")
-        && let Some(host) = orig_host
-        && let Ok(v) = HeaderValue::from_str(host)
-    {
+    if let Some(v) = host.and_then(|h| HeaderValue::from_str(h).ok()) {
         out.insert(HeaderName::from_static("x-forwarded-host"), v);
     }
-
     if let Some(ip) = client_ip
         && let Ok(v) = HeaderValue::from_str(&ip.to_string())
     {
         out.insert(HeaderName::from_static("x-forwarded-for"), v.clone());
         out.insert(HeaderName::from_static("x-real-ip"), v);
     }
+}
 
+/// Construct the outbound header set for a proxied request.
+///
+/// Copies the inbound headers minus hop-by-hop, `Host`, `Content-Length`, the
+/// client-supplied forwarding headers (`Forwarded`, `X-Forwarded-For`,
+/// `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`) and every
+/// Next-internal `x-middleware-*` header, then sets the forwarding set
+/// itself. `X-Forwarded-For` / `X-Real-IP` carry exactly the one client IP
+/// resolved via the trusted-proxy walk (`xff::client_ip`, SEC-6), so a
+/// client cannot hand Next a spoofed chain. `X-Forwarded-Host` /
+/// `X-Forwarded-Proto` follow [`forwarded_host_proto`]: a trusted proxy's
+/// well-formed values, else the inbound `Host` and `http`. CSP injection is
+/// left to the caller (it depends on the per-request nonce value).
+fn build_forwarded_headers(
+    inbound: &HeaderMap,
+    client_ip: Option<IpAddr>,
+    peer_trusted: bool,
+) -> HeaderMap {
+    let mut out = HeaderMap::new();
+    for (name, value) in inbound.iter() {
+        if is_hop_by_hop(name)
+            || name == header::HOST
+            || name == header::CONTENT_LENGTH
+            || is_client_forwarding_or_internal(name)
+        {
+            continue;
+        }
+        out.append(name.clone(), value.clone());
+    }
+    insert_forwarding(&mut out, inbound, client_ip, peer_trusted);
     out
 }
 
@@ -364,11 +446,7 @@ fn build_target_url(upstream: &str, inbound: &Uri) -> Option<String> {
 }
 
 fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(json!({"error": {"code": code, "message": message}})),
-    )
-        .into_response()
+    crate::api::error(status, code, message)
 }
 
 /// Proxy a WebSocket upgrade to the upstream and bidirectionally bridge
@@ -380,7 +458,18 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
 /// error envelope. After bridging starts, the bridge runs in a
 /// detached task; errors there are logged at `debug` (the most common
 /// "error" is a normal close that surfaces as `BrokenPipe`).
-pub async fn proxy_websocket(upstream_url: &str, req: Request<Body>) -> Response {
+///
+/// The upgrade request gets the same forwarding treatment as [`forward`]:
+/// client-supplied forwarding and `x-middleware-*` headers are dropped and
+/// the forwarding set is built from `client_ip` and `peer_trusted`. The
+/// handshake-critical `Connection` / `Upgrade` / `Sec-WebSocket-*` headers
+/// pass through untouched, which is all Next dev's hot-reload socket needs.
+pub async fn proxy_websocket(
+    upstream_url: &str,
+    req: Request<Body>,
+    client_ip: Option<IpAddr>,
+    peer_trusted: bool,
+) -> Response {
     use hyper_util::rt::TokioIo;
     use tokio::net::TcpStream;
 
@@ -422,10 +511,11 @@ pub async fn proxy_websocket(upstream_url: &str, req: Request<Body>) -> Response
     let tcp = match TcpStream::connect((host.as_str(), port)).await {
         Ok(t) => t,
         Err(e) => {
+            tracing::warn!(upstream = %upstream_url, error = %e, "ws proxy: upstream connect failed");
             return error_response(
                 StatusCode::BAD_GATEWAY,
                 "upstream_unreachable",
-                &e.to_string(),
+                "The web app is not reachable",
             );
         }
     };
@@ -437,10 +527,11 @@ pub async fn proxy_websocket(upstream_url: &str, req: Request<Body>) -> Response
     let (mut sender, conn) = match hyper::client::conn::http1::handshake(TokioIo::new(tcp)).await {
         Ok(pair) => pair,
         Err(e) => {
+            tracing::warn!(upstream = %upstream_url, error = %e, "ws proxy: upstream handshake failed");
             return error_response(
                 StatusCode::BAD_GATEWAY,
                 "upstream_handshake_failed",
-                &e.to_string(),
+                "The web app connection failed",
             );
         }
     };
@@ -460,14 +551,22 @@ pub async fn proxy_websocket(upstream_url: &str, req: Request<Body>) -> Response
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".into());
+    let mut outbound = HeaderMap::new();
+    for (name, value) in parts.headers.iter() {
+        if name == header::HOST
+            || name == header::CONTENT_LENGTH
+            || is_client_forwarding_or_internal(name)
+        {
+            continue;
+        }
+        outbound.append(name.clone(), value.clone());
+    }
+    insert_forwarding(&mut outbound, &parts.headers, client_ip, peer_trusted);
     let mut builder = Request::builder()
         .method(parts.method.clone())
         .uri(path_q)
         .version(hyper::Version::HTTP_11);
-    for (name, value) in parts.headers.iter() {
-        if name == header::HOST || name == header::CONTENT_LENGTH {
-            continue;
-        }
+    for (name, value) in outbound.iter() {
         builder = builder.header(name, value);
     }
     builder = builder.header(header::HOST, &host_header);
@@ -475,10 +574,11 @@ pub async fn proxy_websocket(upstream_url: &str, req: Request<Body>) -> Response
     let upstream_req = match builder.body(Body::empty()) {
         Ok(r) => r,
         Err(e) => {
+            tracing::warn!(error = %e, "ws proxy: upgrade request build failed");
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "ws_request_build_failed",
-                &e.to_string(),
+                "Could not build the upgrade request",
             );
         }
     };
@@ -487,10 +587,11 @@ pub async fn proxy_websocket(upstream_url: &str, req: Request<Body>) -> Response
     let upstream_resp = match sender.send_request(upstream_req).await {
         Ok(r) => r,
         Err(e) => {
+            tracing::warn!(upstream = %upstream_url, error = %e, "ws proxy: upgrade request failed");
             return error_response(
                 StatusCode::BAD_GATEWAY,
                 "upstream_send_failed",
-                &e.to_string(),
+                "The web app connection failed",
             );
         }
     };
@@ -516,6 +617,9 @@ pub async fn proxy_websocket(upstream_url: &str, req: Request<Body>) -> Response
     // are preserved end-to-end.
     let mut response_builder = Response::builder().status(StatusCode::SWITCHING_PROTOCOLS);
     for (name, value) in upstream_resp.headers().iter() {
+        if is_next_internal(name) {
+            continue;
+        }
         response_builder = response_builder.header(name, value);
     }
 
@@ -614,7 +718,7 @@ mod tests {
         inbound.insert(header::COOKIE, HeaderValue::from_static("session=abc"));
 
         let resolved: IpAddr = "203.0.113.7".parse().unwrap();
-        let out = build_forwarded_headers(&inbound, Some(resolved), Some("folio.example"));
+        let out = build_forwarded_headers(&inbound, Some(resolved), false);
 
         // Exactly one XFF entry, equal to the resolved IP — no spoofed hops.
         let xff: Vec<_> = out.get_all("x-forwarded-for").iter().collect();
@@ -635,26 +739,119 @@ mod tests {
             HeaderName::from_static("x-forwarded-for"),
             HeaderValue::from_static("9.9.9.9"),
         );
-        let out = build_forwarded_headers(&inbound, None, None);
+        let out = build_forwarded_headers(&inbound, None, false);
         assert!(out.get("x-forwarded-for").is_none());
         assert!(out.get("x-real-ip").is_none());
     }
 
-    #[test]
-    fn forwarded_headers_default_proto_and_preserve_inbound() {
-        // X-Forwarded-Proto/Host are NOT in the strip set: an upstream proxy's
-        // values are preserved, and proto defaults to http when absent.
-        let mut inbound = HeaderMap::new();
-        inbound.insert(
-            HeaderName::from_static("x-forwarded-proto"),
-            HeaderValue::from_static("https"),
-        );
-        let out = build_forwarded_headers(&inbound, None, Some("folio.example"));
-        assert_eq!(out.get("x-forwarded-proto").unwrap(), "https");
-        assert_eq!(out.get("x-forwarded-host").unwrap(), "folio.example");
+    fn hdrs(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(HeaderName::from_static(k), HeaderValue::from_static(v));
+        }
+        h
+    }
 
-        let out2 = build_forwarded_headers(&HeaderMap::new(), None, None);
-        assert_eq!(out2.get("x-forwarded-proto").unwrap(), "http");
+    fn host_proto(out: &HeaderMap) -> (Vec<&str>, Vec<&str>) {
+        let all = |n| {
+            out.get_all(n)
+                .iter()
+                .map(|v| v.to_str().unwrap())
+                .collect::<Vec<_>>()
+        };
+        (all("x-forwarded-host"), all("x-forwarded-proto"))
+    }
+
+    #[test]
+    fn untrusted_peer_gets_inbound_host_and_http() {
+        let inbound = hdrs(&[
+            ("host", "192.168.1.20:8080"),
+            ("x-forwarded-host", "evil.example"),
+            ("x-forwarded-proto", "https"),
+        ]);
+        let out = build_forwarded_headers(&inbound, None, false);
+        assert_eq!(host_proto(&out), (vec!["192.168.1.20:8080"], vec!["http"]));
+    }
+
+    #[test]
+    fn trusted_peer_values_are_kept() {
+        let inbound = hdrs(&[
+            ("host", "folio:8080"),
+            ("x-forwarded-host", "comics.example.com"),
+            ("x-forwarded-proto", "https"),
+        ]);
+        let out = build_forwarded_headers(&inbound, None, true);
+        assert_eq!(
+            host_proto(&out),
+            (vec!["comics.example.com"], vec!["https"])
+        );
+    }
+
+    #[test]
+    fn trusted_peer_without_values_falls_back() {
+        let inbound = hdrs(&[("host", "comics.example.com")]);
+        let out = build_forwarded_headers(&inbound, None, true);
+        assert_eq!(host_proto(&out), (vec!["comics.example.com"], vec!["http"]));
+    }
+
+    #[test]
+    fn trusted_peer_malformed_values_fall_back() {
+        for (fh, fp) in [
+            ("comics.example.com", "javascript"),
+            ("comics.example.com", "HTTPS"),
+            ("a.example, b.example", "https"),
+            ("user@evil.example", "https"),
+            ("evil.example/path", "https"),
+            ("", "https"),
+        ] {
+            let mut inbound = hdrs(&[("host", "folio.lan:8080")]);
+            inbound.insert(
+                HeaderName::from_static("x-forwarded-host"),
+                HeaderValue::from_str(fh).unwrap(),
+            );
+            inbound.insert(
+                HeaderName::from_static("x-forwarded-proto"),
+                HeaderValue::from_str(fp).unwrap(),
+            );
+            let (proto, host) = forwarded_host_proto(&inbound, true);
+            let want_host = if valid_host(fh) { fh } else { "folio.lan:8080" };
+            let want_proto = if fp == "https" { "https" } else { "http" };
+            assert_eq!((host, proto), (Some(want_host), want_proto), "{fh} / {fp}");
+        }
+        // Two separate X-Forwarded-Host / -Proto lines are not one value.
+        let inbound = hdrs(&[
+            ("host", "folio.lan:8080"),
+            ("x-forwarded-host", "a.example"),
+            ("x-forwarded-host", "b.example"),
+            ("x-forwarded-proto", "https"),
+            ("x-forwarded-proto", "http"),
+        ]);
+        let out = build_forwarded_headers(&inbound, None, true);
+        assert_eq!(host_proto(&out), (vec!["folio.lan:8080"], vec!["http"]));
+    }
+
+    #[test]
+    fn next_internal_headers_are_stripped() {
+        let mut inbound = HeaderMap::new();
+        for n in [
+            "x-middleware-subrequest",
+            "x-middleware-rewrite",
+            "x-middleware-next",
+            "x-middleware-prefetch",
+        ] {
+            inbound.insert(HeaderName::from_static(n), HeaderValue::from_static("1"));
+        }
+        inbound.insert(
+            HeaderName::from_static("x-nextjs-data"),
+            HeaderValue::from_static("1"),
+        );
+        let out = build_forwarded_headers(&inbound, None, false);
+        assert!(
+            out.keys().all(|k| !k.as_str().starts_with("x-middleware-")),
+            "{out:?}"
+        );
+        // Only the `x-middleware-` prefix is internal; other Next headers pass.
+        assert_eq!(out.get("x-nextjs-data").unwrap(), "1");
     }
 
     #[test]

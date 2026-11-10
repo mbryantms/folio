@@ -4,7 +4,18 @@ Phase 0 deliverable. Source of truth: [comic-reader-spec.md §17.1–§17.3, §9
 
 ## Modes
 
-`COMIC_AUTH_MODE` ∈ {`oidc`, `local`, `both`}. The login screen reflects the mode.
+The sign-in mode is one of `oidc`, `local`, `both`, chosen under **Admin → Auth** (the `auth.mode` setting; `COMIC_AUTH_MODE` seeds it on first boot). The login screen reflects the mode.
+
+When no mode has been chosen, `config::resolve_auth_mode` derives it from the OIDC settings (issuer, client id, client secret), and every reader (sign-in page via `/auth/config`, login and register handlers, OIDC routes, admin page) sees that one effective value:
+
+| Chosen mode | OIDC settings | Effective mode |
+|---|---|---|
+| none | none set | `local` |
+| none | all three set | `both` |
+| none | some but not all | refuses to boot / save; names the missing values |
+| `local` | any | `local` |
+| `oidc` or `both` | all three set | as chosen |
+| `oidc` or `both` | any missing | refuses to boot / save; names the missing values |
 
 | Mode | Use case |
 |---|---|
@@ -12,7 +23,7 @@ Phase 0 deliverable. Source of truth: [comic-reader-spec.md §17.1–§17.3, §9
 | `local` | Single-user / small-family installs without an IdP. argon2id + pepper; no second factor (TOTP is not implemented; the unused `users.totp_secret` column is kept for a possible later version). |
 | `both` | Mixed — admin via OIDC, opportunistic local accounts (e.g., a guest reader). |
 
-Verified against the code at `1c51a486` on 2026-11-10.
+Verified against the code at `ed5d9019` on 2026-11-10.
 
 ## Token shapes
 
@@ -139,7 +150,7 @@ Verified against the code at `1c51a486` on 2026-11-10.
 
 - `POST /auth/ws-ticket` (cookie + CSRF; also mounted at `/api/auth/ws-ticket`) → server generates a random UUID ticket, stores `(ticket → user_id, role)` in Redis with a 5 min TTL, returns `{ ticket, expires_in: 300 }`.
 - Client opens `wss://…/ws/scan-events?ticket=<…>`. Server consumes the ticket atomically (Redis `GETDEL`); a missing or used ticket is 401.
-- Without a `ticket` parameter the upgrade falls back to the cookie session. Either way the user row is re-read at upgrade: the account must be active and, for `/ws/scan-events` (the only WebSocket endpoint), an admin.
+- Without a `ticket` parameter the upgrade falls back to the cookie session, and then requires an `Origin` header equal to the configured public origin (`public_url`), else 403 before the upgrade; a ticket-authenticated upgrade has no Origin requirement. Either way the user row is re-read at upgrade: the account must be active and, for `/ws/scan-events` (the only WebSocket endpoint), an admin.
 
 Verified against the code at `1c51a486` on 2026-11-10.
 
