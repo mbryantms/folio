@@ -1217,6 +1217,18 @@ async fn emit_progress(
     }
 }
 
+/// A reconcile that restored a soft-removed series changed what the
+/// catalogue lists even when no issue flipped (a series already hidden with
+/// live issues is healed without touching its issues, so
+/// `ScanStats::mutated` can stay false): drop the caches `finalize_run`
+/// drops for a mutating scan that read `series.removed_at`.
+fn invalidate_after_series_restore(state: &AppState, library_id: Uuid, series_restored: u64) {
+    if series_restored > 0 {
+        state.similarity.invalidate_all();
+        state.duplicates.invalidate(library_id);
+    }
+}
+
 /// What the planner knows about an existing series row, keyed by folder.
 #[derive(Debug, Clone, Copy)]
 struct KnownSeries {
@@ -1264,6 +1276,39 @@ async fn list_archives_for_plan(
     .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))
 }
 
+/// Does an unchanged folder (mtime not past `last_scanned_at`) still need
+/// processing? `archives` is every archive the walk listed, `removed` is
+/// the series row's own soft-removal, `paths` its
+/// [`series_removal_paths`](crate::library::reconcile::series_removal_paths)
+/// entry. Paths compare as the reconcile's `seen_paths` do
+/// (`to_string_lossy` of the walked path against `issue.file_path`).
+///
+/// - Any series: a walked archive is the path of a restorable soft-removed
+///   issue (the folder went away and came back with its old mtime).
+/// - A removed series: a walked archive the series has no row for at all
+///   (its rows were hard-purged, or never existed). A removed series whose
+///   archives are all known rows (live issues, which the reconcile's last
+///   step heals without a walk, or sticky Duplicates-page removals) or
+///   that has no archive stays skipped.
+///
+/// A permanently deleted file matches no walked archive, so it never turns
+/// the skip off.
+fn walk_needs_processing(
+    archives: &[PathBuf],
+    removed: bool,
+    paths: Option<&crate::library::reconcile::SeriesRemovalPaths>,
+) -> bool {
+    archives.iter().any(|p| {
+        let p = p.to_string_lossy();
+        match paths {
+            Some(s) => {
+                s.restorable.contains(p.as_ref()) || (removed && !s.known.contains(p.as_ref()))
+            }
+            None => removed,
+        }
+    })
+}
+
 async fn build_library_scan_plan(
     state: &AppState,
     lib: &library::Model,
@@ -1278,12 +1323,13 @@ async fn build_library_scan_plan(
     };
 
     let known = known_series_by_folder(state, lib).await?;
-    // Series holding soft-removed issues a returning file would restore.
+    // Paths of soft-removed issues a returning file would restore (and, for
+    // a removed series, every path it has a row for), one query per scan.
     // Moving a folder away and back keeps its mtime, so the unchanged-folder
-    // skip below would leave those issues (and the series) removed forever;
-    // such a folder is always walked and processed instead.
-    let restorable =
-        crate::library::reconcile::series_with_restorable_issues(&state.db, lib.id).await?;
+    // skip below would leave those issues removed forever; a folder whose
+    // walk finds one of them is processed instead.
+    let removal_paths = crate::library::reconcile::series_removal_paths(&state.db, lib.id).await?;
+    let removal_paths = &removal_paths;
     // Post-audit T1.2: folders in flight per scan are their own knob —
     // queue concurrency (`scan_worker_count`) × per-scan fan-out used to
     // multiply into up to n² open transactions.
@@ -1299,18 +1345,16 @@ async fn build_library_scan_plan(
             let folder = candidate.path.clone();
             let publisher_hint = candidate.publisher_hint.clone();
             let known_entry = known.get(&folder.to_string_lossy().into_owned()).copied();
-            // A removed series, or one with restorable issues, never takes
-            // the unchanged-folder skip.
-            let may_skip = known_entry.is_some_and(|k| !k.removed && !restorable.contains(&k.id));
+            let paths = known_entry.and_then(|k| removal_paths.get(&k.id));
             async move {
                 let mut known_series_id = known_entry.map(|k| k.id);
                 let mut skipped_unchanged = false;
                 let walk = if !force {
                     if let Some(KnownSeries {
                         last_scanned_at: Some(last),
+                        removed,
                         ..
                     }) = known_entry
-                        && may_skip
                     {
                         let folder_for_walk = folder.clone();
                         let ignore_for_walk = Arc::clone(&ignore);
@@ -1324,7 +1368,8 @@ async fn build_library_scan_plan(
                         })
                         .await
                         .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))?;
-                        skipped_unchanged = !walk.changed_since;
+                        skipped_unchanged = !walk.changed_since
+                            && !walk_needs_processing(&walk.archives, removed, paths);
                         walk
                     } else {
                         let walk = list_archives_for_plan(&folder, &ignore).await?;
@@ -1494,7 +1539,7 @@ async fn run_series_phases(
     )
     .await;
     let reconcile_started = Instant::now();
-    crate::library::reconcile::reconcile_series_seen(
+    let series_restored = crate::library::reconcile::reconcile_series_seen(
         &state.db,
         series_id,
         &seen_paths,
@@ -1503,6 +1548,7 @@ async fn run_series_phases(
         events,
     )
     .await?;
+    invalidate_after_series_restore(state, lib.id, series_restored);
     stats.record_phase("reconcile", reconcile_started.elapsed());
     progress.completed = progress.completed.saturating_add(1).min(progress.total);
     emit_progress(
@@ -2241,7 +2287,7 @@ async fn run_phases(
         stats,
     )
     .await;
-    if let Err(e) = crate::library::reconcile::reconcile_library_seen(
+    match crate::library::reconcile::reconcile_library_seen(
         &state.db,
         lib.id,
         &scanned_series,
@@ -2255,7 +2301,10 @@ async fn run_phases(
     )
     .await
     {
-        tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
+        Ok(series_restored) => invalidate_after_series_restore(state, lib.id, series_restored),
+        Err(e) => {
+            tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
+        }
     }
     if let Err(e) =
         reconcile_status::reconcile_series_status_many(&state.db, &status_reconcile_entries).await

@@ -206,14 +206,22 @@ without per-library configuration.
   marked `skipped_unchanged=true` and its archives are still listed
   (the walker collects them while looking at mtimes) but the folder
   short-circuits during processing.
-- **Never skipped: removed or restorable series.** A known series whose
-  row is soft-removed, or which holds soft-removed issues that are not
-  Duplicates-page removals (one grouped
-  `reconcile::series_with_restorable_issues` query per plan), always
-  takes the full walk. Moving a folder away and back keeps its mtime, so
-  without this a returning folder was skipped forever and its issues never
-  restored. The watcher-scoped scan builds the same plan, so it inherits
-  the rule.
+- **What turns the skip off.** One query per plan
+  (`reconcile::series_removal_paths`, projecting `series_id`,
+  `file_path` and a restorable flag) loads, per series, the paths of its
+  soft-removed issues that are not Duplicates-page removals, plus, for a
+  soft-removed series, every path it has a row for. The walk lists every
+  archive in the folder whatever its mtime, so an unchanged folder is
+  still processed when the walk finds (a) the path of a restorable
+  soft-removed issue: the folder went away and came back with its old
+  mtime; or (b) for a removed series, an archive it has no row for at
+  all (its rows were hard-purged). Paths compare as the reconcile's
+  `seen_paths` do (`to_string_lossy` against `issue.file_path`). A
+  permanently deleted file matches nothing, so its leftover row never
+  disables the skip; a removed series whose archives are all live rows
+  or sticky Duplicates-page removals stays skipped (the reconcile's last
+  step heals the former without a walk, §4.5). The watcher-scoped scan
+  builds the same plan, so it inherits the rule.
 - **Force branch**: keep the known-series cache active, but bypass the
   folder mtime skip and list archives in every folder.
 - **Concurrency**: planning is parallelized at `scan_worker_count`
@@ -418,24 +426,38 @@ Two reconciles run after all folders complete:
   - For every issue in scanned series: missing on disk →
     `removed_at = now()`; soft-deleted but back → clear
     `removed_at` (and `removal_confirmed_at`).
-  - A soft-removed series that has an active, non-duplicate-removed issue
-    again is restored with it:
-    [`restore_series_with_live_issues`](../../crates/server/src/library/reconcile.rs)
-    clears the series' `removed_at` and `removal_confirmed_at` (a
-    confirmed removal too) and records a `series` / `restored` library
-    event. Every path that restores issues calls it: both scan
-    reconciles, the single-issue scan, the admin per-issue restore and
-    the Duplicates-page "clear decision" undo. No scan counter is added
-    for it (`ScanStats` is part of the API schema); the event and an
-    `info` log line carry it. Guards:
-    `reconcile.rs::returning_folder_restores_*`,
-    `::returning_folder_clears_a_confirmed_series_removal`,
-    `::returning_duplicate_removed_issue_keeps_series_removed`.
   - Series whose `folder_path` no longer exists on disk: soft-delete
     every issue and the series row itself.
   - [`mark_empty_series_removed`](../../crates/server/src/library/reconcile.rs#L310-L338)
     flips the series row to removed when the last active issue is
     gone.
+  - **Series heal, last step.** After the folder-missing sweep,
+    [`restore_library_series_with_live_issues`](../../crates/server/src/library/reconcile.rs)
+    restores every soft-removed series of the library (not only the
+    scanned ones) that holds an active, non-duplicate-removed issue:
+    it clears `removed_at` and `removal_confirmed_at` (a confirmed
+    removal too) and records a `series` / `restored` library event.
+    `series.removed_at` is only set by the scanner and only for a series
+    with no live issue, so a removed series with a live issue is always
+    an inconsistent state: a folder that came back this scan, or a
+    series an older scanner, a forced or issue scan, or a failure
+    between the issue and series writes left hidden. Running it after
+    the sweep means a series whose recorded folder is missing (the sweep
+    removed its issues) is never restored and removed again in one scan.
+    The series scan does the same for its one series after
+    `mark_empty_series_removed`; the single-issue scan, the admin
+    per-issue restore and the Duplicates-page "clear decision" undo call
+    `restore_series_with_live_issues` for the series they touched. A
+    reconcile that restored a series drops the similar-series and
+    Duplicates caches even when no issue flipped. No scan counter is
+    added (`ScanStats` is part of the API schema); the event and an
+    `info` log line carry it. Guards: `reconcile.rs::returning_folder_*`,
+    `::returning_duplicate_removed_issue_keeps_series_removed`,
+    `::hidden_series_with_live_issues_heals_and_keeps_the_skip`,
+    `::permanently_deleted_file_keeps_the_unchanged_folder_skip`,
+    `::duplicate_removed_only_series_stays_removed_and_skipped`,
+    `::removed_series_with_unknown_archives_is_processed`,
+    `::series_with_missing_folder_does_not_flap_in_one_reconcile`.
   - **Only successfully enumerated scopes authorise absence**
     (post-audit T1.1). A folder the walk could not read (permission
     denied, dead mount, I/O error) is *unknown*, not absent: it lands
@@ -531,8 +553,9 @@ the DB:
   [`list_archives_changed_since`](../../crates/server/src/library/scanner/enumerate.rs#L123)
   short-circuits the folder if its recursive max mtime ≤
   `last_scanned_at`. The folder is marked `skipped_unchanged`
-  and `process_planned_folder` returns immediately. A removed series,
-  or one with restorable soft-removed issues, is never skipped (§4.3).
+  and `process_planned_folder` returns immediately, unless the walk
+  finds a restorable soft-removed issue's file, or an unknown archive in
+  a removed series' folder (§4.3).
 - **Per-file size+mtime fingerprint** — even on a folder that *did*
   change, individual archives whose size+mtime match the existing row
   bypass hash + parse and only count toward `files_unchanged`
@@ -626,7 +649,7 @@ the DB:
 
 | # | Mechanism | Where | Skip predicate | Bypass |
 |---|---|---|---|---|
-| 1 | Folder mtime fast-path | [build_library_scan_plan mod.rs:707–744](../../crates/server/src/library/scanner/mod.rs#L707-L744), [enumerate.rs:123–161](../../crates/server/src/library/scanner/enumerate.rs#L123-L161) | `force=false` ∧ series not removed ∧ no restorable soft-removed issues ∧ recursive max mtime ≤ `series.last_scanned_at` → mark folder `skipped_unchanged`, call `health.touch_folder`, return `processed=false`. | `?force=true` on `POST /libraries/:slug/scan`. |
+| 1 | Folder mtime fast-path | [build_library_scan_plan mod.rs:707–744](../../crates/server/src/library/scanner/mod.rs#L707-L744), [enumerate.rs:123–161](../../crates/server/src/library/scanner/enumerate.rs#L123-L161) | `force=false` ∧ recursive max mtime ≤ `series.last_scanned_at` ∧ no walked archive is a restorable soft-removed issue's path ∧ (series not removed ∨ every walked archive is a known row of it) → mark folder `skipped_unchanged`, call `health.touch_folder`, return `processed=false`. | `?force=true` on `POST /libraries/:slug/scan`. |
 | 2 | Per-file size+mtime fingerprint | [process.rs:164–175](../../crates/server/src/library/scanner/process.rs#L164-L175), [mod.rs:1543–1554](../../crates/server/src/library/scanner/mod.rs#L1543-L1554) | `force=false` ∧ existing row's `(file_size, file_mtime)` match disk ∧ no `comicinfo_count` backfill needed → `files_unchanged++`, `health.touch_file`, skip hash + parse. | Same `force=true` from any tier; default `true` for manual series/issue scans, `false` for scheduled library scans. |
 | 3 | `comicinfo_count` backfill override | [process.rs:540–556](../../crates/server/src/library/scanner/process.rs#L540-L556) | When a row lacks both `comicinfo_count` and a raw `count` in `comic_info_raw`, treat the row as stale and force a re-ingest *even when* size+mtime match. | Inverts (1) — there is no bypass; the override fires automatically. |
 | 4 | Thumbnail invalidation skip | [process.rs:339, 411–428](../../crates/server/src/library/scanner/process.rs#L339) | On the update path, when `row_matches_file(row, size, mtime)` is true, skip clearing `thumbnails_generated_at` and skip wiping the strip dir. | None — this is always desired. |

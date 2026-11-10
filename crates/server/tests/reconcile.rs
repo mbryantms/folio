@@ -1500,3 +1500,281 @@ async fn returning_duplicate_removed_issue_keeps_series_removed() {
     let resp = f.reader_get(format!("/api/series/{}", f.series_slug)).await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+// ───── Unchanged-folder skip vs. removed state ─────
+//
+// The planner keeps the mtime fast path and turns it off only when the walk
+// finds something to restore or ingest; the series heal runs as the
+// reconcile's last step, so a hidden series with live issues comes back
+// without its folder being walked.
+
+/// Write `count` archives `"{prefix} 00N.cbz"` into `folder` and pin the
+/// files and the folder an hour in the past, so the folder is unambiguously
+/// "older than the last scan" whatever the filesystem timestamp granularity.
+fn write_old_folder(folder: &Path, prefix: &str, count: u32, marker: u32) {
+    std::fs::create_dir_all(folder).unwrap();
+    let old = filetime::FileTime::from_unix_time(Utc::now().timestamp() - 3600, 0);
+    for n in 1..=count {
+        let p = folder.join(format!("{prefix} {n:03}.cbz"));
+        write_cbz(&p, marker + n);
+        filetime::set_file_mtime(&p, old).unwrap();
+    }
+    filetime::set_file_mtime(folder, old).unwrap();
+}
+
+async fn series_named(app: &TestApp, needle: &str) -> entity::series::Model {
+    SeriesEntity::find()
+        .filter(entity::series::Column::Name.contains(needle))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn issues_of(app: &TestApp, series_id: Uuid) -> Vec<entity::issue::Model> {
+    IssueEntity::find()
+        .filter(entity::issue::Column::SeriesId.eq(series_id))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+}
+
+async fn series_restored_events(app: &TestApp, lib_id: Uuid, series_id: Uuid) -> usize {
+    entity::library_event::Entity::find()
+        .filter(entity::library_event::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_event::Column::Category.eq("series"))
+        .filter(entity::library_event::Column::Action.eq("restored"))
+        .filter(entity::library_event::Column::EntityId.eq(series_id.to_string()))
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .len()
+}
+
+async fn set_series_removed(app: &TestApp, series_id: Uuid) {
+    let row = SeriesEntity::find_by_id(series_id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: entity::series::ActiveModel = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&app.state().db).await.unwrap();
+}
+
+/// A series already hidden while its issues are live (what the old scanner
+/// left behind after a forced or issue scan, or an admin per-issue restore)
+/// heals on the next normal scan, and its unchanged folder is still skipped.
+#[tokio::test]
+async fn hidden_series_with_live_issues_heals_and_keeps_the_skip() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    write_old_folder(&root.join("Series Chi (2025)"), "Chi", 3, 300);
+    let lib_id = create_library(&app, &root, 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "Chi").await;
+    set_series_removed(&app, series.id).await;
+
+    let s = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(s.series_skipped_unchanged, 1, "folder still skipped: {s:?}");
+    assert_eq!(s.issues_restored, 0, "{s:?}");
+    let sr = SeriesEntity::find_by_id(series.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(sr.removed_at.is_none(), "series healed");
+    for i in issues_of(&app, series.id).await {
+        assert!(i.removed_at.is_none(), "issue {} still live", i.id);
+    }
+    assert_eq!(series_restored_events(&app, lib_id, series.id).await, 1);
+}
+
+/// A permanently deleted file leaves a soft-removed row behind until hard
+/// purge. It must not turn the unchanged-folder skip off for good.
+#[tokio::test]
+async fn permanently_deleted_file_keeps_the_unchanged_folder_skip() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    let folder = root.join("Series Psi (2025)");
+    write_old_folder(&folder, "Psi", 3, 400);
+    let lib_id = create_library(&app, &root, 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "Psi").await;
+
+    // The delete moves the folder mtime past the last scan.
+    let gone = folder.join("Psi 002.cbz");
+    std::fs::remove_file(&gone).unwrap();
+    let s = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(s.issues_removed, 1, "{s:?}");
+    assert_eq!(s.series_skipped_unchanged, 0, "{s:?}");
+
+    let s = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(s.series_skipped_unchanged, 1, "folder skipped again: {s:?}");
+    assert_eq!(s.issues_restored + s.issues_removed, 0, "{s:?}");
+    let gone = gone.to_string_lossy().into_owned();
+    for i in issues_of(&app, series.id).await {
+        assert_eq!(
+            i.removed_at.is_some(),
+            i.file_path == gone,
+            "issue {} ({})",
+            i.id,
+            i.file_path
+        );
+    }
+    let sr = SeriesEntity::find_by_id(series.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(sr.removed_at.is_none(), "series stays live");
+}
+
+/// A removed series whose only issue is a sticky Duplicates-page removal
+/// stays removed, and its unchanged folder is skipped.
+#[tokio::test]
+async fn duplicate_removed_only_series_stays_removed_and_skipped() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    write_old_folder(&root.join("Series Omega (2025)"), "Omega", 1, 500);
+    let lib_id = create_library(&app, &root, 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "Omega").await;
+    let issue = issues_of(&app, series.id).await.remove(0);
+    let now = Utc::now().fixed_offset();
+    entity::issue_duplicate_decision::ActiveModel {
+        issue_id: Set(issue.id.clone()),
+        library_id: Set(lib_id),
+        decision: Set("remove".to_owned()),
+        decided_by: Set(None),
+        decided_at: Set(now),
+    }
+    .insert(&state.db)
+    .await
+    .unwrap();
+    let mut am: IssueAM = issue.into();
+    am.removed_at = Set(Some(now));
+    am.update(&state.db).await.unwrap();
+    set_series_removed(&app, series.id).await;
+
+    let s = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(s.series_skipped_unchanged, 1, "{s:?}");
+    assert_eq!(s.issues_restored, 0, "{s:?}");
+    for i in issues_of(&app, series.id).await {
+        assert!(i.removed_at.is_some(), "issue {} stays removed", i.id);
+    }
+    let sr = SeriesEntity::find_by_id(series.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(sr.removed_at.is_some(), "series stays removed");
+    assert_eq!(series_restored_events(&app, lib_id, series.id).await, 0);
+}
+
+/// A removed series whose folder holds archives the database has no row
+/// for (here: the rows were purged) is not skipped: the files are ingested
+/// again and the series comes back.
+#[tokio::test]
+async fn removed_series_with_unknown_archives_is_processed() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    write_old_folder(&root.join("Series Sigma (2025)"), "Sigma", 2, 600);
+    let lib_id = create_library(&app, &root, 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "Sigma").await;
+    IssueEntity::delete_many()
+        .filter(entity::issue::Column::SeriesId.eq(series.id))
+        .exec(&state.db)
+        .await
+        .unwrap();
+    set_series_removed(&app, series.id).await;
+
+    let s = scanner::scan_library(&state, lib_id).await.unwrap();
+    assert_eq!(s.series_skipped_unchanged, 0, "{s:?}");
+    assert_eq!(s.files_added, 2, "{s:?}");
+    let live = issues_of(&app, series.id).await;
+    assert_eq!(live.len(), 2);
+    assert!(live.iter().all(|i| i.removed_at.is_none()));
+    let sr = SeriesEntity::find_by_id(series.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(sr.removed_at.is_none(), "series back with its files");
+}
+
+/// No flap: a removed series whose recorded folder is missing while one of
+/// its removed issues sits in a scanned, present folder. The reconcile
+/// restores that issue, the folder-missing sweep removes it again, and the
+/// series heal runs after the sweep, so the series is never restored (and
+/// removed again) inside the one reconcile. Drives `reconcile_library_seen`
+/// directly: a full scan re-homes the series onto the present folder first.
+#[tokio::test]
+async fn series_with_missing_folder_does_not_flap_in_one_reconcile() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    let folder = root.join("Series Rho (2025)");
+    write_old_folder(&folder, "Rho", 2, 700);
+    let lib_id = create_library(&app, &root, 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "Rho").await;
+    let issues = issues_of(&app, series.id).await;
+
+    // The series' recorded folder is gone and the last scan removed it; one
+    // of its issues (file present in the scanned folder) is removed too.
+    let mut am: entity::series::ActiveModel = series.clone().into();
+    am.folder_path = Set(Some(
+        root.join("Gone Rho (2025)").to_string_lossy().into_owned(),
+    ));
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&state.db).await.unwrap();
+    let mut am: IssueAM = issues[0].clone().into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&state.db).await.unwrap();
+
+    let present = folder.to_string_lossy().into_owned();
+    let folders: std::collections::HashSet<String> = [present].into_iter().collect();
+    let seen: std::collections::HashSet<String> =
+        issues.iter().map(|i| i.file_path.clone()).collect();
+    let scanned: std::collections::HashSet<Uuid> = [series.id].into_iter().collect();
+    let mut stats = scanner::ScanStats::default();
+    let mut events = server::library::event_log::EventCollector::new(lib_id, None);
+    reconcile::reconcile_library_seen(
+        &state.db,
+        lib_id,
+        &scanned,
+        &seen,
+        &folders,
+        &folders,
+        None,
+        &std::collections::HashSet::new(),
+        &mut stats,
+        &mut events,
+    )
+    .await
+    .unwrap();
+    events.flush(&state.db).await;
+
+    let sr = SeriesEntity::find_by_id(series.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(sr.removed_at.is_some(), "series stays removed");
+    assert_eq!(
+        stats.series_removed, 0,
+        "never restored, so never re-removed: {stats:?}"
+    );
+    assert_eq!(series_restored_events(&app, lib_id, series.id).await, 0);
+}
