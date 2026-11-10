@@ -664,29 +664,6 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // phash-missing issue at boot flooded the queue (~9k jobs) on a
     // large library; the operator now decides when that work runs.
 
-    // Archive-rewrite startup sweep (M0 of metadata-sidecar-writeback-1.0):
-    // walk every `library.root_path` and remove orphan `.tmp` siblings
-    // older than 10 min. Crashed rewrites leave these behind; without the
-    // sweep they accumulate forever. Skipped libraries with read errors
-    // (mount went away, perm issue) — logged inside `walk_and_remove`.
-    {
-        use entity::library;
-        use sea_orm::EntityTrait;
-        if let Ok(libs) = library::Entity::find().all(&state.db).await {
-            let roots: Vec<std::path::PathBuf> = libs
-                .into_iter()
-                .map(|l| std::path::PathBuf::from(l.root_path))
-                .collect();
-            let removed = crate::archive_rewrite::startup_cleanup(
-                roots,
-                std::time::Duration::from_secs(10 * 60),
-            );
-            if removed > 0 {
-                tracing::info!(removed, "archive_rewrite startup: cleaned orphan .tmp");
-            }
-        }
-    }
-
     // Scan-coalescing key boot sweep (OPS-2): clear any `scan:{in_flight,
     // scan_id,queued}:*` keys orphaned by a previous process crash so a library
     // whose scan died between claiming the key and pushing the apalis job isn't
@@ -771,10 +748,18 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // hotlinked variants localize on re-apply or via
     // `/admin/metadata/variant-cover-backfill`.
 
+    let cleanup_db = state.db.clone();
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(addr = %bind, "listening");
+
+    // Archive-rewrite staging sweep: remove Folio's own orphan
+    // `<name>.<32 hex>.tmp` files (crashed rewrites) older than 10 min, in
+    // writeback-enabled libraries only. Runs in the background on the
+    // blocking pool once the listener is bound, so a large library never
+    // holds up startup; the age floor keeps it off live rewrites.
+    drop(crate::archive_rewrite::spawn_startup_cleanup(cleanup_db));
 
     let http_shutdown = shutdown.clone();
     axum::serve(

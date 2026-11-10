@@ -11,7 +11,8 @@
 //!
 //! Both go through [`rewrite_atomic`], which owns the temp→fsync→`.bak`→
 //! rename dance. Both compete for the same per-issue Redis mutex (see
-//! [`mutex`]). Boot-time cleanup of orphan `.tmp` files lives in
+//! [`mutex`]). Boot-time cleanup of orphan staging files
+//! (`<name>.<32 hex>.tmp`, see [`is_staging_name`]) lives in
 //! [`startup_cleanup`].
 //!
 //! ## Atomic-swap contract
@@ -231,18 +232,55 @@ fn link_or_copy(src: &Path, dst: &Path) -> Result<(), RewriteError> {
     }
 }
 
-/// A fresh, unpredictable staging path for `target`: `<target>.<random>.tmp`
-/// in the same directory (so the final rename stays on one filesystem). The
-/// random component means an attacker who can write to the media directory
-/// can't pre-plant a symlink at the staging path to redirect the write
-/// out of the library root (SEC-8). The `.tmp` suffix is preserved so
-/// [`startup_cleanup`] still recognizes and reaps orphans.
+/// Suffix of every staging file [`temp_staging`] names.
+const STAGING_SUFFIX: &str = ".tmp";
+/// Length of the random token in a staging name: a v7 UUID in `simple`
+/// form, 32 lowercase hex characters.
+const STAGING_TOKEN_LEN: usize = 32;
+
+/// A fresh, unpredictable staging path for `target`:
+/// `<target file name>.<32 lowercase hex>.tmp` in the same directory (so the
+/// final rename stays on one filesystem). The random component means an
+/// attacker who can write to the media directory can't pre-plant a symlink
+/// at the staging path to redirect the write out of the library root
+/// (SEC-8). [`is_staging_name`] is the exact inverse: it is what
+/// [`startup_cleanup`] matches, so only names built here are ever reaped.
 fn temp_staging(target: &Path) -> PathBuf {
+    let token = Uuid::now_v7().simple().to_string();
+    debug_assert_eq!(token.len(), STAGING_TOKEN_LEN);
     let mut s = target.as_os_str().to_os_string();
     s.push(".");
-    s.push(Uuid::now_v7().simple().to_string());
-    s.push(".tmp");
+    s.push(token);
+    s.push(STAGING_SUFFIX);
     PathBuf::from(s)
+}
+
+/// Whether `name` (a bare file name) is a staging file [`temp_staging`]
+/// produces: a recognized comic-archive name (`.cbz` / `.cbt` / `.cbr` /
+/// `.cb7`, any case, non-empty stem), a dot, exactly
+/// [`STAGING_TOKEN_LEN`] lowercase hex characters, then `.tmp`. Anything
+/// else — a user's `notes.tmp`, another tool's `x.cbz.tmp`, an uppercase
+/// token — is not Folio's and is never touched.
+pub fn is_staging_name(name: &str) -> bool {
+    let Some(rest) = name.strip_suffix(STAGING_SUFFIX) else {
+        return false;
+    };
+    let Some((base, token)) = rest.rsplit_once('.') else {
+        return false;
+    };
+    if token.len() != STAGING_TOKEN_LEN
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return false;
+    }
+    let base = Path::new(base);
+    base.file_stem().is_some_and(|s| !s.is_empty())
+        && base
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(crate::library::ignore::is_recognized_archive_ext)
 }
 
 /// Atomically create the staging file with `O_EXCL` (`create_new`), so the
@@ -334,7 +372,7 @@ fn fsync_dir(_path: &Path) -> Result<(), RewriteError> {
 ///   5. fsync the parent dir.
 ///
 /// On failure before step 3 the original is untouched (worst case an
-/// orphan `<dst>.tmp`, reaped by [`startup_cleanup`]). Returns the `.bak`
+/// orphan `<dst>.<hex>.tmp` staging file, reaped by [`startup_cleanup`]). Returns the `.bak`
 /// path of the preserved original.
 pub fn convert_atomic<F>(
     original: &Path,
@@ -451,10 +489,19 @@ pub fn mount_writable(_dir: &Path) -> bool {
     true
 }
 
-/// Walk every library root and remove `.tmp` siblings older than `ttl`
-/// — leftovers from a crashed rewrite. Called once at server boot from
-/// [`crate::state::AppState::new`] (M0.5). Safe to call repeatedly; no-op
-/// when no orphans are present.
+/// Age floor for [`startup_cleanup`]: a staging file younger than this may
+/// belong to a rewrite in progress and is left alone.
+pub const STARTUP_CLEANUP_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Walk `roots` and remove Folio's own staging files ([`is_staging_name`])
+/// older than `ttl` — leftovers from a crashed rewrite. Nothing else is
+/// touched: other `.tmp` files and `.bak` backups stay. The caller passes
+/// only roots of libraries with `allow_archive_writeback = true`
+/// ([`spawn_startup_cleanup`]); a library with writeback off is never
+/// walked. Blocking (synchronous filesystem walk); safe to call repeatedly.
+///
+/// The cutoff is fixed once, when the walk starts, so a rewrite that
+/// begins while a slow walk is still running is always newer than it.
 ///
 /// Returns the count of removed files (mostly for log scraping).
 pub fn startup_cleanup(roots: impl IntoIterator<Item = PathBuf>, ttl: std::time::Duration) -> u64 {
@@ -466,6 +513,52 @@ pub fn startup_cleanup(roots: impl IntoIterator<Item = PathBuf>, ttl: std::time:
         removed += walk_and_remove(&root, cutoff);
     }
     removed
+}
+
+/// Run the boot-time staging sweep in the background: load the roots of
+/// writeback-enabled libraries, then walk them on the blocking pool with
+/// [`STARTUP_CLEANUP_TTL`]. Called after the HTTP listener is bound, so a
+/// large or slow library never delays the server coming up. The returned
+/// handle resolves to the removed count (tests await it; boot drops it).
+pub fn spawn_startup_cleanup(db: sea_orm::DatabaseConnection) -> tokio::task::JoinHandle<u64> {
+    tokio::spawn(async move {
+        use entity::library;
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+        let roots: Vec<String> = match library::Entity::find()
+            .select_only()
+            .column(library::Column::RootPath)
+            .filter(library::Column::AllowArchiveWriteback.eq(true))
+            .into_tuple()
+            .all(&db)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "archive_rewrite startup: library lookup failed; sweep skipped");
+                return 0;
+            }
+        };
+        if roots.is_empty() {
+            return 0;
+        }
+        let roots: Vec<PathBuf> = roots.into_iter().map(PathBuf::from).collect();
+        match tokio::task::spawn_blocking(move || startup_cleanup(roots, STARTUP_CLEANUP_TTL)).await
+        {
+            Ok(removed) => {
+                if removed > 0 {
+                    tracing::info!(
+                        removed,
+                        "archive_rewrite startup: removed orphan staging files"
+                    );
+                }
+                removed
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "archive_rewrite startup: sweep task failed");
+                0
+            }
+        }
+    })
 }
 
 fn walk_and_remove(dir: &Path, cutoff: SystemTime) -> u64 {
@@ -489,7 +582,7 @@ fn walk_and_remove(dir: &Path, cutoff: SystemTime) -> u64 {
         if !path
             .file_name()
             .and_then(|n| n.to_str())
-            .is_some_and(|s| s.ends_with(".tmp"))
+            .is_some_and(is_staging_name)
         {
             continue;
         }
@@ -502,12 +595,12 @@ fn walk_and_remove(dir: &Path, cutoff: SystemTime) -> u64 {
         match fs::remove_file(&path) {
             Ok(()) => {
                 removed += 1;
-                tracing::info!(path = %path.display(), "archive_rewrite startup: removed orphan .tmp");
+                tracing::info!(path = %path.display(), "archive_rewrite startup: removed orphan staging file");
             }
             Err(e) => tracing::warn!(
                 path = %path.display(),
                 error = %e,
-                "archive_rewrite startup: failed to remove orphan .tmp",
+                "archive_rewrite startup: failed to remove orphan staging file",
             ),
         }
     }
@@ -745,12 +838,48 @@ mod tests {
         let target = Path::new("/lib/series/issue.cbz");
         let a = temp_staging(target);
         let b = temp_staging(target);
-        // Distinct each call (random component) and still under the same dir
-        // with a `.tmp` suffix so startup_cleanup reaps orphans.
+        // Distinct each call (random component), still under the same dir,
+        // and named exactly what startup_cleanup matches.
         assert_ne!(a, b);
         for p in [&a, &b] {
-            assert!(p.to_str().unwrap().ends_with(".tmp"));
             assert_eq!(p.parent(), target.parent());
+            let name = p.file_name().unwrap().to_str().unwrap();
+            assert!(is_staging_name(name), "{name}");
+        }
+        // Every target name the writers stage under matches.
+        for t in ["a.cbz", "b.CBT", "c.cbr", "d.cb7", "Issue #1 (2020).cbz"] {
+            let p = temp_staging(&Path::new("/lib").join(t));
+            assert!(is_staging_name(p.file_name().unwrap().to_str().unwrap()));
+        }
+    }
+
+    #[test]
+    fn is_staging_name_matches_only_folio_staging_files() {
+        let hex = "0192f3a4b5c6d7e8f90a1b2c3d4e5f60";
+        assert_eq!(hex.len(), 32);
+        assert!(is_staging_name(&format!("issue.cbz.{hex}.tmp")));
+        assert!(is_staging_name(&format!("Issue 1.CBZ.{hex}.tmp")));
+        assert!(is_staging_name(&format!("x.cbt.{hex}.tmp")));
+        assert!(is_staging_name(&format!("x.cbr.{hex}.tmp")));
+        assert!(is_staging_name(&format!("x.cb7.{hex}.tmp")));
+
+        for name in [
+            "notes.tmp".to_owned(),
+            "x.cbz.tmp".to_owned(),
+            ".tmp".to_owned(),
+            format!("x.cbz.{}.tmp", &hex[..31]),
+            format!("x.cbz.{hex}0.tmp"),
+            format!("x.cbz.{}.tmp", hex.to_ascii_uppercase()),
+            format!("x.cbz.{}g.tmp", &hex[..31]),
+            format!("notes.txt.{hex}.tmp"),
+            format!("notes.{hex}.tmp"),
+            format!("{hex}.tmp"),
+            format!(".cbz.{hex}.tmp"),
+            format!("x.cbz.{hex}.TMP"),
+            format!("x.cbz.{hex}.tmp.bak"),
+            format!("x.cbz.{hex}"),
+        ] {
+            assert!(!is_staging_name(&name), "{name}");
         }
     }
 
@@ -758,7 +887,7 @@ mod tests {
     fn claim_staging_path_fails_closed_on_existing_file() {
         let dir = TempDir::new().unwrap();
         // Fresh path: claim succeeds and creates the file.
-        let fresh = dir.path().join("issue.cbz.fresh.tmp");
+        let fresh = temp_staging(&dir.path().join("issue.cbz"));
         claim_staging_path(&fresh).unwrap();
         assert!(fresh.exists());
         // Pre-existing path (stand-in for a pre-planted file/symlink): O_EXCL
@@ -766,15 +895,19 @@ mod tests {
         assert!(claim_staging_path(&fresh).is_err());
     }
 
+    /// A staging name as [`temp_staging`] would produce for `target`.
+    fn staged(dir: &Path, target: &str) -> PathBuf {
+        temp_staging(&dir.join(target))
+    }
+
     #[test]
-    fn startup_cleanup_removes_old_tmp() {
+    fn startup_cleanup_removes_old_staging_file() {
         let dir = TempDir::new().unwrap();
-        let stale = dir.path().join("issue.cbz.tmp");
+        let stale = staged(dir.path(), "issue.cbz");
         let mut f = fs::File::create(&stale).unwrap();
         f.write_all(b"partial").unwrap();
         drop(f);
-        // Backdate mtime well past the cutoff via filetime crate? Avoid
-        // pulling in another dep — sleep + tiny ttl is fine in test.
+        // Sleep + tiny ttl stands in for an old mtime.
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         let removed = startup_cleanup(
@@ -786,9 +919,32 @@ mod tests {
     }
 
     #[test]
-    fn startup_cleanup_skips_recent_tmp() {
+    fn startup_cleanup_leaves_other_tmp_files() {
         let dir = TempDir::new().unwrap();
-        let recent = dir.path().join("issue.cbz.tmp");
+        let others = [
+            dir.path().join("notes.tmp"),
+            dir.path().join("x.cbz.tmp"),
+            dir.path().join("x.cbz.bak"),
+        ];
+        for p in &others {
+            fs::write(p, b"not ours").unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let removed = startup_cleanup(
+            [dir.path().to_path_buf()],
+            std::time::Duration::from_millis(10),
+        );
+        assert_eq!(removed, 0);
+        for p in &others {
+            assert!(p.exists(), "{}", p.display());
+        }
+    }
+
+    #[test]
+    fn startup_cleanup_skips_recent_staging_file() {
+        let dir = TempDir::new().unwrap();
+        let recent = staged(dir.path(), "issue.cbz");
         fs::write(&recent, b"in-flight").unwrap();
 
         // TTL much longer than file age — should be skipped.
@@ -805,7 +961,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let sub = dir.path().join("series");
         fs::create_dir(&sub).unwrap();
-        let stale = sub.join("issue.cbz.tmp");
+        let stale = staged(&sub, "issue.cbz");
         fs::write(&stale, b"partial").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
 

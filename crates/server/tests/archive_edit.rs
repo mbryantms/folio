@@ -758,3 +758,62 @@ async fn page_edit_preserves_foreign_sidecars_cbz_and_cbt() {
         assert!(a.find("Thumbs.db").is_none(), "{file_name}: junk dropped");
     }
 }
+
+// ───────── boot-time staging sweep ─────────
+
+/// Write `name` under `dir` with an mtime `age` in the past.
+fn aged_file(dir: &Path, name: &str, age: std::time::Duration) -> std::path::PathBuf {
+    let p = dir.join(name);
+    std::fs::write(&p, b"leftover").unwrap();
+    let t = filetime::FileTime::from_system_time(std::time::SystemTime::now() - age);
+    filetime::set_file_mtime(&p, t).unwrap();
+    p
+}
+
+/// The boot sweep removes only Folio's own staging files
+/// (`<archive>.<32 hex>.tmp`) older than the floor, and only in libraries
+/// with archive writeback on. A library with writeback off is never
+/// walked; a foreign `.tmp` is never touched anywhere.
+#[tokio::test]
+async fn startup_cleanup_removes_only_own_staging_in_writeback_libraries() {
+    let app = TestApp::spawn().await;
+    let db = &app.state().db;
+    let old = std::time::Duration::from_secs(60 * 60);
+    let fresh = std::time::Duration::from_secs(10);
+    let staging = |n: u8| format!("issue{n}.cbz.{}.tmp", Uuid::new_v4().simple());
+    assert!(archive_rewrite::is_staging_name(&staging(0)));
+
+    // Writeback OFF: nothing is touched, not even a correctly named old
+    // staging file.
+    let off = tempdir().unwrap();
+    LibrarySeed::new(off.path()).insert(db).await;
+    let off_files = [
+        aged_file(off.path(), "notes.tmp", old),
+        aged_file(off.path(), "x.cbz.tmp", old),
+        aged_file(off.path(), &staging(1), old),
+    ];
+
+    // Writeback ON: only the old, correctly named staging file goes.
+    let on = tempdir().unwrap();
+    LibrarySeed::new(on.path())
+        .with_sidecar_writeback()
+        .insert(db)
+        .await;
+    let nested = on.path().join("Series (2020)");
+    std::fs::create_dir(&nested).unwrap();
+    let on_old_staging = aged_file(&nested, &staging(2), old);
+    let on_kept = [
+        aged_file(on.path(), "notes.tmp", old),
+        aged_file(on.path(), "x.cbz.tmp", old),
+        aged_file(on.path(), &staging(3), fresh),
+    ];
+
+    let removed = archive_rewrite::spawn_startup_cleanup(db.clone())
+        .await
+        .unwrap();
+    assert_eq!(removed, 1);
+    assert!(!on_old_staging.exists(), "old staging file removed");
+    for p in off_files.iter().chain(on_kept.iter()) {
+        assert!(p.exists(), "{} must survive", p.display());
+    }
+}
