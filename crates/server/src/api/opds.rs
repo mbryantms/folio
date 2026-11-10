@@ -784,7 +784,6 @@ async fn series_one(
     // series-detail screen, so without this banner the screen
     // shows just the title and the issue grid. M5 follow-up to
     // close that gap (observed in Panels on 2026-05-16).
-    let slugs = fetch_series_slugs(&app.db, &issues).await;
     let series_facets = fetch_series_facets(&app.db, &[s.id]).await;
     let cover_map = fetch_cover_issues(&app.db, &[s.id]).await;
     let cover = cover_map.get(&s.id).map(String::as_str);
@@ -812,12 +811,10 @@ async fn series_one(
     let up_next_id = up_next_issue.as_ref().map(|i| i.id.as_str());
     let mut entries = String::new();
     for (idx, i) in issues.iter().enumerate() {
-        let series_slug = slugs.get(&i.series_id).map(String::as_str);
         let prev = idx.checked_sub(1).and_then(|p| issues.get(p));
         let next = issues.get(idx + 1);
         entries.push_str(&render_issue_acq_entry(IssueAcqEntryCtx {
             issue: i,
-            series_slug,
             pse_ctx: Some((user.id, key)),
             progress: progress.get(&i.id),
             prev,
@@ -1798,14 +1795,12 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
         entry_positions,
     } = args;
     let now = chrono::Utc::now().to_rfc3339();
-    let slugs = fetch_series_slugs(&app.db, issues).await;
     let key = app.secrets.url_signing_key.as_ref();
     let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
     let progress = fetch_user_progress(&app.db, user_id, &issue_ids).await;
     let glyphs = user_progress_glyphs_flag(&app.db, user_id).await;
     let mut entries = String::new();
     for (idx, i) in issues.iter().enumerate() {
-        let series_slug = slugs.get(&i.series_id).map(String::as_str);
         let (prev, next) = if sequential_nav {
             (
                 idx.checked_sub(1).and_then(|p| issues.get(p)),
@@ -1816,7 +1811,6 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
         };
         entries.push_str(&render_issue_acq_entry(IssueAcqEntryCtx {
             issue: i,
-            series_slug,
             pse_ctx: Some((user_id, key)),
             progress: progress.get(&i.id),
             prev,
@@ -1882,7 +1876,6 @@ async fn build_acquisition_feed(app: &AppState, args: AcquisitionFeedArgs<'_>) -
 /// `PublicationCtx` on the v2 side.
 struct IssueAcqEntryCtx<'a> {
     issue: &'a OpdsIssueRow,
-    series_slug: Option<&'a str>,
     pse_ctx: Option<(Uuid, &'a [u8])>,
     progress: Option<&'a progress_record::Model>,
     prev: Option<&'a OpdsIssueRow>,
@@ -1911,7 +1904,6 @@ struct IssueAcqEntryCtx<'a> {
 fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
     let IssueAcqEntryCtx {
         issue: i,
-        series_slug,
         pse_ctx,
         progress,
         prev,
@@ -1990,8 +1982,7 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
     {summary}
 {metadata}    <link rel="http://opds-spec.org/image/thumbnail" href="/issues/{id}/pages/0/thumb" type="image/webp"/>
     <link rel="http://opds-spec.org/image" href="/issues/{id}/pages/0" type="image/jpeg"/>
-{related}    <link rel="http://opds-spec.org/acquisition" href="{acquisition_href}" type="{mime}"{acquisition_progress_attrs}/>
-    <link rel="alternate" href="/api/issues/{id}" type="application/json"/>
+    <link rel="http://opds-spec.org/acquisition" href="{acquisition_href}" type="{mime}"{acquisition_progress_attrs}/>
     <link rel="http://opds-spec.org/progression" href="/opds/v1/progression/{id}" type="application/opds-progression+json"/>
 {pse}{nav}  </entry>
 "#,
@@ -2005,12 +1996,6 @@ fn render_issue_acq_entry(ctx: IssueAcqEntryCtx<'_>) -> String {
             .map(|s| format!("<summary>{}</summary>", xml_escape(s)))
             .unwrap_or_default(),
         metadata = entry_metadata(i),
-        related = series_slug
-            .map(|s| format!(
-                "    <link rel=\"related\" href=\"/api/series/{}\" type=\"application/json\"/>\n",
-                xml_escape(s),
-            ))
-            .unwrap_or_default(),
         mime = mime_for(&i.file_path),
         acquisition_href = acquisition_href,
         pse = pse_link,
@@ -2300,11 +2285,9 @@ fn render_series_subsection_entry(
     <title>{name}</title>
     <updated>{updated}</updated>
 {description}{metadata}{cover_links}    <link rel="subsection" href="/opds/v1/series/{id}" type="{acq}"/>
-    <link rel="alternate" href="/api/series/{slug}" type="application/json"/>
   </entry>
 "#,
         id = s.id,
-        slug = xml_escape(&s.slug),
         name = xml_escape(&s.name),
         updated = s.updated_at.to_rfc3339(),
         description = render_series_description(s.summary.as_deref()),
@@ -2684,31 +2667,6 @@ pub(crate) async fn fetch_series_facets(
         f.genres.dedup();
     }
     out
-}
-
-/// Bulk-fetch the slug for every distinct series referenced in `issues`.
-/// Empty inputs short-circuit so the search-empty-state path doesn't query.
-pub(crate) async fn fetch_series_slugs(
-    db: &sea_orm::DatabaseConnection,
-    issues: &[OpdsIssueRow],
-) -> HashMap<Uuid, String> {
-    if issues.is_empty() {
-        return HashMap::new();
-    }
-    let mut ids: Vec<Uuid> = issues.iter().map(|i| i.series_id).collect();
-    ids.sort();
-    ids.dedup();
-    match series::Entity::find()
-        .filter(series::Column::Id.is_in(ids))
-        .all(db)
-        .await
-    {
-        Ok(rows) => rows.into_iter().map(|s| (s.id, s.slug)).collect(),
-        Err(e) => {
-            tracing::warn!(error = %e, "opds: series-slug lookup failed; related rels will be omitted");
-            HashMap::new()
-        }
-    }
 }
 
 /// Emit Dublin Core, author, and category elements for an issue entry.
@@ -3569,20 +3527,6 @@ async fn render_collection_acq(
     } else {
         None
     };
-    // Series slug lookup for `related` links on issue entries.
-    let issue_series_ids: Vec<Uuid> = issue_by_id.values().map(|i| i.series_id).collect();
-    let issue_slug_by_series: HashMap<Uuid, String> = if issue_series_ids.is_empty() {
-        HashMap::new()
-    } else {
-        series::Entity::find()
-            .filter(series::Column::Id.is_in(issue_series_ids))
-            .all(&app.db)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|s| (s.id, s.slug))
-            .collect()
-    };
     // Per-series cover so series entries in mixed collection feeds
     // render with art instead of folder icons (M1 of opds-richer-feeds).
     // Per-series facets so they also carry dc:publisher / author /
@@ -3606,10 +3550,8 @@ async fn render_collection_acq(
         } else if let Some(iid) = row.issue_id.as_deref()
             && let Some(i) = issue_by_id.get(iid)
         {
-            let slug = issue_slug_by_series.get(&i.series_id).map(String::as_str);
             entries.push_str(&render_issue_acq_entry(IssueAcqEntryCtx {
                 issue: i,
-                series_slug: slug,
                 pse_ctx: Some((user.id, key)),
                 progress: progress.get(iid),
                 prev: None,

@@ -30,6 +30,18 @@ use entity::user::{self, Entity as UserEntity, UserRole, UserState};
 
 use super::cookies::SESSION_COOKIE;
 
+/// Request-extension marker for the reader-client surface: page bytes,
+/// thumbnails and stored covers, OPDS 1.2 + 2.0 (feeds, downloads,
+/// progress, KOReader sync), OPDS progression and the Komga shim.
+/// `app::build_openapi_router_with` layers it onto exactly those routers
+/// before they are merged into the `bare` group. [`CurrentUser`] resolves
+/// an app password (Bearer or Basic) only when the marker is present;
+/// everywhere else the token is refused with 403 before any DB or argon2
+/// work, so a reader token can't reach the JSON API, admin routes or
+/// account settings (and the CSRF bypass it enjoys can't be used there).
+#[derive(Clone, Copy, Debug)]
+pub struct AppPasswordSurface;
+
 #[derive(Clone, Debug)]
 pub struct CurrentUser {
     pub id: Uuid,
@@ -52,6 +64,8 @@ pub enum AuthRejection {
     UserDisabled,
     EmailUnverified,
     Forbidden,
+    /// An app password presented outside the [`AppPasswordSurface`].
+    AppPasswordNotAllowed,
     Internal,
 }
 
@@ -80,6 +94,11 @@ impl IntoResponse for AuthRejection {
                 "auth.permission_denied",
                 "Admin only",
             ),
+            Self::AppPasswordNotAllowed => (
+                StatusCode::FORBIDDEN,
+                "auth.permission_denied",
+                "App passwords only work with reader apps (OPDS). Sign in to use this endpoint.",
+            ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
@@ -106,8 +125,12 @@ where
         // — JWTs always start with `eyJ` so there's no overlap. The
         // app-password DB lookup runs argon2 verify against active rows,
         // so this is slow on cold cache (10-30ms per active row) but the
-        // working set is tiny in practice.
+        // working set is tiny in practice. Reader routes only: anywhere
+        // else the token is refused before the DB / argon2 work.
         if super::app_password::looks_like_app_password(&token) {
+            if parts.extensions.get::<AppPasswordSurface>().is_none() {
+                return Err(AuthRejection::AppPasswordNotAllowed);
+            }
             return resolve_app_password(&app, &token).await;
         }
 

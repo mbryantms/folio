@@ -494,8 +494,9 @@ per-list opt-out to preserve curated orders).
   refresh-token rotation; a replayed refresh token is rejected. Only an
   active account gets in: an unverified or disabled one is refused on
   every credential (session, token, app password, OPDS).
-- **App passwords** per device/app, individually revocable, with
-  last-used tracking.
+- **App passwords** per reader app/device, individually revocable, with
+  last-used tracking. They sign reader apps in to OPDS, downloads, page
+  streaming and progress sync only; the rest of the API refuses them.
 - **Self-service account deletion**: Settings → Account → Delete account
   points at the JSON export first, re-checks the password (identity-provider
   accounts type their email), and removes every personal row while the audit

@@ -79,7 +79,7 @@ export function AppPasswordsCard() {
     return (
       <SettingsSection
         title="Existing passwords"
-        description="Active Bearer credentials issued to your account."
+        description="Reader-app passwords issued to your account."
       >
         <p className="text-destructive text-sm">Failed to load passwords.</p>
       </SettingsSection>
@@ -92,7 +92,7 @@ export function AppPasswordsCard() {
     <div className="space-y-6">
       <SettingsSection
         title="Generate a new password"
-        description="Issue a long-lived Bearer token bound to your account. The plaintext is shown once and never retrievable again — copy it before closing the dialog."
+        description="Issue a long-lived password for a reader app, bound to your account. It works for the OPDS catalogue, downloads, page streaming and progress sync only. The plaintext is shown once and never retrievable again — copy it before closing the dialog."
       >
         <form onSubmit={onSubmit} className="space-y-3">
           <div className="flex items-end gap-3">
@@ -128,9 +128,8 @@ export function AppPasswordsCard() {
                   <span className="font-medium">Read-only</span>
                   <span className="text-muted-foreground">
                     {" "}
-                    — browse + download only. Choose this for one-off downloads,
-                    scripts, or clients you don&rsquo;t want writing progress
-                    back to Folio.
+                    — browse + download only. Choose this for reader apps you
+                    don&rsquo;t want writing progress back to Folio.
                   </span>
                 </span>
               </label>
@@ -165,7 +164,7 @@ export function AppPasswordsCard() {
 
       <SettingsSection
         title="Existing passwords"
-        description="Use them as `Authorization: Bearer <token>` from OPDS readers and scripts. Revoking a password disconnects every client using it immediately."
+        description="Use them from OPDS and other reader apps, as the password (HTTP Basic, any username) or as `Authorization: Bearer <token>`. They don’t work on the rest of the API. Revoking a password disconnects every client using it immediately."
       >
         {rows.length === 0 ? (
           <p className="text-muted-foreground text-sm">
@@ -216,7 +215,7 @@ function OpdsConnectionInfo() {
     <>
       <SettingsSection
         title="OPDS readers"
-        description="Point OPDS-compatible readers (Chunky, KyBook, Panels, Kavita-mobile, …) at the URL below. Use any non-empty username with an app password as the password — HTTP Basic auth."
+        description="Point OPDS-compatible readers (Chunky, KyBook, Panels, Kavita-mobile, …) at the URL below. Use any username (Folio ignores it) with an app password as the password — HTTP Basic auth."
       >
         <div className="space-y-3">
           <div className="space-y-1">
@@ -458,8 +457,8 @@ function IssuedDialog({
           <DialogTitle>App password generated</DialogTitle>
           <DialogDescription>
             Copy this token now — you won&rsquo;t be able to see it again. Paste
-            it into your client as the password (with any non-empty username) or
-            as a Bearer header.
+            it into your reader app as the password (with any username) or as a
+            Bearer header.
           </DialogDescription>
         </DialogHeader>
 

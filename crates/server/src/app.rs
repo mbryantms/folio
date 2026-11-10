@@ -38,6 +38,13 @@ use utoipa_axum::router::OpenApiRouter;
 )]
 pub struct ApiDoc;
 
+/// Mark a reader-client router (OPDS, Komga shim, page bytes, thumbnails)
+/// as a surface where app passwords authenticate. See
+/// [`auth::extractor::AppPasswordSurface`].
+fn reader_surface(router: axum::Router<AppState>) -> axum::Router<AppState> {
+    router.layer(axum::Extension(auth::extractor::AppPasswordSurface))
+}
+
 /// Compose every routed module into a single [`OpenApiRouter`].
 ///
 /// State-free — the result is bound to a concrete [`AppState`] at serve time
@@ -118,12 +125,20 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         // canonical slug URL. Has a `#[utoipa::path]`, so merged unwrapped to
         // land in the spec.
         .merge(api::issue_permalink::routes())
-        .merge(OpenApiRouter::from(api::page_bytes::routes()))
-        .merge(OpenApiRouter::from(api::thumbnails::routes()))
-        .merge(OpenApiRouter::from(api::opds::routes()))
-        .merge(OpenApiRouter::from(api::opds_v2::routes()))
-        .merge(OpenApiRouter::from(api::komga_compat::routes()))
-        .merge(OpenApiRouter::from(api::opds_progression::routes()))
+        // The reader-client surface: the only routes where an app password
+        // authenticates (`AppPasswordSurface`). The marker is layered onto
+        // each router *before* the merge, so it covers that router's
+        // routes and nothing merged alongside them.
+        .merge(OpenApiRouter::from(reader_surface(api::page_bytes::routes())))
+        .merge(OpenApiRouter::from(reader_surface(api::thumbnails::routes())))
+        .merge(OpenApiRouter::from(reader_surface(api::opds::routes())))
+        .merge(OpenApiRouter::from(reader_surface(api::opds_v2::routes())))
+        .merge(OpenApiRouter::from(reader_surface(
+            api::komga_compat::routes(),
+        )))
+        .merge(OpenApiRouter::from(reader_surface(
+            api::opds_progression::routes(),
+        )))
         // Applied before the `api` group is nested, so it covers the bare
         // routes only; the `api` group carries its own copy inside
         // `with_json_layers`.

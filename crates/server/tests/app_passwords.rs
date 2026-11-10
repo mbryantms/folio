@@ -1,8 +1,10 @@
 //! `/me/app-passwords` integration tests (M7, audit M-14).
 //!
-//! Covers: issue → use as Bearer → /auth/me returns the right user;
-//! revoke kills the token; cross-user isolation; label validation;
-//! per-user cap; last_used_at bump.
+//! Covers: issue → use as Bearer on a reader route; revoke kills the
+//! token; cross-user isolation; label validation; per-user cap;
+//! last_used_at bump; and the reader-only scope: an app password
+//! authenticates the OPDS / Komga / page-byte / thumbnail routes and is
+//! refused with 403 everywhere else (`AppPasswordSurface`).
 
 mod common;
 
@@ -107,13 +109,14 @@ async fn list_passwords(app: &TestApp, auth: &Auth) -> serde_json::Value {
     body_json(resp.into_body()).await
 }
 
-async fn me_with_bearer(app: &TestApp, bearer: &str) -> Response<Body> {
+/// The OPDS root: a reader route, where app passwords authenticate.
+async fn opds_with_bearer(app: &TestApp, bearer: &str) -> Response<Body> {
     app.router
         .clone()
         .oneshot(
             Request::builder()
                 .method(Method::GET)
-                .uri("/auth/me")
+                .uri("/opds/v1")
                 .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
                 .body(Body::empty())
                 .unwrap(),
@@ -122,8 +125,12 @@ async fn me_with_bearer(app: &TestApp, bearer: &str) -> Response<Body> {
         .unwrap()
 }
 
+async fn body_text(b: Body) -> String {
+    String::from_utf8(to_bytes(b, usize::MAX).await.unwrap().to_vec()).unwrap()
+}
+
 #[tokio::test]
-async fn issue_then_use_as_bearer_returns_owner() {
+async fn issue_then_use_as_bearer_on_reader_route() {
     let app = TestApp::spawn().await;
     let reg = register(&app, "owner@example.com").await;
     assert_eq!(reg.status(), StatusCode::CREATED);
@@ -136,10 +143,10 @@ async fn issue_then_use_as_bearer_returns_owner() {
     assert!(plaintext.starts_with("app_"), "plaintext shape");
     assert_eq!(body["label"], "kobo");
 
-    let me = me_with_bearer(&app, &plaintext).await;
-    assert_eq!(me.status(), StatusCode::OK);
-    let me_body = body_json(me.into_body()).await;
-    assert_eq!(me_body["email"], "owner@example.com");
+    let feed = opds_with_bearer(&app, &plaintext).await;
+    assert_eq!(feed.status(), StatusCode::OK);
+    let feed_body = body_text(feed.into_body()).await;
+    assert!(feed_body.contains("<feed"), "{feed_body}");
 }
 
 #[tokio::test]
@@ -156,10 +163,8 @@ async fn repeated_bearer_use_resolves_via_cache() {
     let plaintext = body["plaintext"].as_str().unwrap().to_owned();
 
     for _ in 0..3 {
-        let me = me_with_bearer(&app, &plaintext).await;
-        assert_eq!(me.status(), StatusCode::OK);
-        let me_body = body_json(me.into_body()).await;
-        assert_eq!(me_body["email"], "cached@example.com");
+        let feed = opds_with_bearer(&app, &plaintext).await;
+        assert_eq!(feed.status(), StatusCode::OK);
     }
 }
 
@@ -196,8 +201,8 @@ async fn revoked_password_rejects_bearer_auth() {
     let id = body["id"].as_str().unwrap().to_owned();
 
     // Works before revoke.
-    let me = me_with_bearer(&app, &plaintext).await;
-    assert_eq!(me.status(), StatusCode::OK);
+    let feed = opds_with_bearer(&app, &plaintext).await;
+    assert_eq!(feed.status(), StatusCode::OK);
 
     // Revoke.
     let resp = app
@@ -217,8 +222,8 @@ async fn revoked_password_rejects_bearer_auth() {
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
     // Now fails as Bearer.
-    let me = me_with_bearer(&app, &plaintext).await;
-    assert_eq!(me.status(), StatusCode::UNAUTHORIZED);
+    let feed = opds_with_bearer(&app, &plaintext).await;
+    assert_eq!(feed.status(), StatusCode::UNAUTHORIZED);
 
     // And the list view no longer shows it.
     let body = list_passwords(&app, &auth).await;
@@ -276,7 +281,7 @@ async fn last_used_at_bumps_after_bearer_request() {
         .unwrap();
     assert!(before.last_used_at.is_none());
 
-    let _ = me_with_bearer(&app, &plaintext).await;
+    let _ = opds_with_bearer(&app, &plaintext).await;
 
     let after = entity::app_password::Entity::find_by_id(id)
         .one(&state.db)
@@ -328,4 +333,215 @@ async fn cannot_see_other_users_passwords_in_list() {
         .unwrap()
         .len();
     assert_eq!(all_count, 2);
+}
+
+// ───────── reader-only scope (`AppPasswordSurface`) ─────────
+
+/// Which credential a request carries.
+#[derive(Clone, Copy)]
+enum Cred<'a> {
+    Cookie(&'a Auth),
+    Bearer(&'a str),
+    /// HTTP Basic: the username is ignored, the password is the token.
+    Basic(&'a str),
+    None,
+}
+
+async fn send(
+    app: &TestApp,
+    method: Method,
+    uri: &str,
+    cred: Cred<'_>,
+    body: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let mut b = Request::builder().method(method).uri(uri);
+    b = match cred {
+        Cred::Cookie(a) => b
+            .header(header::COOKIE, a.cookies())
+            .header("x-csrf-token", &a.csrf),
+        Cred::Bearer(t) => b.header(header::AUTHORIZATION, format!("Bearer {t}")),
+        Cred::Basic(t) => {
+            use base64::Engine;
+            let creds = base64::engine::general_purpose::STANDARD.encode(format!("any-name:{t}"));
+            b.header(header::AUTHORIZATION, format!("Basic {creds}"))
+        }
+        Cred::None => b,
+    };
+    let req = match body {
+        Some(json) => b
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json.to_owned())),
+        None => b.body(Body::empty()),
+    }
+    .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+async fn mint(app: &TestApp, auth: &Auth) -> String {
+    let resp = create_password(app, auth, "reader").await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    body_json(resp.into_body()).await["plaintext"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn assert_refused(status: StatusCode, body: &serde_json::Value, what: &str) {
+    assert_eq!(status, StatusCode::FORBIDDEN, "{what}: {body}");
+    assert_eq!(
+        body["error"]["code"], "auth.permission_denied",
+        "{what}: {body}"
+    );
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("reader apps")),
+        "{what}: {body}"
+    );
+}
+
+async fn active_password_count(app: &TestApp) -> usize {
+    entity::app_password::Entity::find()
+        .filter(entity::app_password::Column::RevokedAt.is_null())
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .len()
+}
+
+/// Off the reader surface an app password is refused with 403, as Bearer
+/// and as Basic, and the refused writes leave nothing behind.
+#[tokio::test]
+async fn app_password_refused_off_reader_surface() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let reg = register(&app, "scoped@example.com").await;
+    let auth = Auth::from_response(&reg);
+    let token = mint(&app, &auth).await;
+
+    for cred in [Cred::Bearer(&token), Cred::Basic(&token)] {
+        for uri in ["/auth/me", "/api/auth/me"] {
+            let (s, b) = send(&app, Method::GET, uri, cred, None).await;
+            assert_refused(s, &b, uri);
+        }
+
+        let before = active_password_count(&app).await;
+        let (s, b) = send(
+            &app,
+            Method::POST,
+            "/api/me/app-passwords",
+            cred,
+            Some(r#"{"label":"minted-by-token"}"#),
+        )
+        .await;
+        assert_refused(s, &b, "POST /api/me/app-passwords");
+        assert_eq!(active_password_count(&app).await, before, "no new row");
+
+        let (s, b) = send(
+            &app,
+            Method::PATCH,
+            "/api/me/account",
+            cred,
+            Some(r#"{"email":"hijacked@example.com"}"#),
+        )
+        .await;
+        assert_refused(s, &b, "PATCH /api/me/account");
+        let (_, me) = send(&app, Method::GET, "/api/auth/me", Cred::Cookie(&auth), None).await;
+        assert_eq!(me["email"], "scoped@example.com", "email unchanged");
+
+        let (s, b) = send(&app, Method::POST, "/auth/ws-ticket", cred, None).await;
+        assert_refused(s, &b, "POST /auth/ws-ticket");
+    }
+}
+
+/// An admin's app password does not open admin routes.
+#[tokio::test]
+async fn admin_app_password_refused_on_admin_routes() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "first-admin@example.com").await;
+    let auth = Auth::from_response(&reg);
+    // First registered user is the admin: the cookie session gets in.
+    let (s, _) = send(
+        &app,
+        Method::GET,
+        "/api/admin/users",
+        Cred::Cookie(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    let token = mint(&app, &auth).await;
+    let (s, b) = send(
+        &app,
+        Method::GET,
+        "/api/admin/users",
+        Cred::Bearer(&token),
+        None,
+    )
+    .await;
+    assert_refused(s, &b, "GET /api/admin/users (Bearer)");
+    let (s, b) = send(
+        &app,
+        Method::GET,
+        "/api/admin/users",
+        Cred::Basic(&token),
+        None,
+    )
+    .await;
+    assert_refused(s, &b, "GET /api/admin/users (Basic)");
+}
+
+/// On the reader surface the same token authenticates: OPDS 1.2 + 2.0
+/// feeds answer 200, and the page-byte / thumbnail / cover / progression
+/// / Komga routes get past authentication (404 for an unknown issue,
+/// where no credential gets 401).
+#[tokio::test]
+async fn app_password_works_on_reader_surface() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let reg = register(&app, "reader@example.com").await;
+    let auth = Auth::from_response(&reg);
+    let token = mint(&app, &auth).await;
+
+    for cred in [Cred::Bearer(&token), Cred::Basic(&token)] {
+        for uri in ["/opds/v1", "/opds/v2"] {
+            let (s, _) = send(&app, Method::GET, uri, cred, None).await;
+            assert_eq!(s, StatusCode::OK, "{uri}");
+        }
+    }
+
+    let unknown = "0".repeat(64);
+    let cover = uuid::Uuid::new_v4();
+    for uri in [
+        format!("/issues/{unknown}/pages/0"),
+        format!("/issues/{unknown}/pages/0/thumb"),
+        format!("/issues/{unknown}/covers/{cover}"),
+        format!("/opds/v1/progression/{unknown}"),
+        format!("/api/v1/books/{unknown}"),
+    ] {
+        let (s, _) = send(&app, Method::GET, &uri, Cred::None, None).await;
+        assert_eq!(s, StatusCode::UNAUTHORIZED, "{uri} without a credential");
+        for cred in [Cred::Bearer(&token), Cred::Basic(&token)] {
+            let (s, b) = send(&app, Method::GET, &uri, cred, None).await;
+            assert_eq!(s, StatusCode::NOT_FOUND, "{uri}: {b}");
+        }
+    }
+}
+
+/// A cookie session is untouched by the reader-only rule.
+#[tokio::test]
+async fn cookie_session_unaffected_by_app_password_scope() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "cookie@example.com").await;
+    let auth = Auth::from_response(&reg);
+    let (s, me) = send(&app, Method::GET, "/api/auth/me", Cred::Cookie(&auth), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(me["email"], "cookie@example.com");
+    let (s, _) = send(&app, Method::GET, "/opds/v1", Cred::Cookie(&auth), None).await;
+    assert_eq!(s, StatusCode::OK);
 }

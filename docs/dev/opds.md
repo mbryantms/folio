@@ -23,8 +23,17 @@ Three auth modes work:
 2. **HTTP Basic with app-password** — typical OPDS reader setup.
    Generate an app-password in `/settings/api-tokens`, point your
    client at `https://<host>/opds/v1` with `Basic <email>:<app-password>`.
-3. **Bearer token** — for programmatic access. Same app-password
-   sent as `Authorization: Bearer <token>`.
+3. **Bearer token** — the same app-password sent as
+   `Authorization: Bearer <token>`, for readers that prefer it.
+
+App-passwords (Basic or Bearer) authenticate the reader routes only:
+the OPDS 1.2 and 2.0 feeds and downloads (`/opds/*`, including OPDS
+progress and the KOReader sync shim), OPDS progression
+(`/opds/v1/progression/{id}`), the Komga shim (`/api/v1/books/*`),
+page bytes (`/issues/{id}/pages/{n}`) and thumbnails / stored covers.
+Everywhere else (the JSON API, admin routes, account settings,
+`/auth/*`) an app-password is refused with 403
+`auth.permission_denied`. The Basic username is ignored.
 
 Unauthenticated requests return 401 with `WWW-Authenticate: Basic
 realm="Folio"` so reader apps prompt for credentials.
@@ -275,7 +284,6 @@ Every series entry across all browse surfaces carries:
 | `<category term=... scheme="urn:folio:genre">` | `metadata.subject[]` | `series_genres` |
 | `<content type=html>` or `<summary>` | `metadata.description` | `series.summary` |
 | `<link rel=subsection>` | `href` (drill-in) | `/opds/v1/series/{id}` |
-| `<link rel=alternate type=application/json>` | `links[]` (alternate) | `/api/series/{slug}` — canonical JSON |
 
 The `<uri>` element inside `<author>` is the M5 drill-in: clicking
 the author name in an OPDS reader navigates to
@@ -333,7 +341,8 @@ The OPDS surface evolved through four completed plans:
 - `~/.claude/plans/done/opds-richer-feeds-1.0.md` — Visual + UX polish
   (M1-M7). Added cover art on series entries, rich metadata, custom
   Pages, faceted browse, aggregation feeds, OPDS 2.0 groups[], and
-  `rel=alternate` JSON links.
+  `rel=alternate` JSON links. The JSON links were later removed: app
+  passwords are refused on `/api`, so reader apps could not follow them.
 - `~/.claude/plans/done/opds-sync-1.0.md` — End-to-end progress sync.
   Inline read-state annotations (M1), sequential rel=next/previous
   (M2), feed-level up-next rel (M2.3), `/continue` + `/on-deck`

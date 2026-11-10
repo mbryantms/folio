@@ -4,7 +4,7 @@
 //! Every route under `/opds/v2/*` mirrors its `/opds/v1/*` counterpart's
 //! data exactly; only the wire format differs. Data fetching, library
 //! ACL, audit, and rate-limiting reuse the v1 helpers (`allowed_libraries`,
-//! `fetch_series_slugs`, `fetch_visible_issues_preserving_order`,
+//! `fetch_visible_issues_preserving_order`,
 //! `dsl_from_view`, `ensure_want_to_read_seeded`) so the two protocols
 //! can't drift in business logic.
 //!
@@ -15,9 +15,8 @@
 //!
 //! Acquisition link payload mirrors the Atom output: every issue gets
 //! a download link with the per-extension MIME from `mime_for`, an
-//! image-thumbnail link, a full-size image link, an optional related
-//! link to the JSON API, and the PSE signed-URL stream link (rendered
-//! by `crate::auth::url_signing::issue_query`).
+//! image-thumbnail link, a full-size image link, and the PSE signed-URL
+//! stream link (rendered by `crate::auth::url_signing::issue_query`).
 //!
 //! Personal surfaces (`/opds/v2/wtr`, `/opds/v2/lists`, `/opds/v2/collections`,
 //! `/opds/v2/views`) mirror M4. The mixed-collection feed surfaces
@@ -1738,7 +1737,6 @@ async fn build_publications_inner(
     if issues.is_empty() {
         return Vec::new();
     }
-    let slugs = opds::fetch_series_slugs(&app.db, issues).await;
     let key = app.secrets.url_signing_key.as_ref();
     let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
     let progress = opds::fetch_user_progress(&app.db, user.id, &issue_ids).await;
@@ -1757,7 +1755,6 @@ async fn build_publications_inner(
             };
             publication_for(PublicationCtx {
                 issue: i,
-                series_slug: slugs.get(&i.series_id).map(String::as_str),
                 user_id: user.id,
                 url_signing_key: key,
                 progress: progress.get(&i.id),
@@ -1776,7 +1773,6 @@ async fn build_publications_inner(
 /// surface doesn't fan back out across the file.
 struct PublicationCtx<'a> {
     issue: &'a opds::OpdsIssueRow,
-    series_slug: Option<&'a str>,
     user_id: Uuid,
     url_signing_key: &'a [u8],
     progress: Option<&'a progress_record::Model>,
@@ -1794,7 +1790,6 @@ struct PublicationCtx<'a> {
 fn publication_for(ctx: PublicationCtx<'_>) -> Value {
     let PublicationCtx {
         issue: i,
-        series_slug,
         user_id,
         url_signing_key,
         progress,
@@ -1878,22 +1873,6 @@ fn publication_for(ctx: PublicationCtx<'_>) -> Value {
         "href": format!("/opds/v1/issues/{}/file", i.id),
         "type": super::opds::mime_for(&i.file_path),
     })];
-    // `rel=alternate` carries the canonical JSON representation of
-    // this issue — capable clients use it to fetch the rich JSON
-    // form for detail views without a second round-trip discovery.
-    // M7 of opds-richer-feeds.
-    links.push(json!({
-        "rel": "alternate",
-        "href": format!("/api/issues/{}", i.id),
-        "type": "application/json",
-    }));
-    if let Some(slug) = series_slug {
-        links.push(json!({
-            "rel": "related",
-            "href": format!("/api/series/{slug}"),
-            "type": "application/json",
-        }));
-    }
     // M2 of opds-sync: sequential navigation in reading-sequence feeds.
     // `previous` / `next` point at the adjacent issue's acquisition URL
     // so a finishing client can stream the next file without re-fetching
@@ -2006,18 +1985,6 @@ fn series_nav_entry(
     );
     obj.insert("type".into(), Value::from(NAV_CT));
     obj.insert("metadata".into(), Value::Object(metadata));
-    // `rel=alternate` to the canonical JSON for this series — capable
-    // OPDS 2.0 clients can fetch the rich web-API representation for
-    // detail views (per-series stats, full credits, etc.). M7 of
-    // opds-richer-feeds.
-    obj.insert(
-        "links".into(),
-        json!([{
-            "rel": "alternate",
-            "href": format!("/api/series/{}", s.slug),
-            "type": "application/json",
-        }]),
-    );
     // OPDS 2.0 `images` array — clients pick the best fit for their
     // surface (thumbnail for browse, full-size for cover detail).
     // Mirrors v1's image rels; without these clients render a generic

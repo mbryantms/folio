@@ -378,7 +378,8 @@ async fn pending_admin_cannot_change_users() {
     );
 }
 
-/// App-passwords follow the same rule, as Bearer and as OPDS Basic.
+/// App-passwords follow the same rule, as Bearer and as OPDS Basic (on a
+/// reader route: elsewhere an app password is refused outright).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pending_user_app_password_is_refused_bearer_and_basic() {
     const OPDS: &str = "/opds/v1/recent";
@@ -388,7 +389,7 @@ async fn pending_user_app_password_is_refused_bearer_and_basic() {
     let token = mint_app_password(&app, &reader).await;
 
     assert_eq!(
-        get_with(&app, USER_ROUTE, Cred::Bearer(&token)).await.0,
+        get_with(&app, OPDS, Cred::Bearer(&token)).await.0,
         StatusCode::OK
     );
     assert_eq!(
@@ -397,14 +398,14 @@ async fn pending_user_app_password_is_refused_bearer_and_basic() {
     );
 
     set_pending(&app, &admin, &reader, true).await;
-    let (s, b) = get_with(&app, USER_ROUTE, Cred::Bearer(&token)).await;
+    let (s, b) = get_with(&app, OPDS, Cred::Bearer(&token)).await;
     assert_unverified(s, &b, "app-password bearer");
     let (s, b) = get_with(&app, OPDS, Cred::Basic(&token)).await;
     assert_unverified(s, &b, "app-password basic");
 
     set_pending(&app, &admin, &reader, false).await;
     assert_eq!(
-        get_with(&app, USER_ROUTE, Cred::Bearer(&token)).await.0,
+        get_with(&app, OPDS, Cred::Bearer(&token)).await.0,
         StatusCode::OK
     );
     assert_eq!(
