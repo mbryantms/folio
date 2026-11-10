@@ -38,6 +38,47 @@ Everywhere else (the JSON API, admin routes, account settings,
 Unauthenticated requests return 401 with `WWW-Authenticate: Basic
 realm="Folio"` so reader apps prompt for credentials.
 
+### How a token is verified
+
+An app password (`app_` plus 52 base32 characters, 32 random bytes) is
+stored as an argon2id hash under the server pepper and as a lookup
+digest, the SHA-256 of the token (`app_passwords.lookup_digest`, unique).
+The digest is deliberately not keyed by the pepper, so rotating the
+pepper never orphans it; the token's 256 random bits are what keep it
+from being guessed. [`auth::app_password::verify`](../../crates/server/src/auth/app_password.rs)
+checks, in order:
+
+1. **Verified-token cache.** A token this process already verified
+   skips argon2 but re-reads its row, so a revocation or scope change
+   applies on the next request. Only successes are cached.
+2. **Failed-auth lockout** for the client IP, shared with sign-in: a
+   locked-out IP gets 429 `auth.locked_out` with `Retry-After` before
+   any lookup or hashing.
+3. **Digest lookup.** One indexed query by digest, then one argon2
+   check of that row (which also rehashes a row still under the previous
+   pepper during a rotation). A revoked row is refused without hashing.
+4. **Legacy rows.** Only when no row has the digest: active rows written
+   before the digest column existed are tried, at most 20 per request
+   (`MAX_LEGACY_CANDIDATES`), most recently used first. A match stores
+   the row's digest, so that token takes step 3 from then on.
+
+A token that matches nothing gets the usual 401 `auth.invalid` with the
+Basic challenge and counts as a failed attempt for the client IP. Every
+argon2 check runs on the blocking pool behind a global gate of 2 permits;
+a request that waits more than 2 s for one gets 503 `auth.busy` with
+`Retry-After: 1`. The account-state rule (disabled or unverified users
+refused), the `read` / `read+progress` scope check and the reader-route
+rule apply after a match exactly as before.
+
+**Legacy note.** Tokens created before the digest existed are upgraded
+on their first successful use; the Prometheus gauge
+`folio_auth_app_password_legacy_remaining` counts the active ones still
+waiting. Because the scan takes the 20 most recently used, a legacy
+token that has never been used (or not for a long time) on an install
+with more than 20 legacy tokens may never be reached: revoke it and
+create a new one. Once the gauge reads 0 a wrong token costs one indexed
+lookup and no argon2 work.
+
 ## Endpoint catalog
 
 ### Core browsing

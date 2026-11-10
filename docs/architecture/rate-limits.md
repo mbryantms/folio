@@ -52,10 +52,15 @@ Redis-backed ([`auth/failed_auth.rs`](../../crates/server/src/auth/failed_auth.r
 | `GET /auth/oidc/callback` | client IP |
 | `DELETE /me` (password re-check) | client IP and the account's email |
 | `PATCH /me/account` email or password change (password re-check, shared with `DELETE /me` through `failed_auth::verify_password_counted`) | client IP and the account's email |
+| App-password authentication, Basic or Bearer, on the reader routes (`auth::app_password::verify`) | client IP |
 
-The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
+The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The IP axis is one counter shared by every row of the table, so app-password misses and failed sign-ins from the same IP add up.
 
-Verified against the code at `1c51a486` on 2026-11-10.
+On the app-password path a token that matches no active row counts as a failure; a revoked token's row is refused without counting, since it is a real token rather than a guess. The lockout check runs after the in-memory cache of tokens this process already verified: a cached token needs no hashing and keeps working from a locked-out IP, the way an existing session outlives a sign-in lockout, while a token not yet verified gets the 429. A reader app sees 401 `auth.invalid` with `WWW-Authenticate` for a wrong token, as before, and the 429 only while its IP is locked out. App-password argon2 verifications also pass a global gate of 2 concurrent permits (`app_password::VERIFY_PERMITS`); a request that waits more than 2 s for one gets 503 `auth.busy` with `Retry-After: 1`.
+
+The lockout is not applied to JWT Bearer authentication (a signature check, no password hashing). The `auth.rate_limit_enabled` setting switches the counters off on every row. When Redis is unavailable the lockout fails open.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### Email-change requests
 

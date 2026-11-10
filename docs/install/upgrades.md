@@ -146,6 +146,15 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — app passwords are looked up by digest
+
+- **Nothing to do.** App passwords now carry a lookup digest (migration
+  `m20271107_000001_app_password_lookup_digest`). Existing app
+  passwords keep working and are upgraded on their first use; the gauge
+  `folio_auth_app_password_legacy_remaining` shows how many are left. A
+  rarely used old app password on a server with more than 20 of them may
+  need to be re-created if a reader app reports it as rejected.
+
 ### Unreleased — age-rating caps enforced; library-access `role` removed
 
 - **`library_user_access.age_rating_max` is now enforced.** A user whose

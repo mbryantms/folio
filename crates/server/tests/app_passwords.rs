@@ -862,3 +862,377 @@ fn reader_route_prefixes_match_reader_surface() {
         );
     }
 }
+
+// ───────────── lookup digest, legacy rows, lockout, hashing gate ─────────────
+//
+// A token is found by its lookup digest (SHA-256) and argon2-checked against
+// that one row; rows written before the digest column existed are tried, a
+// bounded number per request, only when no row has the digest. The gate's
+// verification counter (`AppPasswordGate::verifications`) counts argon2 work.
+
+use server::auth::app_password::{self as ap, MAX_LEGACY_CANDIDATES};
+
+const JUNK: &str = "app_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn verifications(app: &TestApp) -> u64 {
+    app.state().app_password_gate.verifications()
+}
+
+/// GET the OPDS root with `Bearer <token>` from client IP `ip`.
+async fn opds_from(app: &TestApp, token: &str, ip: [u8; 4]) -> Response<Body> {
+    let mut req = Request::builder()
+        .uri("/opds/v1")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            ip, 40000,
+        ))));
+    app.router.clone().oneshot(req).await.unwrap()
+}
+
+async fn user_id(app: &TestApp, email: &str) -> uuid::Uuid {
+    entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq(email))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .id
+}
+
+/// Issue a token straight through `app_password::issue` (no per-user cap).
+async fn issue_direct(app: &TestApp, owner: uuid::Uuid) -> (uuid::Uuid, String) {
+    let state = app.state();
+    ap::issue(
+        &state.db,
+        owner,
+        "reader",
+        ap::SCOPE_READ,
+        state.secrets.pepper.as_ref(),
+        server::auth::password::HashCost::TEST,
+    )
+    .await
+    .unwrap()
+}
+
+/// Turn a row into one written before the digest column existed.
+async fn make_legacy(app: &TestApp, id: uuid::Uuid) {
+    use sea_orm::sea_query::Expr;
+    entity::app_password::Entity::update_many()
+        .col_expr(
+            entity::app_password::Column::LookupDigest,
+            Expr::value(Option::<Vec<u8>>::None),
+        )
+        .filter(entity::app_password::Column::Id.eq(id))
+        .exec(&app.state().db)
+        .await
+        .unwrap();
+}
+
+async fn stored_digest(app: &TestApp, id: uuid::Uuid) -> Option<Vec<u8>> {
+    entity::app_password::Entity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .lookup_digest
+}
+
+async fn owner(app: &TestApp, email: &str) -> (Auth, uuid::Uuid) {
+    let reg = register(app, email).await;
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    (Auth::from_response(&reg), user_id(app, email).await)
+}
+
+#[tokio::test]
+async fn new_token_verifies_through_digest_with_one_argon2() {
+    let app = TestApp::spawn().await;
+    let (auth, _) = owner(&app, "digest@example.com").await;
+    // Other active tokens must not add work: only the digest's row is hashed.
+    let _ = mint(&app, &auth).await;
+    let _ = mint(&app, &auth).await;
+    let token = mint(&app, &auth).await;
+
+    let row = entity::app_password::Entity::find()
+        .filter(entity::app_password::Column::LookupDigest.eq(ap::lookup_digest(&token).to_vec()))
+        .one(&app.state().db)
+        .await
+        .unwrap();
+    assert!(row.is_some(), "a new token stores its lookup digest");
+
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(verifications(&app), 1);
+    // Repeat use is served by the verified-token cache: no more hashing.
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(verifications(&app), 1);
+    // Behind the cache, the digest path again costs exactly one.
+    app.state().app_password_cache.clear();
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(verifications(&app), 2);
+}
+
+#[tokio::test]
+async fn junk_token_with_only_digest_rows_runs_no_argon2() {
+    let app = TestApp::spawn().await;
+    let (auth, _) = owner(&app, "junk@example.com").await;
+    let _ = mint(&app, &auth).await;
+    let _ = mint(&app, &auth).await;
+
+    for token in [JUNK, "app_", "app_short"] {
+        let resp = opds_with_bearer(&app, token).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{token}");
+        assert!(
+            resp.headers().contains_key(header::WWW_AUTHENTICATE),
+            "OPDS 401 keeps its Basic challenge"
+        );
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "auth.invalid");
+    }
+    assert_eq!(verifications(&app), 0);
+}
+
+#[tokio::test]
+async fn legacy_row_verifies_then_gets_its_digest() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "legacy@example.com").await;
+    // Oldest first, so the target is the last legacy candidate tried.
+    let (target_id, target) = issue_direct(&app, uid).await;
+    make_legacy(&app, target_id).await;
+    for _ in 0..3 {
+        let (id, _) = issue_direct(&app, uid).await;
+        make_legacy(&app, id).await;
+    }
+
+    assert_eq!(
+        opds_with_bearer(&app, &target).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(verifications(&app), 4, "legacy scan tried all four rows");
+    assert_eq!(
+        stored_digest(&app, target_id).await,
+        Some(ap::lookup_digest(&target).to_vec()),
+        "a verified legacy row is given its digest"
+    );
+
+    // Next time (cache cleared) it takes the digest path: one verification.
+    app.state().app_password_cache.clear();
+    assert_eq!(
+        opds_with_bearer(&app, &target).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(verifications(&app), 5);
+}
+
+#[tokio::test]
+async fn legacy_scan_is_bounded() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "bounded@example.com").await;
+    let extra = 3;
+    let mut ids = Vec::new();
+    for _ in 0..(MAX_LEGACY_CANDIDATES as usize + extra) {
+        let (id, token) = issue_direct(&app, uid).await;
+        make_legacy(&app, id).await;
+        ids.push((id, token));
+    }
+
+    let resp = opds_with_bearer(&app, JUNK).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(verifications(&app), MAX_LEGACY_CANDIDATES);
+
+    // The trade-off: the oldest never-used legacy token sits outside the
+    // window and is not reached; a recently used one is.
+    let before = verifications(&app);
+    let (_, oldest) = &ids[0];
+    assert_eq!(
+        opds_with_bearer(&app, oldest).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(verifications(&app) - before, MAX_LEGACY_CANDIDATES);
+}
+
+#[tokio::test]
+async fn lockout_refuses_before_any_verification_per_ip() {
+    let app = TestApp::spawn().await;
+    let (auth, uid) = owner(&app, "lockout@example.com").await;
+    let token = mint(&app, &auth).await;
+    // One legacy row, so every junk attempt costs one verification while
+    // the IP is not locked out.
+    let (legacy_id, _) = issue_direct(&app, uid).await;
+    make_legacy(&app, legacy_id).await;
+
+    let a = [198, 51, 100, 7];
+    let threshold = server::auth::failed_auth::FAIL_THRESHOLD as u64;
+    for i in 0..threshold {
+        let resp = opds_from(&app, JUNK, a).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "attempt {i}");
+    }
+    assert_eq!(verifications(&app), threshold);
+
+    // Locked out: refused before any lookup or hashing, as sign-in is.
+    let resp = opds_from(&app, JUNK, a).await;
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(resp.headers().contains_key(header::RETRY_AFTER));
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.locked_out");
+    // A valid but not yet verified token from the same IP is refused too.
+    assert_eq!(
+        opds_from(&app, &token, a).await.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        verifications(&app),
+        threshold,
+        "no hashing while locked out"
+    );
+
+    // Another IP is unaffected.
+    assert_eq!(
+        opds_from(&app, &token, [203, 0, 113, 9]).await.status(),
+        StatusCode::OK
+    );
+    // Once verified (cached), the token costs no hashing and is served even
+    // from the locked-out IP, the way a session cookie outlives a login
+    // lockout.
+    assert_eq!(opds_from(&app, &token, a).await.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn lockout_off_when_failed_auth_counters_are_disabled() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    let mut cfg = (*state.cfg()).clone();
+    cfg.rate_limit_enabled = false;
+    state.replace_cfg(cfg);
+
+    let ip = [198, 51, 100, 8];
+    for i in 0..(server::auth::failed_auth::FAIL_THRESHOLD + 2) {
+        let resp = opds_from(&app, JUNK, ip).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "attempt {i}");
+    }
+}
+
+#[tokio::test]
+async fn revocation_applies_on_the_next_request_on_every_path() {
+    let app = TestApp::spawn().await;
+    let (auth, _) = owner(&app, "revoked2@example.com").await;
+    let revoke = |id: String| {
+        let app = &app;
+        let auth = &auth;
+        async move {
+            let (status, _) = send(
+                app,
+                Method::DELETE,
+                &format!("/api/me/app-passwords/{id}"),
+                Cred::Cookie(auth),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+    };
+
+    // Digest path: never used, revoked, refused without hashing.
+    let body = body_json(create_password(&app, &auth, "a").await.into_body()).await;
+    let token = body["plaintext"].as_str().unwrap().to_owned();
+    revoke(body["id"].as_str().unwrap().to_owned()).await;
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(verifications(&app), 0);
+
+    // Cached path: used (cached), revoked, refused on the next request.
+    let body = body_json(create_password(&app, &auth, "b").await.into_body()).await;
+    let token = body["plaintext"].as_str().unwrap().to_owned();
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::OK
+    );
+    revoke(body["id"].as_str().unwrap().to_owned()).await;
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn disabled_user_token_is_refused_on_digest_path() {
+    let app = TestApp::spawn().await;
+    let (auth, uid) = owner(&app, "disabled@example.com").await;
+    let token = mint(&app, &auth).await;
+    let mut am: entity::user::ActiveModel = entity::user::Entity::find_by_id(uid)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.state = sea_orm::Set(entity::user::UserState::Disabled);
+    sea_orm::ActiveModelTrait::update(am, &app.state().db)
+        .await
+        .unwrap();
+
+    let (status, body) = send(&app, Method::GET, "/opds/v1", Cred::Basic(&token), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["code"], "auth.disabled");
+}
+
+#[tokio::test]
+async fn two_rows_cannot_share_a_digest() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "unique@example.com").await;
+    let (id, _) = issue_direct(&app, uid).await;
+    let original = entity::app_password::Entity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let dup = entity::app_password::ActiveModel {
+        id: sea_orm::Set(uuid::Uuid::now_v7()),
+        user_id: sea_orm::Set(uid),
+        label: sea_orm::Set("dup".into()),
+        hash: sea_orm::Set(original.hash.clone()),
+        last_used_at: sea_orm::Set(None),
+        created_at: sea_orm::Set(chrono::Utc::now().fixed_offset()),
+        revoked_at: sea_orm::Set(None),
+        scope: sea_orm::Set("read".into()),
+        lookup_digest: sea_orm::Set(original.lookup_digest.clone()),
+    };
+    let res = sea_orm::ActiveModelTrait::insert(dup, &app.state().db).await;
+    assert!(res.is_err(), "the unique index refuses a duplicate digest");
+}
+
+#[tokio::test]
+async fn busy_gate_answers_503_then_recovers() {
+    let app = TestApp::spawn().await;
+    let (auth, _) = owner(&app, "busy@example.com").await;
+    let token = mint(&app, &auth).await;
+    let gate = app.state().app_password_gate.clone();
+    gate.set_permit_wait(std::time::Duration::from_millis(100));
+
+    let held = gate.hold_all_permits().await;
+    let (status, body) = send(&app, Method::GET, "/opds/v1", Cred::Bearer(&token), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], "auth.busy");
+    let resp = opds_with_bearer(&app, &token).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(resp.headers().contains_key(header::RETRY_AFTER));
+    assert_eq!(verifications(&app), 0);
+
+    drop(held);
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(verifications(&app), 1);
+}

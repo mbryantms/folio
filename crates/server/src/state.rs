@@ -58,6 +58,8 @@ pub struct Inner {
     /// Caches `SHA-256(app-password) → row id` so repeat OPDS/Bearer auths skip
     /// the argon2 scan (PERF-1). See [`crate::auth::app_password::verify`].
     pub app_password_cache: crate::auth::app_password::AppPasswordCache,
+    /// Concurrency gate (and verification count) for app-password argon2.
+    pub app_password_gate: crate::auth::app_password::AppPasswordGate,
     pub prometheus: PrometheusHandle,
     /// Process/runtime gauge sampler (`folio_process_*`). The `/metrics`
     /// handler calls `.collect()` per scrape before rendering.
@@ -230,6 +232,7 @@ impl AppState {
             started_at: chrono::Utc::now(),
             zip_lru,
             app_password_cache,
+            app_password_gate: crate::auth::app_password::AppPasswordGate::new(),
             prometheus,
             process_metrics,
             log_buffer,

@@ -10,7 +10,7 @@ the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs).
 > **Lazy registration:** counters/histograms appear only after the relevant code
 > path runs at least once. Boot-time gauges (`folio_process_*`,
 > `folio_jobs_queue_depth`, `folio_metadata_writeback_libraries_remaining`,
-> `folio_thumbs_bytes`) show immediately (`folio_thumbs_bytes` once the boot
+> `folio_auth_app_password_legacy_remaining`, `folio_thumbs_bytes`) show immediately (`folio_thumbs_bytes` once the boot
 > walk of `thumbs/` finishes).
 
 ## Catalogue
@@ -57,6 +57,19 @@ once at boot, hourly at `:17`, after the daily 04:30 UTC orphan sweep, and
 The eviction counter only moves when the optional `cache.thumbs_budget_mb`
 budget is set — see [runtime-configuration.md](runtime-configuration.md).
 Alert idea: `folio_thumbs_bytes` growing toward the data volume's free space.
+
+### App-password lookup digest — [`auth::app_password`](../../crates/server/src/auth/app_password.rs)
+| Metric | Type | Labels |
+|---|---|---|
+| `folio_auth_app_password_legacy_remaining` | gauge | — |
+
+Active app passwords created before the lookup digest existed, which the
+extractor can only find by the bounded legacy scan (at most 20 argon2
+checks per unmatched token; see [opds.md](opds.md#how-a-token-is-verified)).
+Each is upgraded on its first successful use. Set at boot and refreshed when
+an app password is created, revoked or upgraded, never per request (rows
+removed by a user deletion are reflected at the next refresh). Once it stays
+at 0, a wrong token costs one indexed lookup and no hashing.
 
 ### Audit-log retention — [`jobs::audit_log_retention`](../../crates/server/src/jobs/audit_log_retention.rs) (audit 2026-11 E1)
 | Metric | Type | Labels |

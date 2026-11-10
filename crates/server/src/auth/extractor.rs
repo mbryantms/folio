@@ -93,12 +93,31 @@ pub enum AuthRejection {
     Forbidden,
     /// An app password presented outside the [`AppPasswordSurface`].
     AppPasswordNotAllowed,
+    /// The client IP is in failed-auth lockout (app-password path; the
+    /// remaining seconds go out as `Retry-After`).
+    LockedOut(u64),
+    /// No app-password verification permit freed up in time.
+    Busy,
     Internal,
 }
 
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> axum::response::Response {
         let (status, code, message) = match self {
+            // Same answer sign-in gives a locked-out IP.
+            Self::LockedOut(retry) => return super::failed_auth::lockout_response(retry),
+            Self::Busy => {
+                let mut resp = crate::api::error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "auth.busy",
+                    "Too many sign-ins are being checked right now; try again shortly",
+                );
+                resp.headers_mut().insert(
+                    axum::http::header::RETRY_AFTER,
+                    axum::http::HeaderValue::from(super::app_password::BUSY_RETRY_AFTER_SECS),
+                );
+                return resp;
+            }
             Self::Missing => (
                 StatusCode::UNAUTHORIZED,
                 "auth.required",
@@ -149,16 +168,19 @@ where
         let token = extract_token(parts).ok_or(AuthRejection::Missing)?;
 
         // App-password Bearer flow (M7). The `app_` prefix is unambiguous
-        // — JWTs always start with `eyJ` so there's no overlap. The
-        // app-password DB lookup runs argon2 verify against active rows,
-        // so this is slow on cold cache (10-30ms per active row) but the
-        // working set is tiny in practice. Reader routes only: anywhere
-        // else the token is refused before the DB / argon2 work.
+        // — JWTs always start with `eyJ` so there's no overlap. The token
+        // is found by its lookup digest and argon2-checked against that one
+        // row (`app_password::verify`). Reader routes only: anywhere else
+        // the token is refused before the DB / argon2 work.
         if super::app_password::looks_like_app_password(&token) {
             if parts.extensions.get::<AppPasswordSurface>().is_none() {
                 return Err(AuthRejection::AppPasswordNotAllowed);
             }
-            return resolve_app_password(&app, &token).await;
+            let ctx = parts
+                .extensions
+                .get::<crate::middleware::RequestContext>()
+                .cloned();
+            return resolve_app_password(&app, ctx.as_ref(), &token).await;
         }
 
         let claims = app
@@ -202,16 +224,22 @@ pub fn admit_state(state: UserState) -> Result<(), AuthRejection> {
 
 /// Resolve an `app_…` Bearer token to its owning user. Bumps the row's
 /// `last_used_at` on success (best-effort, see `app_password::verify`).
-async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser, AuthRejection> {
-    let resolved = super::app_password::verify(
-        &app.db,
-        &app.app_password_cache,
-        token,
-        app.secrets.peppers(),
-        app.cfg().password_hash_cost,
-    )
-    .await
-    .ok_or(AuthRejection::Invalid)?;
+/// A wrong token is 401 `auth.invalid` as before; a locked-out client IP
+/// gets sign-in's 429 `auth.locked_out`, and a request that found every
+/// verification permit taken gets 503 `auth.busy`.
+async fn resolve_app_password(
+    app: &AppState,
+    ctx: Option<&crate::middleware::RequestContext>,
+    token: &str,
+) -> Result<CurrentUser, AuthRejection> {
+    use super::app_password::VerifyError;
+    let resolved = super::app_password::verify(app, ctx, token)
+        .await
+        .map_err(|e| match e {
+            VerifyError::Invalid => AuthRejection::Invalid,
+            VerifyError::LockedOut(retry) => AuthRejection::LockedOut(retry),
+            VerifyError::Busy => AuthRejection::Busy,
+        })?;
     let row = UserEntity::find()
         .filter(user::Column::Id.eq(resolved.user_id))
         .one(&app.db)

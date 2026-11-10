@@ -41,6 +41,9 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_metadata_weekly_refresh(&scheduler, &state).await;
     register_metadata_resume_sweep(&scheduler, &state).await;
     register_writeback_migration_progress(&scheduler, &state).await;
+    // Boot value of the app-password legacy gauge; the app-password code
+    // refreshes it when a row is created, revoked or given its digest.
+    crate::auth::app_password::refresh_legacy_gauge(&state.db).await;
     register_metadata_match_outcome_prune(&scheduler, &state).await;
     register_job_queue_depth(&scheduler, &state).await;
     Ok(scheduler)
