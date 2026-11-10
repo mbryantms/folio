@@ -325,20 +325,6 @@ pub async fn update(
         }
     }
 
-    // Only now, past the password, say whether the address is in use (the
-    // same answer registration gives). Case-insensitive like the unique
-    // index on `lower(email)`.
-    if let Some(lower) = new_email.as_deref() {
-        match email_in_use_by_other(&app.db, lower, row.id).await {
-            Ok(false) => {}
-            Ok(true) => return fail(StatusCode::CONFLICT, "conflict", "email already in use"),
-            Err(e) => {
-                tracing::error!(error = %e, "email-change address lookup failed");
-                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-            }
-        }
-    }
-
     // Mail delivery configured: same signal register and `/auth/config`
     // use (`smtp_host` set; `email::build` installs the logging no-op
     // sender exactly when it is not).
@@ -392,6 +378,30 @@ pub async fn update(
             return internal();
         }
     };
+    // The password was verified against `row`, read before the lock. If a
+    // password change or reset, or sign-out-everywhere, committed since,
+    // this request rides on credentials that are no longer valid: refuse it
+    // as a wrong password and write nothing. (Requests that checked no
+    // password, a display-name edit or a cancel, do not depend on them.)
+    if (reauthed || password_change)
+        && credentials_changed(credential_stamp(&row), credential_stamp(&locked))
+    {
+        tracing::info!(user_id = %user.id, "account update refused: credentials changed mid-request");
+        return fail_password(StatusCode::FORBIDDEN, ApiErrorCode::AuthInvalid, wrong_msg);
+    }
+    // Only now, past the password and under the lock, say whether the
+    // address is in use (the same answer registration gives). Compared as
+    // `lower(email)`, like the unique index, which stays the backstop.
+    if let Some(lower) = new_email.as_deref() {
+        match email_in_use_by_other(&txn, lower, row.id).await {
+            Ok(false) => {}
+            Ok(true) => return fail(StatusCode::CONFLICT, "conflict", "email already in use"),
+            Err(e) => {
+                tracing::error!(error = %e, "email-change address lookup failed");
+                return internal();
+            }
+        }
+    }
     let now = chrono::Utc::now().fixed_offset();
     let prev = if pending.is_some() || cancel_pending {
         match EmailChangeEntity::find()
@@ -605,6 +615,17 @@ fn rate_limited(retry_after_seconds: u64) -> axum::response::Response {
     crate::middleware::rate_limit::rate_limited_response(RATE_LIMITED_MSG, retry_after_seconds)
 }
 
+/// The parts of a user row the password check depends on.
+fn credential_stamp(row: &user::Model) -> (i64, Option<&str>) {
+    (row.token_version, row.password_hash.as_deref())
+}
+
+/// True when the account's credentials changed between the unlocked read
+/// the password was verified against and the locked read the writes use.
+fn credentials_changed(before: (i64, Option<&str>), locked: (i64, Option<&str>)) -> bool {
+    before != locked
+}
+
 /// True when another account holds `lower` (compared as `lower(email)`,
 /// the unique index's expression).
 pub(crate) async fn email_in_use_by_other<C: sea_orm::ConnectionTrait>(
@@ -743,4 +764,20 @@ async fn send_email_change_mail(app: &AppState, row: &user::Model, new_addr: &st
         }
     }
     tracing::info!(user_id = %row.id, "email-change confirmation sent");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::credentials_changed;
+
+    #[test]
+    fn credentials_changed_refuses_a_bumped_token_version_or_a_new_hash() {
+        let before = (3, Some("hash-a"));
+        assert!(!credentials_changed(before, (3, Some("hash-a"))));
+        // Password reset, password change or sign-out-everywhere.
+        assert!(credentials_changed(before, (4, Some("hash-a"))));
+        // A hash written without a bump still counts.
+        assert!(credentials_changed(before, (3, Some("hash-b"))));
+        assert!(credentials_changed(before, (3, None)));
+    }
 }
