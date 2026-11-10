@@ -596,6 +596,11 @@ export const queryKeys = {
    *  calendar day so a session that crosses midnight re-fetches. */
   onThisDay: (month: number, day: number) =>
     ["rails", "on-this-day", month, day] as const,
+  /** "New in series you're reading" rail (`/me/new-in-series`,
+   *  cursor-paginated; the home rail is the first page, the see-all page
+   *  walks on). Progress and series dismissals change it, so
+   *  `invalidateRails` drops it. */
+  newInSeries: ["rails", "new-in-series"] as const,
   /** WP-7.4 "Similar series" rail on the series page
    *  (`/series/{slug}/similar`, cursor-paginated). Lives under the
    *  `["similar"]` prefix so `invalidateRails` (hide / progress) drops it

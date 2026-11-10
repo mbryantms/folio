@@ -8,6 +8,7 @@
 //!   - `GET    /me/recent-history`                 — every issue with recent activity
 //!   - `GET    /me/random-picks`                   — daily shuffle of unstarted series
 //!   - `GET    /me/on-this-day`                    — issues released on today's date
+//!   - `GET    /me/new-in-series`                  — recent additions to series being read
 //!   - `GET    /me/rail-dismissals`                — the caller's hidden items
 //!   - `POST   /me/rail-dismissals`                — hide a target from a rail
 //!   - `DELETE /me/rail-dismissals/{kind}/{id}`    — undo a dismissal
@@ -65,6 +66,7 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(recent_history))
         .routes(routes!(random_picks))
         .routes(routes!(on_this_day))
+        .routes(routes!(new_in_series))
         .routes(routes!(create_dismissal, list_dismissals))
         .routes(routes!(delete_dismissal))
 }
@@ -82,6 +84,11 @@ const RECENT_ISSUES_LIMIT: i32 = 30;
 const RANDOM_PICKS_LIMIT: i64 = 12;
 /// On-this-day rail size.
 const ON_THIS_DAY_LIMIT: i64 = 30;
+/// "New in series you're reading": how far back an addition counts as new.
+const NEW_IN_SERIES_WINDOW_DAYS: i64 = 30;
+/// Default page size (the home rail's one request); max per page.
+const NEW_IN_SERIES_DEFAULT_LIMIT: u64 = 24;
+const NEW_IN_SERIES_MAX_LIMIT: u64 = 100;
 
 // ───── Response shapes ─────
 
@@ -138,6 +145,35 @@ pub struct OnThisDayView {
 pub struct OnThisDayQuery {
     pub month: Option<u32>,
     pub day: Option<u32>,
+}
+
+/// "New in series you're reading" page: issues added in the last
+/// `NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller has started,
+/// that the caller has not finished, newest addition first.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct NewInSeriesView {
+    pub items: Vec<IssueSummaryView>,
+    /// Opaque cursor for the next page; `null` on the last page.
+    pub next_cursor: Option<String>,
+    /// Matching issues in total; first page only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct NewInSeriesQuery {
+    /// Opaque cursor from a previous page's `next_cursor`.
+    pub cursor: Option<String>,
+    /// Page size; default 24, max 100.
+    pub limit: Option<u64>,
+}
+
+/// Keyset position in the newest-addition-first order.
+#[derive(Debug, Serialize, Deserialize)]
+struct NewInSeriesCursor {
+    at: chrono::DateTime<chrono::FixedOffset>,
+    id: String,
 }
 
 /// Discriminated union for the On Deck rail. Each card represents one
@@ -229,6 +265,7 @@ impl RailDismissalKind {
                 DismissalRail::OnDeck,
                 DismissalRail::RandomPicks,
                 DismissalRail::SimilarSeries,
+                DismissalRail::NewInSeries,
             ],
             Self::Cbl => vec![DismissalRail::OnDeck],
         }
@@ -246,6 +283,7 @@ pub enum DismissalRail {
     RandomPicks,
     SimilarSeries,
     OpdsContinueReading,
+    NewInSeries,
 }
 
 /// The hydrated target of a dismissal. Which link fields are set depends
@@ -600,6 +638,199 @@ pub async fn random_picks(State(app): State<AppState>, user: CurrentUser) -> Res
     };
     let items = crate::api::series::hydrate_series(&app, rows, user.id).await;
     Json(RandomPicksView { seed_date, items }).into_response()
+}
+
+/// Issues added to the library in the last [`NEW_IN_SERIES_WINDOW_DAYS`]
+/// days (`issues.created_at`, the scanner's ingest time — the same stamp
+/// the New issues rail orders by) to a series the caller has started (any
+/// issue finished or read past page 0), minus issues the caller finished.
+/// Newest addition first, tie-break on id; cursor-paginated on
+/// `(created_at, id)`, `total` on the first page.
+///
+/// Excludes removed issues and series, issues outside the caller's
+/// libraries or over their age cap (issue rating, series fallback), and
+/// series the caller hid from the rails — with On deck's auto-restore: a
+/// series dismissal stops hiding once the caller reads in the series again.
+///
+/// One query: the started-series CTE reads the caller's progress rows
+/// (`progress_records` primary key on `(user_id, issue_id)`), the issue
+/// side walks `issues_active_created_idx` (`created_at DESC, id DESC`,
+/// partial on active + not removed) inside the window, and the finished
+/// check is a primary-key probe. The window bounds the scan.
+#[utoipa::path(
+    operation_id = "rails_new_in_series",    get,
+    path = "/me/new-in-series",
+    params(NewInSeriesQuery),
+    responses(
+        (status = 200, body = NewInSeriesView),
+        (status = 400, description = "invalid cursor"),
+    )
+)]
+#[handler]
+pub async fn new_in_series(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<NewInSeriesQuery>,
+) -> Response {
+    let after = match q.cursor.as_deref() {
+        Some(c) => match decode_cursor::<NewInSeriesCursor>(c) {
+            Ok(k) => Some(k),
+            Err(_) => return error(StatusCode::BAD_REQUEST, "validation", "invalid cursor"),
+        },
+        None => None,
+    };
+    let limit = q
+        .limit
+        .unwrap_or(NEW_IN_SERIES_DEFAULT_LIMIT)
+        .clamp(1, NEW_IN_SERIES_MAX_LIMIT);
+    let first_page = after.is_none();
+    let acl = access::for_user(&app, &user).await;
+
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        id: String,
+        created_at: chrono::DateTime<chrono::FixedOffset>,
+        series_slug: String,
+        series_name: String,
+        total: Option<i64>,
+    }
+
+    let since = Utc::now().fixed_offset() - chrono::Duration::days(NEW_IN_SERIES_WINDOW_DAYS);
+    let mut params: Vec<sea_orm::Value> = vec![user.id.into(), since.into()];
+    let Some(acl_clause) = rail_acl_clause(&acl, "i.library_id", &mut params) else {
+        return Json(NewInSeriesView {
+            items: Vec::new(),
+            next_cursor: None,
+            total: first_page.then_some(0),
+        })
+        .into_response();
+    };
+    let cap_clause = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
+    let keyset = match &after {
+        Some(k) => {
+            params.push(k.at.into());
+            params.push(k.id.clone().into());
+            format!(
+                "AND (i.created_at, i.id) < (${}, ${})",
+                params.len() - 1,
+                params.len()
+            )
+        }
+        None => String::new(),
+    };
+    let total_col = if first_page {
+        "COUNT(*) OVER ()"
+    } else {
+        "NULL::bigint"
+    };
+    params.push(i64::try_from(limit + 1).unwrap_or(i64::MAX).into());
+    let limit_param = params.len();
+    let sql = format!(
+        r#"
+            WITH started AS (
+                SELECT pi.series_id, MAX(p.updated_at) AS last_activity
+                  FROM progress_records p
+                  JOIN issues pi ON pi.id = p.issue_id
+                 WHERE p.user_id = $1
+                   AND pi.state = 'active'
+                   AND pi.removed_at IS NULL
+                   AND (p.finished = true OR p.last_page > 0)
+                 GROUP BY pi.series_id
+            )
+            SELECT i.id, i.created_at,
+                   s.slug AS series_slug, s.name AS series_name,
+                   {total_col} AS total
+              FROM issues i
+              JOIN started st ON st.series_id = i.series_id
+              JOIN series s ON s.id = i.series_id
+              LEFT JOIN rail_dismissals d
+                ON d.user_id = $1
+               AND d.target_kind = 'series'
+               AND d.target_id = s.id::text
+             WHERE i.state = 'active'
+               AND i.removed_at IS NULL
+               AND s.removed_at IS NULL
+               AND i.created_at >= $2
+               AND NOT EXISTS (SELECT 1 FROM progress_records f
+                                WHERE f.user_id = $1
+                                  AND f.issue_id = i.id
+                                  AND f.finished = true)
+               AND (d.dismissed_at IS NULL OR st.last_activity > d.dismissed_at)
+               {acl_clause}{cap_clause}
+               {keyset}
+             ORDER BY i.created_at DESC, i.id DESC
+             LIMIT ${limit_param}
+        "#
+    );
+    let mut rows: Vec<Row> = match Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        params,
+    ))
+    .all(&app.db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "rails: new-in-series query failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    let total = first_page.then(|| rows.first().and_then(|r| r.total).unwrap_or(0).max(0) as u64);
+    let has_more = rows.len() as u64 > limit;
+    rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+    let next_cursor = if has_more {
+        rows.last().and_then(|r| {
+            encode_cursor(&NewInSeriesCursor {
+                at: r.created_at,
+                id: r.id.clone(),
+            })
+            .ok()
+        })
+    } else {
+        None
+    };
+
+    // Hydrate the slim card projection (WP-3.6) for the page in one fetch.
+    let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let cards = if ids.is_empty() {
+        Vec::new()
+    } else {
+        match issue::Entity::find()
+            .filter(issue::Column::Id.is_in(ids))
+            .into_partial_model::<OnDeckIssue>()
+            .all(&app.db)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "rails: new-in-series hydrate failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    };
+    let mut by_id: std::collections::HashMap<String, OnDeckIssue> =
+        cards.into_iter().map(|c| (c.id.clone(), c)).collect();
+    let items: Vec<IssueSummaryView> = rows
+        .into_iter()
+        .filter_map(|r| {
+            let card = by_id.remove(&r.id)?;
+            Some(
+                card.into_summary_view(&r.series_slug)
+                    .with_series_name(r.series_name),
+            )
+        })
+        .collect();
+    Json(NewInSeriesView {
+        items,
+        next_cursor,
+        total,
+    })
+    .into_response()
 }
 
 /// Issues released on this calendar day in any year (`issues.month` /

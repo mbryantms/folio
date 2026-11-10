@@ -10,6 +10,10 @@ import {
   OnDeckCardSkeleton,
 } from "@/components/library/OnDeckCard";
 import {
+  NewInSeriesCount,
+  NewInSeriesGrid,
+} from "@/components/saved-views/system-rails";
+import {
   ProgressIssueCard,
   ProgressIssueCardSkeleton,
 } from "@/components/library/ProgressIssueCard";
@@ -85,6 +89,7 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   // Same key as the grid below — one cache entry, two subscribers.
   const sim = useSimilarRailInfinite({ enabled: isSimilar });
   const similarSeed = sim.data?.pages[0]?.seed ?? null;
+  const isNewInSeries = view.system_key === "new_in_series";
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
     min: CARD_SIZE_MIN,
@@ -169,6 +174,7 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           {countLabel != null && (
             <p className="text-muted-foreground mt-2 text-sm">{countLabel}</p>
           )}
+          {isNewInSeries ? <NewInSeriesCount /> : null}
         </div>
         {/* Desktop: the card-size popover. Phones: the same fields in a
          *  bottom sheet behind a single icon, inline in the header row
@@ -224,6 +230,8 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           <RandomPicksGrid loading={rp.isLoading} data={rp.data} />
         ) : isOnThisDay ? (
           <OnThisDayGrid loading={otd.isLoading} data={otd.data} />
+        ) : isNewInSeries ? (
+          <NewInSeriesGrid />
         ) : null}
       </div>
     </div>
