@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { apiGet, ApiError } from "@/lib/api/fetch";
@@ -23,6 +24,8 @@ type SearchParams = {
   deleted?: string;
   /** Surfaced when an OIDC callback returns a structured error. */
   error?: string;
+  /** Set by sign-out; never resume a session after it. */
+  signed_out?: string;
 };
 
 export default async function SignInPage({
@@ -65,12 +68,19 @@ export default async function SignInPage({
             ? ("error" as const)
             : null;
 
+  // A CSRF cookie means a refresh session may still exist; the client
+  // then resumes it, so render that state first instead of the form.
+  const mayResume =
+    Boolean((await cookies()).get("__Host-comic_csrf")) &&
+    sp.signed_out !== "1";
+
   return (
     <SignInClient
       config={config}
       next={next}
       banner={banner}
       errorMessage={sp.error ?? null}
+      mayResume={mayResume}
     />
   );
 }

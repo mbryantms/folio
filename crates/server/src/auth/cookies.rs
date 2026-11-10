@@ -17,6 +17,10 @@ pub const LOCALE_COOKIE: &str = "NEXT_LOCALE";
 pub const REFRESH_COOKIE: &str = "__Host-comic_refresh";
 pub const LEGACY_REFRESH_COOKIE: &str = "__Secure-comic_refresh";
 pub const CSRF_COOKIE: &str = "__Host-comic_csrf";
+/// The current access token's expiry as epoch seconds, readable by
+/// JavaScript so the web client can refresh before the token lapses. Holds
+/// no secret; set and cleared with the session cookie.
+pub const ACCESS_EXP_COOKIE: &str = "__Host-comic_access_exp";
 
 pub const REFRESH_PATH: &str = "/";
 
@@ -43,6 +47,17 @@ pub fn refresh_cookie(value: String, max_age: Duration) -> Cookie<'static> {
 pub fn csrf_cookie(value: String, max_age: Duration) -> Cookie<'static> {
     let mut c = Cookie::new(CSRF_COOKIE, value);
     // NOT HttpOnly — JS reads this for the X-CSRF-Token header.
+    c.set_secure(true);
+    c.set_same_site(SameSite::Lax);
+    c.set_path("/");
+    c.set_max_age(time_from_std(max_age));
+    c
+}
+
+/// The [`ACCESS_EXP_COOKIE`]: `exp` (epoch seconds) of the access token set
+/// alongside it, with the same lifetime. Not HttpOnly, by design.
+pub fn access_exp_cookie(exp: i64, max_age: Duration) -> Cookie<'static> {
+    let mut c = Cookie::new(ACCESS_EXP_COOKIE, exp.to_string());
     c.set_secure(true);
     c.set_same_site(SameSite::Lax);
     c.set_path("/");
@@ -81,11 +96,12 @@ pub fn clear(
     c
 }
 
-/// Expire every auth cookie on `jar` — session, CSRF, refresh and the
-/// legacy refresh name. The one list both sign-out and account deletion
-/// clear, so a cookie added here is cleared by both.
+/// Expire every auth cookie on `jar` — session, access expiry, CSRF,
+/// refresh and the legacy refresh name. The one list both sign-out and
+/// account deletion clear, so a cookie added here is cleared by both.
 pub fn clear_auth(jar: axum_extra::extract::CookieJar) -> axum_extra::extract::CookieJar {
     jar.remove(clear(SESSION_COOKIE, "/"))
+        .remove(clear(ACCESS_EXP_COOKIE, "/"))
         .remove(clear(CSRF_COOKIE, "/"))
         .remove(clear(REFRESH_COOKIE, REFRESH_PATH))
         .remove(clear(LEGACY_REFRESH_COOKIE, REFRESH_PATH))

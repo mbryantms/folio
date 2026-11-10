@@ -1172,16 +1172,28 @@ impl Config {
     }
 
     pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
-        // Accepts `15m`, `30d`, `60s`, `1h`. Anything else errors.
-        let (num, unit) = s.split_at(s.len() - 1);
-        let n: u64 = num.parse()?;
-        Ok(match unit {
-            "s" => Duration::from_secs(n),
-            "m" => Duration::from_secs(n * 60),
-            "h" => Duration::from_secs(n * 60 * 60),
-            "d" => Duration::from_secs(n * 60 * 60 * 24),
+        // Accepts `15m`, `30d`, `60s`, `1h` (surrounding whitespace is
+        // ignored). Anything else errors — never panics, whatever the input.
+        let t = s.trim();
+        let Some((split, unit)) = t.char_indices().last() else {
+            anyhow::bail!("empty duration (use a number and s|m|h|d, e.g. 15m)");
+        };
+        let multiplier: u64 = match unit {
+            's' => 1,
+            'm' => 60,
+            'h' => 60 * 60,
+            'd' => 60 * 60 * 24,
             _ => anyhow::bail!("invalid duration unit (use s|m|h|d): {s}"),
-        })
+        };
+        let num = &t[..split];
+        if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+            anyhow::bail!("invalid duration number (use digits then s|m|h|d): {s}");
+        }
+        let n: u64 = num.parse()?;
+        let secs = n
+            .checked_mul(multiplier)
+            .ok_or_else(|| anyhow::anyhow!("duration too large: {s}"))?;
+        Ok(Duration::from_secs(secs))
     }
 }
 
@@ -2191,5 +2203,63 @@ mod tests {
         cfg.jwt_access_ttl = "1h".into();
         cfg.session_max_age = "ninety days".into();
         assert!(cfg.validate().is_err(), "unparseable");
+    }
+
+    #[test]
+    fn parse_duration_accepts_the_four_units() {
+        assert_eq!(
+            Config::parse_duration("60s").unwrap(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            Config::parse_duration("15m").unwrap(),
+            Duration::from_secs(900)
+        );
+        assert_eq!(
+            Config::parse_duration("1h").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            Config::parse_duration("90d").unwrap(),
+            Duration::from_secs(90 * 86_400)
+        );
+    }
+
+    #[test]
+    fn parse_duration_refuses_empty_input_without_panicking() {
+        for s in ["", " ", "\t", "d", "h"] {
+            assert!(Config::parse_duration(s).is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn parse_duration_refuses_non_ascii_without_panicking() {
+        for s in ["1日", "日", "1é", "１h", "1ｈ", "-1h", "+1h"] {
+            assert!(Config::parse_duration(s).is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn parse_duration_refuses_overflow() {
+        assert!(Config::parse_duration("18446744073709551615d").is_err());
+        assert!(Config::parse_duration("99999999999999999999s").is_err());
+        assert_eq!(
+            Config::parse_duration("18446744073709551615s").unwrap(),
+            Duration::from_secs(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn parse_duration_trims_outer_whitespace_only() {
+        assert_eq!(
+            Config::parse_duration(" 1h ").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            Config::parse_duration("1h\n").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert!(Config::parse_duration("1 h").is_err());
+        assert!(Config::parse_duration("1h 2m").is_err());
     }
 }

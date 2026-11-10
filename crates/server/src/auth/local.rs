@@ -897,7 +897,7 @@ pub async fn refresh(
                 AND revoked_at IS NULL \
                 AND expires_at > now() \
                 AND created_at + make_interval(secs => $3) > now() \
-          RETURNING id, user_id",
+          RETURNING id, user_id, created_at",
             [
                 new_hash.into(),
                 refresh_secs.into(),
@@ -930,11 +930,21 @@ pub async fn refresh(
             "refresh replay or expired",
         );
     };
-    let (session_id, user_id): (Uuid, Uuid) =
-        match (rotated.try_get("", "id"), rotated.try_get("", "user_id")) {
-            (Ok(id), Ok(user_id)) => (id, user_id),
-            _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
-        };
+    let (user_id, created_at): (Uuid, chrono::DateTime<chrono::FixedOffset>) = match (
+        rotated.try_get("", "user_id"),
+        rotated.try_get("", "created_at"),
+    ) {
+        (Ok(user_id), Ok(created_at)) => (user_id, created_at),
+        _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+    };
+    // What is left of the session's absolute age; the refresh and CSRF
+    // cookies never outlive it.
+    let remaining_age = (created_at
+        + chrono::Duration::seconds(app.cfg().session_max_age().as_secs() as i64)
+        - chrono::Utc::now().fixed_offset())
+    .to_std()
+    .unwrap_or_default();
+    let session_lifetime = app.cfg().refresh_ttl().min(remaining_age);
 
     let user_row = match UserEntity::find()
         .filter(user::Column::Id.eq(user_id))
@@ -971,7 +981,7 @@ pub async fn refresh(
     finalize_session(
         &app,
         &user_row,
-        session_id,
+        session_lifetime,
         new_rt_raw,
         jar,
         StatusCode::OK,
@@ -2140,7 +2150,7 @@ async fn issue_session(
     finalize_session(
         app,
         user_row,
-        session_id,
+        lifetime,
         raw_rt,
         jar,
         success_status,
@@ -2149,11 +2159,14 @@ async fn issue_session(
     )
 }
 
+/// Mint the access token and set the session cookies. `session_lifetime`
+/// is the refresh-cookie lifetime: the refresh TTL, clamped to what is left
+/// of the session's absolute age.
 #[expect(clippy::too_many_arguments)]
 fn finalize_session(
     app: &AppState,
     user_row: &user::Model,
-    session_id: Uuid,
+    session_lifetime: Duration,
     raw_rt: String,
     jar: CookieJar,
     success_status: StatusCode,
@@ -2163,7 +2176,7 @@ fn finalize_session(
     let keys = &app.jwt_keys;
 
     let access_ttl = app.cfg().access_ttl();
-    let refresh_ttl = app.cfg().refresh_ttl();
+    let access_exp = chrono::Utc::now().timestamp() + access_ttl.as_secs() as i64;
     let access = match keys.issue_access(
         user_row.id,
         user_row.role.as_str(),
@@ -2176,7 +2189,6 @@ fn finalize_session(
 
     // Refresh token is a raw 32-byte random value (§17.2). Cookie value = raw,
     // DB column = sha256(raw). Single-use rotation by hash compare.
-    let _ = session_id; // session_id is recorded in the DB row; not embedded in the cookie.
     let cookie_rt = raw_rt;
 
     let csrf = new_csrf_token();
@@ -2187,11 +2199,14 @@ fn finalize_session(
 
     let jar = jar
         .add(session_cookie(access, access_ttl))
-        .add(refresh_cookie(cookie_rt, refresh_ttl))
+        // Readable expiry of that access token, so the web client can
+        // refresh before it lapses.
+        .add(crate::auth::cookies::access_exp_cookie(access_exp, access_ttl))
+        .add(refresh_cookie(cookie_rt, session_lifetime))
         // The CSRF cookie lives as long as the refresh cookie, not the
         // access cookie: `/auth/refresh` itself needs it, so tying it to the
         // short access TTL would make the silent refresh fail with 403.
-        .add(csrf_cookie(csrf, refresh_ttl))
+        .add(csrf_cookie(csrf, session_lifetime))
         // Mirror the user's stored language onto `NEXT_LOCALE` so next-intl
         // picks it up on the next nav. Authenticated locale wins over any
         // pre-existing `Accept-Language`-derived cookie value.

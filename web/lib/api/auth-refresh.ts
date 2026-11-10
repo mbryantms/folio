@@ -5,10 +5,11 @@ import { connectionFetch, reportConnectivity } from "@/lib/pwa/connectivity";
  * Client-side `/api/*` fetch wrapper with implicit access-token renewal.
  *
  * Auth model recap (§17.2): access cookie is short (1h by default),
- * refresh cookie is 30d. When the access cookie expires, any cookie-authed
- * request returns 401. Without intervention the user gets bounced to
- * sign-in; with this helper, the next 401 transparently triggers a single
- * `POST /api/auth/refresh`, then retries the original request.
+ * refresh cookie is 30d. Signed-in pages renew the access token before it
+ * lapses (`session-refresh.ts`). When a request still meets an expired
+ * access cookie (a sleeping laptop, a throttled background tab) it returns
+ * 401; this helper then triggers a single `POST /api/auth/refresh` and
+ * retries the original request once.
  *
  * Concurrency: many components fire requests in parallel (TanStack Query
  * does its own coalescing per query key but not across keys, so a fresh
@@ -30,6 +31,23 @@ export function getCsrfToken(): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
+/** The readable access-expiry cookie: the current access token's `exp` in
+ *  epoch seconds. Set and cleared by the server with the session cookie. */
+export const ACCESS_EXP_COOKIE = "__Host-comic_access_exp";
+
+/** The access token's expiry in epoch seconds, or `null` when the cookie is
+ *  absent (signed out, or the access token already lapsed: the cookie's
+ *  Max-Age is the access lifetime) or unreadable. */
+export function readAccessExp(): number | null {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(
+    /(?:^|;\s*)__Host-comic_access_exp=([0-9]+)(?:;|$)/,
+  );
+  if (!m) return null;
+  const exp = Number(m[1]);
+  return Number.isFinite(exp) && exp > 0 ? exp : null;
+}
+
 let refreshInFlight: Promise<boolean | null> | null = null;
 
 /** Web Locks name serializing `/auth/refresh` across this origin's tabs. */
@@ -37,6 +55,29 @@ const REFRESH_LOCK = "folio:auth-refresh";
 /** How long a tab that lost a refresh race waits for the winner's
  *  Set-Cookie to land before concluding it is signed out. */
 const LOST_RACE_SETTLE_MS = 300;
+/** Upper bound on one `/auth/refresh` round trip. A hung request is "no
+ *  answer" (`null`), never a sign-out. */
+export const REFRESH_TIMEOUT_MS = 15_000;
+
+type RenewedListener = () => void;
+const renewedListeners = new Set<RenewedListener>();
+
+/** Subscribe to "this tab's cookies were renewed" (by this tab's refresh, or
+ *  another tab's that this tab noticed). Returns the unsubscribe. */
+export function onSessionRenewed(listener: RenewedListener): () => void {
+  renewedListeners.add(listener);
+  return () => renewedListeners.delete(listener);
+}
+
+function notifyRenewed() {
+  for (const l of renewedListeners) {
+    try {
+      l();
+    } catch {
+      /* a listener's failure must not break the refresh */
+    }
+  }
+}
 
 /** Run `fn` holding the cross-tab refresh lock where Web Locks exist;
  *  otherwise (old browsers, tests) just run it. */
@@ -49,32 +90,50 @@ function withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
   return locks.request(REFRESH_LOCK, fn).catch(() => fn());
 }
 
+/** Expire the script-readable auth cookies after the server definitively
+ *  refused the session, so nothing (the sign-in page's resume, the refresh
+ *  scheduler) keeps trying a dead session. The HttpOnly refresh cookie is
+ *  out of reach; without the CSRF cookie it is never presented again. */
+function expireReadableAuthCookies() {
+  if (typeof document === "undefined") return;
+  for (const name of ["__Host-comic_csrf", ACCESS_EXP_COOKIE]) {
+    document.cookie = `${name}=; Max-Age=0; Path=/; Secure; SameSite=Lax`;
+  }
+}
+
 /**
  * Renew the access token through `POST /api/auth/refresh`.
  *
  * `true`: this tab now has working cookies (it refreshed, or another tab
  * did). `false`: the session is gone. `null`: the server could not be
- * reached or failed; nothing is known.
+ * reached, failed, or did not answer within `REFRESH_TIMEOUT_MS`; nothing
+ * is known and nothing is signed out.
  *
  * Refresh-token rotation is single-use on the server: of two tabs that
  * present the same refresh cookie at once, exactly one wins and the other
  * gets 401. Cookies are shared by every tab, so the loser is not signed
- * out: the winner's Set-Cookie already gave it the new tokens. The CSRF
- * cookie (readable here, unlike the HttpOnly session cookies) is rotated
- * by every successful refresh, so a CSRF value that differs from the one
- * seen before refreshing means another tab refreshed. Two layers:
+ * out: the winner's Set-Cookie already gave it the new tokens. Whether
+ * another tab refreshed is read from the access-expiry cookie: it counts
+ * only when the cookie is present, later than the value this tab saw
+ * before it tried, and still in the future. A missing cookie never counts
+ * (sign-out clears it). Two layers:
  *   - With Web Locks, refreshes are serialized across tabs; a tab that
- *     acquires the lock after another tab refreshed sees the new CSRF
- *     value and skips its own refresh.
+ *     acquires the lock after another tab refreshed sees the later expiry
+ *     and skips its own refresh.
  *   - Without them (or if the race still happens), a 401/403 from the
- *     refresh is treated as a lost race when the CSRF value changed,
- *     checked again once after a short wait for the winner's response.
+ *     refresh is a lost race when the expiry moved, checked again once
+ *     after a short wait for the winner's response.
  */
 async function attemptRefresh(): Promise<boolean | null> {
   if (refreshInFlight) return refreshInFlight;
-  const before = getCsrfToken();
-  const someoneElseRefreshed = () => getCsrfToken() !== before;
-  const p = withRefreshLock(async () => {
+  const before = readAccessExp();
+  const someoneElseRefreshed = () => {
+    const now = readAccessExp();
+    if (now === null) return false;
+    if (before !== null && now <= before) return false;
+    return now * 1000 > Date.now();
+  };
+  const p = withRefreshLock(async (): Promise<boolean | null> => {
     if (someoneElseRefreshed()) return true;
     try {
       const csrf = getCsrfToken();
@@ -82,21 +141,38 @@ async function attemptRefresh(): Promise<boolean | null> {
         method: "POST",
         credentials: "include",
         headers: csrf ? { "X-CSRF-Token": csrf } : undefined,
+        signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
       });
       if (res.ok) return true;
       if (res.status !== 401 && res.status !== 403) return null;
       if (someoneElseRefreshed()) return true;
       await new Promise((resolve) => setTimeout(resolve, LOST_RACE_SETTLE_MS));
-      return someoneElseRefreshed();
+      if (someoneElseRefreshed()) return true;
+      // Refused, and the expiry did not move: the session is gone.
+      expireReadableAuthCookies();
+      return false;
     } catch {
+      // Network failure or timeout: no answer.
       return null;
     }
   });
   refreshInFlight = p;
+  void p.then(
+    (ok) => {
+      if (ok === true) notifyRenewed();
+    },
+    () => {},
+  );
   void p.finally(() => {
     if (refreshInFlight === p) refreshInFlight = null;
   });
   return p;
+}
+
+/** Renew the session now through the cross-tab path (deduped with any
+ *  refresh already in flight). Same result as `attemptRefresh`. */
+export function refreshSession(): Promise<boolean | null> {
+  return attemptRefresh();
 }
 
 /**

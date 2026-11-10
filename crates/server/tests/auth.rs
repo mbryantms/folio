@@ -734,3 +734,221 @@ async fn csrf_cookie_lives_as_long_as_the_refresh_cookie() {
         max_age("__Host-comic_session")
     );
 }
+
+/// The whole `Set-Cookie` line for `name`.
+fn cookie_line(resp: &axum::http::Response<Body>, name: &str) -> Option<String> {
+    resp.headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|c| c.starts_with(&format!("{name}=")))
+        .map(str::to_owned)
+}
+
+fn cookie_attr(line: &str, key: &str) -> Option<String> {
+    line.split(';')
+        .map(str::trim)
+        .find_map(|p| p.strip_prefix(&format!("{key}=")).map(str::to_owned))
+}
+
+fn max_age_of(resp: &axum::http::Response<Body>, name: &str) -> i64 {
+    cookie_attr(&cookie_line(resp, name).expect(name), "Max-Age")
+        .expect("Max-Age")
+        .parse()
+        .unwrap()
+}
+
+/// `__Host-comic_access_exp` is readable by scripts, carries the access
+/// token's expiry, and lives exactly as long as the session cookie.
+fn assert_access_exp_cookie(resp: &axum::http::Response<Body>, access_ttl: i64) {
+    let line = cookie_line(resp, "__Host-comic_access_exp").expect("access-exp cookie set");
+    assert!(!line.contains("HttpOnly"), "readable by scripts: {line}");
+    assert!(line.contains("Secure"), "{line}");
+    assert!(line.contains("SameSite=Lax"), "{line}");
+    assert!(line.contains("Path=/"), "{line}");
+    assert_eq!(
+        max_age_of(resp, "__Host-comic_access_exp"),
+        max_age_of(resp, "__Host-comic_session")
+    );
+    assert_eq!(max_age_of(resp, "__Host-comic_access_exp"), access_ttl);
+    let exp: i64 = extract_cookie(resp, "__Host-comic_access_exp")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let expected = chrono::Utc::now().timestamp() + access_ttl;
+    assert!(
+        (exp - expected).abs() <= 5,
+        "exp {exp}, expected about {expected}"
+    );
+}
+
+#[tokio::test]
+async fn access_expiry_cookie_is_set_on_register_login_and_refresh_and_cleared_on_logout() {
+    let app = TestApp::spawn().await;
+    let ttl = app.state().cfg().access_ttl().as_secs() as i64;
+    let reg = register(&app, "exp@example.com", "correctly-horse-battery").await;
+    assert_access_exp_cookie(&reg, ttl);
+
+    let log = login(&app, "exp@example.com", "correctly-horse-battery").await;
+    assert_eq!(log.status(), StatusCode::OK);
+    assert_access_exp_cookie(&log, ttl);
+    let session = extract_cookie(&log, "__Host-comic_session").unwrap();
+    let csrf = extract_cookie(&log, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&log, "__Host-comic_refresh").unwrap();
+
+    let rotated = refresh_call(&app, &refresh, &csrf).await;
+    assert_eq!(rotated.status(), StatusCode::OK);
+    assert_access_exp_cookie(&rotated, ttl);
+    let refresh = extract_cookie(&rotated, "__Host-comic_refresh").unwrap();
+    let csrf = extract_cookie(&rotated, "__Host-comic_csrf").unwrap();
+    let exp = extract_cookie(&rotated, "__Host-comic_access_exp").unwrap();
+
+    let out = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/logout")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={session}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}; __Host-comic_access_exp={exp}"
+                    ),
+                )
+                .header("x-csrf-token", csrf.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.status(), StatusCode::NO_CONTENT);
+    let cleared = cookie_line(&out, "__Host-comic_access_exp").expect("cleared on logout");
+    assert!(cleared.contains("Max-Age=0"), "{cleared}");
+}
+
+/// Near the end of the absolute session age, a rotation clamps the refresh
+/// and CSRF cookies to what is left of it instead of the 30 d refresh TTL.
+#[tokio::test]
+async fn refresh_and_csrf_cookies_are_clamped_to_the_remaining_session_age() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "clamp@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    age_session(&db, user_id, 89).await;
+
+    let resp = refresh_call(&app, &refresh, &csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let day = 86_400;
+    let refresh_age = max_age_of(&resp, "__Host-comic_refresh");
+    assert!(
+        (day - 120..=day).contains(&refresh_age),
+        "refresh Max-Age {refresh_age} is about one day"
+    );
+    let csrf_age = max_age_of(&resp, "__Host-comic_csrf");
+    assert!(
+        (day - 120..=day).contains(&csrf_age),
+        "csrf Max-Age {csrf_age}"
+    );
+    // The access cookie keeps its own, shorter lifetime.
+    assert_eq!(
+        max_age_of(&resp, "__Host-comic_session"),
+        app.state().cfg().access_ttl().as_secs() as i64
+    );
+}
+
+/// Hold the session row so both refreshes are queued on its lock, then
+/// release it: the rotation is decided by the conditional UPDATE, so exactly
+/// one wins even when the two are guaranteed to overlap.
+#[tokio::test]
+async fn refreshes_queued_on_a_locked_row_have_exactly_one_winner() {
+    use sea_orm::{ConnectionTrait, TransactionTrait};
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "locked@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let holder = db.begin().await.unwrap();
+    holder
+        .execute_unprepared(&format!(
+            "SELECT id FROM auth_sessions WHERE user_id = '{user_id}' FOR UPDATE"
+        ))
+        .await
+        .unwrap();
+
+    let (a, b, ()) = tokio::join!(
+        refresh_call(&app, &refresh, &csrf),
+        refresh_call(&app, &refresh, &csrf),
+        async {
+            // Both requests reach the UPDATE and wait on the row lock.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            holder.commit().await.unwrap();
+        }
+    );
+    let mut statuses = [a.status(), b.status()];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::UNAUTHORIZED]);
+}
+
+/// The first of two queued refreshes finds the account disabled and rolls
+/// its rotation back. The second then sees the original token again, and
+/// is refused for the same reason — not with a 500 and not with a session.
+/// The session survives untouched for when the account is re-enabled.
+#[tokio::test]
+async fn the_loser_of_a_race_whose_winner_rolled_back_is_refused_too() {
+    use sea_orm::{ConnectionTrait, TransactionTrait};
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "rollback@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    db.execute_unprepared(&format!(
+        "UPDATE users SET state = 'disabled' WHERE id = '{user_id}'"
+    ))
+    .await
+    .unwrap();
+    let before = session_for(&db, user_id).await;
+
+    let holder = db.begin().await.unwrap();
+    holder
+        .execute_unprepared(&format!(
+            "SELECT id FROM auth_sessions WHERE user_id = '{user_id}' FOR UPDATE"
+        ))
+        .await
+        .unwrap();
+    let (a, b, ()) = tokio::join!(
+        refresh_call(&app, &refresh, &csrf),
+        refresh_call(&app, &refresh, &csrf),
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            holder.commit().await.unwrap();
+        }
+    );
+    for resp in [a, b] {
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(extract_cookie(&resp, "__Host-comic_session").is_none());
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "auth.invalid");
+    }
+    let after = session_for(&db, user_id).await;
+    assert_eq!(after.refresh_token_hash, before.refresh_token_hash);
+    assert!(after.revoked_at.is_none());
+
+    db.execute_unprepared(&format!(
+        "UPDATE users SET state = 'active' WHERE id = '{user_id}'"
+    ))
+    .await
+    .unwrap();
+    let resp = refresh_call(&app, &refresh, &csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK, "the session survived");
+}

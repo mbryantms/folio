@@ -950,9 +950,13 @@ pub async fn callback(
         ))
         .remove(cookies::clear(LEGACY_OIDC_STATE_COOKIE, "/"))
         .add(session_cookie(access, access_ttl))
-        .add(refresh_cookie(raw_rt, refresh_ttl))
+        .add(cookies::access_exp_cookie(
+            session_now.timestamp() + access_ttl.as_secs() as i64,
+            access_ttl,
+        ))
+        .add(refresh_cookie(raw_rt, lifetime))
         // As long as the refresh cookie: `/auth/refresh` needs it.
-        .add(csrf_cookie(csrf_token, refresh_ttl));
+        .add(csrf_cookie(csrf_token, lifetime));
 
     // Redirect to the requested location, defaulting to /.
     let target = state.redirect_after.unwrap_or_else(|| "/".to_string());
