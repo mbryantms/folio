@@ -323,9 +323,18 @@ migration), bump that test's expected count.
 
 `GET /me/new-in-series` (`rails::new_in_series`): issues whose
 `issues.created_at` (the scanner's ingest stamp, as for New issues) falls
-in the last `NEW_IN_SERIES_WINDOW_DAYS` (30) days, in a series where the
-caller finished an issue or read one past page 0, that the caller has not
-finished. Newest addition first, tie-break on id; cursor-paginated on
+in the last `NEW_IN_SERIES_WINDOW_DAYS` (30) days to a series the caller
+was already reading at the time, that the caller has not finished. "Already
+reading" means `created_at` is after the series' start, taken per series as
+`MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading rows
+(finished, or read past page 0); no start time is stored. `finished_at` is
+stamped once when a row flips to finished and kept while it stays finished,
+so a whole series added at once and then started never counts as new.
+Known limits: a reader whose only progress in the series is one unfinished
+issue has a start that moves with every read (its `updated_at`), so an
+issue added while they are still on it can be missed; and restarting a
+finished issue clears its `finished_at`, so when that was their only
+finished issue the start moves to the re-read. Newest addition first, tie-break on id; cursor-paginated on
 `(created_at, id)` (`limit` default 24, max 100, `total` on the first
 page). Removed issues and series, issues outside the caller's libraries
 or over the age cap, and series the caller hid from the rails (On Deck's

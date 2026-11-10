@@ -176,7 +176,7 @@ fn now() -> DateTime<FixedOffset> {
     Utc::now().fixed_offset()
 }
 
-fn ids(body: &serde_json::Value) -> Vec<String> {
+fn ids_of(body: &serde_json::Value) -> Vec<String> {
     body["items"]
         .as_array()
         .unwrap()
@@ -265,14 +265,14 @@ async fn lists_recent_unfinished_additions_to_started_series_only() {
     let (status, body) = http(&app, Method::GET, "/api/me/new-in-series", &user, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
-        ids(&body),
+        ids_of(&body),
         vec![new_one.clone(), reading_new.clone()],
         "newest addition first"
     );
     assert_eq!(body["total"], 2);
     assert!(body["next_cursor"].is_null());
     assert_eq!(body["items"][0]["series_name"], "Started");
-    let got: HashSet<String> = ids(&body).into_iter().collect();
+    let got: HashSet<String> = ids_of(&body).into_iter().collect();
     for (id, why) in [
         (&s1, "added before the window and finished"),
         (&outside_window, "added before the window"),
@@ -303,7 +303,10 @@ async fn lists_recent_unfinished_additions_to_started_series_only() {
     )
     .await;
     let (_, body) = http(&app, Method::GET, "/api/me/new-in-series", &user, None).await;
-    assert!(ids(&body).contains(&hidden_new), "dismissal auto-restores");
+    assert!(
+        ids_of(&body).contains(&hidden_new),
+        "dismissal auto-restores"
+    );
 }
 
 #[tokio::test]
@@ -349,7 +352,7 @@ async fn pages_past_one_page_without_repeats_newest_first() {
         } else {
             assert!(body.get("total").is_none(), "total on the first page only");
         }
-        walked.extend(ids(&body));
+        walked.extend(ids_of(&body));
         match body["next_cursor"].as_str() {
             Some(c) => cursor = Some(c.to_owned()),
             None => break,
@@ -361,7 +364,7 @@ async fn pages_past_one_page_without_repeats_newest_first() {
 
     // The home rail's one request: the default first page.
     let (_, body) = http(&app, Method::GET, "/api/me/new-in-series", &user, None).await;
-    assert_eq!(ids(&body), expected[..24].to_vec());
+    assert_eq!(ids_of(&body), expected[..24].to_vec());
     assert!(body["next_cursor"].is_string());
 
     let (status, _) = http(
@@ -373,6 +376,140 @@ async fn pages_past_one_page_without_repeats_newest_first() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// A whole series added at once and then started is not "new": every
+/// issue arrived before the reader's first progress, even though all of
+/// them are inside the window.
+#[tokio::test]
+async fn a_series_added_before_the_reader_started_it_yields_nothing() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let user = register(&app, "nis-bulk@example.com").await;
+    let lib = seed_library(&db, dir).await;
+    let series = seed_series(&db, lib, "Bulk").await;
+    let added = now() - Duration::days(10);
+    let mut ids = Vec::new();
+    for n in 1..=10u32 {
+        ids.push(issue(&db, dir, lib, series, n, added).await);
+    }
+    seed_progress_at(
+        &db,
+        user.user_id,
+        &ids[0],
+        19,
+        true,
+        now() - Duration::days(5),
+    )
+    .await;
+    seed_progress_at(
+        &db,
+        user.user_id,
+        &ids[1],
+        4,
+        false,
+        now() - Duration::days(4),
+    )
+    .await;
+
+    let (status, body) = http(&app, Method::GET, "/api/me/new-in-series", &user, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        ids_of(&body),
+        Vec::<String>::new(),
+        "nothing arrived after the start"
+    );
+    assert_eq!(body["total"], 0);
+}
+
+/// An issue added after the reader finished an earlier one appears; one
+/// added before they started does not.
+#[tokio::test]
+async fn only_issues_added_after_the_reader_started_appear() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let user = register(&app, "nis-after@example.com").await;
+    let lib = seed_library(&db, dir).await;
+    let series = seed_series(&db, lib, "Arrivals").await;
+    let first = issue(&db, dir, lib, series, 1, now() - Duration::days(20)).await;
+    seed_progress_at(
+        &db,
+        user.user_id,
+        &first,
+        19,
+        true,
+        now() - Duration::days(15),
+    )
+    .await;
+    let before_start = issue(&db, dir, lib, series, 2, now() - Duration::days(18)).await;
+    let arrival = issue(&db, dir, lib, series, 3, now() - Duration::days(10)).await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/new-in-series", &user, None).await;
+    assert_eq!(ids_of(&body), vec![arrival]);
+    assert!(!ids_of(&body).contains(&before_start));
+}
+
+/// Re-reading one finished issue and continuing another does not move the
+/// series' start past a later arrival: the start is the earliest stable
+/// `finished_at`. The rows mirror the progress upsert: a restart clears
+/// `finished_at` and moves `updated_at`; a finished row that is read
+/// again keeps its `finished_at`.
+#[tokio::test]
+async fn rereading_finished_issues_does_not_hide_a_later_arrival() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let user = register(&app, "nis-reread@example.com").await;
+    let lib = seed_library(&db, dir).await;
+    let series = seed_series(&db, lib, "Reread").await;
+    let one = issue(&db, dir, lib, series, 1, now() - Duration::days(25)).await;
+    let two = issue(&db, dir, lib, series, 2, now() - Duration::days(25)).await;
+    seed_progress_at(
+        &db,
+        user.user_id,
+        &one,
+        19,
+        true,
+        now() - Duration::days(20),
+    )
+    .await;
+    seed_progress_at(
+        &db,
+        user.user_id,
+        &two,
+        19,
+        true,
+        now() - Duration::days(19),
+    )
+    .await;
+    let arrival = issue(&db, dir, lib, series, 3, now() - Duration::days(10)).await;
+    // Restart #2: unfinished again, finished_at cleared, updated now.
+    exec(
+        &db,
+        "UPDATE progress_records SET finished = false, finished_at = NULL, last_page = 3, \
+         updated_at = now() WHERE user_id = $1 AND issue_id = $2",
+        vec![user.user_id.into(), two.clone().into()],
+    )
+    .await;
+    // Continue #1: still finished, finished_at kept, updated now.
+    exec(
+        &db,
+        "UPDATE progress_records SET updated_at = now() WHERE user_id = $1 AND issue_id = $2",
+        vec![user.user_id.into(), one.clone().into()],
+    )
+    .await;
+
+    let (_, body) = http(&app, Method::GET, "/api/me/new-in-series", &user, None).await;
+    assert_eq!(
+        ids_of(&body),
+        vec![arrival],
+        "the arrival stays; #2, back in progress, predates the start"
+    );
 }
 
 fn steps_to_undo_ours() -> u32 {

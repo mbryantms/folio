@@ -2664,8 +2664,8 @@ export function useOnThisDay(opts?: { enabled?: boolean }) {
   });
 }
 
-/** Issues added in the last 30 days to series the user has started and
- *  not finished (`/me/new-in-series`), newest addition first. Cursor-
+/** Issues added in the last 30 days to series the user was already
+ *  reading, not finished (`/me/new-in-series`), newest addition first. Cursor-
  *  paginated: the home rail renders the first page (one request), the
  *  "see all" page walks the rest through the sentinel. Same cache entry
  *  for both. */

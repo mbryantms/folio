@@ -309,7 +309,7 @@ export function OnThisDayRailBody({
 
 /**
  * "New in series you're reading" rail body: issues added in the last 30
- * days to series the user has started, that they haven't finished, newest
+ * days to series the user was already reading, that they haven't finished, newest
  * addition first. First page only — the "see all" page walks the cursor
  * (`SystemViewDetail`). Hidden when empty, like its siblings.
  */
@@ -365,8 +365,8 @@ export function NewInSeriesGrid() {
     return (
       <p className="text-muted-foreground col-span-full text-sm">
         Nothing new in the series you&apos;re reading. Issues added in the last
-        30 days to a series you&apos;ve started show up here until you finish
-        them.
+        30 days to a series you were already reading show up here until you
+        finish them.
       </p>
     );
   }

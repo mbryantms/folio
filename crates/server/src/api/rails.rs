@@ -148,8 +148,9 @@ pub struct OnThisDayQuery {
 }
 
 /// "New in series you're reading" page: issues added in the last
-/// `NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller has started,
-/// that the caller has not finished, newest addition first.
+/// `NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller was already
+/// reading (added after they started it), that the caller has not
+/// finished, newest addition first.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct NewInSeriesView {
     pub items: Vec<IssueSummaryView>,
@@ -642,10 +643,23 @@ pub async fn random_picks(State(app): State<AppState>, user: CurrentUser) -> Res
 
 /// Issues added to the library in the last [`NEW_IN_SERIES_WINDOW_DAYS`]
 /// days (`issues.created_at`, the scanner's ingest time — the same stamp
-/// the New issues rail orders by) to a series the caller has started (any
-/// issue finished or read past page 0), minus issues the caller finished.
+/// the New issues rail orders by) to a series the caller was already
+/// reading when the issue arrived, minus issues the caller finished.
 /// Newest addition first, tie-break on id; cursor-paginated on
 /// `(created_at, id)`, `total` on the first page.
+///
+/// "Already reading" means the issue was added after the caller started
+/// the series. No start time is stored, so per series the start is
+/// `MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading
+/// rows (finished, or read past page 0): a finished row's `finished_at`
+/// is stamped once when it flips to finished and kept while it stays
+/// finished, so for anyone who finished an issue the start is when they
+/// first finished one. A whole series added at once and then started is
+/// therefore not "new". Known limits: when the caller's only reading row
+/// in a series is one unfinished issue, its `updated_at` moves with every
+/// read, so an issue added while they are still on that first issue can
+/// be missed; and restarting a finished issue clears its `finished_at`,
+/// so if that was the only finished row the start moves to the re-read.
 ///
 /// Excludes removed issues and series, issues outside the caller's
 /// libraries or over their age cap (issue rating, series fallback), and
@@ -732,7 +746,8 @@ pub async fn new_in_series(
     let sql = format!(
         r#"
             WITH started AS (
-                SELECT pi.series_id, MAX(p.updated_at) AS last_activity
+                SELECT pi.series_id, MAX(p.updated_at) AS last_activity,
+                       MIN(COALESCE(p.finished_at, p.updated_at)) AS started_at
                   FROM progress_records p
                   JOIN issues pi ON pi.id = p.issue_id
                  WHERE p.user_id = $1
@@ -755,6 +770,7 @@ pub async fn new_in_series(
                AND i.removed_at IS NULL
                AND s.removed_at IS NULL
                AND i.created_at >= $2
+               AND i.created_at > st.started_at
                AND NOT EXISTS (SELECT 1 FROM progress_records f
                                 WHERE f.user_id = $1
                                   AND f.issue_id = i.id

@@ -4,7 +4,8 @@
 //!
 //! Seeds a `kind = 'system'` saved view (`system_key = 'new_in_series'`)
 //! whose endpoint (`GET /me/new-in-series`) lists issues added in the last
-//! 30 days to series the caller has started and not finished. It is
+//! 30 days to series the caller was already reading, that they have not
+//! finished. It is
 //! `auto_pin = false`: existing and new users find it under "Built-in" in
 //! the pin picker and opt in. No schema change and no index — the query
 //! rides `issues_active_created_idx` and the `progress_records` primary
@@ -30,7 +31,7 @@ impl MigrationTrait for Migration {
                  VALUES \
                     ('{VIEW_ID}'::uuid, NULL, 'system', \
                      'New in series you''re reading', \
-                     'Issues added in the last 30 days to series you''ve started, that you haven''t finished.', \
+                     'Issues added in the last 30 days to series you were already reading.', \
                      ARRAY[]::text[], 'new_in_series', FALSE) \
                  ON CONFLICT (id) DO NOTHING"
             ))
