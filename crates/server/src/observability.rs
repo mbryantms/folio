@@ -328,6 +328,28 @@ where
 /// also attach extensions.
 struct SpanFields(BTreeMap<String, String>);
 
+/// Longest field value [`FieldVisitor`] keeps, in bytes. Every event's
+/// fields are held in the ring for [`LOG_RING_CAPACITY`] entries, so one
+/// caller logging a request body must not pin megabytes in memory. The
+/// stdout JSON layer is unaffected.
+const MAX_RING_FIELD_BYTES: usize = 8 * 1024;
+
+/// Cut `s` to at most [`MAX_RING_FIELD_BYTES`] on a char boundary and
+/// append a marker naming how many bytes were dropped.
+fn cap_field(mut s: String) -> String {
+    if s.len() <= MAX_RING_FIELD_BYTES {
+        return s;
+    }
+    let mut cut = MAX_RING_FIELD_BYTES;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let dropped = s.len() - cut;
+    s.truncate(cut);
+    let _ = write!(s, "… [truncated {dropped} bytes]");
+    s
+}
+
 #[derive(Default)]
 struct FieldVisitor {
     fields: BTreeMap<String, String>,
@@ -336,7 +358,7 @@ struct FieldVisitor {
 impl Visit for FieldVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         self.fields
-            .insert(field.name().to_owned(), value.to_owned());
+            .insert(field.name().to_owned(), cap_field(value.to_owned()));
     }
     fn record_i64(&mut self, field: &Field, value: i64) {
         self.fields
@@ -356,12 +378,12 @@ impl Visit for FieldVisitor {
     }
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
         self.fields
-            .insert(field.name().to_owned(), value.to_string());
+            .insert(field.name().to_owned(), cap_field(value.to_string()));
     }
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         let mut s = String::new();
         let _ = write!(s, "{value:?}");
-        self.fields.insert(field.name().to_owned(), s);
+        self.fields.insert(field.name().to_owned(), cap_field(s));
     }
 }
 
@@ -611,6 +633,54 @@ pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn field_cap_leaves_short_values_alone() {
+        assert_eq!(cap_field("short".to_owned()), "short");
+        let exact = "x".repeat(MAX_RING_FIELD_BYTES);
+        assert_eq!(cap_field(exact.clone()), exact);
+    }
+
+    #[test]
+    fn field_cap_truncates_long_values_with_marker() {
+        let got = cap_field("x".repeat(MAX_RING_FIELD_BYTES + 100));
+        let (kept, marker) = got.split_at(MAX_RING_FIELD_BYTES);
+        assert!(kept.bytes().all(|b| b == b'x'));
+        assert_eq!(marker, "… [truncated 100 bytes]");
+    }
+
+    #[test]
+    fn field_cap_cuts_multibyte_on_char_boundary() {
+        // 3-byte chars: the cap (8192) falls mid-char, so the cut backs
+        // off to the previous boundary.
+        let s = "€".repeat(MAX_RING_FIELD_BYTES);
+        let total = s.len();
+        let got = cap_field(s);
+        let kept = got.split('…').next().unwrap();
+        assert!(kept.len() <= MAX_RING_FIELD_BYTES);
+        assert_eq!(kept.len() % 3, 0);
+        assert!(kept.chars().all(|c| c == '€'));
+        assert!(got.ends_with(&format!("[truncated {} bytes]", total - kept.len())));
+    }
+
+    #[test]
+    fn field_visitor_caps_recorded_strings() {
+        let ring = LogRingBuffer::with_capacity(4);
+        let subscriber = Registry::default().with(RingLayer {
+            buffer: ring.clone(),
+        });
+        tracing::subscriber::with_default(subscriber, || {
+            let big = "y".repeat(MAX_RING_FIELD_BYTES * 4);
+            tracing::warn!(big_str = big.as_str(), big_dbg = ?big, small = "ok", "cap test");
+        });
+        let snap = ring.snapshot(SnapshotFilter::default());
+        let fields = &snap.last().unwrap().fields;
+        assert_eq!(fields["small"], "ok");
+        for key in ["big_str", "big_dbg"] {
+            assert!(fields[key].len() < MAX_RING_FIELD_BYTES + 64, "{key}");
+            assert!(fields[key].contains("[truncated "), "{key}");
+        }
+    }
 
     #[test]
     fn ring_buffer_evicts_oldest_past_capacity() {

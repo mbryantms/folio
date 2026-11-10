@@ -7,6 +7,7 @@
 //! - `POST /api/uploads` raises its own limit to 32 MiB (+ framing): a
 //!   31 MiB image stages, a 33 MiB one is refused, and the staged file is
 //!   consumed by the page editor only in a writeback library.
+//! - `POST /csp-report` (unauthenticated) lowers its limit to 64 KiB.
 //! - The Next.js fallback proxy refuses a body over
 //!   `upstream::MAX_PROXY_BODY_BYTES`, declared or streamed.
 //! - `/ws/scan-events` closes a client that sends an oversize frame.
@@ -309,21 +310,61 @@ async fn json_route_accepts_body_under_the_limit() {
 #[tokio::test]
 async fn bare_route_rejects_3_mib_body_with_413_envelope() {
     let app = TestApp::spawn().await;
-    // `/csp-report` is a bare route (CSRF-exempt, no auth) that buffers its
-    // body with the `Bytes` extractor.
+    // `/auth/local/login` is a bare route (CSRF-exempt, no auth) that
+    // buffers a JSON body. It pins the bare group's own
+    // `DEFAULT_BODY_LIMIT`, which `/csp-report` no longer exercises now
+    // that it sets a smaller limit of its own.
+    let mut big = String::from(r#"{"email":"a@example.com","password":""#);
+    big.push_str(&"x".repeat(3 * MIB));
+    big.push_str(r#""}"#);
     let resp = app
         .router
         .clone()
         .oneshot(
             Request::builder()
                 .method(Method::POST)
-                .uri("/csp-report")
-                .header(header::CONTENT_TYPE, "application/csp-report")
-                .body(Body::from(vec![b'x'; 3 * MIB]))
+                .uri("/auth/local/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(big))
                 .unwrap(),
         )
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "too_large", "{body}");
+}
+
+/// `/csp-report` is a bare route (CSRF-exempt, no auth) that buffers its
+/// body with the `Bytes` extractor; it carries its own 64 KiB limit
+/// (`api::csp::CSP_REPORT_BODY_LIMIT`).
+async fn post_csp_report(app: &TestApp, len: usize) -> axum::response::Response {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/csp-report")
+                .header(header::CONTENT_TYPE, "application/csp-report")
+                .body(Body::from(vec![b'x'; len]))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn csp_report_accepts_body_just_under_64_kib() {
+    let app = TestApp::spawn().await;
+    let resp = post_csp_report(&app, 64 * 1024 - 1).await;
+    // Not JSON, so only counted, but still answered 204.
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn csp_report_rejects_body_just_over_64_kib_with_413_envelope() {
+    let app = TestApp::spawn().await;
+    let resp = post_csp_report(&app, 64 * 1024 + 1).await;
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "too_large", "{body}");
