@@ -234,8 +234,17 @@ impl LevelFilter {
 }
 
 /// `tracing-subscriber` layer that copies each event into the ring buffer.
-struct RingLayer {
+pub(crate) struct RingLayer {
     buffer: LogRingBuffer,
+}
+
+impl RingLayer {
+    /// Unit tests in other modules use this to read what a code path
+    /// would put in the admin log ring.
+    #[cfg(test)]
+    pub(crate) fn new(buffer: LogRingBuffer) -> Self {
+        Self { buffer }
+    }
 }
 
 impl<S> Layer<S> for RingLayer

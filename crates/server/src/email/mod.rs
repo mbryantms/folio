@@ -2,8 +2,10 @@
 //!
 //! Three implementations behind one trait so handlers don't care which is
 //! active:
-//!   - [`Noop`] when `COMIC_SMTP_HOST` is unset — logs the would-be email
-//!     at WARN and returns Ok. Used in dev when no MTA is around.
+//!   - [`Noop`] when `COMIC_SMTP_HOST` is unset — logs that a mail was
+//!     skipped (hashed recipient + subject, never the body) at WARN and
+//!     returns Ok. Used in dev when no MTA is around; debug builds also log
+//!     the body at DEBUG.
 //!   - [`MockSender`] for integration tests — captures into an `Arc<Mutex<…>>`
 //!     so test assertions can read what was sent.
 //!   - [`LettreSender`] for production — async tokio + rustls SMTP client
@@ -90,25 +92,47 @@ pub trait EmailSender: Send + Sync {
 
 // ───────── Noop ─────────
 
-/// No-MTA fallback. Logs and returns Ok. The handler can still issue the
-/// HMAC token and tell the user "we sent you a link" — operators in
-/// development can paste the URL out of the log to complete the flow.
+/// No-MTA fallback. Logs one line that a mail was skipped and returns Ok.
+/// The handler can still issue the HMAC token and tell the user "we sent
+/// you a link".
+///
+/// The line carries the hashed recipient and the subject, never the body:
+/// verification and password-reset bodies hold single-use links with their
+/// tokens, and every log line also lands in the in-memory ring an admin
+/// reads at `/admin/logs` (see `docs/dev/logging.md`).
 pub struct Noop;
 
 #[async_trait]
 impl EmailSender for Noop {
     async fn send(&self, email: Email) -> anyhow::Result<()> {
-        tracing::warn!(
-            to = %email.to,
-            subject = %email.subject,
-            "SMTP not configured — email NOT sent. Body:\n{}",
-            email.body_text
-        );
+        // Debug builds (local `cargo run`) also log the body at DEBUG so a
+        // developer can follow the link without an MTA. Release builds never
+        // log it: `cfg!(debug_assertions)` is false there, so no log level
+        // or filter setting can bring a body into a production log.
+        log_skipped(&email, cfg!(debug_assertions));
         Ok(())
     }
 
     fn is_configured(&self) -> bool {
         false
+    }
+}
+
+/// Log that `email` was not sent. `include_body` adds a second, DEBUG-level
+/// event with the plain-text body; [`Noop`] passes `cfg!(debug_assertions)`.
+fn log_skipped(email: &Email, include_body: bool) {
+    let email_hash = &crate::auth::cookies::sha256_hex(&email.to)[..12];
+    tracing::warn!(
+        email_hash = %email_hash,
+        subject = %email.subject,
+        "SMTP not configured — email not sent"
+    );
+    if include_body {
+        tracing::debug!(
+            email_hash = %email_hash,
+            "debug build — body of the email not sent:\n{}",
+            email.body_text
+        );
     }
 }
 
@@ -242,8 +266,72 @@ pub fn build(cfg: &Config) -> anyhow::Result<Arc<dyn EmailSender>> {
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
     if !host_set {
-        tracing::warn!("COMIC_SMTP_HOST not set — recovery emails will be logged, not sent");
+        tracing::warn!("COMIC_SMTP_HOST not set — recovery emails will not be sent");
         return Ok(Arc::new(Noop));
     }
     Ok(Arc::new(LettreSender::from_config(cfg)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::{LogRingBuffer, RingLayer, SnapshotFilter};
+    use tracing_subscriber::{Registry, layer::SubscriberExt};
+
+    const TOKEN: &str = "tok-0123456789abcdef-single-use";
+
+    fn capture(include_body: bool) -> Vec<crate::observability::LogEntry> {
+        let ring = LogRingBuffer::with_capacity(16);
+        let subscriber = Registry::default().with(RingLayer::new(ring.clone()));
+        let email =
+            templates::password_reset("https://comics.example.com", "reader@example.com", TOKEN);
+        tracing::subscriber::with_default(subscriber, || log_skipped(&email, include_body));
+        ring.snapshot(SnapshotFilter::default())
+    }
+
+    fn entry_text(e: &crate::observability::LogEntry) -> String {
+        format!("{} {:?}", e.message, e.fields)
+    }
+
+    /// What a release build logs: one WARN line, no token, no link, no
+    /// plain address.
+    #[test]
+    fn skipped_mail_is_logged_without_body() {
+        let entries = capture(false);
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        let e = &entries[0];
+        assert_eq!(e.level, "warn");
+        assert_eq!(e.fields["subject"], "Reset your Folio password");
+        assert_eq!(
+            e.fields["email_hash"],
+            crate::auth::cookies::sha256_hex("reader@example.com")[..12]
+        );
+        let text = entry_text(e);
+        assert!(!text.contains(TOKEN), "{text}");
+        assert!(!text.contains("reset-password"), "{text}");
+        assert!(!text.contains("reader@example.com"), "{text}");
+    }
+
+    /// Debug builds add the body, and only at DEBUG.
+    #[test]
+    fn debug_body_is_debug_level_only() {
+        let entries = capture(true);
+        assert_eq!(entries.len(), 2, "{entries:?}");
+        for e in &entries {
+            if entry_text(e).contains(TOKEN) {
+                assert_eq!(e.level, "debug", "{e:?}");
+            }
+        }
+        assert!(entries.iter().any(|e| entry_text(e).contains(TOKEN)));
+    }
+
+    #[tokio::test]
+    async fn noop_send_succeeds_and_mock_still_captures_body() {
+        let email =
+            templates::password_reset("https://comics.example.com", "reader@example.com", TOKEN);
+        assert!(Noop.send(email.clone()).await.is_ok());
+        let mock = MockSender::new();
+        mock.send(email).await.unwrap();
+        assert!(mock.last().await.body_text.contains(TOKEN));
+    }
 }
