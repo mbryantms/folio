@@ -134,8 +134,8 @@ curl -fsSLO https://raw.githubusercontent.com/mbryantms/folio/main/compose.prod.
 curl -fsSL  https://raw.githubusercontent.com/mbryantms/folio/main/.env.prod.example -o .env
 
 # Set REPO_OWNER=mbryantms, POSTGRES_PASSWORD, COMIC_LIBRARY_HOST_PATH
-# and COMIC_PUBLIC_URL. Leave COMIC_AUTH_MODE=local and
-# COMIC_LOCAL_REGISTRATION_OPEN=true as they are for the first boot.
+# and COMIC_PUBLIC_URL. Leave COMIC_LOCAL_REGISTRATION_OPEN=true as it is
+# for the first boot. Sign-in is local (email and password) by default.
 $EDITOR .env
 docker compose -f compose.prod.yml up -d
 ```

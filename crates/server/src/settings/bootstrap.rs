@@ -89,18 +89,24 @@ async fn insert_plain(
     Ok(())
 }
 
-/// Seed `auth.*` rows from the env-loaded [`Config`] when no
-/// `auth.mode` row exists. Mirrors [`seed_smtp_from_env`]: `auth.mode`
-/// is the sentinel and we copy the *current effective values* for the
-/// rest of the block (mode + registration_open + trust flag always;
-/// OIDC creds only when set).
+/// Seed `auth.*` rows from the env-loaded [`Config`] when the block has
+/// not been seeded yet. Mirrors [`seed_smtp_from_env`]: we copy the
+/// *current values* for the block (registration_open + the OIDC flags
+/// always; OIDC creds only when set).
+///
+/// `auth.mode` is seeded only when the operator chose a mode
+/// (`COMIC_AUTH_MODE`). A defaulted mode stays unset in the DB so the
+/// effective mode keeps following [`crate::config::resolve_auth_mode`]
+/// and the admin page can say it was defaulted. The sentinel is therefore
+/// `auth.mode` OR `auth.local.registration_open` (always seeded): older
+/// installs seeded both, newer ones may only have the latter.
 pub async fn seed_auth_from_env(
     db: &DatabaseConnection,
     cfg: &Config,
     secrets: &Secrets,
 ) -> anyhow::Result<()> {
     let exists = app_setting::Entity::find()
-        .filter(app_setting::Column::Key.eq("auth.mode"))
+        .filter(app_setting::Column::Key.is_in(["auth.mode", "auth.local.registration_open"]))
         .one(db)
         .await?
         .is_some();
@@ -109,13 +115,9 @@ pub async fn seed_auth_from_env(
     }
 
     let now = chrono::Utc::now().fixed_offset();
-    insert_plain(
-        db,
-        "auth.mode",
-        serde_json::json!(cfg.auth_mode.to_string()),
-        now,
-    )
-    .await?;
+    if let Some(mode) = cfg.auth_mode_choice {
+        insert_plain(db, "auth.mode", serde_json::json!(mode.to_string()), now).await?;
+    }
     insert_plain(
         db,
         "auth.local.registration_open",

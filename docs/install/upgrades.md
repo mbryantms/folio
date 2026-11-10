@@ -163,6 +163,22 @@ docker compose -f compose.prod.yml up -d --no-deps app
   values validated against the ComicInfo `AgeRating` ladder → 422
   otherwise) and the grant view returns `age_rating_max`.
 
+### Unreleased — local sign-in is the default without single sign-on
+
+- **`COMIC_AUTH_MODE=local` is no longer needed.** With no sign-in mode
+  chosen (no `COMIC_AUTH_MODE`, no saved mode under `/admin/auth`) the
+  server uses `local` when none of `COMIC_OIDC_ISSUER` /
+  `COMIC_OIDC_CLIENT_ID` / `COMIC_OIDC_CLIENT_SECRET` is set, and `both`
+  when all three are. Only some of them set is a boot error naming the
+  missing values; an explicit `oidc` / `both` without all three still
+  refuses to boot.
+- **Existing installs keep their mode.** The first boot of an earlier
+  release saved the mode in the database (`auth.mode`), and that row
+  still wins, so you can delete the `COMIC_AUTH_MODE=local` line from
+  `.env` (which also silences its deprecation WARN) without changing
+  anything. A fresh install no longer saves a mode until you pick one
+  under `/admin/auth`.
+
 ### v0.2.0 — Rust binary becomes the public origin
 
 Before v0.2.0, `compose.prod.yml` published both `app:8080` and

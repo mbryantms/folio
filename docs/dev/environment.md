@@ -150,7 +150,12 @@ Open <http://localhost:8080>.
 
 ## Auth modes for dev
 
-Default `.env` sets `COMIC_AUTH_MODE=both`, which requires real OIDC config. For local-only:
+`.env.example` leaves `COMIC_AUTH_MODE` unset and configures the dev Dex
+OIDC client, so the server resolves to `both`. With no mode chosen the rule
+is: all three `COMIC_OIDC_ISSUER` / `CLIENT_ID` / `CLIENT_SECRET` set →
+`both`; none set → `local`; only some set → refuses to boot and names the
+missing values. An explicit `oidc` / `both` without all three also refuses
+to boot. For local-only:
 
 ```sh
 COMIC_AUTH_MODE=local just run-server
