@@ -320,6 +320,14 @@ saying so (audit N-R10). It is selectable
 per series (reader settings, `f`) and as the account default fit
 (`Settings → Reading`, stored as `default_fit_mode = "contain"`).
 
+With no saved fit at all (no account default, no per-series override on
+the server or in the local cache), the reader picks one from the viewport
+when it opens (`autoFitMode` in `lib/reader/store.ts`, audit U-05):
+`contain` when the window is wider than the opening page would be at full
+height (a two-page spread in double view), `width` otherwise, and `width`
+in webtoon. The choice is never saved, so it is made again on each open
+and each device.
+
 ## Progress bar
 
 The thin progress bar under the top chrome mirrors in RTL (audit

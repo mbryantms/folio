@@ -696,10 +696,14 @@ export function Reader({
       detectInitialViewMode(pages, userDefaultViewMode, seriesReadingDirection),
     [pages, userDefaultViewMode, seriesReadingDirection],
   );
-  const initialFitMode = useMemo<FitMode>(
-    () => userDefaultFitMode ?? "width",
-    [userDefaultFitMode],
-  );
+  // No account default → null, and `init` picks from the viewport
+  // (`autoFitMode`: Screen fit on a wide window, width on a phone).
+  const initialFitMode: FitMode | null = userDefaultFitMode ?? null;
+  const openingPage = pages[Math.max(0, Math.min(totalPages - 1, initialPage))];
+  const initialPageAspect =
+    openingPage?.image_width && openingPage.image_height
+      ? openingPage.image_width / openingPage.image_height
+      : null;
 
   // Per-series overrides follow the account (post-audit T4.4): install the
   // network sender before `init` can queue an adoption push, and send
@@ -748,6 +752,7 @@ export function Reader({
       initialDirection,
       initialViewMode,
       initialFitMode,
+      initialPageAspect,
       initialPageStripVisible: userDefaultPageStrip,
       initialCoverSolo: userDefaultCoverSolo,
       serverSeriesPrefs,
@@ -762,6 +767,7 @@ export function Reader({
     initialDirection,
     initialViewMode,
     initialFitMode,
+    initialPageAspect,
     userDefaultPageStrip,
     userDefaultCoverSolo,
     serverSeriesPrefs,
