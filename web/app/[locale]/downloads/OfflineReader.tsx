@@ -93,11 +93,14 @@ export function OfflineReader({
   record,
   list = null,
   manager,
+  onExit,
 }: {
   record: DownloadRecord;
   /** The offline reading list the issue was opened from, if any. */
   list?: OfflineList | null;
   manager: DownloadManager;
+  /** Leaves the reader for the downloads list (`OfflineLibrary`). */
+  onExit?: () => void;
 }) {
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const issueId = record.issueId;
@@ -117,9 +120,11 @@ export function OfflineReader({
     [list, downloads, issueId, record],
   );
   const listId = list?.id ?? null;
+  // Replaces the reader's entry, as the online reader does (audit U-02),
+  // so the exit still returns to the list it was opened from.
   const openNext = useCallback(
     (target: IssueSummaryView) => {
-      window.history.pushState(null, "", offlineReadHref(target.id, listId));
+      window.history.replaceState(null, "", offlineReadHref(target.id, listId));
     },
     [listId],
   );
@@ -212,6 +217,7 @@ export function OfflineReader({
       nextUpOverride={nextUp}
       prevUpOverride={prevUp}
       onNextIssue={openNext}
+      onExit={onExit}
     />
   );
 }

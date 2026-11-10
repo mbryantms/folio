@@ -181,6 +181,15 @@ describe("<OfflineReader> outside a list", () => {
       target: expect.objectContaining({ id: "i0" }),
     });
     expect(typeof props.onNextIssue).toBe("function");
+    // The next issue replaces the reader's entry (audit U-02), so the exit
+    // still returns to the downloads list it was opened from.
+    const replace = vi.spyOn(window.history, "replaceState");
+    const push = vi.spyOn(window.history, "pushState");
+    (props.onNextIssue as (t: { id: string }) => void)({ id: "i4" });
+    expect(replace).toHaveBeenCalledWith(null, "", "/downloads?issue=i4");
+    expect(push).not.toHaveBeenCalled();
+    replace.mockRestore();
+    push.mockRestore();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
