@@ -213,7 +213,11 @@ Applied per request, never cached:
   kept reasons' weights and reordered by that score before paging, so
   the cursor and `total` follow the caller's own list. One extra query
   per request over the cached list (at most 100 neighbours); the cache is
-  not re-keyed, and uncapped callers get the cached list unchanged.
+  not re-keyed, and uncapped callers get the cached list unchanged. The
+  cache keeps only each neighbour's strongest reasons, so a neighbour
+  whose cached reasons are all hidden is dropped even if it shares a
+  weaker visible one: a capped caller can get fewer suggestions, never
+  a hidden name.
 - **Home rail only**: excludes every series the caller has started
   (progress with `last_page > 0` or `finished` on a live issue), and the seed. The seed
   is the most recently read visible, unhidden series; if its neighbours

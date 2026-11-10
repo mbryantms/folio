@@ -259,6 +259,11 @@ sits in a non-removed series of a granted library and passes the cap
 its series' own rating passes the cap too
 (`VisibleLibraries::entity_issue_cap_sql`): entity surfaces never name a
 series the caller cannot open, even through an issue rated below it.
+The issue routes keep their own rule: an issue rated within the cap
+still opens when its series is rated above it, and its page shows its
+own cast and credits; the entity pages those names link to answer
+not-found for that caller unless something else they can see carries
+the same name.
 
 - **Issue junctions** (`issue_credits`, `issue_characters`,
   `issue_teams`, `issue_locations`, `issue_arcs`, `issue_genres`,
