@@ -8193,7 +8193,8 @@ export interface components {
             /**
              * @description Shape varies by `(field, op)`. The compiler validates and rejects
              *     mismatches with a clear error. See [`super::registry`] for the
-             *     matrix of allowed combinations.
+             *     matrix of allowed combinations. Bounded by
+             *     [`MAX_FILTER_LIST_VALUES`] / [`MAX_FILTER_VALUE_LEN`].
              */
             value?: unknown;
         };
@@ -10233,6 +10234,7 @@ export interface components {
             weekly_refresh_enabled: boolean;
         };
         FilterDsl: {
+            /** @description At most [`MAX_FILTER_CONDITIONS`] on a write or preview. */
             conditions: components["schemas"]["Condition"][];
             match_mode: components["schemas"]["MatchMode"];
         };
@@ -12728,6 +12730,7 @@ export interface components {
             item?: components["schemas"]["IssueSummaryView"] | null;
         };
         PreviewReq: {
+            /** @description Bounded like a saved filter (`views::dsl::MAX_FILTER_*`). */
             filter: components["schemas"]["FilterDsl"];
             /** Format: int32 */
             result_limit: number;
@@ -18519,6 +18522,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_admin_delete: {
@@ -18562,6 +18572,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25131,6 +25148,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_preview: {
@@ -25154,6 +25178,20 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
             };
+            /** @description invalid filter, filter over the size bounds, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description saved-view preview rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_preview_issues: {
@@ -25176,6 +25214,20 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueListView"];
                 };
+            };
+            /** @description invalid filter, filter over the size bounds, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description saved-view preview rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25249,6 +25301,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description saved-view write rate limit */
             429: {
                 headers: {
@@ -25303,6 +25362,13 @@ export interface operations {
                     "application/json": components["schemas"]["IssueListView"];
                 };
             };
+            /** @description not a filter_issues view, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_pin: {
@@ -25351,6 +25417,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
+            };
+            /** @description not a filter_series view, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

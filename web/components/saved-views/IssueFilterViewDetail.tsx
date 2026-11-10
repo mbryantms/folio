@@ -35,6 +35,7 @@ import {
   useCreateSavedViewBatch,
 } from "@/lib/api/mutations";
 import { useMe, useSavedViewIssueResultsInfinite } from "@/lib/api/queries";
+import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import type { SavedViewView } from "@/lib/api/types";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -311,6 +312,11 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
             </li>
           ))}
         </ul>
+      ) : results.isError && items.length === 0 ? (
+        <EmptyState
+          size="sm"
+          description={filterQueryErrorMessage(results.error)}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           size="sm"

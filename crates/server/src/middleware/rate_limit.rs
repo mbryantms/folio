@@ -374,6 +374,21 @@ pub const SAVED_VIEW_WRITE: Bucket = Bucket {
     ..COLLECTION_WRITE
 };
 
+/// Saved-view previews — per user, 2/s sustained with a burst of 20:
+/// `POST /me/saved-views/preview` and `POST /me/saved-views/preview-issues`
+/// (one shared instance). Each preview runs an arbitrary filter for up to
+/// the filter statement timeout (5 s), so this is the budget that keeps a
+/// script from parking the pool on them. The web builder previews on an
+/// explicit button click, not on a keystroke debounce, and disables the
+/// button while a preview is in flight, so a person sends at most one or
+/// two a second even clicking fast; the burst absorbs a quick
+/// edit-preview-edit-preview session.
+pub const SAVED_VIEW_PREVIEW: Bucket = Bucket {
+    name: "saved_view_preview",
+    period: Duration::from_millis(500),
+    burst: 20,
+};
+
 /// Collection reorder — per user (E3), 4/s sustained with a burst of 30:
 /// `POST /me/collections/{id}/entries/reorder`, its own bucket so a drag
 /// session never starves the writes above. A drop sends one request with

@@ -396,26 +396,38 @@ export class HttpError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** `error.code` from the server's envelope, when it sent one (e.g.
+     *  `"filter_too_slow"`), so a caller can branch on the failure. */
+    public readonly code: string | null = null,
+    /** `error.details` field errors from a 422 (empty otherwise). */
+    public readonly fields: { field: string; message: string }[] = [],
   ) {
     super(message);
     this.name = "HttpError";
   }
 }
 
+/** Build an [`HttpError`] from a failed response's error envelope. */
+async function httpErrorFrom(res: Response, path: string): Promise<HttpError> {
+  let detail = `${path} → ${res.status}`;
+  let code: string | null = null;
+  let fields: { field: string; message: string }[] = [];
+  try {
+    const body = await res.json();
+    detail = body?.error?.message ?? detail;
+    code = typeof body?.error?.code === "string" ? body.error.code : null;
+    if (Array.isArray(body?.error?.details)) fields = body.error.details;
+  } catch {
+    /* ignore */
+  }
+  return new HttpError(res.status, detail, code, fields);
+}
+
 export async function jsonFetch<T>(path: string): Promise<T> {
   const res = await apiFetch(path, {
     headers: { Accept: "application/json" },
   });
-  if (!res.ok) {
-    let detail = `${path} → ${res.status}`;
-    try {
-      const body = await res.json();
-      detail = body?.error?.message ?? detail;
-    } catch {
-      /* ignore */
-    }
-    throw new HttpError(res.status, detail);
-  }
+  if (!res.ok) throw await httpErrorFrom(res, path);
   return (await res.json()) as T;
 }
 
@@ -2050,16 +2062,7 @@ async function postPreview<T>(path: string, req: PreviewReq): Promise<T> {
     },
     body: JSON.stringify(req),
   });
-  if (!res.ok) {
-    let detail = `${path} → ${res.status}`;
-    try {
-      const body = await res.json();
-      detail = body?.error?.message ?? detail;
-    } catch {
-      /* ignore */
-    }
-    throw new HttpError(res.status, detail);
-  }
+  if (!res.ok) throw await httpErrorFrom(res, path);
   return (await res.json()) as T;
 }
 

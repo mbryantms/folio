@@ -635,6 +635,9 @@ pub struct SpawnOpts {
     /// pool. Off by default (noise); `perf_regressions.rs` turns it on —
     /// its ≤N-queries guards count those events.
     pub sqlx_logging: bool,
+    /// Override `Config::filter_statement_timeout` (default 5 s) so a test
+    /// can drive a saved-view filter query into the time box quickly.
+    pub filter_statement_timeout: Option<std::time::Duration>,
 }
 
 impl TestApp {
@@ -671,6 +674,17 @@ impl TestApp {
     pub async fn spawn_with_default_auth_mode() -> Self {
         Self::spawn_inner(SpawnOpts {
             auth_mode_unset: true,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// [`spawn`] with a short saved-view filter statement timeout, so a
+    /// test can push a filter query into the time box without a slow
+    /// query (`saved_views_bounds.rs`).
+    pub async fn spawn_with_filter_statement_timeout(timeout: std::time::Duration) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            filter_statement_timeout: Some(timeout),
             ..SpawnOpts::default()
         })
         .await
@@ -1047,6 +1061,9 @@ impl TestApp {
             // concurrent test processes) hashing dominated CI wall-clock.
             // Production cost is pinned by `auth::password` unit tests.
             password_hash_cost: server::auth::password::HashCost::TEST,
+            filter_statement_timeout: opts
+                .filter_statement_timeout
+                .unwrap_or(server::views::timebox::FILTER_STATEMENT_TIMEOUT),
             metrics_open: false,
             // progress-writeback-2.0 M4: OPDS client compat mode.
             // Default off — TestApp::spawn() preserves Folio identity;
