@@ -55,6 +55,7 @@ import {
 } from "@/components/folio/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/folio/empty-state";
+import { RailError } from "@/components/saved-views/RailError";
 import {
   useBulkMarkProgress,
   useBulkMarkSeriesMatchingProgress,
@@ -359,11 +360,19 @@ export function IssuesPanel({
   // Auto-fetch the next page when the sentinel scrolls into view.
   // Depend on the three fields, not the whole result object — TanStack
   // returns a fresh object identity per render, so `[query]` tore the
-  // observer down and rebuilt it on every state change.
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  // observer down and rebuilt it on every state change. A failed next
+  // page parks the observer: the rebuilt observer reports the sentinel
+  // as intersecting at once, so without the gate a failure would refetch
+  // in a loop. The inline Retry below the list resumes it.
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+    isFetchNextPageError,
+  } = query;
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -376,7 +385,19 @@ export function IssuesPanel({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, isFetchNextPageError]);
+
+  // A failed fetch with nothing cached is not an empty series: say so and
+  // offer Retry instead of "No issues yet". The specials query counts too
+  // when it is the only thing that could have filled an empty panel.
+  const mainFailed = query.isError && !query.data;
+  const specialsFailed =
+    !searching && specialsQuery.isError && !specialsQuery.data;
+  const listFailed = mainFailed || (items.length === 0 && specialsFailed);
+  const retryList = () => {
+    if (mainFailed) void query.refetch();
+    if (specialsFailed) void specialsQuery.refetch();
+  };
 
   // Esc exits select mode entirely; Cmd/Ctrl+A selects every loaded
   // card. Both gated on `selectMode` so other handlers stay free
@@ -705,14 +726,10 @@ export function IssuesPanel({
         isPending={bulkMark.isPending || bulkMarkMatching.isPending}
       />
 
-      {query.isError && (
-        <p className="text-destructive text-sm">
-          Failed to load issues. {String(query.error)}
-        </p>
-      )}
-
       {query.isLoading ? (
         <IssueGridSkeleton style={gridStyle} />
+      ) : listFailed ? (
+        <RailError message="Couldn't load issues." onRetry={retryList} />
       ) : items.length === 0 ? (
         debouncedQ ? (
           <EmptyState
@@ -750,17 +767,33 @@ export function IssuesPanel({
       <div
         ref={sentinelRef}
         aria-hidden
-        className={cn("h-12", query.hasNextPage ? "" : "hidden")}
+        className={cn(
+          "h-12",
+          query.hasNextPage && !isFetchNextPageError ? "" : "hidden",
+        )}
       />
-      {query.isFetchingNextPage && (
+      {query.isFetchingNextPage ? (
         <p
           role="status"
           className="text-muted-foreground mt-2 text-center text-xs"
         >
           Loading more…
         </p>
-      )}
+      ) : isFetchNextPageError ? (
+        <RailError
+          message="Couldn't load more issues."
+          onRetry={() => void fetchNextPage()}
+          className="mt-2 justify-center text-xs"
+        />
+      ) : null}
 
+      {!listFailed && specialsFailed && (
+        <RailError
+          message="Couldn't load specials and extras."
+          onRetry={() => void specialsQuery.refetch()}
+          className="mt-6"
+        />
+      )}
       {!searching && specialItems.length > 0 && (
         <SpecialsExtrasSection
           items={specialItems}
