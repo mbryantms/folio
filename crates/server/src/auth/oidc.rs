@@ -16,7 +16,12 @@
 //! identities aren't silently merged. `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL=true`
 //! (DB key `auth.oidc.link_local_by_verified_email`) opts in to auto-linking
 //! the OIDC identity onto that local account instead, audited as
-//! `auth.oidc.auto_link`.
+//! `auth.oidc.auto_link`. The link needs the ID token's `email_verified` to be
+//! the JSON boolean `true` (an absent claim admitted by the trust-unverified
+//! opt-in does not count) and the local row's own address to be verified;
+//! otherwise the login is refused as without the opt-in. openidconnect is
+//! built without `accept-string-booleans`, so a string `"true"` fails ID-token
+//! parsing and never reaches the link.
 
 use axum::{
     Extension, Router,
@@ -102,20 +107,63 @@ pub(crate) struct DiscoveryEntry {
     fetched_at: Instant,
 }
 
+/// TCP/TLS connect budget for every request to the identity provider
+/// (discovery, JWKS, token exchange). Same value as the metadata providers'
+/// client (`metadata::http::CONNECT_TIMEOUT`): a black-holed provider fails
+/// fast instead of eating the whole request budget.
+const OIDC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Whole-request budget for one request to the identity provider, matching
+/// the metadata providers' 30 s request timeout. Without it a hung provider
+/// holds the sign-in request open indefinitely.
+const OIDC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Error type of the OIDC HTTP client as openidconnect surfaces it.
+type OidcHttpError = openidconnect::HttpClientError<reqwest::Error>;
+
 /// Process-global HTTP client used for OIDC discovery + token exchange.
 /// Built once with `redirect::Policy::none()` per openidconnect 4's
-/// SSRF-prevention guidance.
+/// SSRF-prevention guidance, and with [`OIDC_CONNECT_TIMEOUT`] /
+/// [`OIDC_REQUEST_TIMEOUT`].
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::const_new();
 
 async fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT
-        .get_or_init(|| async {
-            reqwest::ClientBuilder::new()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("build oidc http client")
-        })
+        .get_or_init(|| async { build_http_client(OIDC_REQUEST_TIMEOUT, OIDC_CONNECT_TIMEOUT) })
         .await
+}
+
+fn build_http_client(request_timeout: Duration, connect_timeout: Duration) -> reqwest::Client {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(request_timeout)
+        .connect_timeout(connect_timeout)
+        .build()
+        .expect("build oidc http client")
+}
+
+/// True when a request to the provider timed out or could not connect: the
+/// provider is unavailable, which is neither a server fault (500) nor a
+/// failed sign-in attempt.
+fn provider_unreachable(err: &OidcHttpError) -> bool {
+    matches!(err, openidconnect::HttpClientError::Reqwest(re) if re.is_timeout() || re.is_connect())
+}
+
+/// [`provider_unreachable`] for the error [`discover_entry`] returns.
+fn discovery_unreachable(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<openidconnect::DiscoveryError<OidcHttpError>>(),
+        Some(openidconnect::DiscoveryError::Request(re)) if provider_unreachable(re)
+    )
+}
+
+/// 502 for a provider that timed out or refused the connection.
+fn provider_unavailable() -> Response {
+    error(
+        StatusCode::BAD_GATEWAY,
+        "oidc.provider_unreachable",
+        "the identity provider did not respond",
+    )
 }
 
 /// Process-global discovery cache. Keyed by issuer URL so a future
@@ -305,7 +353,7 @@ async fn fetch_end_session_endpoint(issuer: &str) -> Option<String> {
         "{}/.well-known/openid-configuration",
         issuer.trim_end_matches('/')
     );
-    let resp = match reqwest::get(&url).await {
+    let resp = match http_client().await.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, %url, "discovery doc fetch failed");
@@ -345,6 +393,10 @@ pub async fn start(
     }
     let client = match discover(&app).await {
         Ok(c) => c,
+        Err(e) if discovery_unreachable(&e) => {
+            tracing::warn!(error = %e, "oidc discovery failed: provider unreachable");
+            return provider_unavailable();
+        }
         Err(e) => {
             tracing::error!(error = %e, "oidc discovery failed");
             return error(
@@ -525,6 +577,13 @@ pub async fn callback(
 
     let client = match discover(&app).await {
         Ok(c) => c,
+        Err(e) if discovery_unreachable(&e) => {
+            tracing::warn!(
+                error = %e,
+                "oidc discovery failed during callback: provider unreachable"
+            );
+            return provider_unavailable();
+        }
         Err(e) => {
             tracing::error!(error = %e, "oidc discovery failed during callback");
             return error(
@@ -543,6 +602,15 @@ pub async fn callback(
         .await
     {
         Ok(t) => t,
+        // A timeout or refused connection is the provider being down, not a
+        // failed sign-in: no lockout strike.
+        Err(openidconnect::RequestTokenError::Request(ref re)) if provider_unreachable(re) => {
+            tracing::warn!(
+                error = %crate::observability::sanitize_error(re),
+                "oidc token exchange failed: provider unreachable"
+            );
+            return provider_unavailable();
+        }
         Err(e) => {
             // `RequestTokenError` from openidconnect may carry the full
             // upstream response body, which can include `access_token=...`
@@ -697,11 +765,12 @@ pub async fn callback(
         // row. Two outcomes depending on policy:
         //   - default: refuse (`auth.email_in_use`); admin migrates manually.
         //   - opt-in `auth.oidc.link_local_by_verified_email`: auto-link the
-        //     OIDC identity onto the existing local account.
-        // Reaching here with `email = Some` guarantees `email_verified` is
-        // true — the gate above returns early when the email is present but
-        // unverified — so the verified-email precondition for linking is
-        // already structurally satisfied.
+        //     OIDC identity onto the existing local account, but only when
+        //     the provider itself asserted `email_verified: true` AND the
+        //     local row's own address is verified. A missing claim admitted
+        //     by the trust-unverified opt-in proves nothing, and a local row
+        //     holding an address it never verified must not receive the
+        //     real owner's sign-in. Either gap refuses like the default.
         if let Some(ref e) = email
             && let Ok(Some(local)) = UserEntity::find()
                 .filter(user::Column::Email.eq(e.clone()))
@@ -722,7 +791,26 @@ pub async fn callback(
                     "verify your email first",
                 );
             }
-            if app.cfg().oidc_link_local_by_verified_email {
+            let link_opt_in = app.cfg().oidc_link_local_by_verified_email;
+            let link_skipped = if !link_opt_in {
+                None
+            } else if !idp_proved_email {
+                Some("provider did not assert email_verified")
+            } else if !local.email_verified {
+                Some("local account email is unverified")
+            } else {
+                None
+            };
+            if let Some(reason) = link_skipped {
+                tracing::info!(
+                    target: "auth.oidc",
+                    local_user_id = %local.id,
+                    email_hash = %sha256_hex(e)[..12].to_owned(),
+                    reason,
+                    "oidc auto-link skipped"
+                );
+            }
+            if link_opt_in && link_skipped.is_none() {
                 tracing::warn!(
                     target: "auth.oidc",
                     local_user_id = %local.id,
@@ -1097,5 +1185,77 @@ mod redirect_tests {
         assert!(!is_safe_redirect_target("relative/path"));
         assert!(!is_safe_redirect_target(""));
         assert!(!is_safe_redirect_target("javascript:alert(1)"));
+    }
+}
+
+#[cfg(test)]
+mod client_timeout_tests {
+    use super::{build_http_client, discovery_unreachable};
+    use openidconnect::{IssuerUrl, core::CoreProviderMetadata};
+    use std::time::Duration;
+
+    async fn discover(issuer: String, client: &reqwest::Client) -> anyhow::Error {
+        CoreProviderMetadata::discover_async(IssuerUrl::new(issuer).unwrap(), client)
+            .await
+            .map(|_| ())
+            .map_err(anyhow::Error::from)
+            .expect_err("discovery must fail")
+    }
+
+    /// A provider that accepts the connection and never answers is cut off
+    /// by the total request timeout and classed as unreachable.
+    #[tokio::test]
+    async fn hung_provider_times_out_as_unreachable() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hold = tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let (sock, _) = listener.accept().await.unwrap();
+                held.push(sock);
+            }
+        });
+        let client = build_http_client(Duration::from_millis(300), Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        let err = discover(format!("http://{addr}"), &client).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "timeout applied"
+        );
+        assert!(discovery_unreachable(&err), "{err:?}");
+        hold.abort();
+    }
+
+    /// A refused connection is unreachable too.
+    #[tokio::test]
+    async fn refused_connection_is_unreachable() {
+        let addr = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap()
+        };
+        let client = build_http_client(Duration::from_secs(5), Duration::from_secs(5));
+        let err = discover(format!("http://{addr}"), &client).await;
+        assert!(discovery_unreachable(&err), "{err:?}");
+    }
+
+    /// A provider that answers with garbage is a provider fault, not an
+    /// unreachable one.
+    #[tokio::test]
+    async fn malformed_discovery_is_not_unreachable() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let serve = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            let _ = sock
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                .await;
+        });
+        let client = build_http_client(Duration::from_secs(5), Duration::from_secs(5));
+        let err = discover(format!("http://{addr}"), &client).await;
+        assert!(!discovery_unreachable(&err), "{err:?}");
+        serve.abort();
     }
 }

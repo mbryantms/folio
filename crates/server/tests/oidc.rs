@@ -1448,3 +1448,211 @@ async fn grant_all_libraries_opens_every_library_to_new_oidc_users() {
     assert_eq!(again, user);
     assert_eq!(grants_for(&app, user).await.len(), 2);
 }
+
+// ───────────────────── Auto-link gate: verified claim + verified local row ─────────────────────
+
+/// Register an active local account (no SMTP, so the address counts as
+/// verified) and return its row.
+async fn active_local_user(app: &TestApp, email: &str) -> entity::user::Model {
+    use sea_orm::EntityTrait;
+    let reg = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(format!(
+                    r#"{{"email":"{email}","password":"correctly-horse-battery"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    let row = entity::user::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|u| u.email.as_deref() == Some(email))
+        .unwrap();
+    assert_eq!(row.state, entity::user::UserState::Active);
+    assert!(row.email_verified);
+    row
+}
+
+/// OIDC sign-in whose ID-token claims are edited as raw JSON first, so a
+/// test can drop `email_verified` entirely or give it a non-boolean value.
+async fn oidc_sign_in_raw(
+    app: &TestApp,
+    op: &MockOp,
+    subject: &str,
+    email: &str,
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+    code: &str,
+) -> Response<Body> {
+    let (state_cookie, state_param) = start_oidc_flow(app, None).await;
+    let nonce = parse_state_cookie_nonce(&state_cookie);
+    let claims = IdTokenClaims::standard(&op.issuer(), "folio-test-client", subject, &nonce, email);
+    let mut raw = serde_json::to_value(&claims).unwrap();
+    edit(raw.as_object_mut().unwrap());
+    let mut jwt_header = Header::new(Algorithm::RS256);
+    jwt_header.kid = Some(KID.into());
+    let token = encode(
+        &jwt_header,
+        &raw,
+        &EncodingKey::from_rsa_der(&key_material().der),
+    )
+    .expect("encode jwt");
+    op.register_token_response_for_code(code, &token).await;
+    callback_with(app, &state_cookie, &state_param, code).await
+}
+
+/// The local row was neither relinked nor changed, no other user row
+/// exists, and no auto-link audit row was written.
+async fn assert_not_linked(app: &TestApp, before: &entity::user::Model) {
+    use sea_orm::EntityTrait;
+    let users = entity::user::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(users.len(), 1, "no OIDC user row was created");
+    let after = &users[0];
+    assert_eq!(after.id, before.id);
+    assert_eq!(after.external_id, before.external_id, "not linked");
+    assert_eq!(after.password_hash, before.password_hash);
+    assert_eq!(after.email_verified, before.email_verified);
+    let linked = entity::audit_log::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .any(|a| a.action == "auth.oidc.auto_link");
+    assert!(!linked, "no auto-link audit row");
+}
+
+/// A missing `email_verified` claim, let through by the trust-unverified
+/// opt-in, proves nothing: the login is refused as a collision, not linked.
+#[tokio::test]
+async fn auto_link_refuses_when_the_claim_is_absent() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local_trusting_unverified(op.issuer()).await;
+    let email = "absent-claim@example.com";
+    let before = active_local_user(&app, email).await;
+
+    let resp = oidc_sign_in_raw(
+        &app,
+        &op,
+        "subject-absent",
+        email,
+        |c| {
+            c.remove("email_verified");
+        },
+        "c1",
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_none());
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.email_in_use", "{body}");
+    assert_not_linked(&app, &before).await;
+}
+
+/// Without the trust-unverified opt-in an absent claim is refused outright.
+#[tokio::test]
+async fn auto_link_refuses_an_absent_claim_without_the_trust_opt_in() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "absent-strict@example.com";
+    let before = active_local_user(&app, email).await;
+
+    let resp = oidc_sign_in_raw(
+        &app,
+        &op,
+        "subject-absent-strict",
+        email,
+        |c| {
+            c.remove("email_verified");
+        },
+        "c1",
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_not_linked(&app, &before).await;
+}
+
+/// `email_verified: false` never links.
+#[tokio::test]
+async fn auto_link_refuses_when_the_claim_is_false() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "false-claim@example.com";
+    let before = active_local_user(&app, email).await;
+
+    let resp = oidc_sign_in(&app, &op, "subject-false", email, Some(false), "c1").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.email_unverified", "{body}");
+    assert_not_linked(&app, &before).await;
+}
+
+/// The string `"true"` is not a boolean: the ID token is rejected and
+/// nothing is linked.
+#[tokio::test]
+async fn auto_link_refuses_a_string_claim() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "string-claim@example.com";
+    let before = active_local_user(&app, email).await;
+
+    let resp = oidc_sign_in_raw(
+        &app,
+        &op,
+        "subject-string",
+        email,
+        |c| {
+            c.insert("email_verified".into(), json!("true"));
+        },
+        "c1",
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_none());
+    assert_not_linked(&app, &before).await;
+}
+
+/// A verified claim does not link onto a local row whose own address was
+/// never verified (here: changed without a verification step).
+#[tokio::test]
+async fn auto_link_refuses_a_local_row_with_an_unverified_email() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel, Set};
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "unverified-local@example.com";
+    let row = active_local_user(&app, email).await;
+    let mut am = row.into_active_model();
+    am.email_verified = Set(false);
+    let before = am.update(&app.state().db).await.unwrap();
+
+    let resp = oidc_sign_in(&app, &op, "subject-owner", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_none());
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.email_in_use", "{body}");
+    assert_not_linked(&app, &before).await;
+}
+
+/// With the opt-in off a verified claim still refuses the collision.
+#[tokio::test]
+async fn no_link_when_the_opt_in_is_off() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let email = "opt-in-off@example.com";
+    let before = active_local_user(&app, email).await;
+
+    let resp = oidc_sign_in(&app, &op, "subject-off", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_not_linked(&app, &before).await;
+}
