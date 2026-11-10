@@ -432,3 +432,122 @@ async fn csrf_middleware_rejects_form_field_mismatch() {
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "auth.csrf");
 }
+
+/// The no-JS profile form posts every field it renders: display name, email
+/// and the always-present current-password field (blank when unused).
+async fn form_account_post(app: &TestApp, cookies: &str, body: String) -> (StatusCode, String) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/me/account")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::COOKIE, cookies)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let location = resp
+        .headers()
+        .get(header::LOCATION)
+        .map(|v| v.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    (resp.status(), location)
+}
+
+#[tokio::test]
+async fn form_profile_post_changes_the_email() {
+    let app = TestApp::spawn_with_smtp().await;
+    let reg = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/register")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"email":"first@example.com","password":"correctly-horse-battery","display_name":"First"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    let mut session = String::new();
+    let mut csrf = String::new();
+    for c in reg.headers().get_all(header::SET_COOKIE).iter() {
+        let s = c.to_str().unwrap();
+        if let Some(v) = s.strip_prefix("__Host-comic_session=") {
+            session = v[..v.find(';').unwrap()].to_owned();
+        }
+        if let Some(v) = s.strip_prefix("__Host-comic_csrf=") {
+            csrf = v[..v.find(';').unwrap()].to_owned();
+        }
+    }
+    let cookies = format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}");
+    let token = urlencoding::encode(&csrf).into_owned();
+
+    // Display name only: the blank password field is ignored.
+    let (status, location) = form_account_post(
+        &app,
+        &cookies,
+        format!(
+            "csrf_token={token}&display_name=Renamed&email=first%40example.com&current_password="
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location, "/settings/account?ok=1");
+
+    // A password manager filled the field on a display-name-only save: no
+    // new password, so it is not a password change and the save goes through.
+    let (status, location) = form_account_post(
+        &app,
+        &cookies,
+        format!(
+            "csrf_token={token}&display_name=Again&email=first%40example.com&current_password=correctly-horse-battery"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location, "/settings/account?ok=1");
+
+    // A new address without the password bounces back with the error.
+    let (status, location) = form_account_post(
+        &app,
+        &cookies,
+        format!(
+            "csrf_token={token}&display_name=Renamed&email=new%40example.com&current_password="
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        location.starts_with("/settings/account?error="),
+        "{location}"
+    );
+
+    // With it, the confirmation link goes out.
+    let (status, location) = form_account_post(
+        &app,
+        &cookies,
+        format!(
+            "csrf_token={token}&display_name=Renamed&email=new%40example.com&current_password=correctly-horse-battery"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location, "/settings/account?email_change=sent");
+    assert!(
+        app.email
+            .outbox()
+            .await
+            .iter()
+            .any(|m| m.to == "new@example.com"
+                && m.body_text.contains("confirm-email-change?token="))
+    );
+}

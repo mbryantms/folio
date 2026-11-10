@@ -1753,7 +1753,27 @@ export function useUpdateAccount() {
   return useApiMutation<MeView, AccountReq>(
     (body) => ({ path: "/me/account", method: "PATCH", body }),
     {
-      successMessage: "Account updated",
+      // An email change with mail delivery on leaves `email` as it was and
+      // names the new address in `pending_email` until its link is opened.
+      successMessage: (data, body) =>
+        body.email && data?.pending_email
+          ? `Confirmation sent to ${data.pending_email}`
+          : "Account updated",
+      onSuccess: (data) => {
+        if (data) qc.setQueryData(queryKeys.me, data);
+      },
+    },
+  );
+}
+
+/** Cancel a pending email change: `PATCH /me/account` with the account's
+ *  current address drops the outstanding confirmation link. */
+export function useCancelEmailChange() {
+  const qc = useQueryClient();
+  return useApiMutation<MeView, { email: string }>(
+    (body) => ({ path: "/me/account", method: "PATCH", body }),
+    {
+      successMessage: "Email change cancelled",
       onSuccess: (data) => {
         if (data) qc.setQueryData(queryKeys.me, data);
       },

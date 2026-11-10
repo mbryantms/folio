@@ -1624,6 +1624,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/local/confirm-email-change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /auth/local/confirm-email-change?token=...`
+         * @description Opens the link `PATCH /me/account` mailed to a new address. The token
+         *     must match an unconsumed, unexpired `email_change_requests` row of the
+         *     same user, made under the account's current `token_version` (a
+         *     credential change since voids it: the row is expired), and the address
+         *     must still be free. Then, in one transaction: `users.email` = the new
+         *     address, `email_verified = true`, `token_version` bumped, the row
+         *     consumed, and every refresh session revoked except the opening
+         *     browser's, kept only when it belongs to the same user. Always answers
+         *     with a redirect to `/settings/account` carrying
+         *     `email_change=confirmed|confirmed_signed_out|invalid|taken`.
+         */
+        get: operations["local_confirm_email_change"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/local/login": {
         parameters: {
             query?: never;
@@ -6284,7 +6313,10 @@ export interface components {
              *     absent or equal.
              */
             confirm_password?: string | null;
-            /** @description Required when changing the password. Verified before any write. */
+            /**
+             * @description Required when changing the password, and when changing the email
+             *     of an account that has a password. Verified before any write.
+             */
             current_password?: string | null;
             display_name?: string | null;
             /**
@@ -11817,6 +11849,12 @@ export interface components {
             onboarding_completed_at?: string | null;
             /** @description True when `/me/account` accepts local password changes for this user. */
             password_editable: boolean;
+            /**
+             * @description The address an email change is waiting to be confirmed at (the
+             *     link went to it), or `null` when no change is pending. `email` keeps
+             *     the current address until the link is opened.
+             */
+            pending_email?: string | null;
             /**
              * Format: double
              * @description Reader display preferences that follow the account (audit 2026-11
@@ -20051,6 +20089,27 @@ export interface operations {
             };
         };
     };
+    local_confirm_email_change: {
+        parameters: {
+            query: {
+                /** @description token from the confirmation email */
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description redirect to /settings/account?email_change=confirmed (the opening browser's session of this account kept), =confirmed_signed_out (no session of the account kept), =invalid or =taken */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     local_login: {
         parameters: {
             query?: never;
@@ -22456,6 +22515,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description updated. After an email change with mail delivery configured, `email` is unchanged and `pending_email` names the address the confirmation link went to. Submitting the current address cancels a pending change */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -22471,22 +22531,36 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description current_password incorrect or session invalid */
+            /** @description session invalid */
             401: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description OIDC users cannot edit email/password */
+            /** @description OIDC users cannot edit email/password, or current_password incorrect (code `auth.invalid`, field error on `current_password`) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description email already in use */
+            /** @description email already in use (checked after the password) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation error; a missing current_password for an email change carries a field error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description locked out after failed password attempts (`auth.locked_out`), or more than 5 email-change requests in an hour (`rate_limited`); both carry Retry-After */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

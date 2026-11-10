@@ -7,6 +7,7 @@
 //!   POST  /auth/refresh         (cross-mode; works for OIDC users too)
 //!   POST  /auth/logout          (cross-mode)
 //!   GET   /auth/me              (cross-mode)
+//!   GET   /auth/local/confirm-email-change   (link mailed by PATCH /me/account)
 //!
 //! Local self-serve recovery (verify-email, request-password-reset,
 //! reset-password, resend-verification) is wired and uses the SMTP
@@ -51,6 +52,7 @@ use super::preferences::{
 };
 
 use entity::auth_session::{self, ActiveModel as SessionAM, Entity as SessionEntity};
+use entity::email_change_request::{self, Entity as EmailChangeEntity};
 use entity::password_reset_use::{
     self, ActiveModel as PasswordResetUseAM, Entity as PasswordResetUseEntity,
 };
@@ -101,6 +103,13 @@ pub fn routes() -> OpenApiRouter<AppState> {
                 .routes(routes!(reset_password))
                 .route_layer(rate_limit::PASSWORD_RESET_REDEEM.build()),
         )
+        // Redeeming an email-change link is the same kind of action as
+        // redeeming a reset link; its own layer, so its own token store.
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(confirm_email_change))
+                .route_layer(rate_limit::PASSWORD_RESET_REDEEM.build()),
+        )
 }
 
 // ────────────── DTOs ──────────────
@@ -134,6 +143,11 @@ pub struct MeResp {
     pub email: Option<String>,
     /// True when `/me/account` accepts email edits for this user.
     pub email_editable: bool,
+    /// The address an email change is waiting to be confirmed at (the
+    /// link went to it), or `null` when no change is pending. `email` keeps
+    /// the current address until the link is opened.
+    #[serde(default)]
+    pub pending_email: Option<String>,
     /// True when `/me/account` accepts local password changes for this user.
     pub password_editable: bool,
     pub display_name: String,
@@ -417,6 +431,7 @@ pub struct VerifyEmailQuery {
 /// (L-2): verify-email 24 h, reset-password 1 h.
 const VERIFY_EMAIL_TTL: Duration = TokenPurpose::EmailVerification.ttl();
 const PASSWORD_RESET_TTL: Duration = TokenPurpose::PasswordReset.ttl();
+pub(crate) const EMAIL_CHANGE_TTL: Duration = TokenPurpose::EmailChange.ttl();
 
 // ────────────── Handlers ──────────────
 
@@ -1119,7 +1134,11 @@ pub async fn me(
         .ok()
         .flatten();
 
-    let body = me_resp_from_parts(&user, csrf.clone(), row.as_ref());
+    let body = with_pending_email(
+        &app.db,
+        me_resp_from_parts(&user, csrf.clone(), row.as_ref()),
+    )
+    .await;
     let jar = if set_cookie {
         jar.add(csrf_cookie(csrf, app.cfg().access_ttl()))
     } else {
@@ -1366,7 +1385,7 @@ pub async fn update_preferences(
     };
 
     let csrf = new_csrf_token();
-    let body = me_resp_from_row(&updated, csrf.clone());
+    let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
     let mut jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
     // If the language preference changed, refresh `NEXT_LOCALE` so the next
     // navigation picks up the new locale immediately (no relog needed).
@@ -1759,6 +1778,255 @@ pub async fn resend_verification(
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// Where `confirm-email-change` sends the browser. The settings page reads
+/// the query and shows the outcome.
+const EMAIL_CHANGE_DONE: &str = "/settings/account?email_change=confirmed";
+/// Confirmed, and no session of the account survived (the link was opened
+/// in a browser not signed in to it).
+const EMAIL_CHANGE_DONE_SIGNED_OUT: &str = "/settings/account?email_change=confirmed_signed_out";
+const EMAIL_CHANGE_INVALID: &str = "/settings/account?email_change=invalid";
+const EMAIL_CHANGE_TAKEN: &str = "/settings/account?email_change=taken";
+
+/// `GET /auth/local/confirm-email-change?token=...`
+///
+/// Opens the link `PATCH /me/account` mailed to a new address. The token
+/// must match an unconsumed, unexpired `email_change_requests` row of the
+/// same user, made under the account's current `token_version` (a
+/// credential change since voids it: the row is expired), and the address
+/// must still be free. Then, in one transaction: `users.email` = the new
+/// address, `email_verified = true`, `token_version` bumped, the row
+/// consumed, and every refresh session revoked except the opening
+/// browser's, kept only when it belongs to the same user. Always answers
+/// with a redirect to `/settings/account` carrying
+/// `email_change=confirmed|confirmed_signed_out|invalid|taken`.
+#[utoipa::path(
+    operation_id = "local_confirm_email_change",    get,
+    path = "/auth/local/confirm-email-change",
+    params(("token" = String, Query, description = "token from the confirmation email")),
+    responses(
+        (status = 303, description = "redirect to /settings/account?email_change=confirmed (the opening browser's session of this account kept), =confirmed_signed_out (no session of the account kept), =invalid or =taken"),
+    )
+)]
+pub async fn confirm_email_change(
+    State(app): State<AppState>,
+    jar: CookieJar,
+    Extension(ctx): Extension<RequestContext>,
+    Query(q): Query<VerifyEmailQuery>,
+) -> impl IntoResponse {
+    let invalid = || Redirect::to(EMAIL_CHANGE_INVALID).into_response();
+    if !matches!(app.cfg().auth_mode, AuthMode::Local | AuthMode::Both) {
+        return invalid();
+    }
+    let claims = match email_token::verify_claims(
+        TokenPurpose::EmailChange,
+        &q.token,
+        app.secrets.email_token_key.as_ref(),
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::info!(error = ?e, "email-change token rejected");
+            return invalid();
+        }
+    };
+    let user_id = claims.user_id;
+    let Some(token_id) = claims.token_id else {
+        return invalid();
+    };
+
+    let txn = match app.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "email-change transaction begin failed");
+            return invalid();
+        }
+    };
+    let now = chrono::Utc::now().fixed_offset();
+    // Lock order: the user row first, then the request, the same order
+    // `PATCH /me/account` takes, so the two never deadlock.
+    let row = match UserEntity::find_by_id(user_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await
+    {
+        Ok(Some(r)) if r.external_id.starts_with("local:") && r.state != UserState::Disabled => r,
+        Ok(_) => return invalid(),
+        Err(e) => {
+            tracing::error!(error = %e, "email-change user lookup failed");
+            return invalid();
+        }
+    };
+    let request = match EmailChangeEntity::find_by_id(token_id)
+        .filter(email_change_request::Column::UserId.eq(user_id))
+        .filter(email_change_request::Column::TokenHash.eq(sha256_hex(&q.token)))
+        .filter(email_change_request::Column::ConsumedAt.is_null())
+        .filter(email_change_request::Column::ExpiresAt.gt(now))
+        .lock_exclusive()
+        .one(&txn)
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            tracing::info!(user_id = %user_id, token_id = %token_id, "email-change link reused, expired, replaced or unknown");
+            return invalid();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "email-change request lookup failed");
+            return invalid();
+        }
+    };
+    // The account's credentials changed since the request (password change
+    // or reset, sign-out-everywhere, admin disable): the request is void.
+    // The row is expired, not deleted, so its hourly count survives.
+    if request.token_version != row.token_version {
+        tracing::info!(user_id = %user_id, "email-change link outlived a credential change");
+        let mut void: email_change_request::ActiveModel = request.into();
+        void.expires_at = Set(now);
+        if let Err(e) = void.update(&txn).await {
+            tracing::error!(error = %e, user_id = %user_id, "email-change stale request void failed");
+            return invalid();
+        }
+        if let Err(e) = txn.commit().await {
+            tracing::error!(error = %e, user_id = %user_id, "email-change stale request commit failed");
+        }
+        return invalid();
+    }
+    // The address may have been taken since the request was made.
+    match crate::api::account::email_in_use_by_other(&txn, &request.new_email, user_id).await {
+        Ok(false) => {}
+        Ok(true) => {
+            tracing::info!(user_id = %user_id, "email-change target address taken meanwhile");
+            return Redirect::to(EMAIL_CHANGE_TAKEN).into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "email-change uniqueness check failed");
+            return invalid();
+        }
+    }
+
+    let mut am: UserAM = row.clone().into();
+    am.email = Set(Some(request.new_email.clone()));
+    am.email_verified = Set(true);
+    am.token_version = Set(row.token_version + 1);
+    am.updated_at = Set(now);
+    if let Err(e) = am.update(&txn).await {
+        // The unique index on lower(email) is the last line against a race;
+        // any other failure is not the address's fault.
+        if crate::api::account::is_unique_violation(&e) {
+            tracing::info!(user_id = %user_id, "email-change target address taken (unique index)");
+            return Redirect::to(EMAIL_CHANGE_TAKEN).into_response();
+        }
+        tracing::error!(error = %e, user_id = %user_id, "email-change user update failed");
+        return invalid();
+    }
+    let new_email = request.new_email.clone();
+    let mut consumed: email_change_request::ActiveModel = request.into();
+    consumed.consumed_at = Set(Some(now));
+    if let Err(e) = consumed.update(&txn).await {
+        tracing::error!(error = %e, user_id = %user_id, "email-change consume failed");
+        return invalid();
+    }
+    // As a password change does, revoke every other refresh session. The
+    // browser opening the link keeps its own only when that session belongs
+    // to this user; a browser without one, or signed in as someone else,
+    // keeps nothing of this user's (and the other account is untouched).
+    let keep = match jar.get(REFRESH_COOKIE).map(|c| sha256_hex(c.value())) {
+        Some(hash) => match SessionEntity::find()
+            .filter(auth_session::Column::RefreshTokenHash.eq(hash.clone()))
+            .filter(auth_session::Column::UserId.eq(user_id))
+            .filter(auth_session::Column::RevokedAt.is_null())
+            .one(&txn)
+            .await
+        {
+            Ok(Some(_)) => Some(hash),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!(error = %e, user_id = %user_id, "email-change session lookup failed");
+                return invalid();
+            }
+        },
+        None => None,
+    };
+    revoke_sessions_for_user(&txn, user_id, keep.as_deref()).await;
+    if let Err(e) = crate::audit::record_in(
+        &txn,
+        crate::audit::AuditEntry {
+            actor_id: user_id,
+            action: "user.account.email_change.confirm",
+            target_type: Some("user"),
+            target_id: Some(user_id.to_string()),
+            payload: serde_json::json!({
+                "email": new_email,
+                "previous_email": row.email,
+                "email_verified": true,
+                "kept_opening_session": keep.is_some(),
+            }),
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await
+    {
+        tracing::error!(error = %e, user_id = %user_id, "email-change audit write failed");
+        return invalid();
+    }
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, user_id = %user_id, "email-change commit failed");
+        return invalid();
+    }
+    tracing::info!(user_id = %user_id, kept_session = keep.is_some(), "email change confirmed");
+    if keep.is_some() {
+        Redirect::to(EMAIL_CHANGE_DONE).into_response()
+    } else {
+        Redirect::to(EMAIL_CHANGE_DONE_SIGNED_OUT).into_response()
+    }
+}
+
+/// True when the request's link would still work: unconsumed, unexpired,
+/// and made under the account's current `token_version` (a password change
+/// or reset, sign-out-everywhere or admin disable since then voids it).
+pub(crate) fn request_is_live(
+    r: &email_change_request::Model,
+    user_token_version: i64,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> bool {
+    r.consumed_at.is_none() && r.expires_at > now && r.token_version == user_token_version
+}
+
+/// The unconfirmed address of the user's pending email change, if its link
+/// would still work ([`request_is_live`]).
+pub(crate) async fn pending_email_change<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    user_id: Uuid,
+) -> Option<String> {
+    let token_version: i64 = UserEntity::find_by_id(user_id)
+        .select_only()
+        .column(user::Column::TokenVersion)
+        .into_tuple()
+        .one(db)
+        .await
+        .ok()
+        .flatten()?;
+    EmailChangeEntity::find()
+        .filter(email_change_request::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+        .ok()
+        .flatten()
+        .filter(|r| request_is_live(r, token_version, chrono::Utc::now().fixed_offset()))
+        .map(|r| r.new_email)
+}
+
+/// `resp` with `pending_email` filled from `email_change_requests`.
+pub(crate) async fn with_pending_email<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    mut resp: MeResp,
+) -> MeResp {
+    if let Ok(id) = Uuid::parse_str(&resp.id) {
+        resp.pending_email = pending_email_change(db, id).await;
+    }
+    resp
+}
+
 // ────────────── Helpers ──────────────
 
 /// Validate a `next` redirect target through the same allowlist used by OIDC
@@ -1912,6 +2180,8 @@ pub(crate) fn me_resp_from_row(row: &user::Model, csrf_token: String) -> MeResp 
         id: row.id.to_string(),
         email: row.email.clone(),
         email_editable: is_local,
+        // Filled by `with_pending_email` on the responses that need it.
+        pending_email: None,
         password_editable: has_local_password(row),
         display_name: row.display_name.clone(),
         role: row.role,
@@ -1962,6 +2232,7 @@ fn me_resp_from_parts(user: &CurrentUser, csrf_token: String, row: Option<&user:
             id: user.id.to_string(),
             email: user.email.clone(),
             email_editable: true,
+            pending_email: None,
             password_editable: true,
             display_name: user.display_name.clone(),
             role: user.role,

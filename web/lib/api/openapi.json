@@ -3572,6 +3572,29 @@
         }
       }
     },
+    "/api/auth/local/confirm-email-change": {
+      "get": {
+        "summary": "`GET /auth/local/confirm-email-change?token=...`",
+        "description": "Opens the link `PATCH /me/account` mailed to a new address. The token\nmust match an unconsumed, unexpired `email_change_requests` row of the\nsame user, made under the account's current `token_version` (a\ncredential change since voids it: the row is expired), and the address\nmust still be free. Then, in one transaction: `users.email` = the new\naddress, `email_verified = true`, `token_version` bumped, the row\nconsumed, and every refresh session revoked except the opening\nbrowser's, kept only when it belongs to the same user. Always answers\nwith a redirect to `/settings/account` carrying\n`email_change=confirmed|confirmed_signed_out|invalid|taken`.",
+        "operationId": "local_confirm_email_change",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "description": "token from the confirmation email",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "redirect to /settings/account?email_change=confirmed (the opening browser's session of this account kept), =confirmed_signed_out (no session of the account kept), =invalid or =taken"
+          }
+        }
+      }
+    },
     "/api/auth/local/login": {
       "post": {
         "operationId": "local_login",
@@ -6222,6 +6245,7 @@
         },
         "responses": {
           "200": {
+            "description": "updated. After an email change with mail delivery configured, `email` is unchanged and `pending_email` names the address the confirmation link went to. Submitting the current address cancels a pending change",
             "content": {
               "application/json": {
                 "schema": {
@@ -6234,13 +6258,19 @@
             "description": "validation error"
           },
           "401": {
-            "description": "current_password incorrect or session invalid"
+            "description": "session invalid"
           },
           "403": {
-            "description": "OIDC users cannot edit email/password"
+            "description": "OIDC users cannot edit email/password, or current_password incorrect (code `auth.invalid`, field error on `current_password`)"
           },
           "409": {
-            "description": "email already in use"
+            "description": "email already in use (checked after the password)"
+          },
+          "422": {
+            "description": "validation error; a missing current_password for an email change carries a field error"
+          },
+          "429": {
+            "description": "locked out after failed password attempts (`auth.locked_out`), or more than 5 email-change requests in an hour (`rate_limited`); both carry Retry-After"
           }
         }
       }
@@ -14578,7 +14608,7 @@
               "string",
               "null"
             ],
-            "description": "Required when changing the password. Verified before any write."
+            "description": "Required when changing the password, and when changing the email\nof an account that has a password. Verified before any write."
           },
           "display_name": {
             "type": [
@@ -27881,6 +27911,13 @@
           "password_editable": {
             "type": "boolean",
             "description": "True when `/me/account` accepts local password changes for this user."
+          },
+          "pending_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address an email change is waiting to be confirmed at (the\nlink went to it), or `null` when no change is pending. `email` keeps\nthe current address until the link is opened."
           },
           "reader_brightness": {
             "type": [
