@@ -6,6 +6,10 @@
 //! skipped — those are our own reverse-proxies. The first hop that is *not*
 //! trusted is the real client.
 //!
+//! Only `X-Forwarded-For` is read. RFC 7239 `Forwarded` is ignored: trusted
+//! proxies append to `X-Forwarded-For` but usually pass a client's own
+//! `Forwarded` header through, so it is client-controlled.
+//!
 //! Forwarding headers are honored **only when the immediate TCP peer is itself
 //! a trusted proxy** (listed in `trusted_proxies`). A client connecting to us
 //! directly can set any `X-Forwarded-For` value it likes, so if we trusted the
@@ -45,6 +49,12 @@ pub fn parse_trusted_proxies(raw: &str) -> Vec<IpNet> {
         .collect()
 }
 
+/// True when the immediate TCP peer is one of our own reverse proxies
+/// (covered by `trusted`). Only then may forwarding headers be believed.
+pub fn peer_is_trusted(peer: IpAddr, trusted: &[IpNet]) -> bool {
+    trusted.iter().any(|net| net.contains(&peer))
+}
+
 /// Resolve the real client IP for this request.
 ///
 /// Forwarding headers are honored only when `peer` (the immediate TCP peer) is
@@ -59,24 +69,19 @@ pub fn client_ip(headers: &HeaderMap, peer: IpAddr, trusted: &[IpNet]) -> IpAddr
     // Authenticate the hop we can: only walk the forwarding chain when the
     // immediate sender is one of our own proxies. A direct (untrusted) peer
     // cannot be allowed to dictate its own client IP.
-    if !trusted.iter().any(|net| net.contains(&peer)) {
+    if !peer_is_trusted(peer, trusted) {
         return peer;
     }
 
-    let Some(raw) = headers
-        .get(axum::http::header::FORWARDED.as_str())
-        .or_else(|| headers.get("x-forwarded-for"))
-        .and_then(|v| v.to_str().ok())
-    else {
+    // Only `X-Forwarded-For` is read; an RFC 7239 `Forwarded` header is
+    // ignored entirely. Trusted proxies append to `X-Forwarded-For` but
+    // commonly pass a client's own `Forwarded` header through untouched, so
+    // that header is client-controlled even behind a trusted proxy. Letting
+    // it win would let a client choose (or hide) the address the rate
+    // limiter, the sign-in lockout and the audit log record.
+    let Some(raw) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) else {
         return peer;
     };
-
-    // Reject `Forwarded:` (RFC 7239) — we only support XFF for now. Calling
-    // sites set XFF; the Forwarded header pick above is only for forward-compat
-    // and would parse differently.
-    if raw.contains("for=") {
-        return peer;
-    }
 
     // Parse each hop; trust connection peer if any parse fails.
     let hops: Vec<IpAddr> = raw
@@ -199,12 +204,31 @@ mod tests {
     }
 
     #[test]
-    fn forwarded_header_rejected_from_trusted_peer() {
-        // RFC 7239 `Forwarded:` is unsupported; even from a trusted peer we fall
-        // back to peer rather than misparse it.
+    fn forwarded_header_ignored_from_trusted_peer() {
+        // RFC 7239 `Forwarded:` is never read, even from a trusted peer: a
+        // trusted proxy passes the client's own `Forwarded` through.
         let trusted = parse_trusted_proxies("10.0.0.0/8");
-        let h = h(&[("forwarded", "for=1.2.3.4")]);
-        assert_eq!(client_ip(&h, trusted_peer(), &trusted), trusted_peer());
+        let with_for = h(&[("forwarded", "for=1.2.3.4")]);
+        assert_eq!(
+            client_ip(&with_for, trusted_peer(), &trusted),
+            trusted_peer()
+        );
+        // A bare-address `Forwarded` value is not read as a hop list either.
+        let bare = h(&[("forwarded", "1.2.3.4")]);
+        assert_eq!(client_ip(&bare, trusted_peer(), &trusted), trusted_peer());
+    }
+
+    #[test]
+    fn forwarded_header_does_not_override_x_forwarded_for() {
+        let trusted = parse_trusted_proxies("10.0.0.0/8");
+        for fwd in ["for=1.2.3.4", "1.2.3.4", "for=10.0.0.9"] {
+            let headers = h(&[("forwarded", fwd), ("x-forwarded-for", "198.51.100.7")]);
+            assert_eq!(
+                client_ip(&headers, trusted_peer(), &trusted),
+                "198.51.100.7".parse::<IpAddr>().unwrap(),
+                "Forwarded: {fwd}"
+            );
+        }
     }
 
     #[test]

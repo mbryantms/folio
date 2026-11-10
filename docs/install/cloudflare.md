@@ -108,8 +108,17 @@ Folio walks `X-Forwarded-For` from the right and takes the first
 address that is not inside `COMIC_TRUSTED_PROXIES`. The variable is a
 comma-separated list of CIDRs or bare IPs; `compose.prod.yml` defaults
 it to `172.16.0.0/12`, which covers Docker's default bridge networks.
-(If a request carries a `Forwarded:` header with `for=`, Folio falls
-back to the peer address, so don't add one in your proxy.)
+Folio ignores the RFC 7239 `Forwarded:` header for this, since proxies
+usually pass a client's own copy through unchanged.
+
+The same trust decides the scheme and host Folio hands its web app,
+which builds absolute redirect URLs from them. From a peer inside
+`COMIC_TRUSTED_PROXIES`, Folio keeps a well-formed `X-Forwarded-Proto`
+(`http` or `https`) and `X-Forwarded-Host` (one `host[:port]`); from any
+other peer, or when they are missing or malformed, it uses the request's
+`Host` and `http`. A proxy that terminates TLS must therefore be trusted
+and set `X-Forwarded-Proto`, and should pass `Host` through or set
+`X-Forwarded-Host`.
 
 Cloudflare's edge puts the visitor's address in `X-Forwarded-For`, so
 what has to be trusted depends on the shape:
