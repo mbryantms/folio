@@ -98,9 +98,16 @@ impl CheckOutcome {
 /// exactly what a real [`refresh`] would change — including the matcher
 /// re-run — but no `cbl_entries`, `cbl_refresh_log`, or list-row writes
 /// survive. Powers the "Check for updates" review flow.
+///
+/// `caller_view` is `Some` for a caller who does not see the whole library
+/// ([`crate::library::access::sees_whole_library`]): `rematched` is then
+/// the entries that newly read as matched to that caller, snapshotted
+/// inside the dry-run transaction before and after the apply, instead of
+/// the global matcher count. `None` keeps the global count.
 pub async fn check(
     db: &sea_orm::DatabaseConnection,
     list_id: Uuid,
+    caller_view: Option<&crate::library::access::VisibleLibraries>,
 ) -> Result<CheckOutcome, RefreshError> {
     let list = cbl_list::Entity::find_by_id(list_id)
         .one(db)
@@ -164,26 +171,33 @@ pub async fn check(
         // library gained issues; reflect that as the rematch delta only.
         let parsed = parsers::cbl::parse(list.raw_xml.as_bytes())
             .map_err(|e| RefreshError::Parse(e.to_string()))?;
-        return dry_run_apply(db, list.id, &parsed, &list.raw_xml, None).await;
+        return dry_run_apply(db, list.id, &parsed, &list.raw_xml, None, caller_view).await;
     };
 
     let parsed =
         parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
-    dry_run_apply(db, list.id, &parsed, &xml, blob_sha.as_deref()).await
+    dry_run_apply(db, list.id, &parsed, &xml, blob_sha.as_deref(), caller_view).await
 }
 
 /// Apply `parsed` inside a transaction and roll it back, returning only the
 /// structural counts. The rollback discards every write `apply_parsed` makes
-/// (entries, refresh-log row, list-row bumps).
+/// (entries, refresh-log row, list-row bumps). With `caller_view`,
+/// `rematched` is the caller-view delta (see [`check`]).
 async fn dry_run_apply(
     db: &sea_orm::DatabaseConnection,
     list_id: Uuid,
     parsed: &parsers::cbl::ParsedCbl,
     raw_xml: &str,
     blob_sha: Option<&str>,
+    caller_view: Option<&crate::library::access::VisibleLibraries>,
 ) -> Result<CheckOutcome, RefreshError> {
+    use crate::api::cbl_lists::caller_matched_keys;
     let txn = db.begin().await?;
-    let summary = import::apply_parsed(
+    let before = match caller_view {
+        Some(acl) => Some(caller_matched_keys(&txn, list_id, acl).await?),
+        None => None,
+    };
+    let mut summary = import::apply_parsed(
         &txn,
         list_id,
         parsed,
@@ -192,6 +206,10 @@ async fn dry_run_apply(
         RefreshTrigger::Manual,
     )
     .await?;
+    if let (Some(acl), Some(before)) = (caller_view, before.as_ref()) {
+        let after = caller_matched_keys(&txn, list_id, acl).await?;
+        summary.rematched = after.difference(before).count() as i32;
+    }
     txn.rollback().await?;
     Ok(CheckOutcome {
         upstream_changed: summary.upstream_changed,

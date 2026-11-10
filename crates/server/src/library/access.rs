@@ -370,6 +370,30 @@ pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {
     }
 }
 
+/// True iff `acl` hides nothing in the library: an admin, or a non-admin
+/// with no age cap on any grant AND a grant on every library that exists.
+/// For surfaces that hold stored global facts (CBL refresh-log counts,
+/// dry-run rematch counts) which cannot be recomputed per caller: only a
+/// caller this returns `true` for may see them unchanged. One query for a
+/// non-admin without caps; a DB error reads as `false` (fail closed).
+pub async fn sees_whole_library(db: &sea_orm::DatabaseConnection, acl: &VisibleLibraries) -> bool {
+    if acl.unrestricted {
+        return true;
+    }
+    if acl.has_caps() {
+        return false;
+    }
+    let mut ungranted = entity::library::Entity::find()
+        .select_only()
+        .column(entity::library::Column::Id);
+    if !acl.allowed.is_empty() {
+        ungranted = ungranted.filter(
+            entity::library::Column::Id.is_not_in(acl.allowed.iter().copied().collect::<Vec<_>>()),
+        );
+    }
+    matches!(ungranted.into_tuple::<Uuid>().one(db).await, Ok(None))
+}
+
 /// Single-row grant lookup: membership + cap for one library. Admins
 /// are unrestricted. Same query count as the old per-module
 /// `visible(app, user, lib_id)` helpers this replaces.

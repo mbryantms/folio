@@ -169,16 +169,23 @@ pub async fn issue_appearances(
 
 // ───────────────────────── series ─────────────────────────
 
-const SERIES_CBLS: &str = "\
-    SELECT sv.id::text AS id, cl.parsed_name AS name, \
+/// Reading lists holding issues of the series, counting only the issues the
+/// caller can open (`vis` is [`crate::library::access::visible_issues_sql`]
+/// over `i`): a list whose only matches here sit above the caller's age cap
+/// is not listed, and no count includes them.
+fn series_cbls_sql(vis: &str) -> String {
+    format!(
+        "SELECT sv.id::text AS id, cl.parsed_name AS name, \
            NULL::int AS position, count(DISTINCT ce.matched_issue_id)::bigint AS issue_count \
-    FROM cbl_entries ce \
-    JOIN cbl_lists cl ON cl.id = ce.cbl_list_id \
-    JOIN saved_views sv ON sv.cbl_list_id = cl.id AND sv.kind = 'cbl' \
-    JOIN issues i ON i.id = ce.matched_issue_id \
-    WHERE i.series_id = $1 AND sv.user_id = $2 \
-    GROUP BY sv.id, cl.parsed_name \
-    ORDER BY cl.parsed_name";
+         FROM cbl_entries ce \
+         JOIN cbl_lists cl ON cl.id = ce.cbl_list_id \
+         JOIN saved_views sv ON sv.cbl_list_id = cl.id AND sv.kind = 'cbl' \
+         JOIN issues i ON i.id = ce.matched_issue_id \
+         WHERE i.series_id = $1 AND sv.user_id = $2{vis} \
+         GROUP BY sv.id, cl.parsed_name \
+         ORDER BY cl.parsed_name"
+    )
+}
 
 const SERIES_COLLECTIONS: &str = "\
     SELECT sv.id::text AS id, sv.name AS name, NULL::int AS position, \
@@ -232,14 +239,17 @@ pub async fn series_appearances(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
+    let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
     let uid: Value = user.id.into();
     let sid: Value = s.id.into();
 
-    let reading_lists = collect(&app, "cbl", pg(SERIES_CBLS, vec![sid.clone(), uid.clone()])).await;
+    let mut cbl_params = vec![sid.clone(), uid.clone()];
+    let vis = crate::library::access::visible_issues_sql(&acl, "i", &mut cbl_params);
+    let reading_lists = collect(&app, "cbl", pg(&series_cbls_sql(&vis), cbl_params)).await;
     let collections = collect(
         &app,
         "collection",
