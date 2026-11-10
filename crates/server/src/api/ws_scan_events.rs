@@ -25,7 +25,7 @@ use axum::{
         Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderValue, StatusCode, header},
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::get,
 };
@@ -36,6 +36,7 @@ use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
 use crate::auth::extractor::{AuthRejection, admit_state};
+use crate::auth::origin::origin_is_public;
 use crate::auth::{CurrentUser, ws_ticket};
 use crate::state::AppState;
 use server_macros::handler;
@@ -149,22 +150,6 @@ pub async fn scan_events(
     }
 }
 
-/// True when `origin` is present and names the same origin (scheme, host,
-/// port) as the configured `public_url`. Both sides are parsed and
-/// compared by their serialized origin so default ports and letter case
-/// normalize (`https://Example.com:443` equals `https://example.com`).
-/// `null` and unparsable values never match.
-pub fn origin_is_public(origin: Option<&HeaderValue>, public_url: &str) -> bool {
-    let Some(origin) = origin.and_then(|v| v.to_str().ok()) else {
-        return false;
-    };
-    let (Ok(got), Ok(want)) = (url::Url::parse(origin), url::Url::parse(public_url)) else {
-        return false;
-    };
-    let got = got.origin();
-    got.is_tuple() && got == want.origin()
-}
-
 fn unauthorized() -> axum::response::Response {
     super::error(
         StatusCode::UNAUTHORIZED,
@@ -207,48 +192,5 @@ async fn run(mut socket: WebSocket, app: AppState) {
                 _ => {}
             },
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::origin_is_public;
-    use axum::http::HeaderValue;
-
-    fn check(origin: &str, public_url: &str) -> bool {
-        origin_is_public(Some(&HeaderValue::from_str(origin).unwrap()), public_url)
-    }
-
-    #[test]
-    fn same_origin_matches_after_normalization() {
-        assert!(check("http://localhost:8080", "http://localhost:8080"));
-        assert!(check("http://localhost:8080", "http://localhost:8080/"));
-        assert!(check(
-            "https://Comics.Example.com",
-            "https://comics.example.com:443/"
-        ));
-    }
-
-    #[test]
-    fn foreign_or_missing_origin_does_not_match() {
-        assert!(!origin_is_public(None, "https://comics.example.com"));
-        assert!(!check("null", "https://comics.example.com"));
-        assert!(!check(
-            "https://evil.example.com",
-            "https://comics.example.com"
-        ));
-        assert!(!check(
-            "https://other.example.com",
-            "https://comics.example.com"
-        ));
-        assert!(!check(
-            "http://comics.example.com",
-            "https://comics.example.com"
-        ));
-        assert!(!check(
-            "https://comics.example.com:8443",
-            "https://comics.example.com"
-        ));
-        assert!(!check("http://localhost:3000", "http://localhost:8080"));
     }
 }

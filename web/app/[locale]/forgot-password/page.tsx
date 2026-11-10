@@ -21,6 +21,8 @@ type SearchParams = {
    *  the page can render the "check your email" confirmation even when JS
    *  never ran on the submit. */
   sent?: string;
+  /** Error code from a refused no-JS form post (`?error=auth.csrf`). */
+  error?: string;
 };
 
 export default async function ForgotPasswordPage({
@@ -41,6 +43,7 @@ export default async function ForgotPasswordPage({
         <ForgotPasswordForm
           preSubmitted={sp.sent === "1"}
           recoveryEnabled={config.password_recovery_enabled}
+          errorCode={sp.error ?? null}
         />
       </div>
     </div>

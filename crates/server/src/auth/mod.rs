@@ -21,6 +21,7 @@ pub mod jwt;
 pub mod last_admin;
 pub mod local;
 pub mod oidc;
+pub mod origin;
 pub mod password;
 pub mod preferences;
 pub mod url_signing;
