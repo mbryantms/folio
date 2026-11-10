@@ -562,3 +562,175 @@ async fn csrf_wrong_value_rejected() {
     let resp = attempt(csrf.clone()).await;
     assert_eq!(resp.status(), StatusCode::OK, "correct value still passes");
 }
+
+/// Refresh rotation is one conditional UPDATE: of two concurrent refreshes
+/// presenting the same token, exactly one rotates it. Repeated a few times
+/// so the two requests really interleave on the database at least once.
+#[tokio::test]
+async fn concurrent_refreshes_with_one_token_have_one_winner() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "race@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let mut current = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+
+    for round in 0..5 {
+        let (a, b) = tokio::join!(
+            refresh_call(&app, &current, &csrf),
+            refresh_call(&app, &current, &csrf)
+        );
+        let mut statuses = [a.status(), b.status()];
+        statuses.sort();
+        assert_eq!(
+            statuses,
+            [StatusCode::OK, StatusCode::UNAUTHORIZED],
+            "round {round}: exactly one refresh may win"
+        );
+        let (winner, loser) = if a.status() == StatusCode::OK {
+            (a, b)
+        } else {
+            (b, a)
+        };
+        let loser_body = body_json(loser.into_body()).await;
+        assert_eq!(loser_body["error"]["code"], "auth.invalid");
+        let rotated = extract_cookie(&winner, "__Host-comic_refresh").unwrap();
+        let access = extract_cookie(&winner, "__Host-comic_session").unwrap();
+        assert_ne!(rotated, current);
+
+        // The presented token is dead for good.
+        let replay = refresh_call(&app, &current, &csrf).await;
+        assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+
+        // The winner's access token works.
+        let me = app
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/me")
+                    .header(header::COOKIE, format!("__Host-comic_session={access}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(me.status(), StatusCode::OK);
+        current = rotated;
+    }
+
+    // ... and so does the winner's refresh token.
+    let next = refresh_call(&app, &current, &csrf).await;
+    assert_eq!(next.status(), StatusCode::OK);
+}
+
+async fn session_for(
+    db: &sea_orm::DatabaseConnection,
+    user_id: uuid::Uuid,
+) -> entity::auth_session::Model {
+    use sea_orm::{ColumnTrait, QueryFilter};
+    entity::auth_session::Entity::find()
+        .filter(entity::auth_session::Column::UserId.eq(user_id))
+        .one(db)
+        .await
+        .unwrap()
+        .expect("session row")
+}
+
+async fn age_session(db: &sea_orm::DatabaseConnection, user_id: uuid::Uuid, days: i64) {
+    use sea_orm::ConnectionTrait;
+    db.execute_unprepared(&format!(
+        "UPDATE auth_sessions SET created_at = now() - interval '{days} days' \
+         WHERE user_id = '{user_id}'"
+    ))
+    .await
+    .unwrap();
+}
+
+/// A session older than the absolute maximum age (90 d by default) is
+/// refused and revoked even though its sliding expiry is still ahead.
+#[tokio::test]
+async fn refresh_past_max_session_age_is_refused_and_revokes_the_session() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "old@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    age_session(&db, user_id, 91).await;
+    let before = session_for(&db, user_id).await;
+    assert!(
+        before.expires_at > chrono::Utc::now().fixed_offset(),
+        "the sliding expiry is still in the future"
+    );
+
+    let resp = refresh_call(&app, &refresh, &csrf).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.invalid");
+
+    let after = session_for(&db, user_id).await;
+    assert!(
+        after.revoked_at.is_some(),
+        "the over-age session is revoked"
+    );
+    assert_eq!(after.refresh_token_hash, before.refresh_token_hash);
+}
+
+/// Inside the maximum age a session still refreshes, and its new sliding
+/// expiry is clamped to `created_at + max age`.
+#[tokio::test]
+async fn refresh_inside_max_session_age_rotates_and_clamps_expiry() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "young@example.com", "correctly-horse-battery").await;
+    let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
+    let refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    age_session(&db, user_id, 89).await;
+
+    let resp = refresh_call(&app, &refresh, &csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let after = session_for(&db, user_id).await;
+    assert!(after.revoked_at.is_none());
+    let limit = after.created_at + chrono::Duration::days(90);
+    assert!(
+        after.expires_at <= limit,
+        "expiry {} runs past the absolute age {limit}",
+        after.expires_at
+    );
+    // Roughly one day left, far less than the 30 d sliding window.
+    assert!(after.expires_at < chrono::Utc::now().fixed_offset() + chrono::Duration::days(2));
+}
+
+/// The CSRF cookie lives as long as the refresh cookie, so the silent
+/// refresh still has it after the short access cookie has expired.
+#[tokio::test]
+async fn csrf_cookie_lives_as_long_as_the_refresh_cookie() {
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "csrf-life@example.com", "correctly-horse-battery").await;
+    let max_age = |name: &str| -> String {
+        reg.headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|c| c.starts_with(&format!("{name}=")))
+            .and_then(|c| {
+                c.split(';')
+                    .map(str::trim)
+                    .find_map(|p| p.strip_prefix("Max-Age=").map(str::to_owned))
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        max_age("__Host-comic_csrf"),
+        max_age("__Host-comic_refresh")
+    );
+    assert_ne!(
+        max_age("__Host-comic_csrf"),
+        max_age("__Host-comic_session")
+    );
+}

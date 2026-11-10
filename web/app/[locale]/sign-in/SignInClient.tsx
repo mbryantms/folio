@@ -34,6 +34,7 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import { statusTone } from "@/lib/ui/status-tone";
+import { getCsrfToken, resumeSession } from "@/lib/api/auth-refresh";
 import type { PublicAuthConfigView } from "@/lib/api/types";
 
 const loginSchema = z.object({
@@ -111,12 +112,40 @@ export function SignInClient({
       ),
     getServerInsecureSnapshot,
   );
+  // A full page load whose access cookie expired lands here although the
+  // refresh session is still live: renew it silently and go back to `next`
+  // before showing the form (or bouncing to the IdP).
+  const canResume = useSyncExternalStore(
+    subscribeNoop,
+    () => shouldResumeSession(banner, errorMessage),
+    getServerInsecureSnapshot,
+  );
+  const [resumeFailed, setResumeFailed] = useState(false);
+  const resuming = canResume && !resumeFailed;
+  const resumeStarted = useRef(false);
+  useEffect(() => {
+    if (!resuming || resumeStarted.current) return;
+    resumeStarted.current = true;
+    void resumeSession().then((ok) => {
+      if (!ok) {
+        setResumeFailed(true);
+        return;
+      }
+      try {
+        window.sessionStorage.setItem(RESUME_KEY, String(Date.now()));
+      } catch {
+        // storage unavailable (private mode): the guard just doesn't apply
+      }
+      window.location.replace(next ?? "/");
+    });
+  }, [resuming, next]);
+
   const ssoHref = oidcStartHref(next);
   // Strict Mode re-runs effects in dev; a second `location.replace` would
   // start a second OIDC attempt. The ref survives that remount.
   const redirected = useRef(false);
   useEffect(() => {
-    if (!autoRedirect || redirected.current) return;
+    if (resuming || !autoRedirect || redirected.current) return;
     redirected.current = true;
     try {
       window.sessionStorage.setItem(AUTO_REDIRECT_KEY, String(Date.now()));
@@ -124,7 +153,20 @@ export function SignInClient({
       // storage unavailable (private mode): the guard just doesn't apply
     }
     window.location.replace(ssoHref);
-  }, [autoRedirect, ssoHref]);
+  }, [resuming, autoRedirect, ssoHref]);
+
+  if (resuming) {
+    return (
+      <CenteredCard>
+        <CardHeader className="space-y-2 text-center">
+          <CardTitle className="text-2xl">
+            <h1>Signing you in…</h1>
+          </CardTitle>
+          <CardDescription>Restoring your session.</CardDescription>
+        </CardHeader>
+      </CenteredCard>
+    );
+  }
 
   if (autoRedirect) {
     return (
@@ -342,6 +384,30 @@ const AUTO_REDIRECT_KEY = "folio:oidc-auto-redirect-at";
  *  user straight back (e.g. a failed callback) — show the page instead of
  *  looping. */
 const AUTO_REDIRECT_GUARD_MS = 30_000;
+
+const RESUME_KEY = "folio:session-resume-at";
+
+/** Decide (client-side) whether `/sign-in` should first try to renew an
+ *  existing session. Only when a CSRF cookie shows one may exist (sign-out
+ *  clears it), the page carries no banner or error, it doesn't follow a
+ *  sign-out, and no resume succeeded within the guard window (a resumed
+ *  session that still lands here must not loop). */
+export function shouldResumeSession(
+  banner: Banner,
+  errorMessage: string | null,
+): boolean {
+  if (banner !== null || errorMessage) return false;
+  if (typeof window === "undefined" || !getCsrfToken()) return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("signed_out") === "1") return false;
+  try {
+    const last = Number(window.sessionStorage.getItem(RESUME_KEY));
+    if (last && Date.now() - last < AUTO_REDIRECT_GUARD_MS) return false;
+  } catch {
+    // storage unavailable: fall through
+  }
+  return true;
+}
 
 function oidcStartHref(next: string | null): string {
   return next

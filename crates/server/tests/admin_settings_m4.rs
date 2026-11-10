@@ -243,3 +243,53 @@ async fn log_level_accepts_module_scoped_directive() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(app.state().cfg().log_level, "info,server::auth=debug");
 }
+
+// ───────── Default access TTL vs a saved value ─────────
+
+/// The built-in access TTL is now 1 h, but an install that saved a value
+/// (every install that booted before seeds `auth.jwt.access_ttl`) keeps it:
+/// the DB row wins over the default.
+#[tokio::test]
+async fn saved_access_ttl_wins_over_the_1h_default() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = patch_settings(&app, &admin, json!({ "auth.jwt.access_ttl": "24h" })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let state = app.state();
+    let mut fresh = (*state.cfg()).clone();
+    fresh.jwt_access_ttl = "1h".into(); // the new built-in default
+    fresh
+        .overlay_db(&state.db, &state.secrets)
+        .await
+        .expect("overlay");
+    assert_eq!(fresh.jwt_access_ttl, "24h");
+    assert_eq!(fresh.access_ttl().as_secs(), 24 * 3600);
+}
+
+// ───────── Maximum session age ─────────
+
+#[tokio::test]
+async fn session_max_age_overlay_takes_effect() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    assert_eq!(app.state().cfg().session_max_age().as_secs(), 90 * 86_400);
+
+    let resp = patch_settings(&app, &admin, json!({ "auth.session.max_age": "7d" })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(app.state().cfg().session_max_age().as_secs(), 7 * 86_400);
+}
+
+#[tokio::test]
+async fn session_max_age_below_the_floor_rejected_pre_write() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    for bad in ["12h", "forever"] {
+        let resp = patch_settings(&app, &admin, json!({ "auth.session.max_age": bad })).await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "settings.invalid_combination");
+    }
+    assert_eq!(app.state().cfg().session_max_age, "90d");
+}

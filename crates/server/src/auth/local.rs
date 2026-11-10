@@ -60,8 +60,9 @@ use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
 // Access + refresh TTLs are operator-tunable via `COMIC_JWT_ACCESS_TTL` and
 // `COMIC_JWT_REFRESH_TTL` (parsed at startup; see `Config::access_ttl` /
-// `Config::refresh_ttl`). Defaults are 24h / 30d — long enough that a
-// content-consumption session never bounces a user mid-issue.
+// `Config::refresh_ttl`). Defaults are 1h / 30d: the web client refreshes
+// silently on a 401, and a session ends for good `session_max_age` (90d by
+// default) after sign-in.
 
 pub fn routes() -> OpenApiRouter<AppState> {
     // Each rate-limited route lives in its own sub-router so `route_layer`
@@ -865,63 +866,78 @@ pub async fn refresh(
     };
 
     // The cookie value is a raw base64url-encoded 32-byte token (§17.2).
-    // Look up by hash; rotate atomically.
     let presented_hash = sha256_hex(&rt_cookie);
+    let new_rt_raw = new_refresh_token_raw();
+    let new_hash = sha256_hex(&new_rt_raw);
+    let refresh_secs = app.cfg().refresh_ttl().as_secs_f64();
+    let max_age_secs = app.cfg().session_max_age().as_secs_f64();
+
     let txn = match app.db.begin().await {
         Ok(t) => t,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
 
-    let sess = match SessionEntity::find()
-        .filter(auth_session::Column::RefreshTokenHash.eq(presented_hash))
-        .one(&txn)
-        .await
+    // Rotation is ONE conditional statement: the WHERE re-checks the
+    // presented hash under the row lock, so of two concurrent refreshes
+    // carrying the same token exactly one matches; the other sees the
+    // rotated hash and gets zero rows. The new sliding expiry never runs
+    // past the session's absolute age (`created_at + max_age`).
+    let rotated = match sea_orm::ConnectionTrait::query_one_raw(
+        &txn,
+        sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "UPDATE auth_sessions \
+                SET refresh_token_hash = $1, \
+                    last_used_at = now(), \
+                    expires_at = LEAST(now() + make_interval(secs => $2), \
+                                       created_at + make_interval(secs => $3)), \
+                    ip = COALESCE($4, ip), \
+                    user_agent = COALESCE($5, user_agent) \
+              WHERE refresh_token_hash = $6 \
+                AND revoked_at IS NULL \
+                AND expires_at > now() \
+                AND created_at + make_interval(secs => $3) > now() \
+          RETURNING id, user_id",
+            [
+                new_hash.into(),
+                refresh_secs.into(),
+                max_age_secs.into(),
+                ctx.ip_string().into(),
+                ctx.user_agent.clone().into(),
+                presented_hash.clone().into(),
+            ],
+        ),
+    )
+    .await
     {
-        Ok(Some(s)) => s,
-        _ => {
-            // No session matching this hash. Could be a replay of an already-rotated token —
-            // we don't know the user, so we can't revoke siblings. Just reject.
-            return error(
-                StatusCode::UNAUTHORIZED,
-                "auth.invalid",
-                "refresh replay or expired",
-            );
+        Ok(row) => row,
+        Err(e) => {
+            tracing::error!(error = %e, "refresh rotation failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-
-    if sess.revoked_at.is_some() {
-        return error(StatusCode::UNAUTHORIZED, "auth.invalid", "session revoked");
-    }
-    if sess.expires_at < chrono::Utc::now().fixed_offset() {
-        return error(StatusCode::UNAUTHORIZED, "auth.invalid", "session expired");
-    }
-
-    // Rotate.
-    let new_rt_raw = new_refresh_token_raw();
-    let new_hash = sha256_hex(&new_rt_raw);
-    let now = chrono::Utc::now().fixed_offset();
-    let refresh_ttl = app.cfg().refresh_ttl();
-    let new_expires = chrono::Utc::now() + chrono::Duration::seconds(refresh_ttl.as_secs() as i64);
-
-    let session_id = sess.id;
-    let mut active: SessionAM = sess.clone().into();
-    active.refresh_token_hash = Set(new_hash);
-    active.last_used_at = Set(now);
-    active.expires_at = Set(new_expires.fixed_offset());
-    // Track most recent client IP/UA so /me/sessions reflects the latest
-    // device that rotated through this session.
-    if ctx.ip_string().is_some() {
-        active.ip = Set(ctx.ip_string());
-    }
-    if ctx.user_agent.is_some() {
-        active.user_agent = Set(ctx.user_agent.clone());
-    }
-    if active.update(&txn).await.is_err() {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-    }
+    let Some(rotated) = rotated else {
+        drop(txn);
+        // Unknown, already rotated (a replay, or the loser of two tabs
+        // refreshing at once), revoked, expired, or past its absolute age.
+        // The last case also marks the row revoked so it stops showing as a
+        // live session. We can't tell which user an unknown hash belonged
+        // to, so no sibling session is touched.
+        revoke_if_past_max_age(&app.db, &presented_hash, max_age_secs).await;
+        return error(
+            StatusCode::UNAUTHORIZED,
+            "auth.invalid",
+            "refresh replay or expired",
+        );
+    };
+    let (session_id, user_id): (Uuid, Uuid) =
+        match (rotated.try_get("", "id"), rotated.try_get("", "user_id")) {
+            (Ok(id), Ok(user_id)) => (id, user_id),
+            _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
+        };
 
     let user_row = match UserEntity::find()
-        .filter(user::Column::Id.eq(sess.user_id))
+        .filter(user::Column::Id.eq(user_id))
         .one(&txn)
         .await
     {
@@ -962,6 +978,34 @@ pub async fn refresh(
         ResponseFormat::Json,
         None,
     )
+}
+
+/// Mark the session holding `presented_hash` revoked when it has outlived
+/// the absolute session age. Called after a refused rotation; best-effort.
+async fn revoke_if_past_max_age(
+    db: &sea_orm::DatabaseConnection,
+    presented_hash: &str,
+    max_age_secs: f64,
+) {
+    let res = sea_orm::ConnectionTrait::execute_raw(
+        db,
+        sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "UPDATE auth_sessions SET revoked_at = now() \
+              WHERE refresh_token_hash = $1 \
+                AND revoked_at IS NULL \
+                AND created_at + make_interval(secs => $2) <= now()",
+            [presented_hash.into(), max_age_secs.into()],
+        ),
+    )
+    .await;
+    match res {
+        Ok(r) if r.rows_affected() > 0 => {
+            tracing::info!("refresh refused: session past its maximum age; revoked");
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "revoking an over-age session failed"),
+    }
 }
 
 /// Revoke every non-revoked `auth_session` row for `user_id`, optionally
@@ -1140,7 +1184,7 @@ pub async fn me(
     )
     .await;
     let jar = if set_cookie {
-        jar.add(csrf_cookie(csrf, app.cfg().access_ttl()))
+        jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()))
     } else {
         jar
     };
@@ -1386,7 +1430,7 @@ pub async fn update_preferences(
 
     let csrf = new_csrf_token();
     let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
-    let mut jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
+    let mut jar = jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()));
     // If the language preference changed, refresh `NEXT_LOCALE` so the next
     // navigation picks up the new locale immediately (no relog needed).
     if req.language.is_some() {
@@ -2072,7 +2116,8 @@ async fn issue_session(
     let raw_rt = new_refresh_token_raw();
     let hash = sha256_hex(&raw_rt);
     let now = chrono::Utc::now();
-    let expires = now + chrono::Duration::seconds(app.cfg().refresh_ttl().as_secs() as i64);
+    let lifetime = app.cfg().refresh_ttl().min(app.cfg().session_max_age());
+    let expires = now + chrono::Duration::seconds(lifetime.as_secs() as i64);
 
     let am = SessionAM {
         id: Set(session_id),
@@ -2143,7 +2188,10 @@ fn finalize_session(
     let jar = jar
         .add(session_cookie(access, access_ttl))
         .add(refresh_cookie(cookie_rt, refresh_ttl))
-        .add(csrf_cookie(csrf, access_ttl))
+        // The CSRF cookie lives as long as the refresh cookie, not the
+        // access cookie: `/auth/refresh` itself needs it, so tying it to the
+        // short access TTL would make the silent refresh fail with 403.
+        .add(csrf_cookie(csrf, refresh_ttl))
         // Mirror the user's stored language onto `NEXT_LOCALE` so next-intl
         // picks it up on the next nav. Authenticated locale wins over any
         // pre-existing `Accept-Language`-derived cookie value.

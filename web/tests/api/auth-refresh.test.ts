@@ -33,7 +33,7 @@ function setCookie(value: string) {
   cookieValue = `__Host-comic_csrf=${value}`;
 }
 
-const { apiFetch } = await import("@/lib/api/auth-refresh");
+const { apiFetch, resumeSession } = await import("@/lib/api/auth-refresh");
 
 type Capture = { url: string; init: RequestInit };
 
@@ -46,6 +46,7 @@ describe("apiFetch refresh-and-retry", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("re-reads the CSRF cookie before retrying after a successful refresh", async () => {
@@ -121,6 +122,142 @@ describe("apiFetch refresh-and-retry", () => {
     const res = await apiFetch("/me/account", { method: "PATCH" });
     expect(res.status).toBe(401);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Refresh rotation is single-use on the server: of two tabs that refresh
+ * with the same cookie at once, one gets 401. The loser must not be signed
+ * out — cookies are shared, so the winner's Set-Cookie already renewed it.
+ */
+describe("apiFetch when another tab wins the refresh", () => {
+  const captured: Capture[] = [];
+  let events: string[] = [];
+
+  beforeEach(() => {
+    captured.length = 0;
+    events = [];
+    vi.stubGlobal("window", {
+      dispatchEvent: (e: Event) => {
+        events.push(String((e as CustomEvent).detail));
+        return true;
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("retries the original request once after losing the refresh race", async () => {
+    vi.stubGlobal("navigator", {}); // no Web Locks: the race can happen
+    setCookie("OLD");
+    let call = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      call += 1;
+      captured.push({ url: String(input), init: init ?? {} });
+      if (call === 1) return new Response("unauth", { status: 401 });
+      if (call === 2) {
+        // The other tab's refresh committed first and its Set-Cookie
+        // rotated the shared cookies; ours presented the stale token.
+        setCookie("NEW");
+        return new Response("refresh replay", { status: 401 });
+      }
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch);
+
+    const res = await apiFetch("/me/progress", {
+      method: "POST",
+      headers: { "X-CSRF-Token": "OLD" },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(captured[1]!.url).toContain("/api/auth/refresh");
+    expect(captured[2]!.url).toBe("/api/me/progress");
+    expect(headerOf(captured[2]!.init, "X-CSRF-Token")).toBe("NEW");
+    expect(events).not.toContain("authentication");
+  });
+
+  it("skips its own refresh when another tab refreshed while it waited for the lock", async () => {
+    setCookie("OLD");
+    const request = vi.fn(async (_name: string, fn: () => Promise<unknown>) => {
+      // While this tab queued on the lock, the holder refreshed.
+      setCookie("NEW");
+      return fn();
+    });
+    vi.stubGlobal("navigator", { locks: { request } });
+    let call = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      call += 1;
+      captured.push({ url: String(input), init: init ?? {} });
+      return call === 1
+        ? new Response("unauth", { status: 401 })
+        : new Response("ok", { status: 200 });
+    }) as typeof fetch);
+
+    const res = await apiFetch("/series", {});
+
+    expect(res.ok).toBe(true);
+    expect(request).toHaveBeenCalledWith(
+      "folio:auth-refresh",
+      expect.any(Function),
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(captured.some((c) => c.url.includes("/auth/refresh"))).toBe(false);
+    expect(headerOf(captured[1]!.init, "X-CSRF-Token")).toBe("NEW");
+  });
+
+  it("still reports a signed-out session when no tab refreshed", async () => {
+    vi.stubGlobal("navigator", {});
+    setCookie("SAME");
+    let call = 0;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((async () => {
+        call += 1;
+        return new Response("unauth", { status: 401 });
+      }) as typeof fetch);
+
+    const res = await apiFetch("/series", {});
+
+    expect(res.status).toBe(401);
+    expect(fetchSpy).toHaveBeenCalledTimes(2); // original + refresh, no retry
+    expect(call).toBe(2);
+    expect(events).toContain("authentication");
+  });
+});
+
+describe("resumeSession", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends nothing without a CSRF cookie", async () => {
+    cookieValue = "";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    expect(await resumeSession()).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("renews the session when the refresh cookie is live", async () => {
+    vi.stubGlobal("navigator", {});
+    setCookie("X");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        (async () => new Response("{}", { status: 200 })) as typeof fetch,
+      );
+    expect(await resumeSession()).toBe(true);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain("/api/auth/refresh");
   });
 });
 

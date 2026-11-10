@@ -58,9 +58,9 @@ use crate::state::AppState;
 use server_macros::handler;
 use shared::error::{ApiErrorCode, FieldError};
 
-// Access TTL flows from config; the CSRF cookie max-age must match the access
-// cookie's so JS doesn't think the form is signed-in after the access cookie
-// expires. Read at handler time via `app.cfg().access_ttl()`.
+// The CSRF cookie max-age is the refresh TTL (as at sign-in): the silent
+// `/auth/refresh` needs the cookie after the short-lived access cookie has
+// expired. Read at handler time via `app.cfg().refresh_ttl()`.
 
 pub fn routes() -> OpenApiRouter<AppState> {
     // PATCH is the JSON contract (XHR happy path); POST is the
@@ -473,7 +473,7 @@ pub async fn update(
         drop(txn);
         let csrf = new_csrf_token();
         let body = with_pending_email(&app.db, me_resp_from_row(&locked, csrf.clone())).await;
-        let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
+        let jar = jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()));
         return match format {
             ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
             ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),
@@ -595,7 +595,7 @@ pub async fn update(
 
     let csrf = new_csrf_token();
     let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
-    let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
+    let jar = jar.add(csrf_cookie(csrf, app.cfg().refresh_ttl()));
     let form_target = if pending.is_some() {
         "/settings/account?email_change=sent"
     } else {

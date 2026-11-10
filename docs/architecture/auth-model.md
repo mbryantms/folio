@@ -27,7 +27,7 @@ Verified against the code at `ed5d9019` on 2026-11-10.
 
 ## Token shapes
 
-### Access token (JWT, 24 h default)
+### Access token (JWT, 1 h default)
 
 ```json
 {
@@ -43,35 +43,41 @@ Verified against the code at `ed5d9019` on 2026-11-10.
 
 `tv` (token_version) is the user's `users.token_version` at issuance. Mismatch → 401, force re-auth.
 
-**TTL: 24 hours** (`COMIC_JWT_ACCESS_TTL`, default `24h`). This is longer than typical JWT advice but deliberate: Folio is a content-consumption app, and being kicked back to sign-in mid-issue is friction with no proportional security win. Revocation is still prompt because:
+**TTL: 1 hour** (`auth.jwt.access_ttl` under **Admin → Auth → Tokens**; `COMIC_JWT_ACCESS_TTL` seeds it on first boot; built-in default `1h`, `24h` before this version, and an install that saved a value keeps it). The access token carries no session id and is not looked up per request, so it cannot be recalled: signing out revokes the refresh session, but an access token already issued keeps working until its `exp`. The short TTL bounds that window. Other revocation is prompt:
 
-- The auth extractor re-fetches the user row on every request, so admin disable (`token_version` bump) blocks the next request.
-- The refresh cookie rotates on every use, so an exfiltrated access cookie is invalidated at the next `/auth/refresh` regardless of its `exp`.
-- Worst-case window for a stolen access cookie is the full 24h, but the attacker would also need the refresh cookie or the CSRF cookie to do anything destructive.
+- The auth extractor re-fetches the user row on every request, so admin disable (state change plus `token_version` bump) blocks the next request.
+- A password change or reset and "sign out everywhere" bump `token_version`, which voids every access token at once.
 
-Operators wanting tighter defaults can set `COMIC_JWT_ACCESS_TTL=15m`. The web client transparently calls `/auth/refresh` on 401 so the user-visible experience is unchanged — only `/auth/refresh` QPS increases.
+Expiry is invisible to the web user: `apiFetch` answers a 401 by calling `POST /auth/refresh` once and retrying the request, and a full page load that lands on `/sign-in` because the access cookie expired renews the session there and returns to the page (see [Refresh](#refresh)).
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 Algorithm: `EdDSA` (Ed25519). Server holds the keypair under `/data/secrets/jwt-ed25519.key`. The audience is hardcoded to `folio`; verification also accepts the legacy `comic-reader` audience from before the rename.
 
-### Refresh token (random opaque, 30 d default)
+### Refresh token (random opaque, 30 d sliding, 90 d maximum)
 
 - 32 bytes, base64url. Never inspectable.
 - SHA-256 hash stored in `auth_sessions.refresh_token_hash`.
-- Rotated on every use: the session row's hash is overwritten in the same transaction.
+- Rotated on every use by one conditional `UPDATE` (see [Refresh](#refresh)); single-use.
 - `auth_sessions.ip` + `.user_agent` recorded on issue and refresh (M1) — used by `/me/sessions` (M5) and the audit log. Not enforced as a binding (proxy IPs change).
-- `COMIC_JWT_REFRESH_TTL` controls the cookie lifetime; validated at boot to be `>= access TTL`.
+- Sliding expiry: `auth.jwt.refresh_ttl` (default `30d`, `COMIC_JWT_REFRESH_TTL` seeds it) sets the cookie lifetime and moves `expires_at` forward on every refresh; validated to be `>= access TTL`.
+- Absolute age: `auth.session.max_age` (default `90d`, floor `1d`, `>=` access TTL; **Admin → Auth → Tokens**). A session cannot be refreshed past `created_at + max age` however often it is used; `expires_at` is clamped to that bound at sign-in and on every refresh.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ## Cookie shape (web)
 
 ```
-__Host-comic_session=<jwt>;     HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=86400
-__Host-comic_csrf=<csrf>;                 Secure; SameSite=Lax; Path=/; Max-Age=86400
+__Host-comic_session=<jwt>;     HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600
+__Host-comic_csrf=<csrf>;                 Secure; SameSite=Lax; Path=/; Max-Age=2592000
 __Host-comic_refresh=<rt>;      HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000
 ```
 
 All auth cookies are host-only. The refresh path is `/` (not the narrower `/auth/refresh`) because the Next dev proxy rewrites `/api/auth/refresh` → `/auth/refresh` and browsers compare the cookie's `Path` against the original request URL — a narrower path made the cookie omit from the dev refresh call.
 
-The CSRF cookie is intentionally **not** HttpOnly — JS reads it for the `X-CSRF-Token` header (double-submit). The session cookie is HttpOnly.
+The CSRF cookie is intentionally **not** HttpOnly — JS reads it for the `X-CSRF-Token` header (double-submit). The session cookie is HttpOnly. The CSRF cookie lives as long as the refresh cookie (refresh TTL), not the access cookie: `POST /auth/refresh` is CSRF-checked, so it must still be there after the access cookie expired. It is not a credential on its own, and sign-out clears it.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ## Flows
 
@@ -86,12 +92,12 @@ verify argon2id(password + pepper, hash); user must be active
    ↓
 INSERT auth_sessions (refresh_token_hash) VALUES (sha256(rt))
    ↓
-mint access (access TTL, 24h default) → set __Host-comic_session
+mint access (access TTL, 1h default) → set __Host-comic_session
 mint refresh (30d) → set __Host-comic_refresh
-generate csrf       → set __Host-comic_csrf, return in body
+generate csrf       → set __Host-comic_csrf (refresh TTL), return in body
 ```
 
-Verified against the code at `1c51a486` on 2026-11-10.
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### OIDC login (PKCE)
 
@@ -125,19 +131,29 @@ issue cookie session (same as local)
 ### Refresh
 
 ```
-POST /auth/refresh  (with __Host-comic_refresh cookie)
+POST /auth/refresh  (with __Host-comic_refresh cookie; CSRF-checked)
    ↓
-look up auth_sessions WHERE refresh_token_hash = sha256(rt); refuse (401) if missing, revoked or expired
-   ↓
-UPDATE that row with the rotated refresh hash, last_used_at, expiry, IP, user agent;
-user must be active, else roll back (401); one transaction
+one transaction:
+  UPDATE auth_sessions
+     SET refresh_token_hash = sha256(new rt), last_used_at = now(),
+         expires_at = LEAST(now() + refresh TTL, created_at + max age),
+         ip, user_agent (kept when the request has none)
+   WHERE refresh_token_hash = sha256(rt) AND revoked_at IS NULL
+     AND expires_at > now() AND created_at + max age > now()
+  RETURNING id, user_id
+  exactly one row, else 401 auth.invalid
+  user must be active, else roll back (401)
    ↓
 mint new access; set new cookies
 ```
 
-If the lookup misses (an already-rotated token replayed, a race between two tabs, an expired or unknown token), the request gets 401 `auth.invalid` and nothing else happens: the server cannot tell which user the old hash belonged to, so no other session is revoked. Refresh-token reuse detection is not implemented. To cut off every device, revoke all sessions (`POST /me/sessions/revoke-all`, which also bumps `token_version`); a password change revokes every session except the current one.
+The `WHERE` is evaluated under the row lock, so the rotation is atomic: of two concurrent refreshes carrying the same token, one updates the row and the other then finds the rotated hash, matches nothing and gets 401 `auth.invalid`. If nothing matches (an already-rotated token replayed, the loser of such a race, an expired, revoked or unknown token) the request gets 401 `auth.invalid` and only one more thing can happen: when the row exists, is not revoked and is past its maximum age, it is marked revoked (so `/me/sessions` stops listing it). The server cannot tell which user an unknown hash belonged to, so no other session is revoked. Refresh-token reuse detection is not implemented. To cut off every device, revoke all sessions (`POST /me/sessions/revoke-all`, which also bumps `token_version`); a password change revokes every session except the current one.
 
-Verified against the code at `1c51a486` on 2026-11-10.
+**Two tabs.** Tabs share cookies, so the tab that loses a refresh race already holds the winner's new tokens. The web client ([`web/lib/api/auth-refresh.ts`](../../web/lib/api/auth-refresh.ts)) serializes refreshes across tabs with the Web Locks API (`folio:auth-refresh`); a tab that gets the lock after another tab refreshed sees the rotated CSRF cookie and skips its own refresh. Without Web Locks, a 401 or 403 from `/auth/refresh` counts as a lost race when the CSRF cookie changed since the refresh started (checked again after 300 ms); either way the tab retries its original request once with the new cookies. Only when the CSRF cookie did not change is the session treated as gone.
+
+**Full page loads.** Server-rendered pages cannot refresh. A page load whose access cookie expired is redirected to `/sign-in?next=…`; when a CSRF cookie is present (a session may exist), the sign-in page calls the same refresh and, on success, returns to `next` (at most once per 30 s, so a session that still fails cannot loop).
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### CSRF (double-submit)
 
@@ -170,8 +186,10 @@ Verified against the code at `ffaa3249` on 2026-11-10.
 
 ### Logout
 
-- `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`) and clears all three cookies; for an OIDC session it also redirects through the issuer's `end_session_endpoint` when one is published. It does not touch other sessions or `token_version`.
+- `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`) and clears all three cookies; for an OIDC session it also redirects through the issuer's `end_session_endpoint` when one is published. It does not touch other sessions or `token_version`, so a copy of the access token taken before sign-out stays valid until it expires (at most the access TTL, 1 h by default).
 - "Log out everywhere" is a separate call, `POST /me/sessions/revoke-all`: it revokes every refresh row for the user and bumps `users.token_version`.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ## Library ACL and the age-rating cap
 
@@ -252,6 +270,6 @@ can be re-introduced with real semantics later.
 |---|---|
 | Loop: cookie set, immediately rejected | `COMIC_PUBLIC_URL` doesn't match the host the cookie was set on (`__Host-` requires exact host). |
 | OIDC callback 401 with valid token | Clock skew > 60 s; check NTP on the app host. |
-| One tab or device signed out unexpectedly | Its refresh token was already rotated by another request (two tabs refreshing at once) or the session expired or was revoked; `/auth/refresh` answers 401 for that token only. |
+| One tab or device signed out unexpectedly | The session expired, reached its maximum age (`auth.session.max_age`, 90 d) or was revoked; `/auth/refresh` answers 401 for that token only. Two tabs of one browser refreshing at once do not cause this (see [Refresh](#refresh)); two separate clients sharing one refresh token do. |
 | All sessions invalidated | A password reset, an admin disable, or "revoke all sessions" (each bumps `token_version` and revokes sessions; a self-serve password change does the same but keeps the current session). Refresh-token replay never does this. |
 | OIDC user marked unverified | `email_verified` claim missing from the issuer; fix the Authentik mapping (`docs/install/authentik.md`) or set the trust flag. |

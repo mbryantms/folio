@@ -906,7 +906,8 @@ pub async fn callback(
     let raw_rt = new_refresh_token_raw();
     let hash = sha256_hex(&raw_rt);
     let session_now = chrono::Utc::now();
-    let expires = session_now + chrono::Duration::seconds(refresh_ttl.as_secs() as i64);
+    let lifetime = refresh_ttl.min(app.cfg().session_max_age());
+    let expires = session_now + chrono::Duration::seconds(lifetime.as_secs() as i64);
 
     // Persist the raw id_token for RP-initiated logout. openidconnect's
     // `IdToken` implements Display, which emits the compact JWS form.
@@ -950,7 +951,8 @@ pub async fn callback(
         .remove(cookies::clear(LEGACY_OIDC_STATE_COOKIE, "/"))
         .add(session_cookie(access, access_ttl))
         .add(refresh_cookie(raw_rt, refresh_ttl))
-        .add(csrf_cookie(csrf_token, access_ttl));
+        // As long as the refresh cookie: `/auth/refresh` needs it.
+        .add(csrf_cookie(csrf_token, refresh_ttl));
 
     // Redirect to the requested location, defaulting to /.
     let target = state.redirect_after.unwrap_or_else(|| "/".to_string());

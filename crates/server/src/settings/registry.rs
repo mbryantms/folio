@@ -126,6 +126,12 @@ pub const REGISTRY: &[SettingDef] = &[
         is_secret: false,
     },
     SettingDef {
+        // Absolute refresh-session lifetime from sign-in (floor 1d).
+        key: "auth.session.max_age",
+        kind: SettingKind::Duration,
+        is_secret: false,
+    },
+    SettingDef {
         // Kill switch: when false, the failed-auth Redis lockout
         // short-circuits to "not locked". Per-route governor buckets
         // are installed at boot regardless (their thresholds are
