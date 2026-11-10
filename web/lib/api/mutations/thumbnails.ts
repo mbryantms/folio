@@ -18,6 +18,7 @@ import type {
   UpdateThumbnailsSettingsReq,
 } from "../types";
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 /** Link on "enqueued N jobs" toasts to where the jobs can be watched. */
 const PROGRESS_ACTION = {
@@ -45,7 +46,7 @@ export function useUpdateThumbnailsSettings(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<ThumbnailsSettingsView, UpdateThumbnailsSettingsReq>(
     (body) => ({
-      path: `/admin/libraries/${libraryId}/thumbnails-settings`,
+      path: apiPath`/admin/libraries/${libraryId}/thumbnails-settings`,
       method: "PATCH",
       body,
     }),
@@ -73,7 +74,7 @@ export function useGenerateMissingThumbnails(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails/generate-missing`,
+      path: apiPath`/admin/libraries/${libraryId}/thumbnails/generate-missing`,
       method: "POST",
     }),
     {
@@ -101,7 +102,7 @@ export function useGeneratePageMapThumbnails(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails/generate-page-map`,
+      path: apiPath`/admin/libraries/${libraryId}/thumbnails/generate-page-map`,
       method: "POST",
     }),
     {
@@ -127,7 +128,7 @@ export function useForceRecreateThumbnails(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails/force-recreate`,
+      path: apiPath`/admin/libraries/${libraryId}/thumbnails/force-recreate`,
       method: "POST",
     }),
     {
@@ -157,7 +158,7 @@ export function useRegenerateSeriesCover(
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/series/${seriesSlug}/thumbnails/regenerate-cover`,
+      path: apiPath`/admin/series/${seriesSlug}/thumbnails/regenerate-cover`,
       method: "POST",
     }),
     {
@@ -177,7 +178,7 @@ export function useGenerateSeriesPageMap(
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/series/${seriesSlug}/thumbnails/generate-page-map`,
+      path: apiPath`/admin/series/${seriesSlug}/thumbnails/generate-page-map`,
       method: "POST",
     }),
     {
@@ -199,7 +200,7 @@ export function useForceRecreateSeriesPageMap(
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/series/${seriesSlug}/thumbnails/force-recreate-page-map`,
+      path: apiPath`/admin/series/${seriesSlug}/thumbnails/force-recreate-page-map`,
       method: "POST",
     }),
     {
@@ -222,7 +223,7 @@ export function useRegenerateIssueCover(
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/regenerate-cover`,
+      path: apiPath`/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/regenerate-cover`,
       method: "POST",
     }),
     {
@@ -240,7 +241,7 @@ export function useGenerateIssuePageMap(
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/generate-page-map`,
+      path: apiPath`/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/generate-page-map`,
       method: "POST",
     }),
     {
@@ -261,7 +262,7 @@ export function useForceRecreateIssuePageMap(
   const qc = useQueryClient();
   return useApiMutation<RegenerateResp, void>(
     () => ({
-      path: `/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/force-recreate-page-map`,
+      path: apiPath`/admin/series/${seriesSlug}/issues/${issueSlug}/thumbnails/force-recreate-page-map`,
       method: "POST",
     }),
     {
@@ -279,7 +280,7 @@ export function useDeleteAllThumbnails(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<DeleteAllResp, void>(
     () => ({
-      path: `/admin/libraries/${libraryId}/thumbnails`,
+      path: apiPath`/admin/libraries/${libraryId}/thumbnails`,
       method: "DELETE",
     }),
     {
