@@ -172,8 +172,9 @@ Rust binary handles every request: it serves its own routes (`/api`,
 `/opds`, `/auth`, page bytes, WebSockets) directly and reverse-proxies
 HTML/RSC/`/_next/*` to the Next.js container internally.
 
-**Pull the new compose and `.env.example` and reconcile your local
-copies if you customized them.** Two concrete things change:
+**Pull the new compose and `.env.prod.example` and reconcile your local
+copies if you customized them.** (`.env.example` is the development
+file.) Two concrete things change:
 
 1. **Drop path-routing from your reverse proxy.** Whether you run
    Caddy, nginx, Traefik, or Kubernetes Ingress, the new template is

@@ -131,17 +131,23 @@ You need a Linux host with Docker and Compose v2. Folio listens on
 ```bash
 mkdir -p ~/folio && cd ~/folio
 curl -fsSLO https://raw.githubusercontent.com/mbryantms/folio/main/compose.prod.yml
-curl -fsSL  https://raw.githubusercontent.com/mbryantms/folio/main/.env.example -o .env
+curl -fsSL  https://raw.githubusercontent.com/mbryantms/folio/main/.env.prod.example -o .env
 
 # Set REPO_OWNER=mbryantms, POSTGRES_PASSWORD, COMIC_LIBRARY_HOST_PATH
-# and COMIC_PUBLIC_URL, then:
+# and COMIC_PUBLIC_URL. Leave COMIC_AUTH_MODE=local and
+# COMIC_LOCAL_REGISTRATION_OPEN=true as they are for the first boot.
 $EDITOR .env
 docker compose -f compose.prod.yml up -d
 ```
 
-Open the address you set as `COMIC_PUBLIC_URL` and register. The first
-account becomes the administrator. Migrations run and server secrets are
-generated on first boot.
+Migrations run and server secrets are generated on first boot. Once your
+reverse proxy serves `COMIC_PUBLIC_URL`, open it and register straight
+away: the first account becomes the administrator, so do this before you
+share the address. Then turn off *Self-serve registration* under
+**Admin → Auth** and add other people under **Admin → Users**. Single
+sign-on, email and server settings are configured in the admin pages too.
+`.env.example` in the repository is the development file; don't use it
+for a deployment.
 
 Next steps, including reverse-proxy setup, single sign-on, backups and
 upgrades, are in [docs/install/](./docs/install/).
