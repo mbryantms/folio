@@ -220,8 +220,10 @@ pub async fn serve(
     hdrs.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     hdrs.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("inline; filename=\"page-{n}.{}\"", info.ext))
-            .unwrap_or_else(|_| HeaderValue::from_static("inline")),
+        crate::util::content_disposition::content_disposition(
+            crate::util::content_disposition::Disposition::Inline,
+            &format!("page-{n}.{}", info.ext),
+        ),
     );
     hdrs.insert(
         header::CACHE_CONTROL,

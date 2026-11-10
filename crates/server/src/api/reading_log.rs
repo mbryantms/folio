@@ -48,6 +48,7 @@ use super::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::library::access;
 use crate::state::AppState;
+use crate::util::csv_cell::formula_safe;
 use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -755,10 +756,16 @@ pub async fn reading_log_export(
     (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("text/csv; charset=utf-8"),
+            ),
             (
                 header::CONTENT_DISPOSITION,
-                "attachment; filename=\"reading-log.csv\"".to_string(),
+                crate::util::content_disposition::content_disposition(
+                    crate::util::content_disposition::Disposition::Attachment,
+                    "reading-log.csv",
+                ),
             ),
         ],
         body,
@@ -769,6 +776,12 @@ pub async fn reading_log_export(
 /// Flatten reading-log events into an RFC 4180 CSV — one row per event,
 /// with kind-specific payload fields fanned out into dedicated columns
 /// (empty where not applicable) so the output stays analyzable.
+///
+/// Text columns that carry archive metadata or user input (series,
+/// publisher, issue number and title, marker kind, tags) go through
+/// [`formula_safe`], so a cell a spreadsheet would read as a formula gets
+/// a leading `'`. Columns the server formats itself (timestamps, counts,
+/// the event kind) are written as they are.
 fn build_reading_log_csv(events: &[ReadingLogEventView]) -> Result<Vec<u8>, csv::Error> {
     let mut w = csv::Writer::from_writer(Vec::new());
     w.write_record([
@@ -875,11 +888,11 @@ fn build_reading_log_csv(events: &[ReadingLogEventView]) -> Result<Vec<u8>, csv:
         w.write_record([
             e.occurred_at.as_str(),
             e.kind.as_str(),
-            series_name,
+            &formula_safe(series_name),
             &series_year,
-            publisher,
-            issue_number,
-            issue_title,
+            &formula_safe(publisher),
+            &formula_safe(issue_number),
+            &formula_safe(issue_title),
             &started_at,
             &ended_at,
             &active_minutes,
@@ -888,8 +901,8 @@ fn build_reading_log_csv(events: &[ReadingLogEventView]) -> Result<Vec<u8>, csv:
             &is_reread,
             &total_issues,
             &span_days,
-            &marker_kind,
-            &tags,
+            &formula_safe(&marker_kind),
+            &formula_safe(&tags),
         ])?;
     }
     w.flush()?;
@@ -1317,40 +1330,6 @@ async fn fetch_series_finished(
     // trip even though Sea-ORM doesn't expose a fluent API for the
     // pattern.
 
-    // Cursor: (occurred_at, series_id::text). The "::text" cast
-    // mirrors how the rest of the query orders the id field; using
-    // text comparison keeps the cursor compatible across the merge
-    // step which compares synthetic ids as strings.
-    let cursor_clause = match cursor {
-        Some(c) => {
-            let id_str = c.id.strip_prefix("ser-fin:").unwrap_or("");
-            format!(
-                "AND (uf.series_finished_at, uf.series_id::text) < (TIMESTAMPTZ '{}', '{}')",
-                c.occurred_at.to_rfc3339().replace('\'', "''"),
-                id_str.replace('\'', "''"),
-            )
-        }
-        None => String::new(),
-    };
-    let from_clause = match from {
-        Some(t) => format!(
-            "AND uf.series_finished_at >= TIMESTAMPTZ '{}'",
-            t.to_rfc3339().replace('\'', "''")
-        ),
-        None => String::new(),
-    };
-    let to_clause = match to {
-        Some(t) => format!(
-            "AND uf.series_finished_at < TIMESTAMPTZ '{}'",
-            t.to_rfc3339().replace('\'', "''")
-        ),
-        None => String::new(),
-    };
-    let series_clause = match series_id {
-        Some(s) => format!("AND uf.series_id = '{s}'"),
-        None => String::new(),
-    };
-
     // For a capped caller both sides count only what they can see: the
     // series under the cap and, within it, the issues under the
     // issue-level cap (own rating, else the joined series' rating), so
@@ -1369,6 +1348,48 @@ async fn fetch_series_finished(
         "COALESCE(i.age_rating, s.age_rating)",
         &mut params,
     );
+    // Cursor: (occurred_at, series_id::text). The "::text" cast
+    // mirrors how the rest of the query orders the id field; using
+    // text comparison keeps the cursor compatible across the merge
+    // step which compares synthetic ids as strings. Every value is a
+    // bound parameter, numbered after the cap clauses' ones.
+    let cursor_clause = match cursor {
+        Some(c) => {
+            let id_str = c.id.strip_prefix("ser-fin:").unwrap_or("");
+            params.push(c.occurred_at.into());
+            let at = params.len();
+            params.push(id_str.to_owned().into());
+            let id = params.len();
+            format!(
+                "AND (uf.series_finished_at, uf.series_id::text) < (${at}::timestamptz, ${id}::text)"
+            )
+        }
+        None => String::new(),
+    };
+    let from_clause = match from {
+        Some(t) => {
+            params.push((*t).into());
+            format!(
+                "AND uf.series_finished_at >= ${}::timestamptz",
+                params.len()
+            )
+        }
+        None => String::new(),
+    };
+    let to_clause = match to {
+        Some(t) => {
+            params.push((*t).into());
+            format!("AND uf.series_finished_at < ${}::timestamptz", params.len())
+        }
+        None => String::new(),
+    };
+    let series_clause = match series_id {
+        Some(s) => {
+            params.push(s.into());
+            format!("AND uf.series_id = ${}", params.len())
+        }
+        None => String::new(),
+    };
     let finished_join = if finished_cap.is_empty() {
         ""
     } else {
@@ -1605,5 +1626,89 @@ fn handle_update_result(
             tracing::warn!(error = %e, kind, "reading-log hide/unhide update failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
+    }
+}
+
+#[cfg(test)]
+mod csv_tests {
+    use super::*;
+
+    fn marker_event(series: &str, number: &str, title: &str, tags: &[&str]) -> ReadingLogEventView {
+        ReadingLogEventView {
+            id: "mrk:1".into(),
+            kind: "marker_created".into(),
+            occurred_at: "2026-11-01T10:00:00+00:00".into(),
+            series: Some(EventSeries {
+                id: "s".into(),
+                slug: "s".into(),
+                name: series.into(),
+                year: Some(2001),
+                publisher: Some("@Publisher".into()),
+                imprint: None,
+                cover_url: None,
+            }),
+            issue: Some(EventIssue {
+                id: "i".into(),
+                slug: "i".into(),
+                number: Some(number.into()),
+                title: Some(title.into()),
+                year: None,
+                month: None,
+                day: None,
+                page_count: None,
+                cover_url: None,
+                writer: None,
+                penciller: None,
+                inker: None,
+                colorist: None,
+                letterer: None,
+                cover_artist: None,
+                editor: None,
+            }),
+            payload: EventPayload::MarkerCreated {
+                marker_id: "m".into(),
+                marker_kind: "note".into(),
+                page_index: 0,
+                tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+                body_preview: None,
+            },
+            is_hidden: false,
+        }
+    }
+
+    fn rows(events: &[ReadingLogEventView]) -> Vec<Vec<String>> {
+        let bytes = build_reading_log_csv(events).unwrap();
+        csv::Reader::from_reader(bytes.as_slice())
+            .records()
+            .map(|r| r.unwrap().iter().map(str::to_owned).collect())
+            .collect()
+    }
+
+    #[test]
+    fn formula_cells_are_prefixed_and_numbers_kept() {
+        let out = rows(&[marker_event(
+            "=HYPERLINK(\"http://x\",\"y\")",
+            "-1",
+            "+cmd|' /C calc'!A0",
+            &["-tag", "ok"],
+        )]);
+        let r = &out[0];
+        assert_eq!(r[0], "2026-11-01T10:00:00+00:00", "timestamp untouched");
+        assert_eq!(r[1], "marker_created");
+        assert_eq!(r[2], "'=HYPERLINK(\"http://x\",\"y\")");
+        assert_eq!(r[3], "2001");
+        assert_eq!(r[4], "'@Publisher");
+        assert_eq!(r[5], "-1", "issue -1 is a number, not a formula");
+        assert_eq!(r[6], "'+cmd|' /C calc'!A0");
+        assert_eq!(r[16], "'-tag, ok");
+    }
+
+    #[test]
+    fn plain_text_is_unchanged() {
+        let out = rows(&[marker_event("Batman", "12", "Year One", &["arc"])]);
+        assert_eq!(out[0][2], "Batman");
+        assert_eq!(out[0][5], "12");
+        assert_eq!(out[0][6], "Year One");
+        assert_eq!(out[0][16], "arc");
     }
 }

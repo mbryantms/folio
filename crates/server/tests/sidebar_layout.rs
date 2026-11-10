@@ -1063,3 +1063,31 @@ async fn hiding_reading_lists_builtin_persists() {
         );
     }
 }
+
+#[tokio::test]
+async fn patch_rejects_more_entries_than_the_cap_with_field_details() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "sidebar-cap@example.com").await;
+    let max = server::api::sidebar_layout::MAX_SIDEBAR_ENTRIES;
+    let entries: Vec<serde_json::Value> = (0..=max)
+        .map(|i| {
+            serde_json::json!({
+                "kind": "spacer",
+                "ref_id": format!("s{i}"),
+                "visible": true,
+                "position": i,
+            })
+        })
+        .collect();
+    let (status, body) = http(
+        &app,
+        Method::PATCH,
+        "/api/me/sidebar-layout",
+        Some(&auth),
+        Some(serde_json::json!({ "entries": entries })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["details"][0]["field"], "entries");
+}
