@@ -293,7 +293,8 @@ pub async fn verify_password_counted(
     }
     let stored = row.password_hash.as_deref().unwrap_or_default();
     let ok = !stored.is_empty()
-        && crate::auth::password::verify_rotating(stored, given, app.secrets.peppers())
+        && crate::auth::password::verify_rotating_blocking(stored, given, app.secrets.peppers())
+            .await
             .is_ok_and(|v| v.ok());
     if ok {
         return PasswordCheck::Ok;

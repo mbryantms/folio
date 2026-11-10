@@ -489,11 +489,13 @@ pub async fn register(
         return fail(StatusCode::CONFLICT, "conflict", "email already in use");
     }
 
-    let hash = match password::hash(
+    let hash = match password::hash_blocking(
         &req.password,
         app.secrets.pepper.as_ref(),
         app.cfg().password_hash_cost,
-    ) {
+    )
+    .await
+    {
         Ok(h) => h,
         Err(e) => {
             tracing::error!(error = %e, "argon2 hash failed");
@@ -720,33 +722,55 @@ pub async fn login(
         }
     };
 
-    let Some(row) = user_row else {
-        // Constant-time login: run the full argon2id verify against a
-        // pre-computed dummy PHC string so the missing-user path takes
-        // the same wall time as the wrong-password path. The literal we
-        // used here pre-M3 failed PHC parse before any argon2 work
-        // (audit S-4), which let a timing channel distinguish the two.
-        let dummy = password::dummy_hash(app.secrets.pepper.as_ref(), app.cfg().password_hash_cost);
-        // `verify_rotating` so this path pays the same one-or-two argon2
-        // verifies a wrong password does while a pepper rotation is active.
-        let _ = password::verify_rotating(dummy, &req.password, app.secrets.peppers());
-        super::failed_auth::record_failure_for(&app, &ctx).await;
-        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
-        // INFO-level reason so operators tailing logs can see WHY a
-        // login failed without having to deduce it from the response
-        // body. Today's prod incident (2026-05-16) took an extra hour
-        // because every reject path returned an opaque "invalid
-        // credentials". Email is intentionally NOT logged — the
-        // request body usually carries it in a higher-level access
-        // log, and duplicating it here would just bloat the entry.
-        tracing::info!(reason = "user_not_found", "login rejected");
-        return fail(
-            StatusCode::UNAUTHORIZED,
-            "auth.invalid",
-            "invalid credentials",
-        );
+    // The password is checked FIRST, for every account. An unknown address
+    // or an account without a local password pays the same argon2 work
+    // against a dummy hash (audit S-4: the old malformed dummy literal let
+    // timing tell the cases apart), and a wrong password answers the one
+    // generic 401 whatever the account's state. Only a caller who knows the
+    // password learns that the account is disabled or unverified, so the
+    // state codes can't be used to probe which addresses have accounts.
+    let peppers = app.secrets.peppers();
+    let stored = user_row.as_ref().and_then(|r| r.password_hash.clone());
+    let verified = match stored.as_deref() {
+        Some(stored) => password::verify_rotating_blocking(stored, &req.password, peppers)
+            .await
+            .unwrap_or(password::Verified::No),
+        None => {
+            password::dummy_verify_blocking(&req.password, peppers, app.cfg().password_hash_cost)
+                .await;
+            password::Verified::No
+        }
+    };
+    let row = match user_row {
+        Some(row) if verified.ok() => row,
+        row => {
+            super::failed_auth::record_failure_for(&app, &ctx).await;
+            super::failed_auth::record_failure_for_email(&app, &email_lower).await;
+            // INFO-level reason so operators tailing logs can see WHY a
+            // login failed without having to deduce it from the response
+            // body (the 2026-05-16 prod incident took an extra hour because
+            // every reject path returned an opaque "invalid credentials").
+            // `no_local_password` is usually an OIDC-only user trying the
+            // local form. Email is intentionally NOT logged.
+            let reason = match (&row, &stored) {
+                (None, _) => "user_not_found",
+                (Some(_), None) => "no_local_password",
+                (Some(_), Some(_)) => "wrong_password",
+            };
+            match &row {
+                Some(r) => tracing::info!(reason, user_id = %r.id, "login rejected"),
+                None => tracing::info!(reason, "login rejected"),
+            }
+            return fail(
+                StatusCode::UNAUTHORIZED,
+                "auth.invalid",
+                "invalid credentials",
+            );
+        }
     };
 
+    // Correct password: now the account state may be reported. These
+    // attempts still count as failures, as they always have.
     if row.state == UserState::Disabled {
         super::failed_auth::record_failure_for(&app, &ctx).await;
         super::failed_auth::record_failure_for_email(&app, &email_lower).await;
@@ -763,42 +787,18 @@ pub async fn login(
             "verify your email first",
         );
     }
-    let Some(stored) = row.password_hash.as_ref() else {
-        super::failed_auth::record_failure_for(&app, &ctx).await;
-        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
-        // Account has no local password set — usually an OIDC-only
-        // user trying the local form. Distinct from `wrong_password`
-        // so the operator can spot config drift (e.g. OIDC user with
-        // hash=NULL trying to sign in via the form).
-        tracing::info!(reason = "no_local_password", user_id = %row.id, "login rejected");
-        return fail(
-            StatusCode::UNAUTHORIZED,
-            "auth.invalid",
-            "invalid credentials",
-        );
-    };
-    let verified = password::verify_rotating(stored, &req.password, app.secrets.peppers())
-        .unwrap_or(password::Verified::No);
-    if !verified.ok() {
-        super::failed_auth::record_failure_for(&app, &ctx).await;
-        super::failed_auth::record_failure_for_email(&app, &email_lower).await;
-        tracing::info!(reason = "wrong_password", user_id = %row.id, "login rejected");
-        return fail(
-            StatusCode::UNAUTHORIZED,
-            "auth.invalid",
-            "invalid credentials",
-        );
-    }
 
     // L-1 (WP-6.3): the hash only verified under `secrets/pepper.previous`
     // — rehash it under the current pepper now that we hold the plaintext,
     // so the user survives the eventual removal of the previous pepper.
     let rehashed = if verified == password::Verified::Previous {
-        match password::hash(
+        match password::hash_blocking(
             &req.password,
             app.secrets.pepper.as_ref(),
             app.cfg().password_hash_cost,
-        ) {
+        )
+        .await
+        {
             Ok(h) => Some(h),
             Err(e) => {
                 tracing::warn!(error = %e, user_id = %row.id, "pepper rehash failed");
@@ -1557,11 +1557,13 @@ pub async fn reset_password(
         );
     };
 
-    let hash = match password::hash(
+    let hash = match password::hash_blocking(
         &req.new_password,
         app.secrets.pepper.as_ref(),
         app.cfg().password_hash_cost,
-    ) {
+    )
+    .await
+    {
         Ok(h) => h,
         Err(e) => {
             tracing::error!(error = %e, "argon2 hash failed during reset");

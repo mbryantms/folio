@@ -175,6 +175,80 @@ pub fn dummy_hash(pepper: &[u8], cost: HashCost) -> &'static str {
     })
 }
 
+// ─────────────── async call sites: the blocking pool ───────────────
+//
+// One argon2 hash or verify is tens of milliseconds of CPU and tens of MiB
+// of memory. Run on an async worker thread it stalls every other request
+// scheduled there, so async handlers go through these wrappers, which move
+// the work onto tokio's blocking pool. The pepper and the plaintext are
+// copied into zeroizing buffers because the task must own its inputs.
+
+/// Owned copy of a [`Peppers`] set for a blocking task.
+struct OwnedPeppers {
+    current: zeroize::Zeroizing<Vec<u8>>,
+    previous: Option<zeroize::Zeroizing<Vec<u8>>>,
+}
+
+impl OwnedPeppers {
+    fn from(p: Peppers<'_>) -> Self {
+        Self {
+            current: zeroize::Zeroizing::new(p.current.to_vec()),
+            previous: p.previous.map(|v| zeroize::Zeroizing::new(v.to_vec())),
+        }
+    }
+    fn borrow(&self) -> Peppers<'_> {
+        Peppers {
+            current: &self.current,
+            previous: self.previous.as_deref().map(|v| v.as_slice()),
+        }
+    }
+}
+
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, PasswordError> + Send + 'static,
+) -> Result<T, PasswordError> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| PasswordError::Argon2(format!("blocking task failed: {e}")))?
+}
+
+/// [`hash`] on the blocking pool.
+pub async fn hash_blocking(
+    plain: &str,
+    pepper: &[u8],
+    cost: HashCost,
+) -> Result<String, PasswordError> {
+    let plain = zeroize::Zeroizing::new(plain.to_owned());
+    let pepper = zeroize::Zeroizing::new(pepper.to_vec());
+    blocking(move || hash(&plain, &pepper, cost)).await
+}
+
+/// [`verify_rotating`] on the blocking pool.
+pub async fn verify_rotating_blocking(
+    stored_hash: &str,
+    plain: &str,
+    peppers: Peppers<'_>,
+) -> Result<Verified, PasswordError> {
+    let stored = stored_hash.to_owned();
+    let plain = zeroize::Zeroizing::new(plain.to_owned());
+    let peppers = OwnedPeppers::from(peppers);
+    blocking(move || verify_rotating(&stored, &plain, peppers.borrow())).await
+}
+
+/// The timing equalizer for a sign-in that has no hash to check (unknown
+/// address, or an account without a local password): the same
+/// one-or-two argon2 verifies a wrong password costs, against
+/// [`dummy_hash`], on the blocking pool. Never verifies.
+pub async fn dummy_verify_blocking(plain: &str, peppers: Peppers<'_>, cost: HashCost) {
+    let plain = zeroize::Zeroizing::new(plain.to_owned());
+    let peppers = OwnedPeppers::from(peppers);
+    let _ = blocking(move || {
+        let dummy = dummy_hash(&peppers.current, cost);
+        verify_rotating(dummy, &plain, peppers.borrow())
+    })
+    .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +338,38 @@ mod tests {
         .unwrap();
         // Same password, different pepper → must not verify (peppered hash).
         assert!(!verify(&h, "hunter2", b"pepper-B-32bytes-XXXXXXXXXXXXXXX").unwrap());
+    }
+
+    /// The blocking-pool wrappers give the same answers as the sync calls.
+    #[tokio::test]
+    async fn blocking_wrappers_match_the_sync_calls() {
+        let old = b"pepper-A-32bytes-XXXXXXXXXXXXXXX";
+        let new = b"pepper-B-32bytes-XXXXXXXXXXXXXXX";
+        let h = hash_blocking("hunter2", new, HashCost::TEST).await.unwrap();
+        assert!(verify(&h, "hunter2", new).unwrap());
+        let under_old = hash("hunter2", old, HashCost::TEST).unwrap();
+        let rotating = Peppers {
+            current: new,
+            previous: Some(old),
+        };
+        assert_eq!(
+            verify_rotating_blocking(&h, "hunter2", rotating)
+                .await
+                .unwrap(),
+            Verified::Current
+        );
+        assert_eq!(
+            verify_rotating_blocking(&under_old, "hunter2", rotating)
+                .await
+                .unwrap(),
+            Verified::Previous
+        );
+        assert_eq!(
+            verify_rotating_blocking(&h, "wrong", rotating)
+                .await
+                .unwrap(),
+            Verified::No
+        );
+        dummy_verify_blocking("anything", rotating, HashCost::TEST).await;
     }
 }

@@ -53,9 +53,9 @@ Redis-backed ([`auth/failed_auth.rs`](../../crates/server/src/auth/failed_auth.r
 | `DELETE /me` (password re-check) | client IP and the account's email |
 | `PATCH /me/account` email or password change (password re-check, shared with `DELETE /me` through `failed_auth::verify_password_counted`) | client IP and the account's email |
 
-The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
+The handler checks the lockout before any password hashing. On sign-in every refused attempt counts on both axes: an unknown address, a wrong password, and also a correct password on a disabled or unverified account (sign-in verifies the password before it reports the account state, see [auth-model.md](auth-model.md#sign-in-check-order)). A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
 
-Verified against the code at `1c51a486` on 2026-11-10.
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### Email-change requests
 

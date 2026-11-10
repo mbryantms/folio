@@ -38,10 +38,23 @@
 //!   - `/auth/local/verify-email`    (token-gated, GET)
 //!   - `/auth/local/resend-verification` (no session)
 //!   - `/csp-report`                 (browser sends without CSRF)
+//!
+//! The exempt sign-in POSTs (login, register, request-password-reset,
+//! reset-password, resend-verification) carry no session to forge, but a
+//! cross-site form could still sign a visitor into an account the attacker
+//! controls (login CSRF). They get a cross-site guard instead of the token
+//! check, [`crate::auth::origin::cross_site_reason`]: refused on
+//! `Sec-Fetch-Site: cross-site` / `same-site`, or on an `Origin` that is
+//! neither the configured public origin nor the host and port of the
+//! request's own `Host` header (so same-origin posts over a LAN address or
+//! another host name pass); requests with neither header pass. The refusal
+//! is the standard 403 `auth.csrf` envelope, the same whichever check
+//! failed. The OIDC callback (a cross-site redirect by design, gated by its
+//! state cookie), `verify-email` (a GET) and `/csp-report` are not guarded.
 
 use axum::{
     body::{Body, to_bytes},
-    extract::{MatchedPath, Request},
+    extract::{MatchedPath, Request, State},
     http::{
         HeaderMap, HeaderName, Method, StatusCode,
         header::{AUTHORIZATION, CONTENT_TYPE, ORIGIN},
@@ -54,6 +67,7 @@ use constant_time_eq::constant_time_eq;
 
 use super::cookies::{CSRF_COOKIE, LEGACY_REFRESH_COOKIE, REFRESH_COOKIE, SESSION_COOKIE};
 use super::extractor::is_reader_route;
+use crate::state::AppState;
 
 const CSRF_HEADER: &str = "x-csrf-token";
 const SEC_FETCH_SITE: &str = "sec-fetch-site";
@@ -62,11 +76,20 @@ const SEC_FETCH_SITE: &str = "sec-fetch-site";
 /// can't make us hold a multi-MB body in memory just to validate CSRF.
 const MAX_FORM_BODY_FOR_CSRF: usize = 64 * 1024;
 
-pub async fn require_csrf(req: Request, next: Next) -> Response {
+pub async fn require_csrf(State(app): State<AppState>, req: Request, next: Next) -> Response {
     if !is_unsafe(req.method()) {
         return next.run(req).await;
     }
     if path_is_exempt(req.uri().path()) {
+        if CROSS_SITE_GUARDED_PATHS.contains(&req.uri().path())
+            && let Some(reason) = super::origin::cross_site_reason(
+                req.headers(),
+                req.uri().authority().map(|a| a.as_str()),
+                &app.cfg().public_url,
+            )
+        {
+            return csrf_error(req.method(), req.uri().path(), reason);
+        }
         return next.run(req).await;
     }
     if token_exemption(&req) {
@@ -269,6 +292,16 @@ pub const CSRF_EXEMPT_PATHS: &[&str] = &[
     "/auth/local/verify-email",
     "/auth/local/resend-verification",
     "/csp-report",
+];
+
+/// The CSRF-exempt POSTs that still refuse a cross-site browser request
+/// (module docs). Every entry is also in [`CSRF_EXEMPT_PATHS`].
+pub const CROSS_SITE_GUARDED_PATHS: &[&str] = &[
+    "/auth/local/login",
+    "/auth/local/register",
+    "/auth/local/request-password-reset",
+    "/auth/local/reset-password",
+    "/auth/local/resend-verification",
 ];
 
 fn path_is_exempt(path: &str) -> bool {

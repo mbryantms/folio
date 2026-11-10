@@ -145,6 +145,27 @@ Verified against the code at `1c51a486` on 2026-11-10.
 - Client reads cookie, includes value as `X-CSRF-Token` on POST/PUT/PATCH/DELETE.
 - Server compares cookie value to header; mismatch = 403.
 - Bearer-authenticated requests (mobile, API, OPDS-Bearer) skip CSRF entirely — there's no ambient credential to forge.
+- The sign-in POSTs that are exempt from the token check because no session exists yet (`/auth/local/login`, `/register`, `/request-password-reset`, `/reset-password`, `/resend-verification`) get the cross-site guard below instead.
+
+### Cross-site sign-in posts (login CSRF)
+
+Without a guard, another site could post the sign-in form with credentials it controls and sign the visitor into the attacker's account. For the five routes above, `auth::csrf` applies [`auth::origin::cross_site_reason`](../../crates/server/src/auth/origin.rs) before the handler runs:
+
+1. `Sec-Fetch-Site: cross-site` or `same-site` is refused. `same-site` is refused deliberately: a sibling subdomain (another app on the same registrable domain) must not sign visitors in either, and nothing in Folio posts these forms from another subdomain. `same-origin` and `none` pass.
+2. An `Origin` header is refused unless it equals the configured public origin (`public_url`, scheme + host + port), **or** its host and port equal the request's own `Host` header (the HTTP/2 authority when there is no `Host`; a missing port means the `Origin` scheme's default). The second arm keeps same-origin posts working when the server is reached by a LAN address or another host name (the proxy forwards the request's own `Host`); a page on another site cannot make its `Origin` equal the `Host` it posts to. `Origin: null` never passes.
+3. A request with neither header (native clients, older browsers) proceeds.
+
+A refusal is the standard 403 `auth.csrf` envelope with the same message whichever check failed (the reason is logged at INFO only), for the JSON and the no-JavaScript form path alike. The OIDC callback (a cross-site redirect by design, gated by its state cookie), the `GET` verify-email link and `/csp-report` are not guarded. The `/api`-prefixed mounts of these routes are not exempt at all and need the CSRF token.
+
+### Sign-in check order
+
+`POST /auth/local/login`: (1) refuse with 429 if the client IP or the submitted email is locked out; (2) verify the password, for every account: against the stored hash, or, for an unknown address or an account without a local password, against a dummy hash at the same cost, so all paths pay the same argon2 work; (3) a wrong password, unknown address or missing hash records a failure on both lockout axes and answers the generic 401 `auth.invalid`, whatever the account's state; (4) only after a correct password: a disabled account gets 403 `auth.disabled` and an unverified one 403 `auth.email_unverified`, and both still record a failure on both axes, as before; (5) otherwise the session is issued. The no-JavaScript form gets the same outcomes as a redirect to `/sign-in?error=<code>`.
+
+Registration still answers 409 for an address that has an account; that is an accepted trade-off of open registration (the email-change route reveals the same).
+
+Every argon2 hash and verify reached from an async handler (sign-in and its dummy verify, registration, password change, password reset, account deletion and the email/password re-checks through `failed_auth::verify_password_counted`, admin-created users) runs on tokio's blocking pool through `auth::password::{hash_blocking, verify_rotating_blocking, dummy_verify_blocking}`; app-password verification is handled in `auth::app_password` separately.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### WebSocket auth (one-shot ticket)
 
