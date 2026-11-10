@@ -79,7 +79,7 @@ export function AppPasswordsCard() {
     return (
       <SettingsSection
         title="Existing passwords"
-        description="Active Bearer credentials issued to your account."
+        description="Reader-app passwords issued to your account."
       >
         <p className="text-destructive text-sm">Failed to load passwords.</p>
       </SettingsSection>
