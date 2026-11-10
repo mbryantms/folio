@@ -129,7 +129,19 @@ manual `docker run … tar xzf` sequence above because it has to run with
 
 A reference `scripts/backup.sh` lives in the repo at
 [`scripts/backup.sh`](../../scripts/backup.sh). It does the Postgres
-dump + `comic_data` tar in one shot and is safe to run from cron:
+dump + `comic_data` tar in one shot and is safe to run from cron.
+
+Its output is private. The dump holds every user's account data and the
+tar holds the server's pepper, signing and encryption keys (see
+[`secrets-backup.md`](./secrets-backup.md)), so the script runs under
+`umask 077`, creates `$BACKUP_DIR` with mode `0700` when it does not
+exist yet, and leaves each dump and tarball at mode `0600`. The tar is
+written as root inside a helper container, where the host umask does not
+reach, so that step sets its own umask, chmods the file and hands it to
+the user running the script before it lands. The helper image is the same digest-pinned `alpine` that
+`compose.prod.yml` uses for `app-init`. An existing `$BACKUP_DIR` keeps
+its mode; tighten it with `chmod 700` if other users can read it. If you
+run the manual commands above instead, apply the same modes yourself.
 
 ```cron
 # /etc/cron.d/folio-backup
@@ -139,7 +151,8 @@ dump + `comic_data` tar in one shot and is safe to run from cron:
 
 Off-host (S3 / Backblaze / a NAS) replication is the operator's call;
 add a `rclone` step after the local backup or back up `/var/backups/folio/`
-with your existing host-level tool.
+with your existing host-level tool. Keep those copies private too: a
+dump or tarball others can read is as good as a copy of the keys.
 
 ## Audit-log exports
 
