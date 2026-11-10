@@ -7,6 +7,12 @@
 //!     thumbnails / secrets live under data_path)
 //!   - root path equals or contains another library's root (overlap → dup work)
 //!
+//! The root is canonicalized, so a root that is itself a symbolic link (a
+//! mount path, `/data/comics -> /mnt/x`) is accepted: that is the one link
+//! Folio resolves. Nothing below the root is ever followed: the scanner
+//! skips links (`enumerate`), and readers are served through
+//! `library::no_follow`.
+//!
 //! Per spec §12.3 these are *fatal* errors — the scan_run row is closed with
 //! `state='failed'` and an explanatory `error` message.
 

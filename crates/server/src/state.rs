@@ -160,6 +160,11 @@ pub struct Inner {
     /// N-L3). Invalidated by catalogue-changing scans, duplicate decisions
     /// and Removed-tab restores. See [`crate::api::duplicates`].
     pub duplicates: Arc<crate::api::duplicates::DuplicateGroupsCache>,
+    /// Library id → configured and canonical root, for the no-symlink
+    /// serving check (`library::no_follow`). Invalidated when a library's
+    /// settings are saved or it is deleted; entries also expire after a
+    /// minute.
+    pub library_roots: Arc<crate::library::no_follow::LibraryRoots>,
     /// Per-job start/finish hub behind the admin queue lanes (Flair phase 5
     /// B3): the jobs executing now, the last completions per queue, and the
     /// aggregated `queue.activity` events. Fed by the jobs' metrics layer.
@@ -262,6 +267,7 @@ impl AppState {
             similarity: Arc::new(crate::similarity::SimilarityCache::new()),
             page_hash_backfill_inflight: Arc::new(std::sync::Mutex::new(HashSet::new())),
             duplicates: Arc::new(crate::api::duplicates::DuplicateGroupsCache::new()),
+            library_roots: Arc::new(crate::library::no_follow::LibraryRoots::new()),
             job_activity: Arc::new(crate::jobs::activity::JobActivity::new()),
             scan_progress: Arc::new(crate::library::scanner::pacer::ProgressPacers::default()),
         }))
