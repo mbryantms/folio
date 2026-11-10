@@ -40,7 +40,10 @@ pub struct ApiDoc;
 
 /// Mark a reader-client router (OPDS, Komga shim, page bytes, thumbnails)
 /// as a surface where app passwords authenticate. See
-/// [`auth::extractor::AppPasswordSurface`].
+/// [`auth::extractor::AppPasswordSurface`]. Every route of a router wrapped
+/// here must start with one of [`auth::extractor::READER_ROUTE_PREFIXES`]
+/// (the CSRF exemption for app passwords is decided from that list); a
+/// test in `tests/app_passwords.rs` enforces it.
 fn reader_surface(router: axum::Router<AppState>) -> axum::Router<AppState> {
     router.layer(axum::Extension(auth::extractor::AppPasswordSurface))
 }

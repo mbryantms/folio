@@ -1,8 +1,23 @@
 //! Double-submit CSRF middleware (§17.3).
 //!
 //! Required on every unsafe verb (POST/PUT/PATCH/DELETE) **when the request is
-//! cookie-authenticated**. Bearer-authenticated requests bypass the check (no
-//! ambient credential to forge).
+//! cookie-authenticated**. Requests carrying an out-of-band credential skip
+//! the check, by [`token_exemption`]:
+//!
+//!   - `Authorization: Bearer <jwt>` — exempt on every route (a browser
+//!     never attaches a Bearer header on its own, so there is no ambient
+//!     credential to forge).
+//!   - An app password (`Bearer app_…`, or `Basic` whose password is
+//!     `app_…`) — exempt **only on the reader-client routes**
+//!     ([`crate::auth::extractor::is_reader_route`]), the one surface where
+//!     an app password authenticates. Elsewhere the request gets the full
+//!     cookie check like any browser request.
+//!   - App password via `Basic` on a reader route — exempt only when the
+//!     request does not look like it came from a browser page on another
+//!     site: no `Origin` header and no `Sec-Fetch-Site: cross-site` /
+//!     `same-site`. A browser that has cached Basic credentials attaches
+//!     them by itself; reader apps (Panels, Chunky, KOReader, Komga-style
+//!     clients) are native HTTP clients and send neither header.
 //!
 //! The token is the value of the `__Host-comic_csrf` cookie. It must match
 //! either:
@@ -22,8 +37,11 @@
 
 use axum::{
     body::{Body, to_bytes},
-    extract::Request,
-    http::{HeaderName, Method, StatusCode, header::CONTENT_TYPE},
+    extract::{MatchedPath, Request},
+    http::{
+        HeaderMap, HeaderName, Method, StatusCode,
+        header::{AUTHORIZATION, CONTENT_TYPE, ORIGIN},
+    },
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -31,8 +49,10 @@ use axum_extra::extract::CookieJar;
 use constant_time_eq::constant_time_eq;
 
 use super::cookies::CSRF_COOKIE;
+use super::extractor::is_reader_route;
 
 const CSRF_HEADER: &str = "x-csrf-token";
+const SEC_FETCH_SITE: &str = "sec-fetch-site";
 /// Max body size we'll buffer in order to scan the form for a CSRF field.
 /// Auth forms are tiny (<1 KB); this is just a guard so a misbehaving client
 /// can't make us hold a multi-MB body in memory just to validate CSRF.
@@ -45,10 +65,7 @@ pub async fn require_csrf(req: Request, next: Next) -> Response {
     if path_is_exempt(req.uri().path()) {
         return next.run(req).await;
     }
-    if has_token_auth(req.headers()) {
-        // Out-of-band credential (Bearer JWT/app-password, or Basic
-        // carrying an `app_…` token — what OPDS clients send). No
-        // session cookie is implicated, so CSRF is moot.
+    if token_exemption(&req) {
         return next.run(req).await;
     }
 
@@ -135,32 +152,81 @@ fn is_unsafe(m: &Method) -> bool {
     )
 }
 
-/// True when the request carries an out-of-band credential the CSRF
-/// middleware should consider equivalent to a Bearer token: either an
-/// explicit `Authorization: Bearer …` OR an `Authorization: Basic …`
-/// whose decoded password component is an `app_…` token. Basic carrying
-/// a raw password (login flow only — and login is CSRF-exempt anyway)
-/// or a JWT is *not* treated as token auth.
-fn has_token_auth(h: &axum::http::HeaderMap) -> bool {
-    let Some(raw) = h
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    else {
-        return false;
-    };
-    if raw.starts_with("Bearer ") {
-        return true;
+/// The out-of-band credential an `Authorization` header carries, as far as
+/// the CSRF decision cares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokenCredential {
+    /// `Bearer <anything but app_…>` — a JWT (or junk the extractor will
+    /// refuse; it never falls back to the session cookie).
+    BearerJwt,
+    /// `Bearer app_…`.
+    AppPasswordBearer,
+    /// `Basic <b64(user:app_…)>` — what OPDS clients send.
+    AppPasswordBasic,
+}
+
+fn token_credential(h: &HeaderMap) -> Option<TokenCredential> {
+    let raw = h.get(AUTHORIZATION).and_then(|v| v.to_str().ok())?;
+    if let Some(token) = raw.strip_prefix("Bearer ") {
+        return Some(
+            if super::app_password::looks_like_app_password(token.trim()) {
+                TokenCredential::AppPasswordBearer
+            } else {
+                TokenCredential::BearerJwt
+            },
+        );
     }
     if let Some(b64) = raw.strip_prefix("Basic ") {
         use base64::Engine;
         if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(b64.trim())
             && let Ok(s) = std::str::from_utf8(&decoded)
             && let Some((_user, password)) = s.split_once(':')
+            && super::app_password::looks_like_app_password(password)
         {
-            return super::app_password::looks_like_app_password(password);
+            return Some(TokenCredential::AppPasswordBasic);
         }
     }
-    false
+    // Basic carrying a raw password (or a JWT) is not token auth: the
+    // extractor refuses it, and it gets no CSRF exemption.
+    None
+}
+
+/// True when the request is exempt from the double-submit check because of
+/// the credential it carries (module docs). The route decision reads the
+/// matched route template, which `Router::layer` middleware sees after
+/// routing; a request no explicit route claimed (the Next.js fallback) has
+/// none and is never a reader route.
+fn token_exemption(req: &Request) -> bool {
+    let Some(cred) = token_credential(req.headers()) else {
+        return false;
+    };
+    let on_reader_route = || {
+        req.extensions()
+            .get::<MatchedPath>()
+            .is_some_and(|p| is_reader_route(p.as_str()))
+    };
+    match cred {
+        TokenCredential::BearerJwt => true,
+        TokenCredential::AppPasswordBearer => on_reader_route(),
+        TokenCredential::AppPasswordBasic => {
+            on_reader_route() && !looks_like_browser_cross_site(req.headers())
+        }
+    }
+}
+
+/// True when the headers show a browser page made this request on its own
+/// behalf rather than a native reader app: any `Origin` header (browsers
+/// send it on every non-GET fetch / form post; native HTTP clients don't),
+/// or a `Sec-Fetch-Site` naming another site.
+fn looks_like_browser_cross_site(h: &HeaderMap) -> bool {
+    if h.contains_key(ORIGIN) {
+        return true;
+    }
+    h.get(SEC_FETCH_SITE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| {
+            v.eq_ignore_ascii_case("cross-site") || v.eq_ignore_ascii_case("same-site")
+        })
 }
 
 /// Routes exempted from CSRF double-submit. These are either:
