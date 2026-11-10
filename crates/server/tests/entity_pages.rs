@@ -1460,3 +1460,314 @@ async fn insights_report_library_stats_under_the_acl() {
     let (s, _) = get_json(&app, "/api/characters/nobody/insights", &f.user).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+// ───────────── locations from ComicInfo get entity rows ─────────────
+
+/// A one-page CBZ (real PNG signature, so the page survives the content
+/// sniff) carrying `comic_info` as its `ComicInfo.xml`.
+fn write_cbz(path: &std::path::Path, comic_info: &str, unique_marker: u32) {
+    use std::io::Write;
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    png.extend_from_slice(&unique_marker.to_le_bytes());
+    png.extend(std::iter::repeat_n(0u8, 64));
+    zw.start_file("page-001.png", opts).unwrap();
+    zw.write_all(&png).unwrap();
+    zw.start_file("ComicInfo.xml", opts).unwrap();
+    zw.write_all(comic_info.as_bytes()).unwrap();
+    zw.finish().unwrap();
+}
+
+fn comicinfo_with(number: u32, extra: &str) -> String {
+    format!(
+        r#"<?xml version="1.0"?>
+<ComicInfo>
+  <Series>Gotham Tales</Series>
+  <Number>{number}</Number>
+  <Year>2020</Year>
+  {extra}
+</ComicInfo>"#
+    )
+}
+
+/// `/api/locations` items as `name → issue_count`.
+async fn location_counts(app: &TestApp, user: &Authed) -> Vec<(String, i64)> {
+    let (s, body) = get_json(app, "/api/locations", user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let mut out: Vec<(String, i64)> = body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| {
+            (
+                i["name"].as_str().unwrap().to_owned(),
+                i["issue_count"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Locations that only a file's ComicInfo names get entity rows (so the
+/// Locations page lists them, like characters and teams), the junction
+/// rows are linked by id, and a forced rescan mints nothing twice.
+#[tokio::test]
+async fn file_locations_get_entity_rows_and_list_without_duplicates() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Gotham Tales (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(
+        &folder.join("Gotham Tales 001.cbz"),
+        &comicinfo_with(
+            1,
+            "<Locations>Gotham City, Arkham Asylum</Locations><Characters>Batman</Characters>",
+        ),
+        1,
+    );
+    write_cbz(
+        &folder.join("Gotham Tales 002.cbz"),
+        &comicinfo_with(2, "<Locations>Gotham City</Locations>"),
+        2,
+    );
+    let state = app.state();
+    let lib_id = common::seed::LibrarySeed::new(tmp.path())
+        .insert(&state.db)
+        .await;
+    let stats = server::library::scanner::scan_library(&state, lib_id)
+        .await
+        .unwrap();
+    assert_eq!(stats.files_added, 2, "{stats:?}");
+
+    let expected = vec![
+        ("Arkham Asylum".to_owned(), 1),
+        ("Gotham City".to_owned(), 2),
+    ];
+    assert_eq!(location_counts(&app, &admin).await, expected);
+    let (s, body) = get_json(&app, "/api/locations/gotham-city", &admin).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["issue_count"], 2);
+    assert_eq!(body["series_count"], 1);
+    // Characters keep working the same way alongside.
+    let (s, _) = get_json(&app, "/api/characters/batman", &admin).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let unlinked = || async {
+        scalar(
+            &db,
+            "SELECT count(*) AS n FROM issue_locations WHERE location_id IS NULL",
+            vec![],
+        )
+        .await
+    };
+    assert_eq!(unlinked().await, Some(0), "junction rows linked by id");
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) AS n FROM series_locations WHERE location_id IS NULL",
+            vec![],
+        )
+        .await,
+        Some(0),
+        "series_locations rebuild carries the FK"
+    );
+
+    // A forced rescan re-ingests both files: no second entity row, same
+    // counts.
+    server::library::scanner::scan_library_with(&state, lib_id, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        scalar(&db, "SELECT count(*) AS n FROM location", vec![]).await,
+        Some(2)
+    );
+    assert_eq!(location_counts(&app, &admin).await, expected);
+    assert_eq!(unlinked().await, Some(0));
+}
+
+/// One sidecar list is capped at `MAX_SIDECAR_LIST_ITEMS` names: an
+/// oversized `<Locations>` / `<Characters>` creates that many junction and
+/// entity rows, not one per listed name.
+#[tokio::test]
+async fn oversized_sidecar_lists_are_capped() {
+    use server::library::scanner::metadata_rollup::MAX_SIDECAR_LIST_ITEMS;
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Gotham Tales (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let over = MAX_SIDECAR_LIST_ITEMS + 25;
+    let names = |prefix: &str| {
+        (0..over)
+            .map(|n| format!("{prefix} {n:05}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    write_cbz(
+        &folder.join("Gotham Tales 001.cbz"),
+        &comicinfo_with(
+            1,
+            &format!(
+                "<Locations>{}</Locations><Characters>{}</Characters>",
+                names("Place"),
+                names("Hero")
+            ),
+        ),
+        1,
+    );
+    let state = app.state();
+    let lib_id = common::seed::LibrarySeed::new(tmp.path())
+        .insert(&state.db)
+        .await;
+    server::library::scanner::scan_library(&state, lib_id)
+        .await
+        .unwrap();
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let cap = Some(MAX_SIDECAR_LIST_ITEMS as i64);
+    for sql in [
+        "SELECT count(*) AS n FROM issue_locations",
+        "SELECT count(*) AS n FROM location",
+        "SELECT count(*) AS n FROM issue_characters",
+        "SELECT count(*) AS n FROM character",
+    ] {
+        assert_eq!(scalar(&db, sql, vec![]).await, cap, "{sql}");
+    }
+    // The cap keeps the names in file order: the last ones are dropped.
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) AS n FROM location WHERE name = 'Place 00000'",
+            vec![],
+        )
+        .await,
+        Some(1)
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            &format!(
+                "SELECT count(*) AS n FROM location WHERE name = 'Place {:05}'",
+                over - 1
+            ),
+            vec![],
+        )
+        .await,
+        Some(0)
+    );
+}
+
+/// A user's location edit wins over the file on rescan: the pinned
+/// junction rows stay, no entity row is minted from the user rows' FK
+/// text, and an existing location row's display fields are left alone.
+#[tokio::test]
+async fn rescan_keeps_user_edited_locations() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Gotham Tales (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("Gotham Tales 001.cbz");
+    write_cbz(
+        &file,
+        &comicinfo_with(1, "<Locations>Gotham City</Locations>"),
+        1,
+    );
+    let state = app.state();
+    let lib_id = common::seed::LibrarySeed::new(tmp.path())
+        .insert(&state.db)
+        .await;
+    server::library::scanner::scan_library(&state, lib_id)
+        .await
+        .unwrap();
+    let db = Database::connect(&app.db_url).await.unwrap();
+    // A provider-filled display field on the file-minted row.
+    exec(
+        &db,
+        "UPDATE location SET description = 'Home of the Bat' WHERE slug = 'gotham-city'",
+        vec![],
+    )
+    .await;
+
+    use sea_orm::FromQueryResult;
+    #[derive(FromQueryResult)]
+    struct Slugs {
+        series_slug: String,
+        issue_slug: String,
+    }
+    let row = Slugs::find_by_statement(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "SELECT s.slug AS series_slug, i.slug AS issue_slug \
+           FROM issues i JOIN series s ON s.id = i.series_id",
+        Vec::<sea_orm::Value>::new(),
+    ))
+    .one(&db)
+    .await
+    .unwrap()
+    .unwrap();
+    // The user replaces the file's location through the issue editor.
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri(format!(
+                    "/api/series/{}/issues/{}",
+                    row.series_slug, row.issue_slug
+                ))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        admin.session, admin.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", admin.csrf.clone())
+                .body(Body::from(r#"{"locations":"Batcave"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // The file is retagged with other locations, then rescanned.
+    write_cbz(
+        &file,
+        &comicinfo_with(1, "<Locations>Gotham City, Metropolis</Locations>"),
+        2,
+    );
+    let stats = server::library::scanner::scan_library(&state, lib_id)
+        .await
+        .unwrap();
+    assert_eq!(stats.files_updated, 1, "{stats:?}");
+
+    assert_eq!(
+        location_counts(&app, &admin).await,
+        vec![("Batcave".to_owned(), 1)],
+        "the user's locations stay; the file's are not re-derived"
+    );
+    // No entity row named after the user row's FK text, none for the
+    // file-only Metropolis, and the Gotham row is untouched.
+    assert_eq!(
+        scalar(&db, "SELECT count(*) AS n FROM location", vec![]).await,
+        Some(2),
+        "Gotham City (first scan) + Batcave (user)"
+    );
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT count(*) AS n FROM location \
+              WHERE slug = 'gotham-city' AND description = 'Home of the Bat'",
+            vec![],
+        )
+        .await,
+        Some(1)
+    );
+}
