@@ -38,9 +38,36 @@ use super::cookies::SESSION_COOKIE;
 /// an app password (Bearer or Basic) only when the marker is present;
 /// everywhere else the token is refused with 403 before any DB or argon2
 /// work, so a reader token can't reach the JSON API, admin routes or
-/// account settings (and the CSRF bypass it enjoys can't be used there).
+/// account settings.
 #[derive(Clone, Copy, Debug)]
 pub struct AppPasswordSurface;
+
+/// Route-template prefixes of every route under the reader-client surface
+/// ([`AppPasswordSurface`]). The CSRF middleware runs before the marker is
+/// attached, so it decides "is this a reader route?" from the matched route
+/// template with [`is_reader_route`]: an app password skips the CSRF check
+/// only there. `tests/app_passwords.rs::reader_route_prefixes_match_reader_surface`
+/// checks every route of every `reader_surface(...)` router in `app.rs`
+/// starts with one of these, and that no other route does.
+pub const READER_ROUTE_PREFIXES: &[&str] = &[
+    // OPDS 1.2 + 2.0 feeds, downloads, PSE, progress, KOReader sync,
+    // OPDS progression.
+    "/opds/",
+    // Komga-compatible shim.
+    "/api/v1/",
+    // Page bytes + page thumbnails.
+    "/issues/{id}/pages/",
+    // Stored issue covers.
+    "/issues/{id}/covers/",
+];
+
+/// True when `matched_path` (an axum route template such as
+/// `/opds/v1/issues/{id}/progress`) belongs to the reader-client surface.
+pub fn is_reader_route(matched_path: &str) -> bool {
+    READER_ROUTE_PREFIXES
+        .iter()
+        .any(|p| matched_path.starts_with(p))
+}
 
 #[derive(Clone, Debug)]
 pub struct CurrentUser {

@@ -414,7 +414,10 @@ async fn active_password_count(app: &TestApp) -> usize {
 }
 
 /// Off the reader surface an app password is refused with 403, as Bearer
-/// and as Basic, and the refused writes leave nothing behind.
+/// and as Basic, and the refused writes leave nothing behind. These
+/// requests carry no session cookie, so the CSRF check lets them through
+/// to the extractor, which answers with the message that says what an app
+/// password is for.
 #[tokio::test]
 async fn app_password_refused_off_reader_surface() {
     let app = TestApp::spawn().await;
@@ -544,4 +547,318 @@ async fn cookie_session_unaffected_by_app_password_scope() {
     assert_eq!(me["email"], "cookie@example.com");
     let (s, _) = send(&app, Method::GET, "/opds/v1", Cred::Cookie(&auth), None).await;
     assert_eq!(s, StatusCode::OK);
+}
+
+// ───── CSRF: the app-password exemption is reader-routes only ─────
+
+/// A cookie-authenticated request with the given extra `Authorization`
+/// header and NO `X-CSRF-Token`.
+async fn cookie_write_with_authorization(
+    app: &TestApp,
+    method: Method,
+    uri: &str,
+    auth: &Auth,
+    authorization: &str,
+    body: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let b = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::COOKIE, auth.cookies())
+        .header(header::AUTHORIZATION, authorization);
+    let req = match body {
+        Some(json) => b
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json.to_owned())),
+        None => b.body(Body::empty()),
+    }
+    .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+fn basic(token: &str) -> String {
+    use base64::Engine;
+    format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("any-name:{token}"))
+    )
+}
+
+fn assert_csrf_refused(status: StatusCode, body: &serde_json::Value, what: &str) {
+    assert_eq!(status, StatusCode::FORBIDDEN, "{what}: {body}");
+    assert_eq!(body["error"]["code"], "auth.csrf", "{what}: {body}");
+}
+
+/// Off the reader routes, an app-password-shaped `Authorization` header no
+/// longer skips the CSRF check: a cookie-authenticated write without the
+/// CSRF header is refused, whether the token is real or junk, Bearer or
+/// Basic, on a `CurrentUser` route and on cookie-only logout.
+#[tokio::test]
+async fn app_password_header_gets_no_csrf_exemption_off_reader_routes() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let reg = register(&app, "csrf@example.com").await;
+    let auth = Auth::from_response(&reg);
+    let token = mint(&app, &auth).await;
+
+    let headers = [
+        basic("app_junkjunkjunk"),
+        "Bearer app_junkjunkjunk".to_owned(),
+        basic(&token),
+        format!("Bearer {token}"),
+    ];
+    for authorization in &headers {
+        let before = active_password_count(&app).await;
+        let (s, b) = cookie_write_with_authorization(
+            &app,
+            Method::POST,
+            "/api/me/app-passwords",
+            &auth,
+            authorization,
+            Some(r#"{"label":"forged"}"#),
+        )
+        .await;
+        assert_csrf_refused(s, &b, "POST /api/me/app-passwords");
+        assert_eq!(active_password_count(&app).await, before, "no new row");
+
+        for uri in ["/auth/logout", "/api/auth/logout"] {
+            let (s, b) = cookie_write_with_authorization(
+                &app,
+                Method::POST,
+                uri,
+                &auth,
+                authorization,
+                None,
+            )
+            .await;
+            assert_csrf_refused(s, &b, uri);
+        }
+    }
+
+    // The session survived every refused logout.
+    let (s, me) = send(&app, Method::GET, "/api/auth/me", Cred::Cookie(&auth), None).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(me["email"], "csrf@example.com");
+}
+
+/// A Bearer JWT stays exempt everywhere: no cookie, no CSRF header.
+#[tokio::test]
+async fn bearer_jwt_still_csrf_exempt() {
+    let app = TestApp::spawn().await;
+    let _reg = register(&app, "jwt@example.com").await;
+    let row = entity::user::Entity::find()
+        .filter(entity::user::Column::Email.eq("jwt@example.com"))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let jwt = app
+        .state()
+        .jwt_keys
+        .issue_access(
+            row.id,
+            "admin",
+            row.token_version,
+            chrono::Duration::hours(1),
+        )
+        .unwrap();
+    let (s, b) = send(
+        &app,
+        Method::POST,
+        "/api/me/app-passwords",
+        Cred::Bearer(&jwt),
+        Some(r#"{"label":"via-jwt"}"#),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+}
+
+/// On a reader route an app password writes progress with no cookie and
+/// no CSRF header (what reader apps send); with Basic, a request carrying
+/// browser cross-site markers loses the exemption and is refused.
+#[tokio::test]
+async fn reader_route_app_password_write_and_browser_origin() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let reg = register(&app, "rw@example.com").await;
+    let auth = Auth::from_response(&reg);
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/me/app-passwords")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, auth.cookies())
+                .header("x-csrf-token", &auth.csrf)
+                .body(Body::from(r#"{"label":"rw","scope":"read+progress"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let token = body_json(resp.into_body()).await["plaintext"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Unknown issue: getting past CSRF + auth lands on 404, never 403.
+    let unknown = "0".repeat(64);
+    let uri = format!("/opds/v1/issues/{unknown}/progress");
+    let progress = r#"{"page":1}"#;
+    for authorization in [basic(&token), format!("Bearer {token}")] {
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri(&uri)
+            .header(header::AUTHORIZATION, &authorization)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(progress))
+            .unwrap();
+        let resp = app.router.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{authorization}");
+    }
+
+    // Basic + a browser marker: no exemption, so the CSRF check runs
+    // (no cookie, no token) and refuses.
+    for (name, value) in [
+        ("origin", "https://elsewhere.example"),
+        ("sec-fetch-site", "cross-site"),
+        ("sec-fetch-site", "same-site"),
+    ] {
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri(&uri)
+            .header(header::AUTHORIZATION, basic(&token))
+            .header(name, value)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(progress))
+            .unwrap();
+        let resp = app.router.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let body = body_json(resp.into_body()).await;
+        assert_csrf_refused(status, &body, &format!("Basic + {name}: {value}"));
+    }
+
+    // Bearer is never attached by a browser on its own: it stays exempt
+    // on reader routes even with an Origin header.
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri(&uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header("origin", "https://elsewhere.example")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(progress))
+        .unwrap();
+    let resp = app.router.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// Pull the string literal that follows each `marker` in `src`.
+fn literals_after(src: &str, marker: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = src;
+    while let Some(i) = rest.find(marker) {
+        rest = &rest[i + marker.len()..];
+        let trimmed = rest.trim_start();
+        if let Some(lit) = trimmed.strip_prefix('"')
+            && let Some(end) = lit.find('"')
+        {
+            out.push(lit[..end].to_owned());
+        }
+    }
+    out
+}
+
+fn module_source(module: &str) -> String {
+    let (dir, name) = module.split_once("::").unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let file = root.join(dir).join(format!("{name}.rs"));
+    let file = if file.exists() {
+        file
+    } else {
+        root.join(dir).join(name).join("mod.rs")
+    };
+    std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+}
+
+/// The CSRF middleware decides "reader route" from
+/// `READER_ROUTE_PREFIXES`; the extractor decides it from the
+/// `reader_surface(...)` wrapping in `app.rs`. Keep the two in step: every
+/// route of a wrapped router is covered by a prefix, and no other `bare`
+/// route or JSON route is.
+///
+/// Limits of this check: it reads source text, so it only sees routes
+/// written as a string literal in a `.route("…")` call of the module's own
+/// file, and JSON routes that carry a `#[utoipa::path]`. A reader route
+/// registered another way (a path constant, a sub-router merged from a
+/// different file) is not seen; add its path here by hand when adding one.
+#[test]
+fn reader_route_prefixes_match_reader_surface() {
+    use server::auth::extractor::is_reader_route;
+
+    let app_rs = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app.rs"),
+    )
+    .unwrap();
+    let start = app_rs.find("let bare = ").expect("bare group");
+    let end = start + app_rs[start..].find("let api = ").expect("api group");
+    let bare = &app_rs[start..end];
+
+    // Every `api::X::routes()` / `auth::X::routes()` in the bare group,
+    // split by whether `reader_surface(` wraps it.
+    let mut reader = Vec::new();
+    let mut other = Vec::new();
+    for (i, _) in bare.match_indices("::routes()") {
+        let head = &bare[..i];
+        let from = head
+            .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+            .map_or(0, |p| p + 1);
+        let module = &head[from..];
+        if !(module.starts_with("api::") || module.starts_with("auth::")) {
+            continue;
+        }
+        let before = head[..from].trim_end();
+        if before.ends_with("reader_surface(") {
+            reader.push(module.to_owned());
+        } else {
+            other.push(module.to_owned());
+        }
+    }
+    assert!(
+        reader.len() >= 6,
+        "reader_surface routers found: {reader:?}"
+    );
+
+    for module in &reader {
+        let routes = literals_after(&module_source(module), ".route(");
+        assert!(!routes.is_empty(), "{module}: no routes found");
+        for path in routes {
+            assert!(
+                is_reader_route(&path),
+                "{module} route {path} is under reader_surface but not in READER_ROUTE_PREFIXES"
+            );
+        }
+    }
+    for module in &other {
+        let src = module_source(module);
+        for path in literals_after(&src, ".route(")
+            .into_iter()
+            .chain(literals_after(&src, "path = "))
+        {
+            assert!(
+                !is_reader_route(&path),
+                "{module} route {path} is not a reader route but matches READER_ROUTE_PREFIXES"
+            );
+        }
+    }
+    // The JSON surface, with its real `/api` prefix.
+    for path in server::app::openapi_spec().paths.paths.keys() {
+        assert!(
+            !is_reader_route(path),
+            "{path} matches READER_ROUTE_PREFIXES but is not a reader route"
+        );
+    }
 }

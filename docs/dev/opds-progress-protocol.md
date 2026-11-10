@@ -53,9 +53,13 @@ mirror; both protocol surfaces converge on the v1 path.
 - **HTTP Basic** carrying an app password (`Authorization: Basic <b64(user:app_…)>`).
   Same scope rule applies. JWT-via-Basic is rejected as a footgun guard.
 
-`PUT` is CSRF-exempt when accompanied by Basic auth with an app password
-(M7 of opds-readiness widened the exempt list). Cookie callers must
-include the standard `X-CSRF-Token` header.
+`PUT` is CSRF-exempt when it carries an app password, because this is a
+reader route (`auth::extractor::READER_ROUTE_PREFIXES`; off those routes an
+app password gets no CSRF exemption). With **Basic**, the exemption also
+requires that the request carries no `Origin` header and no
+`Sec-Fetch-Site: cross-site` / `same-site` — a browser attaches cached
+Basic credentials by itself, reader apps send neither header. Cookie
+callers must include the standard `X-CSRF-Token` header.
 
 ## Request body
 
