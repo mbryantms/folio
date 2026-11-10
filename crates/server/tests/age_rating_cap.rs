@@ -927,6 +927,9 @@ struct Gap {
     one: String,
     two: String,
     three: String,
+    /// "Lead Gap" (rated `Teen`): its #1 is the hidden one, so the
+    /// heuristic cover of an uncapped card is the hidden issue.
+    lead_hidden: String,
 }
 
 async fn seed_gap(app: &TestApp, lib_id: Uuid) -> Gap {
@@ -996,11 +999,29 @@ async fn seed_gap(app: &TestApp, lib_id: Uuid) -> Gap {
         )
         .await;
     }
+    let lead = seed_series(&db, lib_id, "Lead Gap", "lead-gap", Some("Teen")).await;
+    let lead_hidden = seed_issue(
+        &db,
+        &root,
+        lib_id,
+        lead,
+        1,
+        "lead-1",
+        "Lead One",
+        Some("Mature 17+"),
+        None,
+    )
+    .await;
+    seed_issue(
+        &db, &root, lib_id, lead, 2, "lead-2", "Lead Two", None, None,
+    )
+    .await;
     Gap {
         series_id,
         one,
         two,
         three,
+        lead_hidden,
     }
 }
 
@@ -1428,4 +1449,589 @@ async fn reading_log_leaves_out_a_read_of_the_hidden_issue() {
     assert_eq!(st, StatusCode::OK);
     let csv = String::from_utf8(bytes).unwrap();
     assert!(csv.contains("Gap One") && !csv.contains("Gap Two"), "{csv}");
+}
+
+// ───── round two: coverage, OPDS covers, list filters, bulk progress ─────
+
+/// `(status, body)` with every occurrence of `id` replaced by `X`, so the
+/// answer for a hidden id can be compared with the one for an unknown id.
+async fn masked(
+    app: &TestApp,
+    method: Method,
+    path: &str,
+    user: &Authed,
+    body: Option<serde_json::Value>,
+    id: &str,
+) -> (StatusCode, String) {
+    let (st, bytes) = raw(app, method, path, user, body).await;
+    (st, String::from_utf8_lossy(&bytes).replace(id, "X"))
+}
+
+fn unknown_issue_id() -> String {
+    format!("{:0>64}", "f")
+}
+
+#[tokio::test]
+async fn provider_coverage_segments_leave_out_the_hidden_issue() {
+    let (w, gap) = gap_world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::external_id::ActiveModel {
+        entity_type: Set("series".into()),
+        entity_id: Set(gap.series_id.to_string()),
+        source: Set("comicvine".into()),
+        external_id: Set("1000".into()),
+        external_url: Set(None),
+        set_by: Set("user".into()),
+        first_set_at: Set(now),
+        last_synced_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    // Only the hidden #2 maps to another provider series.
+    entity::series_provider_range::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        series_id: Set(gap.series_id),
+        source: Set("comicvine".into()),
+        provider_series_id: Set("2000".into()),
+        provider_series_url: Set(None),
+        provider_series_name: Set(Some("Split".into())),
+        range_low: Set(Some("2".into())),
+        range_high: Set(Some("2".into())),
+        declared_year: Set(None),
+        set_by: Set("user".into()),
+        first_set_at: Set(now),
+        last_synced_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let segments = |body: &serde_json::Value| -> Vec<(String, String, u64, String)> {
+        body["providers"][0]["segments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["low"].as_str().unwrap().to_owned(),
+                    s["high"].as_str().unwrap().to_owned(),
+                    s["issue_count"].as_u64().unwrap(),
+                    s["provider_series_id"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    let path = "/api/series/gap-run/provider-coverage";
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        segments(&body),
+        vec![("1".into(), "3".into(), 2, "1000".into())],
+        "{body}"
+    );
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, path, user).await;
+        assert_eq!(
+            segments(&body),
+            vec![
+                ("1".into(), "1".into(), 1, "1000".into()),
+                ("2".into(), "2".into(), 1, "2000".into()),
+                ("3".into(), "3".into(), 1, "1000".into()),
+            ],
+            "{body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn coverage_hints_local_view_leaves_out_the_hidden_issue() {
+    use server::library::access::VisibleLibraries;
+    use server::metadata::coverage::{load_local, load_local_for};
+    let (w, gap) = gap_world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let numbers = |l: Vec<server::metadata::coverage::LocalCovIssue>| -> Vec<String> {
+        l.into_iter().map(|i| i.canonical).collect()
+    };
+    let mut capped = VisibleLibraries::default();
+    capped.allowed.insert(w.fx.lib_id);
+    capped.caps.insert(w.fx.lib_id, "Teen".into());
+    let got = numbers(load_local_for(&db, gap.series_id, &capped).await.unwrap());
+    assert_eq!(got, vec!["1", "3"]);
+    let mut uncapped = VisibleLibraries::default();
+    uncapped.allowed.insert(w.fx.lib_id);
+    for acl in [uncapped, VisibleLibraries::unrestricted()] {
+        let got = numbers(load_local_for(&db, gap.series_id, &acl).await.unwrap());
+        assert_eq!(got, vec!["1", "2", "3"]);
+    }
+    // The coverage job keeps the full view.
+    let got = numbers(load_local(&db, gap.series_id).await.unwrap());
+    assert_eq!(got, vec!["1", "2", "3"]);
+}
+
+#[tokio::test]
+async fn opds_series_entries_never_name_the_hidden_cover_issue() {
+    let (w, gap) = gap_world().await;
+    let lead = gap.lead_hidden.clone();
+    let lead_series = {
+        use sea_orm::{ColumnTrait, QueryFilter};
+        let db = Database::connect(&w.app.db_url).await.unwrap();
+        entity::series::Entity::find()
+            .filter(entity::series::Column::Slug.eq("lead-gap"))
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+            .id
+    };
+    for path in [
+        "/opds/v1/series".to_owned(),
+        "/opds/v2/series".to_owned(),
+        format!("/opds/v1/series/{lead_series}"),
+        format!("/opds/v2/series/{lead_series}"),
+    ] {
+        let (st, bytes) = raw(&w.app, Method::GET, &path, &w.capped, None).await;
+        assert_eq!(st, StatusCode::OK, "{path}");
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("Lead Gap"), "{path}: {text}");
+        assert!(
+            !text.contains(&lead),
+            "{path} names the hidden issue: {text}"
+        );
+    }
+    // The uncapped reader and the admin get the hidden #1 as the cover.
+    for user in [&w.uncapped, &w.admin] {
+        for path in ["/opds/v1/series", "/opds/v2/series"] {
+            let (_, bytes) = raw(&w.app, Method::GET, path, user, None).await;
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(text.contains(&lead), "{path}: {text}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn series_list_filters_agree_with_the_capped_card() {
+    let (w, _gap) = gap_world().await;
+    let path = "/api/series?characters=Secret%20Agent";
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(
+        !names(&body, "slug").contains(&"gap-run".to_owned()),
+        "{body}"
+    );
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, path, user).await;
+        assert_eq!(names(&body, "slug"), vec!["gap-run"], "{body}");
+    }
+}
+
+#[tokio::test]
+async fn relationship_card_leaves_out_a_hidden_first_issue() {
+    let (w, gap) = gap_world().await;
+    let (st, body) = post_json(
+        &w.app,
+        "/api/series/teen-tales/relationships",
+        &w.admin,
+        serde_json::json!({"target": "lead-gap", "kind": "sequel_of"}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let card = |body: &serde_json::Value| -> serde_json::Value {
+        body["relationships"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["series"]["slug"] == "lead-gap")
+            .map(|r| r["series"].clone())
+            .unwrap_or_default()
+    };
+    let path = "/api/series/teen-tales/relationships";
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let c = card(&body);
+    assert_eq!(c["issue_count"], 1, "{body}");
+    assert_eq!(c["progress_summary"]["total"], 1, "{body}");
+    assert!(!body.to_string().contains(&gap.lead_hidden), "{body}");
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, path, user).await;
+        let c = card(&body);
+        assert_eq!(c["issue_count"], 2, "{body}");
+        assert!(
+            c["cover_url"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(&gap.lead_hidden),
+            "{body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn bulk_progress_counts_a_hidden_issue_as_not_found() {
+    let (w, gap) = gap_world().await;
+    let unknown = unknown_issue_id();
+    let (st, body) = post_json(
+        &w.app,
+        "/api/me/progress/bulk",
+        &w.capped,
+        serde_json::json!({"issue_ids": [&gap.one, &gap.two, &unknown], "finished": true}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        (&body["updated"], &body["not_found"], &body["forbidden"]),
+        (
+            &serde_json::json!(1),
+            &serde_json::json!(2),
+            &serde_json::json!(0)
+        ),
+        "{body}"
+    );
+    assert!(!has_progress_row(&w.app, w.capped.user_id, &gap.two).await);
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = post_json(
+            &w.app,
+            "/api/me/progress/bulk",
+            user,
+            serde_json::json!({"issue_ids": [&gap.one, &gap.two, &unknown], "finished": true}),
+        )
+        .await;
+        assert_eq!(body["updated"], 2, "{body}");
+        assert_eq!(body["not_found"], 1, "{body}");
+        assert!(has_progress_row(&w.app, user.user_id, &gap.two).await);
+    }
+    // Series-level bulk: a series above the cap reads as unknown too.
+    let (_, body) = post_json(
+        &w.app,
+        "/api/me/progress/series-bulk",
+        &w.capped,
+        serde_json::json!({"series_ids": [w.fx.mature_series, Uuid::now_v7()], "finished": true}),
+    )
+    .await;
+    assert_eq!(body["not_found_series"], 2, "{body}");
+    assert_eq!(body["forbidden_series"], 0, "{body}");
+    assert_eq!(body["updated"], 0, "{body}");
+}
+
+#[tokio::test]
+async fn writes_keyed_on_a_hidden_issue_answer_like_an_unknown_id() {
+    use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter};
+    let (w, gap) = gap_world().await;
+    let hidden = gap.two.clone();
+    let unknown = unknown_issue_id();
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let started = (Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
+    let session = |id: &str| {
+        serde_json::json!({
+            "client_session_id": "s-1",
+            "issue_id": id,
+            "started_at": started,
+            "active_ms": 60_000,
+            "distinct_pages_read": 2,
+            "page_turns": 2,
+            "start_page": 0,
+            "end_page": 1,
+            "client_meta": {},
+        })
+    };
+    let (st, created) = post_json(
+        &w.app,
+        "/api/me/collections",
+        &w.capped,
+        serde_json::json!({"name": "Pile"}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    let cid = created["id"].as_str().unwrap().to_owned();
+
+    // (method, hidden path, unknown path, body builder)
+    type Body = fn(&str) -> Option<serde_json::Value>;
+    let cases: Vec<(Method, String, String, Body)> = vec![
+        (
+            Method::POST,
+            "/api/progress".into(),
+            "/api/progress".into(),
+            |id| Some(serde_json::json!({"issue_id": id, "page": 1, "finished": true})),
+        ),
+        (
+            Method::PUT,
+            "/api/series/gap-run/issues/gap-2/rating".into(),
+            "/api/series/gap-run/issues/no-such-issue/rating".into(),
+            |_| Some(serde_json::json!({"rating": 4.0})),
+        ),
+        (
+            Method::PUT,
+            "/api/series/gap-run/issues/gap-2/note".into(),
+            "/api/series/gap-run/issues/no-such-issue/note".into(),
+            |_| Some(serde_json::json!({"body": "a note"})),
+        ),
+        (
+            Method::POST,
+            format!("/api/me/collections/{cid}/members/bulk-add"),
+            format!("/api/me/collections/{cid}/members/bulk-add"),
+            |id| Some(serde_json::json!({"members": [{"entry_kind": "issue", "ref_id": id}]})),
+        ),
+        (
+            Method::POST,
+            "/api/series/gap-run/issues/gap-2/metadata/search".into(),
+            "/api/series/gap-run/issues/no-such-issue/metadata/search".into(),
+            |_| None,
+        ),
+        (
+            Method::POST,
+            "/api/series/gap-run/issues/gap-2/metadata/lookup".into(),
+            "/api/series/gap-run/issues/no-such-issue/metadata/lookup".into(),
+            |_| Some(serde_json::json!({"source": "comicvine", "external_id": "1"})),
+        ),
+    ];
+    for (method, hidden_path, unknown_path, body) in cases {
+        let h = masked(
+            &w.app,
+            method.clone(),
+            &hidden_path,
+            &w.capped,
+            body(&hidden),
+            &hidden,
+        )
+        .await;
+        let u = masked(
+            &w.app,
+            method.clone(),
+            &unknown_path,
+            &w.capped,
+            body(&unknown),
+            &unknown,
+        )
+        .await;
+        assert_eq!(h, u, "{method} {hidden_path}");
+        if hidden_path.ends_with("/bulk-add") {
+            // A batch endpoint: 200 with the id counted as not found.
+            assert!(h.1.contains("\"not_found\":1"), "{hidden_path}: {h:?}");
+        } else {
+            assert!(h.0.is_client_error(), "{method} {hidden_path}: {h:?}");
+        }
+    }
+    // Reading session start: same answer as an unknown id.
+    let h = masked(
+        &w.app,
+        Method::POST,
+        "/api/me/reading-sessions",
+        &w.capped,
+        Some(session(&hidden)),
+        &hidden,
+    )
+    .await;
+    let u = masked(
+        &w.app,
+        Method::POST,
+        "/api/me/reading-sessions",
+        &w.capped,
+        Some(session(&unknown)),
+        &unknown,
+    )
+    .await;
+    assert_eq!(h, u);
+    assert_eq!(h.0, StatusCode::NOT_FOUND);
+
+    // Metadata diffs (GET with a run id): same answer as an unknown slug.
+    let run = Uuid::now_v7();
+    for suffix in [
+        format!("metadata/proposed-diff?run_id={run}&ordinal=0"),
+        format!("metadata/composite-diff?run_id={run}"),
+    ] {
+        let h = masked(
+            &w.app,
+            Method::GET,
+            &format!("/api/series/gap-run/issues/gap-2/{suffix}"),
+            &w.capped,
+            None,
+            &hidden,
+        )
+        .await;
+        let u = masked(
+            &w.app,
+            Method::GET,
+            &format!("/api/series/gap-run/issues/no-such-issue/{suffix}"),
+            &w.capped,
+            None,
+            &unknown,
+        )
+        .await;
+        assert_eq!(h, u, "{suffix}");
+        assert_eq!(h.0, StatusCode::NOT_FOUND, "{suffix}");
+    }
+
+    // Reading-list manual match onto the hidden issue.
+    let list_id = Uuid::now_v7();
+    let entry_id = Uuid::now_v7();
+    let now = Utc::now().fixed_offset();
+    entity::cbl_list::ActiveModel {
+        id: Set(list_id),
+        owner_user_id: Set(Some(w.capped.user_id)),
+        source_kind: Set("upload".into()),
+        source_url: Set(None),
+        catalog_source_id: Set(None),
+        catalog_path: Set(None),
+        github_blob_sha: Set(None),
+        source_etag: Set(None),
+        source_last_modified: Set(None),
+        raw_sha256: Set(vec![0; 32]),
+        raw_xml: Set("<ReadingList/>".into()),
+        parsed_name: Set("List".into()),
+        parsed_matchers_present: Set(false),
+        num_issues_declared: Set(Some(1)),
+        description: Set(None),
+        imported_at: Set(now),
+        last_refreshed_at: Set(None),
+        last_match_run_at: Set(None),
+        refresh_schedule: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        preserve_canonical_order: Set(false),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    entity::cbl_entry::ActiveModel {
+        id: Set(entry_id),
+        cbl_list_id: Set(list_id),
+        position: Set(0),
+        series_name: Set("Gap Run".into()),
+        issue_number: Set("2".into()),
+        volume: Set(None),
+        year: Set(None),
+        cv_series_id: Set(None),
+        cv_issue_id: Set(None),
+        metron_series_id: Set(None),
+        metron_issue_id: Set(None),
+        matched_issue_id: Set(None),
+        match_status: Set("missing".into()),
+        match_method: Set(None),
+        match_confidence: Set(None),
+        ambiguous_candidates: Set(None),
+        user_resolved_at: Set(None),
+        matched_at: Set(None),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    let path = format!("/api/me/cbl-lists/{list_id}/entries/{entry_id}/match");
+    let h = masked(
+        &w.app,
+        Method::POST,
+        &path,
+        &w.capped,
+        Some(serde_json::json!({"issue_id": hidden})),
+        &hidden,
+    )
+    .await;
+    let u = masked(
+        &w.app,
+        Method::POST,
+        &path,
+        &w.capped,
+        Some(serde_json::json!({"issue_id": unknown})),
+        &unknown,
+    )
+    .await;
+    assert_eq!(h, u);
+    assert!(h.0.is_client_error(), "{h:?}");
+
+    // Nothing was written for the hidden issue.
+    assert!(!has_progress_row(&w.app, w.capped.user_id, &hidden).await);
+    let entry = entity::cbl_entry::Entity::find_by_id(entry_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(entry.matched_issue_id.is_none());
+    let n = entity::collection_entry::Entity::find()
+        .filter(entity::collection_entry::Column::IssueId.eq(hidden.clone()))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    let n = entity::reading_session::Entity::find()
+        .filter(entity::reading_session::Column::IssueId.eq(hidden.clone()))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    let n = entity::user_rating::Entity::find()
+        .filter(entity::user_rating::Column::TargetId.eq(hidden.clone()))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+
+    // The uncapped reader and the admin can do the same writes.
+    for user in [&w.uncapped, &w.admin] {
+        let (st, body) = raw(
+            &w.app,
+            Method::PUT,
+            "/api/series/gap-run/issues/gap-2/rating",
+            user,
+            Some(serde_json::json!({"rating": 4.0})),
+        )
+        .await;
+        assert!(st.is_success(), "{st} {}", String::from_utf8_lossy(&body));
+        let (st, body) = raw(
+            &w.app,
+            Method::POST,
+            "/api/progress",
+            user,
+            Some(serde_json::json!({"issue_id": hidden, "page": 1})),
+        )
+        .await;
+        assert!(st.is_success(), "{st} {}", String::from_utf8_lossy(&body));
+    }
+}
+
+#[tokio::test]
+async fn reading_log_keeps_a_read_of_a_later_removed_issue() {
+    let (w, gap) = gap_world().await;
+    for user in [&w.capped, &w.uncapped] {
+        for id in [&gap.two, &gap.three] {
+            progress(&w.app, user.user_id, id, true).await;
+        }
+    }
+    // #3 is soft-removed after it was read: the log is history and keeps it.
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    entity::issue::ActiveModel {
+        id: Unchanged(gap.three.clone()),
+        removed_at: Set(Some(Utc::now().fixed_offset())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    let issue_ids = |body: &serde_json::Value| -> Vec<String> {
+        body["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["issue"]["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let (_, body) = get_json(&w.app, "/api/me/reading-log", &w.capped).await;
+    let got = issue_ids(&body);
+    assert!(got.contains(&gap.three), "{body}");
+    assert!(!got.contains(&gap.two), "{body}");
+    let (_, body) = get_json(&w.app, "/api/me/reading-log", &w.uncapped).await;
+    let got = issue_ids(&body);
+    assert!(got.contains(&gap.three) && got.contains(&gap.two), "{body}");
+    let (st, bytes) = raw(
+        &w.app,
+        Method::GET,
+        "/api/me/reading-log/export",
+        &w.capped,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let csv = String::from_utf8(bytes).unwrap();
+    assert!(
+        csv.contains("Gap Three") && !csv.contains("Gap Two"),
+        "{csv}"
+    );
 }

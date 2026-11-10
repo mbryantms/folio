@@ -460,11 +460,13 @@ async fn gather_events(
     // tens of MB up front; the Vec still grows to whatever the sources
     // return.
     let mut candidates: Vec<Candidate> = Vec::with_capacity((limit.clamp(0, 1000) as usize) * 4);
-    // The caller's grant + age cap. Every harvester folds the issue-level
-    // visibility predicate into its own statement, so a page is never
-    // short and an issue the caller can no longer see (rated above the
-    // cap, removed, or outside the grant) leaves no event — including
-    // reads recorded before the cap was set.
+    // The caller's grant + age cap. For a capped caller every harvester
+    // folds the issue-level cap into its own statement (grant + cap only:
+    // the log is history, so a read of an issue that was later removed
+    // stays), so a page is never short and a read of an issue rated above
+    // the cap leaves no event — including reads recorded before the cap
+    // was set. Admins and uncapped readers pay nothing extra: the grant is
+    // checked at hydrate time, as before.
     let acl = access::for_user(app, user).await;
 
     if p.kinds.contains(&EventKind::IssueFinished) {
@@ -583,9 +585,14 @@ async fn gather_events(
     let series_cover_by_id: HashMap<Uuid, String> = if series_ids.is_empty() {
         HashMap::new()
     } else {
-        let candidates_for_cover = access::visible_issues_select(&acl)
+        let mut cover_select = issue::Entity::find()
             .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
             .filter(issue::Column::State.eq(issue::IssueState::Active))
+            .filter(issue::Column::RemovedAt.is_null());
+        if let Some(cap) = acl.issue_cap_condition() {
+            cover_select = cover_select.filter(cap);
+        }
+        let candidates_for_cover = cover_select
             .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await?;
@@ -1013,13 +1020,23 @@ fn hydrate(
 
 // ───────── Per-source harvesters ─────────
 
-/// `SELECT issues.id` over [`access::visible_issues_select`] — the
-/// semi-join every per-issue harvester filters its source rows through.
-fn visible_issue_ids(acl: &access::VisibleLibraries) -> sea_orm::sea_query::SelectStatement {
-    access::visible_issues_select(acl)
+/// For a capped caller, `SELECT issues.id` under the caller's grant + age
+/// cap ([`access::VisibleLibraries::issue_filter`], which has no removed
+/// predicate: a log row of a since-removed issue is history and stays) —
+/// the semi-join every per-issue harvester filters its rows through.
+/// `None` for an admin or an uncapped reader: no predicate at all (the
+/// grant is still checked at hydrate time, as before).
+fn capped_issue_ids(acl: &access::VisibleLibraries) -> Option<sea_orm::sea_query::SelectStatement> {
+    if !acl.has_caps() {
+        return None;
+    }
+    let mut select = issue::Entity::find()
         .select_only()
-        .column(issue::Column::Id)
-        .into_query()
+        .column(issue::Column::Id);
+    if let Some(cond) = acl.issue_filter() {
+        select = select.filter(cond);
+    }
+    Some(select.into_query())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1040,8 +1057,10 @@ async fn fetch_issue_finished(
     // we don't over-fetch.
     let mut query = progress_record::Entity::find()
         .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::FinishedAt.is_not_null())
-        .filter(progress_record::Column::IssueId.in_subquery(visible_issue_ids(acl)));
+        .filter(progress_record::Column::FinishedAt.is_not_null());
+    if let Some(ids) = capped_issue_ids(acl) {
+        query = query.filter(progress_record::Column::IssueId.in_subquery(ids));
+    }
     // Catalog/sync writes (`is_backfill = true`) are intentionally
     // excluded from the reading-log feed by default — they represent
     // issues the user is *recording* as read, not *just read*. The
@@ -1142,8 +1161,10 @@ async fn fetch_sessions(
         .filter(reading_session::Column::UserId.eq(user_id))
         .filter(reading_session::Column::EndedAt.is_not_null())
         .filter(reading_session::Column::ActiveMs.gte(SESSION_MIN_ACTIVE_MS))
-        .filter(reading_session::Column::DistinctPagesRead.gt(0))
-        .filter(reading_session::Column::IssueId.in_subquery(visible_issue_ids(acl)));
+        .filter(reading_session::Column::DistinctPagesRead.gt(0));
+    if let Some(ids) = capped_issue_ids(acl) {
+        query = query.filter(reading_session::Column::IssueId.in_subquery(ids));
+    }
     if !include_hidden {
         query = query.filter(reading_session::Column::HiddenFromLog.eq(false));
     }
@@ -1209,9 +1230,10 @@ async fn fetch_markers(
     series_id: Option<Uuid>,
     include_hidden: bool,
 ) -> Result<Vec<Candidate>, sea_orm::DbErr> {
-    let mut query = marker::Entity::find()
-        .filter(marker::Column::UserId.eq(user_id))
-        .filter(marker::Column::IssueId.in_subquery(visible_issue_ids(acl)));
+    let mut query = marker::Entity::find().filter(marker::Column::UserId.eq(user_id));
+    if let Some(ids) = capped_issue_ids(acl) {
+        query = query.filter(marker::Column::IssueId.in_subquery(ids));
+    }
     if !include_hidden {
         query = query.filter(marker::Column::HiddenFromLog.eq(false));
     }
@@ -1326,14 +1348,29 @@ async fn fetch_series_finished(
         None => String::new(),
     };
 
-    // Both sides count only what the caller can see: the series itself
-    // (grant + cap) and, within it, the issues (grant + issue-level cap),
-    // so a capped reader's "finished" is judged over the issues they can
-    // open and a hidden issue never feeds the timestamp.
+    // For a capped caller both sides count only what they can see: the
+    // series under the cap and, within it, the issues under the
+    // issue-level cap (own rating, else the joined series' rating), so
+    // "finished" is judged over the issues they can open and a hidden
+    // issue never feeds the timestamp. Empty for admins and uncapped
+    // readers (the grant is checked at hydrate time, as before).
     let mut params: Vec<sea_orm::Value> = vec![user_id.into(), limit.into()];
-    let series_vis = access::visible_series_sql(acl, "s", &mut params);
-    let active_vis = access::visible_issues_sql(acl, "i", &mut params);
-    let finished_vis = access::visible_issues_sql(acl, "i", &mut params);
+    let series_cap = acl.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
+    let active_cap = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
+    let finished_cap = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
+    let finished_join = if finished_cap.is_empty() {
+        ""
+    } else {
+        "JOIN   series s ON s.id = i.series_id"
+    };
     let sql = format!(
         r#"
         WITH active_counts AS (
@@ -1341,7 +1378,7 @@ async fn fetch_series_finished(
             FROM   series s
             JOIN   issues i ON i.series_id = s.id
             WHERE  i.state = 'active' AND i.removed_at IS NULL
-                   {series_vis}{active_vis}
+                   {series_cap}{active_cap}
             GROUP BY s.id
         ),
         user_finishes AS (
@@ -1350,6 +1387,7 @@ async fn fetch_series_finished(
                    COUNT(*)             AS finished_count
             FROM   progress_records pr
             JOIN   issues i ON i.id = pr.issue_id
+            {finished_join}
             WHERE  pr.user_id = $1
               AND  pr.finished = TRUE
               AND  pr.finished_at IS NOT NULL
@@ -1358,7 +1396,7 @@ async fn fetch_series_finished(
               AND  pr.is_backfill = FALSE
               AND  i.state = 'active'
               AND  i.removed_at IS NULL
-                   {finished_vis}
+                   {finished_cap}
             GROUP BY i.series_id
         )
         SELECT uf.series_id, uf.series_finished_at

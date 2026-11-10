@@ -890,13 +890,11 @@ pub struct UpsertBulkResp {
     pub updated: u32,
     /// Issues already in the target state (no DB write — cheap re-click).
     pub skipped: u32,
-    /// Issues the caller doesn't have library access to read. Silent
-    /// from the user's perspective; surfaced here so an admin
-    /// debugging a "mark read did nothing" report can see the
-    /// filter fired.
+    /// Always 0. Kept for response shape: an issue the caller can't see
+    /// is counted in `not_found`, indistinguishable from an unknown id.
     pub forbidden: u32,
     /// Issues whose id didn't resolve to a row (removed / never
-    /// existed / typo). Treated the same as forbidden — the caller
+    /// existed / typo) or that the caller can't see — the caller
     /// doesn't get to distinguish a missing row from one they're
     /// not allowed to see.
     pub not_found: u32,
@@ -977,7 +975,7 @@ pub async fn upsert_bulk(
     };
 
     let found_ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-    let not_found = ids
+    let mut not_found = ids
         .iter()
         .filter(|id| !found_ids.contains(id.as_str()))
         .count() as u32;
@@ -991,11 +989,14 @@ pub async fn upsert_bulk(
     let mut skipped: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
-    let mut forbidden: u32 = 0;
+    // An issue the caller can't see (outside the grant, or rated above
+    // their cap) is counted exactly like an unknown id; `forbidden` stays
+    // in the response for shape and is always 0.
+    let forbidden: u32 = 0;
 
     for iss in rows {
         if !access::issue_allowed(&app, &acl, &iss).await {
-            forbidden += 1;
+            not_found += 1;
             continue;
         }
         let target_page = if req.finished {
@@ -1098,9 +1099,10 @@ pub struct UpsertSeriesBulkResp {
     pub updated: u32,
     /// Issues already in the target state.
     pub skipped: u32,
-    /// Series the caller can't see (library access denied).
+    /// Always 0. Kept for response shape: a series the caller can't see
+    /// is counted in `not_found_series`.
     pub forbidden_series: u32,
-    /// Series whose id didn't resolve.
+    /// Series whose id didn't resolve, or that the caller can't see.
     pub not_found_series: u32,
     /// Issues whose write failed (post-audit T3.7); see
     /// [`UpsertSeriesResp::failed`].
@@ -1172,7 +1174,7 @@ pub async fn upsert_series_bulk(
     };
     let found_ids: std::collections::HashSet<uuid::Uuid> =
         series_rows.iter().map(|r| r.id).collect();
-    let not_found_series = series_ids
+    let mut not_found_series = series_ids
         .iter()
         .filter(|id| !found_ids.contains(id))
         .count() as u32;
@@ -1184,11 +1186,13 @@ pub async fn upsert_series_bulk(
     let mut skipped: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
-    let mut forbidden_series: u32 = 0;
+    // A series the caller can't see counts exactly like an unknown id;
+    // `forbidden_series` stays in the response for shape and is always 0.
+    let forbidden_series: u32 = 0;
 
     for srow in series_rows {
         if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
-            forbidden_series += 1;
+            not_found_series += 1;
             continue;
         }
         // Pull every active, on-disk issue for the series in one

@@ -79,8 +79,7 @@ pub struct IssueCoversResp {
     params(("id" = String, Path)),
     responses(
         (status = 200, body = IssueCoversResp),
-        (status = 403, description = "library access denied"),
-        (status = 404, description = "issue not found"),
+        (status = 404, description = "issue not found, or not visible to the caller"),
     )
 )]
 #[handler]

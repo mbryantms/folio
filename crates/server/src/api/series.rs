@@ -1900,9 +1900,13 @@ fn apply_series_credit_role_filters(
 /// value contains one (so names like `"Capes, Inc."` survive),
 /// otherwise split on `,`. Lowercased on both sides for case-
 /// insensitive matching.
+/// The issue EXISTS takes the caller's issue-level age cap (`acl`), so a
+/// cast value only an issue above the cap carries never selects a series
+/// — the filter agrees with the capped card it returns (WP-2.7).
 fn apply_series_cast_setting_filters(
     mut select: sea_orm::Select<series::Entity>,
     q: &ListSeriesQuery,
+    acl: &access::VisibleLibraries,
 ) -> sea_orm::Select<series::Entity> {
     let cast_facets: [(Option<&str>, &'static str); 3] = [
         (q.characters.as_deref(), "characters"),
@@ -1916,11 +1920,13 @@ fn apply_series_cast_setting_filters(
             continue;
         }
         let lowered: Vec<String> = values.iter().map(|s| s.to_lowercase()).collect();
+        let mut params: Vec<Value> = vec![Value::from(lowered)];
+        let cap = acl.issue_cap_sql("i", &mut params);
         let sql = format!(
             "EXISTS (SELECT 1 FROM issues i \
                WHERE i.series_id = series.id \
                  AND i.removed_at IS NULL \
-                 AND i.state = 'active' \
+                 AND i.state = 'active'{cap} \
                  AND EXISTS ( \
                    SELECT 1 FROM unnest( \
                      regexp_split_to_array( \
@@ -1931,7 +1937,7 @@ fn apply_series_cast_setting_filters(
                    WHERE lower(trim(piece)) = ANY($1) \
                  ))",
         );
-        select = select.filter(Expr::cust_with_values(sql, [Value::from(lowered)]));
+        select = select.filter(Expr::cust_with_values(sql, params));
     }
     select
 }
@@ -2068,6 +2074,7 @@ fn apply_series_provider_match_filter(
 fn apply_series_metadata_completeness_filter(
     select: sea_orm::Select<series::Entity>,
     q: &ListSeriesQuery,
+    acl: &access::VisibleLibraries,
 ) -> sea_orm::Select<series::Entity> {
     let Some(tier) = q.metadata_completeness.as_deref().map(str::trim) else {
         return select;
@@ -2082,15 +2089,22 @@ fn apply_series_metadata_completeness_filter(
         _ => "agg.complete_count > 0 AND agg.complete_count < agg.active_count",
     };
     let satisfied = crate::metadata::completeness::issue_metadata_satisfied_sql("i");
+    // Same issue set as the card's completeness badge: the caller's cap.
+    let mut params: Vec<Value> = Vec::new();
+    let cap = acl.issue_cap_sql("i", &mut params);
     let sql = format!(
         "EXISTS (SELECT 1 FROM ( \
            SELECT COUNT(*) AS active_count, \
                   COUNT(*) FILTER (WHERE {satisfied}) AS complete_count \
              FROM issues i \
-            WHERE i.series_id = series.id AND i.state = 'active' AND i.removed_at IS NULL \
+            WHERE i.series_id = series.id AND i.state = 'active' AND i.removed_at IS NULL{cap} \
          ) agg WHERE agg.active_count > 0 AND {tier_cond})"
     );
-    select.filter(Expr::cust(sql))
+    if params.is_empty() {
+        select.filter(Expr::cust(sql))
+    } else {
+        select.filter(Expr::cust_with_values(sql, params))
+    }
 }
 
 /// Decode the opaque cursor and dispatch to the per-sort
@@ -2276,10 +2290,10 @@ pub async fn list(
     select = apply_series_direct_column_filters(select, &q);
     select = apply_series_junction_facet_filters(select, &q);
     select = apply_series_credit_role_filters(select, &q);
-    select = apply_series_cast_setting_filters(select, &q);
+    select = apply_series_cast_setting_filters(select, &q, &visible_libs);
     select = apply_series_user_rating_filter(select, &q, user.id);
     select = apply_series_read_status_filter(select, &q, user.id);
-    select = apply_series_metadata_completeness_filter(select, &q);
+    select = apply_series_metadata_completeness_filter(select, &q, &visible_libs);
     select = apply_series_provider_match_filter(select, &q);
     select = apply_series_starts_with_filter(select, &q);
 

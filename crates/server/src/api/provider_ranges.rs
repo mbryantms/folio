@@ -184,7 +184,8 @@ pub async fn coverage_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
+    let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -194,9 +195,16 @@ pub async fn coverage_series(
 
     // Project only the issue number (in reading order) — loading full
     // issue rows would drag the large `comic_info_raw` / `pages` JSON.
-    let issue_numbers: Vec<String> = issue::Entity::find()
+    // On-disk issues the caller can see only (WP-2.7: one rated above the
+    // caller's cap never shapes a segment or its count).
+    let mut numbers_select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(s.id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
+        .filter(issue::Column::RemovedAt.is_null());
+    if let Some(cap) = acl.issue_cap_condition() {
+        numbers_select = numbers_select.filter(cap);
+    }
+    let issue_numbers: Vec<String> = numbers_select
         .order_by_asc(issue::Column::SortNumber)
         .select_only()
         .column(issue::Column::NumberRaw)

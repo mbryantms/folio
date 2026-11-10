@@ -777,7 +777,8 @@ pub async fn coverage_hints_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
+    let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return error(
             StatusCode::FORBIDDEN,
             "auth.forbidden",
@@ -855,7 +856,9 @@ pub async fn coverage_hints_series(
             }
         }
     }
-    let local = match coverage::load_local(&app.db, s.id).await {
+    // The reader's own view of the run: an issue above their cap is never
+    // counted or named as missing (WP-2.7).
+    let local = match coverage::load_local_for(&app.db, s.id, &acl).await {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(error = %e, "coverage hints: load local issues failed");
