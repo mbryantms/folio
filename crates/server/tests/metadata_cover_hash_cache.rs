@@ -36,7 +36,7 @@ use wiremock::{
 const UNRESOLVABLE_COVER: &str = "https://covers.invalid/saga-1.jpg";
 
 fn client() -> reqwest::Client {
-    ssrf::shared_public_client("folio-test", Duration::from_secs(2), 2)
+    ssrf::shared_public_client("folio-test", Duration::from_secs(2), 2, true)
 }
 
 #[tokio::test]

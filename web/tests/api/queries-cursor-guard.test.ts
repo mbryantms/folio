@@ -59,6 +59,12 @@ const ALLOWLIST: Record<string, string> = {
     "one row per registered user; the server returns the whole set (admin_stats.rs), next_cursor is always null",
   useEntitySearch:
     "global-search source: the first page of the entity index by design; the browse index walks via useEntityListInfinite",
+  useContinueReading:
+    "home-rail preview: the first page in one request; the see-all page walks useContinueReadingInfinite",
+  useOnDeck:
+    "home-rail preview: the first page in one request; the see-all page walks useOnDeckInfinite",
+  useRecentHistory:
+    "home-rail preview: the first page in one request; the see-all page walks useRecentHistoryInfinite",
 };
 
 /** Schema names in the generated OpenAPI types whose object carries
