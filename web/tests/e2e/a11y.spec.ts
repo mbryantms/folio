@@ -7,12 +7,22 @@
  * open a phone bottom sheet or switch a tab first, so the sheets and the
  * non-default tabs are swept too. The three reader states stay in
  * `reader-flow.spec.ts` (it owns the reader state); the M7b relationship
- * surfaces stay in `relationship-review.spec.ts`.
+ * surfaces stay in `relationship-review.spec.ts`. Not swept: the
+ * `error.tsx` / `global-error.tsx` boundaries (no safe way to make a page
+ * throw) and `/settings/activity`, whose whole body is a redirect to
+ * `/settings/privacy`. Token pages are swept in their invalid-token or
+ * landing state: the email-verification link lands on `/sign-in?verified=1`
+ * (a bad token is a JSON 400, not a page), and a bad email-change link
+ * redirects to the account settings with its error banner.
  *
  * Adding a route is one line in `ROUTES` (or `PUBLIC_ROUTES` for a page
  * that renders signed out). Dynamic segments come from the fixture library
  * the `setup` project scanned (`fixtures/make-library.mjs`), resolved once
- * per worker through the API — never hard-code a slug.
+ * per worker through the API — never hard-code a slug. The fixture's
+ * Relay (2011) carries one character, team, location and story arc for
+ * the entity landing pages. A collection, a reading list (an uploaded
+ * `.cbl`) and a custom page are throwaway rows of the shared admin, created
+ * here idempotently (reused by name) like the filter view.
  *
  * Runs in the `chromium-admin` project: the signed-in entries start from
  * the shared admin session (`admin.setup.ts`); the public entries drop the
@@ -37,6 +47,15 @@ type Ids = {
   librarySlug: string;
   userId: string;
   viewId: string;
+  creatorSlug: string;
+  publisherSlug: string;
+  characterSlug: string;
+  teamSlug: string;
+  locationSlug: string;
+  arcSlug: string;
+  collectionId: string;
+  readingListId: string;
+  pageSlug: string;
 };
 
 type Width = "desktop" | "phone";
@@ -54,6 +73,10 @@ type Route = {
   /** Skip unless local registration is open (the Register tab is disabled
    *  otherwise). */
   needsRegistration?: boolean;
+  /** Load with `prefers-reduced-motion: reduce`, for a surface that would
+   *  otherwise keep a finite animation running (an auto-advancing story):
+   *  the axe pass waits for those to settle. */
+  reducedMotion?: boolean;
   /** Elements left out of the axe pass on this route (CSS selectors), with
    *  the finding in a comment. Preferred over `disableRules`: every rule
    *  keeps running on the rest of the page. */
@@ -69,8 +92,33 @@ const PHONE = {
   hasTouch: true,
 };
 
-/** Name of the throwaway filter view the sweep creates (idempotent). */
+/** Names of the throwaway rows the sweep creates (idempotent). */
 const SWEEP_VIEW_NAME = "A11y sweep view";
+const SWEEP_COLLECTION_NAME = "A11y sweep collection";
+const SWEEP_LIST_NAME = "A11y sweep reading list";
+const SWEEP_PAGE_NAME = "A11y sweep page";
+
+/** Entity names `fixtures/make-library.mjs` writes into Relay (2011). */
+const FIXTURE_ENTITIES = {
+  creators: "Ada Fixture",
+  publishers: "Folio Test Comics",
+  characters: "Captain Fixture",
+  teams: "Fixture League",
+  locations: "Fixture City",
+  arcs: "Fixture Saga",
+} as const;
+
+/** The reading list the sweep uploads: both Relay volumes. */
+const SWEEP_CBL = `<?xml version="1.0" encoding="utf-8"?>
+<ReadingList><Name>${SWEEP_LIST_NAME}</Name><Books>
+<Book Series="Relay" Number="1" Volume="2011" Year="2011" />
+<Book Series="Relay" Number="1" Volume="2016" Year="2016" />
+</Books></ReadingList>
+`;
+
+/** The Year in review story for the current year (empty or not, it is
+ *  the same story frame). */
+const THIS_YEAR = new Date().getUTCFullYear();
 
 const PUBLIC_ROUTES: Route[] = [
   { path: "/sign-in", label: "sign-in" },
@@ -91,6 +139,10 @@ const PUBLIC_ROUTES: Route[] = [
     path: "/reset-password?token=e2e-sweep-token",
     label: "reset password, token form",
   },
+  // Where the email-verification link lands.
+  { path: "/sign-in?verified=1", label: "sign-in, email verified banner" },
+  // The service worker's offline fallback (static, precached).
+  { path: "/offline.html", label: "offline fallback page" },
 ];
 
 const ROUTES: Route[] = [
@@ -180,14 +232,48 @@ const ROUTES: Route[] = [
   { path: "/log", label: "reading log" },
   { path: "/log/activity", label: "reading log, activity" },
   { path: "/log/stats", label: "reading log, stats" },
+  { path: "/log/sessions", label: "reading log, sessions" },
+  {
+    path: `/log/year/${THIS_YEAR}`,
+    label: "reading log, year in review",
+    reducedMotion: true,
+  },
   { path: "/views/continue-reading", label: "saved view, system rail" },
   { path: (ids) => `/views/${ids.viewId}`, label: "saved view, filter" },
+  {
+    path: (ids) => `/views/${ids.collectionId}`,
+    label: "collection detail",
+  },
+  {
+    path: (ids) => `/views/${ids.readingListId}`,
+    label: "reading list detail",
+  },
+  { path: (ids) => `/pages/${ids.pageSlug}`, label: "custom page" },
   { path: "/creators", label: "creators index" },
+  {
+    path: (ids) => `/creators/${ids.creatorSlug}`,
+    label: "creator detail",
+  },
   { path: "/publishers", label: "publishers index" },
+  {
+    path: (ids) => `/publishers/${ids.publisherSlug}`,
+    label: "publisher detail",
+  },
   { path: "/characters", label: "characters index" },
+  {
+    path: (ids) => `/characters/${ids.characterSlug}`,
+    label: "character detail",
+  },
   { path: "/teams", label: "teams index" },
+  { path: (ids) => `/teams/${ids.teamSlug}`, label: "team detail" },
   { path: "/locations", label: "locations index" },
+  {
+    path: (ids) => `/locations/${ids.locationSlug}`,
+    label: "location detail",
+  },
   { path: "/arcs", label: "story arcs index" },
+  { path: (ids) => `/arcs/${ids.arcSlug}`, label: "story arc detail" },
+  { path: "/a11y-sweep-no-such-page", label: "not found" },
   // ----- settings -----
   { path: "/settings", label: "settings index" },
   { path: "/settings/reading", label: "settings, reading" },
@@ -203,6 +289,12 @@ const ROUTES: Route[] = [
     label: "settings, account",
   },
   { path: "/settings/api-tokens", label: "settings, app passwords" },
+  // A bad email-change confirmation link: the server redirects to the
+  // account settings with the "didn't work" banner.
+  {
+    path: "/auth/local/confirm-email-change?token=e2e-sweep-token",
+    label: "settings, account, email change link invalid",
+  },
   // ----- admin -----
   { path: "/admin", label: "admin dashboard" },
   {
@@ -259,6 +351,7 @@ const ROUTES: Route[] = [
   { path: "/admin/activity?view=log", label: "admin, server log" },
   { path: "/admin/auth", label: "admin, auth config" },
   { path: "/admin/email", label: "admin, email" },
+  { path: "/admin/starter-lists", label: "admin, starter lists" },
   { path: "/admin/background-work?view=jobs", label: "admin, job queue" },
   {
     path: "/admin/api-docs",
@@ -284,10 +377,13 @@ function fixtureIds(page: Page, context: BrowserContext): Promise<Ids> {
 }
 
 async function resolveIds(page: Page, context: BrowserContext): Promise<Ids> {
-  type SeriesList = { items: { slug: string; name: string }[] };
-  const series = (
+  type SeriesList = { items: { id: string; slug: string; name: string }[] };
+  const allSeries = (
     await json<SeriesList>(page.request.get("/api/series?limit=50"))
-  ).items.find((s) => s.name === "Test Series");
+  ).items;
+  const series = allSeries.find((s) => s.name === "Test Series");
+  const relay = allSeries.find((s) => s.name === "Relay");
+  expect(relay, "fixture series Relay").toBeTruthy();
   expect(series, "fixture series Test Series").toBeTruthy();
   type IssueList = { items: { slug: string }[] };
   const issue = (
@@ -323,13 +419,127 @@ async function resolveIds(page: Page, context: BrowserContext): Promise<Ids> {
       }),
     );
   }
+  const csrf = { "X-CSRF-Token": await csrfToken(context) };
+
+  // A collection holding one series, so the grid (not the empty state)
+  // is swept. The entry is added only with a new collection.
+  let collection = (
+    await json<{ id: string; name: string }[]>(
+      page.request.get("/api/me/collections"),
+    )
+  ).find((c) => c.name === SWEEP_COLLECTION_NAME);
+  if (!collection) {
+    collection = await json<{ id: string; name: string }>(
+      page.request.post("/api/me/collections", {
+        headers: csrf,
+        data: { name: SWEEP_COLLECTION_NAME },
+      }),
+    );
+    await json(
+      page.request.post(`/api/me/collections/${collection.id}/entries`, {
+        headers: csrf,
+        data: { entry_kind: "series", ref_id: relay!.id },
+      }),
+    );
+  }
+
+  // A reading list: upload the `.cbl`, then save it as a reading-list view
+  // (the two calls the import dialog makes).
+  let readingList = (
+    await json<ViewList>(page.request.get("/api/me/saved-views"))
+  ).items.find((v) => v.name === SWEEP_LIST_NAME);
+  if (!readingList) {
+    const list = await json<{ id: string }>(
+      page.request.post("/api/me/cbl-lists/upload", {
+        headers: csrf,
+        multipart: {
+          file: {
+            name: "a11y-sweep.cbl",
+            mimeType: "application/xml",
+            buffer: Buffer.from(SWEEP_CBL, "utf8"),
+          },
+          name: SWEEP_LIST_NAME,
+        },
+      }),
+    );
+    readingList = await json<{ id: string; name: string }>(
+      page.request.post("/api/me/saved-views", {
+        headers: csrf,
+        data: { kind: "cbl", name: SWEEP_LIST_NAME, cbl_list_id: list.id },
+      }),
+    );
+  }
+
+  // A custom page (nothing pinned: its empty state).
+  type PageList = { items: { slug: string; name: string }[] };
+  let customPage = (
+    await json<PageList>(page.request.get("/api/me/pages"))
+  ).items.find((p) => p.name === SWEEP_PAGE_NAME);
+  if (!customPage) {
+    customPage = await json<{ slug: string; name: string }>(
+      page.request.post("/api/me/pages", {
+        headers: csrf,
+        data: { name: SWEEP_PAGE_NAME },
+      }),
+    );
+  }
+
   return {
     seriesSlug: series!.slug,
     issueSlug: issue.slug,
     librarySlug: library.slug,
     userId: me.id,
     viewId: view.id,
+    creatorSlug: await entitySlug(page, "creators", FIXTURE_ENTITIES.creators),
+    publisherSlug: await entitySlug(
+      page,
+      "publishers",
+      FIXTURE_ENTITIES.publishers,
+    ),
+    characterSlug: await entitySlug(
+      page,
+      "characters",
+      FIXTURE_ENTITIES.characters,
+    ),
+    teamSlug: await entitySlug(page, "teams", FIXTURE_ENTITIES.teams),
+    locationSlug: await entitySlug(
+      page,
+      "locations",
+      FIXTURE_ENTITIES.locations,
+    ),
+    arcSlug: await entitySlug(page, "arcs", FIXTURE_ENTITIES.arcs),
+    collectionId: collection.id,
+    readingListId: readingList.id,
+    pageSlug: customPage.slug,
   };
+}
+
+/** Slug of a fixture entity from its browse index. Entity rows (and a
+ *  creator's slug) are minted by the post-scan rollup, which can finish
+ *  after the series exist, so poll. Creators list as `person`; the other
+ *  kinds as `name`. */
+async function entitySlug(
+  page: Page,
+  kind: keyof typeof FIXTURE_ENTITIES,
+  name: string,
+): Promise<string> {
+  type Row = { slug?: string | null; name?: string; person?: string };
+  let slug: string | null | undefined;
+  await expect
+    .poll(
+      async () => {
+        const rows = (
+          await json<{ items: Row[] }>(
+            page.request.get(`/api/${kind}?limit=100`),
+          )
+        ).items;
+        slug = rows.find((r) => (r.person ?? r.name) === name)?.slug;
+        return slug ?? "";
+      },
+      { timeout: 60_000, message: `fixture ${kind} "${name}" has a slug` },
+    )
+    .not.toBe("");
+  return slug!;
 }
 
 /** Load a route and wait until it is the surface under test: network quiet
@@ -359,9 +569,15 @@ function sweep(routes: Route[], width: Width, withIds: boolean) {
           "the Register tab is disabled unless local registration is open",
         );
       }
+      // The worker's first signed-in test also resolves the ids, which
+      // may wait on the post-scan entity rollup (`entitySlug`).
+      if (withIds && !idsPromise) test.setTimeout(120_000);
       const ids = withIds ? await fixtureIds(page, context) : null;
       const path =
         typeof route.path === "function" ? route.path(ids!) : route.path;
+      if (route.reducedMotion) {
+        await page.emulateMedia({ reducedMotion: "reduce" });
+      }
       await open(page, path);
       await route.prepare?.(page);
       await expectNoAxeViolations(page, `${route.label} (${width})`, {
