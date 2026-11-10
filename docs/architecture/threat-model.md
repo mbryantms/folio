@@ -47,7 +47,7 @@ Each line is a trust boundary. Anything inside the dotted box is the same trust 
 | **T**ampering | Cookie session is signed; CSRF double-submit on unsafe verbs; CSP + COOP/COEP/CORP. |
 | **R**epudiation | `audit_log` (§5.9) for admin/security actions; trace IDs in every log line. |
 | **I**nformation disclosure | ACL predicate on every read query (§5.1.1); content-type sniffing on page bytes; signed URLs for OPDS-PSE; `nosniff` everywhere. |
-| **D**oS | Rate-limit table (§17.7); CSP report endpoint capped; payloads bounded; `statement_timeout=2s` on search queries. |
+| **D**oS | Rate-limit table (§17.7); CSP report endpoint capped (64 KiB body, selected fields logged); payloads bounded; `statement_timeout=2s` on search queries. |
 | **E**levation | Role check on admin endpoints; admin bootstrap warning (§12.8); never honor issuer claims for role assignment. |
 
 ### Library scanner
