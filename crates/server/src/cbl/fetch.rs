@@ -62,6 +62,10 @@ pub const SWEEP_BUDGET: FetchBudget = FetchBudget {
 /// are reported as not attempted.
 pub const CBL_REQUEST_BULK_BUDGET: Duration = Duration::from_secs(45);
 
+/// Most time one list may take inside a bulk request, so a few stalling
+/// hosts cannot use up the whole request.
+pub const CBL_REQUEST_BULK_LIST_BUDGET: Duration = Duration::from_secs(15);
+
 /// Least time worth starting one more list with in a bulk request.
 pub const CBL_REQUEST_MIN_LIST_BUDGET: Duration = Duration::from_secs(5);
 

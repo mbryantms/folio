@@ -423,11 +423,18 @@ reads the tree listing (16 MiB) and blob (4 MiB) with a running cap that
 also refuses an oversize `Content-Length` before reading.
 
 **Time budgets** (`cbl::fetch`). Refresh, check, their `-all` variants
-and URL import run under the 60 s JSON route timeout, so they use
-`REQUEST_BUDGET`: 40 s per fetch and 40 s for one list's remote work,
-returning their own timeout error. `refresh-all` / `check-all` stop
-starting lists after 45 s (`CBL_REQUEST_BULK_BUDGET`, or when less than
-5 s is left) and report the rest as "not attempted". The hourly sweep
+and URL or catalog import run under the 60 s JSON route timeout, so they
+use `REQUEST_BUDGET`: 40 s per fetch and 40 s for one list's remote work,
+returning their own timeout error. `refresh-all` / `check-all` give each
+list at most 15 s (`CBL_REQUEST_BULK_LIST_BUDGET`), work through the
+lists in random order so the same stalling hosts cannot hold the others
+back on every run, stop starting lists after 45 s
+(`CBL_REQUEST_BULK_BUDGET`, or when less than 5 s is left) and report the
+rest as "not attempted"; results keep the lists' own order. Matching a
+large list after a slow fetch can still take a request past the route
+timeout: the write is then rolled back and the request answers 408,
+while lists finished earlier in the same bulk request stay updated. The
+hourly sweep
 uses `SWEEP_BUDGET` (60 s per fetch, 120 s per list), visits due lists
 in random order and starts no new list after 30 minutes
 (`CBL_SWEEP_BUDGET`); lists it did not reach stay due for the next run.

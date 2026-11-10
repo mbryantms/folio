@@ -1630,7 +1630,21 @@ async fn create_from_catalog(
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "catalog source"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    let blob = match catalog::fetch_blob(&app.db, &source, &catalog_path, false).await {
+    // Index and blob fetches together stay under the route timeout, so a
+    // slow host ends in this handler's own error.
+    let fetched = tokio::time::timeout(
+        crate::cbl::fetch::REQUEST_BUDGET.list_budget,
+        catalog::fetch_blob(&app.db, &source, &catalog_path, false),
+    )
+    .await;
+    let Ok(fetched) = fetched else {
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "fetch_failed",
+            "the catalog took too long to answer",
+        );
+    };
+    let blob = match fetched {
         Ok(b) => b,
         Err(catalog::CatalogError::NotFound(m)) => {
             return error(StatusCode::NOT_FOUND, "not_found", &m);
@@ -2090,9 +2104,22 @@ impl BulkDeadline {
         let remaining = self
             .0
             .saturating_duration_since(tokio::time::Instant::now());
-        (remaining >= crate::cbl::fetch::CBL_REQUEST_MIN_LIST_BUDGET)
-            .then(|| crate::cbl::fetch::REQUEST_BUDGET.capped_at(remaining))
+        (remaining >= crate::cbl::fetch::CBL_REQUEST_MIN_LIST_BUDGET).then(|| {
+            crate::cbl::fetch::REQUEST_BUDGET
+                .capped_at(remaining.min(crate::cbl::fetch::CBL_REQUEST_BULK_LIST_BUDGET))
+        })
     }
+}
+
+/// The order a bulk request works through its lists: shuffled, so lists
+/// whose hosts keep stalling cannot use up the request's time ahead of
+/// the same others on every run. Results are still reported in the
+/// lists' own order.
+fn bulk_order(len: usize) -> Vec<usize> {
+    use rand::seq::SliceRandom;
+    let mut order: Vec<usize> = (0..len).collect();
+    order.shuffle(&mut rand::rng());
+    order
 }
 
 fn bulk_result(items: Vec<CblBulkItemView>) -> axum::response::Response {
@@ -2173,11 +2200,12 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
     };
     let acl = crate::library::access::for_user(&app, &user).await;
     let caller_view = check_caller_view(&app, acl).await;
-    let mut items = Vec::with_capacity(lists.len());
+    let mut slots: Vec<Option<CblBulkItemView>> = lists.iter().map(|_| None).collect();
     let deadline = BulkDeadline::start();
-    for list in &lists {
+    for idx in bulk_order(lists.len()) {
+        let list = &lists[idx];
         let Some(budget) = deadline.next_list_budget() else {
-            items.push(item_error(
+            slots[idx] = Some(item_error(
                 list,
                 false,
                 crate::cbl::refresh::RefreshError::NotAttempted.to_string(),
@@ -2193,9 +2221,9 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
                 item_error(list, false, e.to_string())
             }
         };
-        items.push(item);
+        slots[idx] = Some(item);
     }
-    bulk_result(items)
+    bulk_result(slots.into_iter().flatten().collect())
 }
 
 #[utoipa::path(
@@ -2224,11 +2252,12 @@ pub async fn refresh_all(
     // (GitHub catalog, arbitrary URLs) with no real latency win here.
     // `rematched` / `changed` are the caller's view, as on `refresh_one`.
     let acl = crate::library::access::for_user(&app, &user).await;
-    let mut items = Vec::with_capacity(lists.len());
+    let mut slots: Vec<Option<CblBulkItemView>> = lists.iter().map(|_| None).collect();
     let deadline = BulkDeadline::start();
-    for list in &lists {
+    for idx in bulk_order(lists.len()) {
+        let list = &lists[idx];
         let Some(budget) = deadline.next_list_budget() else {
-            items.push(item_error(
+            slots[idx] = Some(item_error(
                 list,
                 true,
                 refresh::RefreshError::NotAttempted.to_string(),
@@ -2265,9 +2294,9 @@ pub async fn refresh_all(
                 item_error(list, true, e.to_string())
             }
         };
-        items.push(item);
+        slots[idx] = Some(item);
     }
-    bulk_result(items)
+    bulk_result(slots.into_iter().flatten().collect())
 }
 
 #[utoipa::path(
