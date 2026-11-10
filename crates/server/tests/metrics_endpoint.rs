@@ -88,3 +88,63 @@ async fn metrics_bearer_gate_enforced_when_token_set() {
     assert_eq!(ok, StatusCode::OK, "correct bearer must be accepted");
     assert!(body.contains("folio_"), "scrape body should expose metrics");
 }
+
+/// Request labels stay bounded: arbitrary method tokens share the `OTHER`
+/// method label, and raw paths (matched or not) never become a `route`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn http_metric_labels_stay_bounded_for_junk_methods_and_paths() {
+    let app = TestApp::spawn().await;
+    let tag = uuid::Uuid::new_v4().simple().to_string()[..8].to_uppercase();
+
+    let junk_methods: Vec<String> = (0..20).map(|i| format!("JUNK{tag}X{i}")).collect();
+    for m in &junk_methods {
+        let _ = app
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(axum::http::Method::from_bytes(m.as_bytes()).unwrap())
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    let raw_paths: Vec<String> = (0..5)
+        .flat_map(|i| {
+            [
+                format!("/no-such-page-{tag}-{i}"),
+                format!("/api/no-such-endpoint-{tag}-{i}"),
+                format!("/api/series/slug-{tag}-{i}"),
+            ]
+        })
+        .collect();
+    for p in &raw_paths {
+        let _ = app
+            .router
+            .clone()
+            .oneshot(Request::builder().uri(p).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+    }
+
+    let (status, body) = scrape(&app, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let lower = tag.to_lowercase();
+    assert!(
+        !body.contains(&tag) && !body.contains(&lower),
+        "a request-supplied token leaked into a label:\n{body}"
+    );
+    assert!(
+        body.lines()
+            .any(|l| l.starts_with("folio_http_requests_total{")
+                && l.contains(r#"method="OTHER""#)
+                && l.contains(r#"route="/healthz""#)),
+        "junk methods should count under method=\"OTHER\":\n{body}"
+    );
+    assert!(
+        body.contains(r#"route="<unmatched>""#),
+        "unmatched requests should share one route label:\n{body}"
+    );
+}
