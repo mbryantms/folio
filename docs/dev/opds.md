@@ -23,8 +23,17 @@ Three auth modes work:
 2. **HTTP Basic with app-password** — typical OPDS reader setup.
    Generate an app-password in `/settings/api-tokens`, point your
    client at `https://<host>/opds/v1` with `Basic <email>:<app-password>`.
-3. **Bearer token** — for programmatic access. Same app-password
-   sent as `Authorization: Bearer <token>`.
+3. **Bearer token** — the same app-password sent as
+   `Authorization: Bearer <token>`, for readers that prefer it.
+
+App-passwords (Basic or Bearer) authenticate the reader routes only:
+the OPDS 1.2 and 2.0 feeds and downloads (`/opds/*`, including OPDS
+progress and the KOReader sync shim), OPDS progression
+(`/opds/v1/progression/{id}`), the Komga shim (`/api/v1/books/*`),
+page bytes (`/issues/{id}/pages/{n}`) and thumbnails / stored covers.
+Everywhere else (the JSON API, admin routes, account settings,
+`/auth/*`) an app-password is refused with 403
+`auth.permission_denied`. The Basic username is ignored.
 
 Unauthenticated requests return 401 with `WWW-Authenticate: Basic
 realm="Folio"` so reader apps prompt for credentials.

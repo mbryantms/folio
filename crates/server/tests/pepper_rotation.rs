@@ -149,7 +149,8 @@ async fn app_password_under_previous_pepper_verifies_and_rehashes() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/auth/me")
+                // A reader route: app passwords only authenticate there.
+                .uri("/opds/v1")
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),

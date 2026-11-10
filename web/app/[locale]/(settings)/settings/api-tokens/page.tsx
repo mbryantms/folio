@@ -6,7 +6,7 @@ export default function ApiTokensPage() {
     <>
       <PageHeader
         title="App passwords"
-        description="Long-lived Bearer tokens for OPDS readers, scripts, and other clients that can’t use the cookie session."
+        description="Long-lived passwords for OPDS and other reader apps. They sign the app in to the catalogue, downloads, page streaming and progress sync, and don’t work on the rest of the API."
       />
       <AppPasswordsCard />
     </>
