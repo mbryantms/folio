@@ -157,6 +157,8 @@ export function NewFilterViewDialog({
                   toast.error(
                     e instanceof Error ? e.message : "Failed to save view",
                   );
+                  // The builder binds a 422's field errors inline.
+                  throw e;
                 }
               }}
             />

@@ -57,6 +57,7 @@ use crate::state::AppState;
 use crate::views::{
     compile::{self, CompileInput, IssueCompileInput},
     dsl::{FilterDsl, MatchMode, SortField, SortOrder},
+    timebox::{self, FilterQueryError},
 };
 
 use super::{error, not_found};
@@ -3224,9 +3225,9 @@ async fn view_acq(
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let backend = app.db.get_database_backend();
     let raw = Statement::from_sql_and_values(backend, sql, values);
-    let mut rows = match series::Model::find_by_statement(raw).all(&app.db).await {
+    let mut rows = match run_series_view_query(&app, id, raw).await {
         Ok(r) => r,
-        Err(e) => return server_error(e.to_string()),
+        Err(e) => return server_error(e),
     };
     // Compile fetches limit+1 for cursor purposes; we drop the trailing
     // sentinel row so the feed advertises exactly `result_limit` entries.
@@ -3618,10 +3619,40 @@ pub(crate) fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde
         Some(j) => serde_json::from_value(j.clone())?,
         None => Vec::new(),
     };
-    Ok(FilterDsl {
+    let dsl = FilterDsl {
         match_mode: mode,
         conditions,
-    })
+    };
+    // Stored views are exempt from the write-time size bounds; log one
+    // that is over them (see `FilterDsl::log_if_over_bounds`).
+    dsl.log_if_over_bounds(view.id);
+    Ok(dsl)
+}
+
+/// Run a series filter view's compiled select for an OPDS feed under the
+/// filter time box. A feed has no error UI a reader app would show, so a
+/// timed-out query serves the feed empty (WARN logged) instead of a 500;
+/// any other database error stays an error.
+pub(crate) async fn run_series_view_query(
+    app: &AppState,
+    view_id: Uuid,
+    stmt: Statement,
+) -> Result<Vec<series::Model>, String> {
+    match timebox::query_one_statement(&app.db, app.cfg().filter_statement_timeout, stmt).await {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| series::Model::from_query_result(r, ""))
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string()),
+        Err(FilterQueryError::TimedOut) => {
+            tracing::warn!(
+                view_id = %view_id,
+                "opds: series view feed hit the filter statement timeout; serving it empty"
+            );
+            Ok(Vec::new())
+        }
+        Err(FilterQueryError::Db(e)) => Err(e.to_string()),
+    }
 }
 
 /// WP-8.4: run an issue-level (`filter_issues`) saved view for an OPDS
@@ -3663,10 +3694,29 @@ pub(crate) async fn issue_view_issues(
     let stmt = compile::compile_issues(&input).map_err(|e| e.to_string())?;
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
-    let rows = IdRow::find_by_statement(raw)
-        .all(&app.db)
-        .await
-        .map_err(|e| e.to_string())?;
+    let rows: Vec<IdRow> = match timebox::query_one_statement(
+        &app.db,
+        app.cfg().filter_statement_timeout,
+        raw,
+    )
+    .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| IdRow::from_query_result(r, ""))
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?,
+        // A feed has no error UI a reader app would show: answer an
+        // empty feed (WARN logged) rather than a 500.
+        Err(FilterQueryError::TimedOut) => {
+            tracing::warn!(
+                view_id = %view.id,
+                "opds: issue view feed hit the filter statement timeout; serving it empty"
+            );
+            Vec::new()
+        }
+        Err(FilterQueryError::Db(e)) => return Err(e.to_string()),
+    };
     // The compiler over-fetches one row for its cursor; drop it.
     let ids: Vec<String> = rows
         .into_iter()

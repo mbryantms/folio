@@ -20,6 +20,8 @@ renders series cards for `filter_series` and issue cards for
 
 Stateless previews: `POST /me/saved-views/preview` (series) and
 `POST /me/saved-views/preview-issues` (issues) take the same `PreviewReq`.
+They share one per-user `saved_view_preview` bucket (2/s, burst 20; see
+`docs/architecture/rate-limits.md`).
 
 ## The DSL
 
@@ -70,6 +72,60 @@ read carries a trigram or `text_pattern_ops` index (the trigram indexes
 sit on `series.normalized_name` and the people / entity lookup names), so
 all three filter rows already narrowed by the library ACL, and `ends_with`
 costs the same as `contains`.
+
+### Size bounds
+
+A filter that a request writes or previews is capped (`dsl.rs`, next to
+`FilterDsl`):
+
+| Constant | Cap | Counts |
+| --- | --- | --- |
+| `MAX_FILTER_CONDITIONS` | 50 | `conditions.len()`; the list is flat (no nested groups yet), and once groups land every leaf condition in every group counts against it |
+| `MAX_FILTER_LIST_VALUES` | 200 | elements of one list-valued `value` (`in`, `includes_any`, …) |
+| `MAX_FILTER_VALUE_LEN` | 200 bytes | one string value, or one string element of a list (the search endpoints' query cap) |
+
+They are `garde` rules on `FilterDsl` / `Condition`, reached through
+`Validated<T>` on `POST /me/saved-views`, `PATCH /me/saved-views/{id}`, the
+two admin equivalents and both preview routes. A failure is a 422
+`validation` whose `error.details` names the field (`filter.conditions`,
+`filter.conditions[3].value`). On create the cross-field rules
+(`validate_create`: name, kind, `filter` / `cbl_list_id` / `result_limit`)
+run from the body's `garde::Validate` impl, so they and the bounds come back
+in the same report. Malformed JSON stays 400. The web mirrors the caps in
+`web/lib/saved-views/filter-bounds.ts`: the builder disables "Add condition"
+at 50 and the multi-select stops at 200 values.
+
+**Stored views are not re-checked.** A view written before the caps existed
+still lists, opens and runs; reading one over them logs one WARN with the
+view id and its counts (`FilterDsl::log_if_over_bounds`, called from
+`saved_views::dsl_from_view` and `opds::dsl_from_view`, the two places a
+stored filter is rebuilt). The statement timeout below is the backstop. To
+enforce the caps on stored views later, reject in `log_if_over_bounds`.
+A PATCH that only renames a view over the caps succeeds; one that sends a
+new `filter` must fit them.
+
+### The filter time box
+
+Every query compiled from a filter runs through
+`views::timebox::query_all`: a read-only transaction that issues
+`SET LOCAL statement_timeout` (`FILTER_STATEMENT_TIMEOUT`, 5 s; `SET LOCAL`
+so it ends with the transaction and never reaches the pooled connection),
+runs the statements, and commits, or rolls back on any error. Postgres
+cancels an overrun with SQLSTATE 57014, reported as
+`FilterQueryError::TimedOut`. Callers and what they do on a timeout:
+
+| Caller | On timeout |
+| --- | --- |
+| `GET …/results`, `GET …/issue-results` (rows and the first page's `total` in one transaction), both previews | 422 `filter_too_slow`, "This filter takes too long to run. Remove some conditions and try again." The web shows it inline: the builder's preview notice, the detail page's empty state, the home rail's empty state |
+| Metadata bulk-fetch target expansion (`resolve_metadata_batch_targets`) | the same 422 |
+| OPDS v1 / v2 `…/views/{id}` (series and issue views) | the feed is served empty with a WARN (a reader app has no error UI to show) |
+
+Any other database error keeps its old answer (500, or the OPDS server
+error). The timeout is `Config::filter_statement_timeout`, `#[serde(skip)]`
+and not an operator knob; the test harness shortens it
+(`TestApp::spawn_with_filter_statement_timeout`). Tests:
+`crates/server/tests/saved_views_bounds.rs`. Home rails have no server-side
+renderer: they call `…/results` / `…/issue-results` like the detail pages.
 
 ## The registry
 

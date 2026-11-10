@@ -39,6 +39,7 @@ import {
 } from "@/lib/api/mutations";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { useMe, useSavedViewResultsInfinite } from "@/lib/api/queries";
+import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { SavedViewView } from "@/lib/api/types";
@@ -364,6 +365,11 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
 
       {isInitialLoading ? (
         <SeriesGridSkeleton style={gridStyle} />
+      ) : results.isError && items.length === 0 ? (
+        <EmptyState
+          size="sm"
+          description={filterQueryErrorMessage(results.error)}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           size="sm"

@@ -11,6 +11,9 @@
 //!   - `compile` — compiles a validated DSL into a
 //!     `sea_query::SelectStatement` that the results endpoint runs.
 //!
+//!   - `timebox` — runs compiled filter SQL under a per-transaction
+//!     statement timeout (`SET LOCAL statement_timeout`).
+//!
 //! The CBL kind doesn't compile through this module — it dispatches to
 //! M4's CBL list reader directly. The discriminator lives on
 //! `saved_views.kind`.
@@ -18,3 +21,4 @@
 pub mod compile;
 pub mod dsl;
 pub mod registry;
+pub mod timebox;

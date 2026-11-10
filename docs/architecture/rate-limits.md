@@ -36,7 +36,7 @@ Every limit that is attached to a route today. A route not listed here has no li
 | `GET /me/holdings.csv` | `holdings_export` | IP | 6 / min | 6 |
 | `DELETE /me` (wrong passwords also count as failed auth) | `account_delete` | IP | 1 / min | 5 |
 | Marker writes (`POST /me/markers`, `PATCH`/`DELETE /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST /me/markers/restore`), one shared bucket | `marker_write` | IP | 10 / s | 60 |
-| Free-text search, metadata writes, collection and saved-view writes, collection reorder | see [Per-user web-app buckets](#per-user-web-app-buckets) | user | | |
+| Free-text search, metadata writes, collection and saved-view writes, saved-view previews, collection reorder | see [Per-user web-app buckets](#per-user-web-app-buckets) | user | | |
 | CBL imports: create (upload / URL / catalog), manual refresh, manual check (`cbl::quota`; admins exempt; Redis fixed 1 h window) | `cbl_import` | user | 20 / hour | none |
 | `PATCH /me/account` requests that change the email while mail delivery is configured (see [Email-change requests](#email-change-requests)) | none (request row) | user | 5 / hour | none |
 
@@ -55,7 +55,7 @@ Redis-backed ([`auth/failed_auth.rs`](../../crates/server/src/auth/failed_auth.r
 
 The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
 
-Verified against the code at `1c51a486` on 2026-11-10.
+Verified against the code at `ed5d9019` on 2026-11-10.
 
 ### Email-change requests
 
@@ -75,11 +75,14 @@ Audit 2026-11 N-A5 (WP E3, gaps closed in E12). Keyed per user (above), so house
 | `metadata_write` | One instance each: `PATCH /series/{slug}`; `PATCH /series/{series_slug}/issues/{issue_slug}` + `PATCH /me/issues/bulk-metadata` + `PUT`/`DELETE /series/{series_slug}/issues/{issue_slug}/field-provenance/{field}` (shared); the cover picks `PATCH /series/{series_slug}/issues/{issue_slug}/cover`, `POST …/cover/variant/{variant_id}`, `DELETE …/cover/variant`, `PATCH /series/{slug}/cover` (shared); the external-id writes `POST`/`DELETE /series/{slug}/external-ids[/{source}]` and `POST`/`DELETE /series/{slug}/issues/{issue_slug}/external-ids[/{source}]` (shared) | 1 / s | 30 | Each UI save is one request. The bulk "Edit metadata" dialog sends the whole selection, up to its 500-id cap, in one PATCH, so editing a 500-issue series costs one token. A field lock, a pin release, a cover pick and an id edit are one click each, and the control is disabled while its request is in flight; no UI loops over fields or ids. In a writeback library each save becomes an archive rewrite job. |
 | `collection_write` | `POST /me/collections`, `PATCH`/`DELETE /me/collections/{id}`, `POST`/`DELETE` entries, `POST …/members/bulk-add`, `POST …/members/bulk-remove` | 5 / s | 60 | The busiest pattern is toggling Want to Read on card after card, a couple per second. Bulk adds and removes from a selection are one request each. |
 | `saved_view_write` | `PATCH`/`DELETE /me/saved-views/{id}` | 5 / s | 60 | These also edit and delete collection rows, so they get `collection_write`'s numbers. A sibling bucket, not the collections instance: every `build_per_user()` is its own store and the two modules build their routers separately, and the own name tells the denial counter which surface tripped. The web sends one PATCH per explicit save (filter sheet, CBL detail) and one DELETE behind a confirm. |
+| `saved_view_preview` | `POST /me/saved-views/preview` + `POST /me/saved-views/preview-issues` (shared) | 2 / s | 20 | Each preview runs an arbitrary filter for up to the 5 s filter statement timeout, so a loop of them is the cheapest way to keep the database busy. The builder previews on an explicit Preview click (there is no keystroke debounce) and disables the button while a preview is in flight, so a person sends one or two a second at most; the burst covers a quick edit-and-preview session. A 429 shows as the builder's inline preview error. |
 | `collection_reorder` | `POST /me/collections/{id}/entries/reorder` | 4 / s | 30 | One request per drop with the full order; nobody drops faster than about once a second. Its own bucket, so a drag session never starves adds and removes. |
 
 Each instance is its own store, so a script that rotates across the four `metadata_write` instances gets four times one instance's budget, and one that alternates `/me/collections/{id}` and `/me/saved-views/{id}` gets `collection_write` twice. That is accepted: a shared store would mean threading one built layer through several modules' `routes()`, and each instance alone still caps its surface.
 
 `POST /auth/refresh` stays unbucketed on purpose. The list and read routes on the same routers (`GET /me/saved-views`, the issue and series GETs, `GET …/metadata-overview`, `GET …/external-ids`) stay unbucketed. Not covered yet: `POST /me/saved-views` (it refuses collection rows), the saved-view pin / sidebar / icon / reorder toggles, the admin-only `/admin/saved-views` writes, the series provider ranges (`POST`/`DELETE /series/{slug}/provider-ranges[/{id}]`, `POST …/provider-ranges/detect`), the series relationships (`POST`/`PATCH`/`DELETE /series/{slug}/relationships[/{id}]`) and the per-user page overrides (`/me/issues/{issue_id}/page-overrides`).
+
+Verified against the code at `ed5d9019` on 2026-11-10 (per-user web-app buckets).
 
 ## Behavior on bucket exhaustion
 
