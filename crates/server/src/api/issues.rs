@@ -193,8 +193,14 @@ pub async fn get_one(
     view.series_reading_direction = series_dir.flatten();
     view.series_name = series_name;
     view.library_default_reading_direction = library_default_dir;
-    view.allow_archive_writeback = allow_archive_writeback;
-    view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
+    // The archive path and the library's writeback settings are server
+    // configuration: admins only.
+    if user.role == entity::user::UserRole::Admin {
+        view.allow_archive_writeback = Some(allow_archive_writeback);
+        view.library_cbr_convert_confirmed = Some(library_cbr_convert_confirmed);
+    } else {
+        view.file_path = None;
+    }
     view.creator_slugs = creator_slugs;
     view.credits = junctions.credits;
     view.cast = junctions.cast;
@@ -1680,9 +1686,13 @@ pub async fn list_issue_health(
         }
     };
 
+    // Findings name server paths (in `fingerprint` and `payload.data`):
+    // a non-admin gets the reader view.
+    let is_admin = user.role == entity::user::UserRole::Admin;
     Json(
         rows.into_iter()
             .map(crate::api::health_issues::HealthIssueView::from)
+            .map(|v| if is_admin { v } else { v.for_reader() })
             .collect::<Vec<_>>(),
     )
     .into_response()

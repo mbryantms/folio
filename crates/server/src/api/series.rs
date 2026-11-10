@@ -1133,7 +1133,11 @@ pub struct IssueDetailView {
     pub series_slug: String,
     pub series_id: String,
     pub library_id: String,
-    pub file_path: String,
+    /// Absolute path of the archive on the server. Admins only (the page
+    /// editor and the Details tab); absent for every other caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub file_path: Option<String>,
     pub state: entity::issue::IssueState,
     pub title: Option<String>,
     pub number: Option<String>,
@@ -1261,10 +1265,11 @@ pub struct IssueDetailView {
     pub last_metadata_sync_at: Option<String>,
     /// Whether the parent library has archive writeback enabled. Gates
     /// the admin "Edit archive…" affordance in the UI
-    /// (`archive-rewrite-1.0` M3). Populated by the issue-detail handler;
-    /// defaults false (not stored on the issue row).
-    #[serde(default)]
-    pub allow_archive_writeback: bool,
+    /// (`archive-rewrite-1.0` M3). Populated by the issue-detail handler
+    /// for admins only (a library setting); absent for other callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub allow_archive_writeback: Option<bool>,
     /// 0-based index of the page used as the cover. Surfaced so the page
     /// editor can highlight the current cover. `archive-rewrite-1.0`.
     #[serde(default)]
@@ -1272,9 +1277,11 @@ pub struct IssueDetailView {
     /// Whether the parent library has acknowledged the CBR→CBZ conversion
     /// at least once (`library.cbr_convert_confirmed_at` is set). The page
     /// editor uses this to decide whether to show the one-time conversion
-    /// explainer when editing a `.cbr`. `archive-rewrite-1.0` M6.
-    #[serde(default)]
-    pub library_cbr_convert_confirmed: bool,
+    /// explainer when editing a `.cbr`. `archive-rewrite-1.0` M6. Admins
+    /// only (a library setting); absent for other callers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub library_cbr_convert_confirmed: Option<bool>,
     /// RFC3339 time an operator marked this issue "metadata complete" despite
     /// gaps (B4), or `null`. Drives the issue's `accepted` completeness tier +
     /// the "Mark complete / Reopen" affordance.
@@ -1328,7 +1335,7 @@ impl IssueDetailView {
             series_slug: series_slug.to_owned(),
             series_id: m.series_id.to_string(),
             library_id: m.library_id.to_string(),
-            file_path: m.file_path,
+            file_path: Some(m.file_path),
             state: m.state,
             title: m.title,
             number: m.number_raw,
@@ -1398,9 +1405,9 @@ impl IssueDetailView {
             last_rewrite_at: m.last_rewrite_at.map(|t| t.to_rfc3339()),
             last_rewrite_kind: m.last_rewrite_kind,
             last_metadata_sync_at: m.last_metadata_sync_at.map(|t| t.to_rfc3339()),
-            allow_archive_writeback: false,
+            allow_archive_writeback: None,
             cover_page_index: m.cover_page_index,
-            library_cbr_convert_confirmed: false,
+            library_cbr_convert_confirmed: None,
             metadata_review_accepted_at: m.metadata_review_accepted_at.map(|t| t.to_rfc3339()),
             metadata_completeness: None,
         }

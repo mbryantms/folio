@@ -111,7 +111,15 @@ pub struct HealthIssueView {
     pub id: String,
     pub kind: HealthIssueKind,
     pub severity: String,
-    pub fingerprint: String,
+    /// Dedupe key, built from the server paths the finding names. Admins
+    /// only; absent on the reader-facing per-issue list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub fingerprint: Option<String>,
+    /// The finding's `{kind, data}` payload. On the reader-facing
+    /// per-issue list `data` keeps only the counts and labels the reader
+    /// shows ([`HealthIssueView::for_reader`]); paths and raw errors are
+    /// for admins.
     pub payload: serde_json::Value,
     pub first_seen_at: String,
     pub last_seen_at: String,
@@ -126,7 +134,7 @@ impl From<library_health_issue::Model> for HealthIssueView {
             id: m.id.to_string(),
             kind: m.kind,
             severity: m.severity,
-            fingerprint: m.fingerprint,
+            fingerprint: Some(m.fingerprint),
             payload: m.payload,
             first_seen_at: m.first_seen_at.to_rfc3339(),
             last_seen_at: m.last_seen_at.to_rfc3339(),
@@ -134,6 +142,33 @@ impl From<library_health_issue::Model> for HealthIssueView {
             dismissed_at: m.dismissed_at.map(|t| t.to_rfc3339()),
             scan_id: m.scan_id.map(|u| u.to_string()),
         }
+    }
+}
+
+/// `payload.data` keys a non-admin may receive: counts and labels, never a
+/// server path (`path`, `folder`, `path_a`, `owner_path`, …) or a raw
+/// error string (which can carry one).
+const READER_PAYLOAD_KEYS: &[&str] = &[
+    "dropped",
+    "total",
+    "reason",
+    "technique",
+    "page_index",
+    "ext",
+    "skipped_archive_count",
+];
+
+impl HealthIssueView {
+    /// The view a non-admin receives: no `fingerprint`, and `payload.data`
+    /// reduced to [`READER_PAYLOAD_KEYS`].
+    pub fn for_reader(mut self) -> Self {
+        self.fingerprint = None;
+        if let Some(serde_json::Value::Object(data)) =
+            self.payload.as_object_mut().and_then(|p| p.get_mut("data"))
+        {
+            data.retain(|k, _| READER_PAYLOAD_KEYS.contains(&k.as_str()));
+        }
+        self
     }
 }
 
@@ -493,7 +528,7 @@ fn synth_metadata_drift_row(summary: &crate::metadata::drift::DriftSummary) -> H
         id: SYNTH_METADATA_DRIFT_ID.to_owned(),
         kind: HealthIssueKind::MetadataDriftFromXml,
         severity: "info".to_owned(),
-        fingerprint: SYNTH_METADATA_DRIFT_ID.to_owned(),
+        fingerprint: Some(SYNTH_METADATA_DRIFT_ID.to_owned()),
         payload: serde_json::json!({
             "drifted_issue_count": summary.drifted_issue_count,
             "drifted_series_count": summary.drifted_series_count,

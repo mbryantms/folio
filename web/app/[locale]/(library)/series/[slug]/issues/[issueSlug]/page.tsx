@@ -725,8 +725,11 @@ export default async function IssuePage({
                     value: formatFileSize(issue.file_size),
                   },
                   {
+                    // Server path: only an admin's response carries it.
                     label: "File",
-                    value: <FilePathValue path={issue.file_path} />,
+                    value: issue.file_path ? (
+                      <FilePathValue path={issue.file_path} />
+                    ) : null,
                     wide: true,
                   },
                 ]}
