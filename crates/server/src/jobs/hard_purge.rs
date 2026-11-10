@@ -36,6 +36,19 @@
 //! `::unconstrained_id_columns_are_accounted_for` pin both halves, so a new
 //! `RESTRICT` FK or a new FK-less reference fails CI rather than this sweep.
 //!
+//! **Only what is really gone.** A library that fails the scanner's
+//! `validate_library` gate (root missing, unreadable, empty: an unmounted
+//! share) is skipped whole for the run. Every candidate issue's
+//! `file_path` is stat-ed first (on the blocking pool, with the scanner's
+//! own notion of an indexable archive,
+//! [`crate::library::scanner::enumerate::is_indexable_archive`]): a file
+//! that is back on disk is **not** deleted, its `removal_confirmed_at` is
+//! cleared so the confirm sweep re-evaluates it, and its series gets one
+//! coalesced scoped rescan that restores it. A candidate series whose folder
+//! holds an indexable archive again is kept and rescanned the same way.
+//! Duplicates-page removals (deliberate; the file is on disk by definition)
+//! are purged without the stat.
+//!
 //! **Series** are purged only when confirmed-removed past the same window
 //! **and** left with no issue rows at all (any state). `issues.series_id`
 //! cascades, so deleting a series that still owned rows would take live or
@@ -55,6 +68,9 @@
 //! comes back as a *new* issue with no read state.
 
 use crate::library::event_log::{self, Action, Category, NewEvent, Severity};
+use crate::library::reconcile::{
+    PresenceProbe, library_ready_for_sweep, queue_series_rescans, record_kept_present,
+};
 use crate::state::AppState;
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use entity::library;
@@ -62,7 +78,7 @@ use sea_orm::{
     ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, Statement,
     TransactionTrait,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use uuid::Uuid;
 
 /// Lower bound on the purge window, in days, regardless of
@@ -121,12 +137,19 @@ pub struct PurgeStats {
     pub series: u64,
     /// Libraries that had at least one row purged.
     pub libraries: u64,
+    /// Candidate rows kept because their file (or series folder) is on disk
+    /// again; their confirmation was cleared and a rescan queued.
+    pub kept_present: u64,
+    /// Series rescans queued (or coalesced into one already in flight).
+    pub rescans_queued: u64,
+    /// Libraries skipped because `validate_library` refused them.
+    pub libraries_skipped: u64,
 }
 
 /// Cron entry point: reads the multiplier from the live config.
 pub async fn run(state: &AppState) -> anyhow::Result<PurgeStats> {
     let multiplier = state.cfg().library_hard_purge_multiplier;
-    run_with(&state.db, multiplier, Utc::now().fixed_offset()).await
+    run_with(state, multiplier, Utc::now().fixed_offset()).await
 }
 
 /// Purge window in days for a library, or `None` when purging is disabled
@@ -142,7 +165,7 @@ pub fn window_days(soft_delete_days: i32, multiplier: u32) -> Option<i64> {
 /// Run one sweep against `db` as of `now`. Split from [`run`] so tests can
 /// drive the window deterministically.
 pub async fn run_with(
-    db: &DatabaseConnection,
+    state: &AppState,
     multiplier: u32,
     now: DateTime<FixedOffset>,
 ) -> anyhow::Result<PurgeStats> {
@@ -150,19 +173,25 @@ pub async fn run_with(
     if multiplier == 0 {
         return Ok(stats);
     }
-    let libs = library::Entity::find().all(db).await?;
+    let libs = library::Entity::find().all(&state.db).await?;
     for lib in libs {
         let Some(days) = window_days(lib.soft_delete_days, multiplier) else {
             continue;
         };
+        if !library_ready_for_sweep(state, &lib, "Hard purge").await {
+            stats.libraries_skipped += 1;
+            continue;
+        }
         let cutoff = now - Duration::days(days);
-        match purge_library(db, lib.id, days, cutoff).await {
-            Ok((issues, series)) => {
-                if issues > 0 || series > 0 {
+        match purge_library(state, &lib, days, cutoff).await {
+            Ok(lib_stats) => {
+                if lib_stats.issues > 0 || lib_stats.series > 0 {
                     stats.libraries += 1;
                 }
-                stats.issues += issues;
-                stats.series += series;
+                stats.issues += lib_stats.issues;
+                stats.series += lib_stats.series;
+                stats.kept_present += lib_stats.kept_present;
+                stats.rescans_queued += lib_stats.rescans_queued;
             }
             // One library failing must not stop the others being purged.
             Err(e) => tracing::error!(
@@ -192,6 +221,7 @@ struct IssueCandidate {
     content_hash: String,
     removed_at: DateTime<FixedOffset>,
     removal_confirmed_at: DateTime<FixedOffset>,
+    duplicate_removed: bool,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -215,28 +245,97 @@ struct DeletedId {
     id: String,
 }
 
+/// Rows the stat guard kept in one library: their ids and the series to
+/// rescan.
+#[derive(Default)]
+struct Kept {
+    issue_ids: Vec<String>,
+    series_ids: HashSet<Uuid>,
+    rescan: BTreeSet<Uuid>,
+}
+
 async fn purge_library(
-    db: &DatabaseConnection,
-    library_id: Uuid,
+    state: &AppState,
+    lib: &library::Model,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
-) -> anyhow::Result<(u64, u64)> {
-    let issues = purge_issues(db, library_id, window_days, cutoff).await?;
-    let series = purge_series(db, library_id, window_days, cutoff).await?;
-    Ok((issues, series))
+) -> anyhow::Result<PurgeStats> {
+    let probe = PresenceProbe::for_library(lib);
+    let mut kept = Kept::default();
+    let issues = purge_issues(&state.db, &probe, lib.id, window_days, cutoff, &mut kept).await?;
+    let series = purge_series(&state.db, &probe, lib.id, window_days, cutoff, &mut kept).await?;
+    let mut stats = PurgeStats {
+        issues,
+        series,
+        kept_present: (kept.issue_ids.len() + kept.series_ids.len()) as u64,
+        ..PurgeStats::default()
+    };
+    if !kept.rescan.is_empty() {
+        stats.rescans_queued = queue_series_rescans(state, lib.id, &kept.rescan).await as u64;
+        tracing::warn!(
+            target: "folio::hard_purge",
+            library_id = %lib.id,
+            kept_issues = kept.issue_ids.len(),
+            kept_series = kept.series_ids.len(),
+            rescans = stats.rescans_queued,
+            "hard purge: confirmed-removed rows are on disk again; kept, confirmation cleared, rescans queued",
+        );
+        record_kept_present(
+            &state.db,
+            lib.id,
+            "Hard purge",
+            &kept.issue_ids,
+            &kept.series_ids,
+            &kept.rescan,
+        )
+        .await;
+    }
+    Ok(stats)
+}
+
+/// Clear `removal_confirmed_at` on the still-eligible `ids` of `table`
+/// (`issues` / `series`) so the confirm sweep re-evaluates them.
+async fn unconfirm<T>(
+    db: &DatabaseConnection,
+    table: &str,
+    library_id: Uuid,
+    cutoff: DateTime<FixedOffset>,
+    ids: &[T],
+) -> anyhow::Result<()>
+where
+    T: Clone + Into<sea_orm::Value>,
+{
+    for chunk in ids.chunks(DELETE_CHUNK) {
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!(
+                "UPDATE {table} SET removal_confirmed_at = NULL \
+                 WHERE library_id = $1 AND {CONFIRMED_PAST_CUTOFF} AND id IN ({})",
+                placeholders(3, chunk.len()),
+            ),
+            with_ids([library_id.into(), cutoff.into()], chunk),
+        ))
+        .await?;
+    }
+    Ok(())
 }
 
 async fn purge_issues(
     db: &DatabaseConnection,
+    probe: &PresenceProbe,
     library_id: Uuid,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
+    kept: &mut Kept,
 ) -> anyhow::Result<u64> {
     let candidates = IssueCandidate::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
             "SELECT id, series_id, slug, file_path, content_hash, removed_at, \
-                    removal_confirmed_at \
+                    removal_confirmed_at, \
+                    EXISTS (SELECT 1 FROM issue_duplicate_decision d \
+                            WHERE d.issue_id = issues.id AND d.decision = 'remove') \
+                      AS duplicate_removed \
              FROM issues \
              WHERE library_id = $1 AND {CONFIRMED_PAST_CUTOFF} \
              ORDER BY removal_confirmed_at, id \
@@ -250,6 +349,31 @@ async fn purge_issues(
     ))
     .all(db)
     .await?;
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    // Stat guard: a file that is back on disk is not deleted.
+    let to_stat: Vec<((String, Uuid), String)> = candidates
+        .iter()
+        .filter(|c| !c.duplicate_removed)
+        .map(|c| ((c.id.clone(), c.series_id), c.file_path.clone()))
+        .collect();
+    let present: Vec<(String, Uuid)> = probe.present_files(to_stat).await?;
+    let candidates: Vec<IssueCandidate> = if present.is_empty() {
+        candidates
+    } else {
+        let present_ids: Vec<String> = present.iter().map(|(id, _)| id.clone()).collect();
+        unconfirm(db, "issues", library_id, cutoff, &present_ids).await?;
+        let present_set: HashSet<&str> = present_ids.iter().map(String::as_str).collect();
+        let rest = candidates
+            .into_iter()
+            .filter(|c| !present_set.contains(c.id.as_str()))
+            .collect();
+        kept.rescan.extend(present.iter().map(|(_, sid)| *sid));
+        kept.issue_ids.extend(present_ids);
+        rest
+    };
     if candidates.is_empty() {
         return Ok(0);
     }
@@ -343,9 +467,11 @@ async fn purge_issues(
 
 async fn purge_series(
     db: &DatabaseConnection,
+    probe: &PresenceProbe,
     library_id: Uuid,
     window_days: i64,
     cutoff: DateTime<FixedOffset>,
+    kept: &mut Kept,
 ) -> anyhow::Result<u64> {
     let candidates = SeriesCandidate::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -359,6 +485,30 @@ async fn purge_series(
     ))
     .all(db)
     .await?;
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    // Stat guard: a series whose folder holds an indexable archive again is
+    // kept for the rescan that will re-ingest it. It owns no issue rows, so
+    // nothing is excluded from the folder check.
+    let folders: Vec<(Uuid, String)> = candidates
+        .iter()
+        .filter_map(|c| c.folder_path.clone().map(|f| (c.id, f)))
+        .collect();
+    let present = probe.folders_with_archives(folders, HashSet::new()).await?;
+    let candidates: Vec<SeriesCandidate> = if present.is_empty() {
+        candidates
+    } else {
+        let present_ids: Vec<Uuid> = present.iter().copied().collect();
+        unconfirm(db, "series", library_id, cutoff, &present_ids).await?;
+        kept.rescan.extend(present_ids);
+        kept.series_ids.extend(present.iter().copied());
+        candidates
+            .into_iter()
+            .filter(|c| !present.contains(&c.id))
+            .collect()
+    };
     if candidates.is_empty() {
         return Ok(0);
     }

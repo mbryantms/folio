@@ -508,6 +508,12 @@ library tabs show as a badge on "Removed". Guards:
 `reconcile.rs::confirm_series_cascades_to_its_issues` and
 `::bulk_confirm_selected_then_all`.
 
+The library reconcile binds its series-id lists (the scanned series, the
+empty-series check, the end-of-reconcile series heal) at most
+`reconcile::RECONCILE_ID_CHUNK` (5 000) ids per statement, so a library
+with more series than Postgres' 65 535 bind parameters still reconciles
+(guard: `reconcile.rs::library_reconcile_chunks_series_id_lists`).
+
 The narrow per-series path in
 [`reconcile::reconcile_series`](../../crates/server/src/library/reconcile.rs#L175)
 runs the same logic scoped to one series so siblings stay untouched.
@@ -613,7 +619,10 @@ the DB:
   runs daily at 04:00 UTC
   ([scheduler.rs:357–361](../../crates/server/src/jobs/scheduler.rs#L357-L361))
   and stamps `removal_confirmed_at` on rows whose `removed_at` is older
-  than `library.soft_delete_days`. The scanner itself never
+  than `library.soft_delete_days`, **but only for what is really gone**
+  (see *Removal guards* under **Removal lifecycle**: a library failing
+  `validate_library` is skipped, a file back on disk gets a series
+  rescan instead of a confirmation). The scanner itself never
   hard-deletes; that is the purge sweep's job (next bullet).
 - **Hard-purge cron** (roadmap WP-3.5) —
   [`jobs::hard_purge`](../../crates/server/src/jobs/hard_purge.rs) runs
@@ -622,8 +631,8 @@ the DB:
   hard-`DELETE`s issues whose `removal_confirmed_at` is older than
   `library.soft_delete_days × library.hard_purge_multiplier` days
   (global setting, default `2`, `0` disables; window floor 1 day; at
-  most 5 000 issues per library per run). See **Removal lifecycle**
-  below.
+  most 5 000 issues per library per run), after the same disk guards as
+  the confirm sweep. See **Removal lifecycle** below.
 - **`series.json` re-read every scan** — there is no caching layer;
   changes to the sidecar take effect on the next pass through the
   folder ([mod.rs:1479](../../crates/server/src/library/scanner/mod.rs#L1479)).
@@ -1017,8 +1026,9 @@ waiting for the scheduled refresh window.
 - `POST /series/{series_slug}/issues/{issue_slug}/restore` — reverse the soft-delete (file must be back)
 - `POST /series/{series_slug}/issues/{issue_slug}/confirm-removal` — admin confirmation now (skip the wait)
 - The auto-confirm sweep at 04:00 UTC stamps `removal_confirmed_at` on
-  rows older than `library.soft_delete_days`
-  ([scheduler.rs:357](../../crates/server/src/jobs/scheduler.rs#L357)).
+  rows older than `library.soft_delete_days` whose files are really gone
+  ([scheduler.rs](../../crates/server/src/jobs/scheduler.rs),
+  `register_reconcile_sweep`; guards under **Removal lifecycle**).
 - A returning file (same content hash, same path, file back on disk) is
   auto-restored by the next scan, and so is its soft-removed (or
   confirmed-removed) series once it holds a live issue again
@@ -1081,14 +1091,77 @@ picker). Backed by [`api/duplicates.rs`](../../crates/server/src/api/duplicates.
 |---|---|---|---|
 | Active | `removed_at IS NULL` | scan | — |
 | Soft-deleted | `removed_at` set, `removal_confirmed_at` NULL | reconcile: file missing | yes — file returns (auto) or admin restore; the series follows its first live issue |
-| Confirmed | both set | 04:00 auto-confirm after `soft_delete_days`, or admin `confirm-removal` | yes — a returning file still restores the row, and its series |
-| Purged | row gone | 04:15 hard-purge once confirmed for `soft_delete_days × library.hard_purge_multiplier` days | **no** |
+| Confirmed | both set | 04:00 auto-confirm after `soft_delete_days` (file absent, library root valid), or admin `confirm-removal` | yes — a returning file still restores the row, and its series |
+| Purged | row gone | 04:15 hard-purge once confirmed for `soft_delete_days × library.hard_purge_multiplier` days (file still absent, library root valid) | **no** |
 
 With the defaults (`soft_delete_days = 30`, multiplier `2`) a missing
 file's row survives ~90 days: 30 pending, then 60 confirmed.
 
+**Removal guards (both automatic steps look at the disk).** Neither the
+04:00 confirm sweep ([`reconcile::auto_confirm_sweep`](../../crates/server/src/library/reconcile.rs))
+nor the 04:15 purge trusts the database alone, so a library root that was
+away for a while (unmounted share, renamed mount) cannot march its rows to
+deletion:
+
+- **Library gate.** Each sweep runs the scanner's own `validate_library`
+  (root missing, not a directory, unreadable, empty, equal to the data
+  path, overlapping another library) per library first. A library that
+  fails is skipped whole for that run: one `WARN` line and one
+  `library_events` row (`category = issue`, `action = skipped`, `detail`
+  names the sweep and the error). Nothing in it is confirmed or purged
+  until its root validates again.
+- **Per-row stat.** Candidate paths are stat-ed on the blocking pool,
+  500 per `spawn_blocking` call. "Present" means exactly what a scan
+  would index, one shared helper
+  ([`enumerate::is_indexable_archive`](../../crates/server/src/library/scanner/enumerate.rs)):
+  the stored `issue.file_path` lies in a folder below the library root,
+  has a recognised archive extension, neither it nor a folder between the
+  root and it is ignored (built-in junk names and the library's
+  `ignore_globs`), it is a **regular file** (not a symlink, FIFO, socket,
+  device or directory: the scan walk runs with `follow_links(false)` and
+  keeps only regular files), and its canonical path stays inside the
+  canonical root (a symlinked folder pointing out of the library never
+  makes a file present).
+- **Confirm sweep.** Candidates (soft-removed past the window,
+  unconfirmed) are read oldest first in pages of 500, at most 5 000 issue
+  rows and 5 000 series rows per library per run
+  (`CONFIRM_MAX_ROWS_PER_LIBRARY_PER_RUN`); the rest wait for the next
+  run. An issue whose file is present is **not** confirmed and its
+  series gets one scoped rescan; an absent file is confirmed as before. A
+  removed series is not confirmed while one of its issues was just found
+  present, or while its folder holds an indexable archive (its
+  Duplicates-page removals excepted); it gets the same rescan.
+- **Purge.** A candidate issue whose file is present is **not** deleted:
+  its `removal_confirmed_at` is cleared (the confirm sweep re-evaluates
+  it) and its series is rescanned. A candidate series (no issue rows
+  left) whose folder holds an indexable archive again is kept,
+  unconfirmed and rescanned the same way, so a returning folder is never
+  purged out from under the scan that will re-ingest it. An empty or
+  missing folder is purged as before.
+- **Rescans** go through `JobRuntime::coalesce_scoped_scan` (the admin
+  "Scan series" path, not forced): one queued `scan_runs` row per series,
+  and a series that already has a scoped scan in flight is coalesced into
+  it. The normal restore path (a seen file restores its row and its
+  series) does the rest. Kept rows are summarised per library and sweep
+  in one `issue` / `skipped` event (counts plus up to 50 ids).
+- **Duplicates-page removals** (`issue_duplicate_decision`, `remove`) are
+  deliberate and their files are on disk by definition, so both sweeps
+  confirm / purge them without the stat, as before.
+- **Admin actions.** The Removed tab's confirm buttons stay unguarded
+  (the admin asked for it); there is no admin "purge now", so every hard
+  delete goes through the guarded job, which also un-confirms an
+  admin-confirmed row whose file turns out to be present.
+- A folder that keeps an indexable archive the scanner never ingests
+  (only malformed or encrypted archives, say) keeps its series removed
+  but unconfirmed, with one coalesced rescan a day: the guards fail safe.
+  Guards: `tests/reconcile.rs::auto_confirm_*`, `tests/hard_purge.rs::purge_keeps_rows_whose_files_are_back`
+  and `::purge_skips_a_library_whose_root_is_missing`.
+
 The purge ([`jobs/hard_purge.rs`](../../crates/server/src/jobs/hard_purge.rs)):
 
+- **Only what is really gone.** See *Removal guards* above: a library
+  failing `validate_library` is skipped, and a row whose file is on disk
+  again is kept, un-confirmed and rescanned.
 - **Only confirmed rows.** The candidate `SELECT` and the `DELETE` both
   carry `removed_at IS NOT NULL AND removal_confirmed_at IS NOT NULL AND
   removal_confirmed_at < cutoff`, so a row restored between the two

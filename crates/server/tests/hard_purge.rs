@@ -9,6 +9,10 @@
 //!   - a confirmed-removed series is purged only once it has no issue rows
 //!   - every purged entity lands a `library_events` row (`action = purged`)
 //!   - multiplier `0` disables the sweep
+//!   - a confirmed row whose file is back on disk is kept, loses its
+//!     confirmation and gets a series rescan; a series whose folder holds
+//!     archives again is kept the same way
+//!   - a library whose root fails validation is skipped whole
 //!   - every FK into `issues` / `series` is CASCADE or SET NULL, so the
 //!     sweep's DELETE can never be blocked by a RESTRICT reference
 
@@ -129,7 +133,7 @@ async fn create_library(app: &TestApp, root: &Path, soft_delete_days: i32) -> Uu
     let now = Utc::now().fixed_offset();
     LibraryAM {
         id: Set(id),
-        name: Set("Purge Lib".into()),
+        name: Set(format!("Purge Lib {id}")),
         root_path: Set(root.to_string_lossy().into_owned()),
         default_language: Set("eng".into()),
         default_reading_direction: Set("ltr".into()),
@@ -384,15 +388,22 @@ async fn purge_respects_window_cascades_and_writes_library_events() {
     )
     .await;
 
+    // The purged / later-purged rows' files are really gone: the sweep
+    // stats every candidate and keeps one whose file is back on disk.
+    for name in ["Alpha 001.cbz", "Alpha 002.cbz"] {
+        std::fs::remove_file(alpha.join(name)).unwrap();
+    }
+    std::fs::remove_file(beta.join("Beta 001.cbz")).unwrap();
+
     // ── Multiplier 0 disables the sweep entirely.
-    let stats = hard_purge::run_with(db, 0, Utc::now().fixed_offset())
+    let stats = hard_purge::run_with(&state, 0, Utc::now().fixed_offset())
         .await
         .unwrap();
     assert_eq!(stats, hard_purge::PurgeStats::default());
     assert!(issue_exists(db, &a1).await);
 
     // ── A larger multiplier (window 40d) keeps a1 (confirmed 30d ago).
-    let stats = hard_purge::run_with(db, 4, Utc::now().fixed_offset())
+    let stats = hard_purge::run_with(&state, 4, Utc::now().fixed_offset())
         .await
         .unwrap();
     assert_eq!(
@@ -402,7 +413,7 @@ async fn purge_respects_window_cascades_and_writes_library_events() {
     assert!(issue_exists(db, &a1).await);
 
     // ── Default multiplier 2 (window 20d).
-    let stats = hard_purge::run_with(db, 2, Utc::now().fixed_offset())
+    let stats = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
         .await
         .unwrap();
     assert_eq!(stats.issues, 2, "a1 + b1 purged: {stats:?}");
@@ -554,7 +565,7 @@ async fn purge_respects_window_cascades_and_writes_library_events() {
     assert_eq!(beta_detail["ratings"], 1);
 
     // Idempotent: a second run finds nothing more.
-    let stats = hard_purge::run_with(db, 2, Utc::now().fixed_offset())
+    let stats = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
         .await
         .unwrap();
     assert_eq!(stats, hard_purge::PurgeStats::default());
@@ -562,7 +573,7 @@ async fn purge_respects_window_cascades_and_writes_library_events() {
     // Time passes: once a2's confirmation ages past the window it goes too;
     // a3 (never confirmed) still doesn't.
     let later = Utc::now().fixed_offset() + Duration::days(30);
-    let stats = hard_purge::run_with(db, 2, later).await.unwrap();
+    let stats = hard_purge::run_with(&state, 2, later).await.unwrap();
     assert_eq!(stats.issues, 1);
     assert!(!issue_exists(db, &a2).await);
     assert!(issue_exists(db, &a3).await);
@@ -678,5 +689,216 @@ async fn unconstrained_id_columns_are_accounted_for() {
         unaccounted.is_empty(),
         "FK-less id columns with no hard-purge policy: {unaccounted:#?} — add them to \
          jobs::hard_purge (clean) or INTENTIONALLY_KEPT here (history / provider id)"
+    );
+}
+
+async fn removal_confirmed(db: &impl ConnectionTrait, id: &str) -> bool {
+    count(
+        db,
+        "SELECT count(*) FROM issues WHERE id = $1 AND removal_confirmed_at IS NOT NULL",
+        vec![id.into()],
+    )
+    .await
+        == 1
+}
+
+async fn series_scan_runs(db: &impl ConnectionTrait, series_id: Uuid) -> i64 {
+    count(
+        db,
+        "SELECT count(*) FROM scan_runs WHERE series_id = $1 AND kind = 'series'",
+        vec![series_id.into()],
+    )
+    .await
+}
+
+async fn series_id_of_issue(db: &impl ConnectionTrait, issue_id: &str) -> Uuid {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT series_id FROM issues WHERE id = $1",
+            [issue_id.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    row.try_get_by_index::<Uuid>(0).unwrap()
+}
+
+/// A confirmed row past the purge window whose file is on disk again is not
+/// deleted: its confirmation is cleared and its series gets one rescan. One
+/// whose file is absent is deleted with its dependents as before. A removed
+/// series with no issue rows whose folder holds an archive again is kept the
+/// same way; one whose folder is empty is purged.
+#[tokio::test]
+async fn purge_keeps_rows_whose_files_are_back() {
+    let app = TestApp::spawn().await;
+    let auth = register_user(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let delta = tmp.path().join("Delta (2020)");
+    let eta = tmp.path().join("Eta (2021)");
+    let theta = tmp.path().join("Theta (2022)");
+    for d in [&delta, &eta, &theta] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    write_cbz(&delta.join("Delta 001.cbz"), 1);
+    write_cbz(&delta.join("Delta 002.cbz"), 2);
+    write_cbz(&delta.join("Delta 003.cbz"), 3);
+    write_cbz(&eta.join("Eta 001.cbz"), 4);
+    write_cbz(&theta.join("Theta 001.cbz"), 5);
+
+    let lib_id = create_library(&app, tmp.path(), 10).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let db = &state.db;
+
+    let (back, ..) = issue_by_file(db, "Delta 001.cbz").await;
+    let (gone, ..) = issue_by_file(db, "Delta 002.cbz").await;
+    let (e1, _, eta_slug) = issue_by_file(db, "Eta 001.cbz").await;
+    let (t1, _, theta_slug) = issue_by_file(db, "Theta 001.cbz").await;
+    let delta_id = series_id_of_issue(db, &back).await;
+    let eta_id = series_id_of_issue(db, &e1).await;
+    let theta_id = series_id_of_issue(db, &t1).await;
+    let _ = (eta_slug, theta_slug);
+
+    // User data on the row that will be purged.
+    assert!(
+        send(
+            &app,
+            &auth,
+            Method::POST,
+            "/api/progress",
+            serde_json::json!({ "issue_id": gone, "page": 0, "finished": false }),
+        )
+        .await
+        .is_success()
+    );
+
+    // `back`: confirmed long ago while its share was away, file present now.
+    set_removal(db, "issues", back.clone().into(), Some(60), Some(30)).await;
+    // `gone`: really gone.
+    std::fs::remove_file(delta.join("Delta 002.cbz")).unwrap();
+    set_removal(db, "issues", gone.clone().into(), Some(60), Some(30)).await;
+
+    // Eta and Theta: removed series whose issue rows were already purged.
+    // Eta's folder holds an archive again; Theta's folder is empty.
+    std::fs::remove_file(theta.join("Theta 001.cbz")).unwrap();
+    exec(
+        db,
+        "DELETE FROM issues WHERE id IN ($1, $2)",
+        vec![e1.clone().into(), t1.clone().into()],
+    )
+    .await;
+    set_removal(db, "series", eta_id.into(), Some(60), Some(30)).await;
+    set_removal(db, "series", theta_id.into(), Some(60), Some(30)).await;
+
+    let stats = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 1, "{stats:?}");
+    assert_eq!(stats.series, 1, "only Theta: {stats:?}");
+    assert_eq!(stats.kept_present, 2, "back + Eta: {stats:?}");
+    assert_eq!(stats.rescans_queued, 2, "Delta + Eta: {stats:?}");
+
+    assert!(issue_exists(db, &back).await, "file on disk: kept");
+    assert!(
+        !removal_confirmed(db, &back).await,
+        "confirmation cleared so the confirm sweep re-evaluates it"
+    );
+    assert!(!issue_exists(db, &gone).await, "absent file: purged");
+    assert_eq!(
+        count(
+            db,
+            "SELECT count(*) FROM progress_records WHERE issue_id = $1",
+            vec![gone.clone().into()]
+        )
+        .await,
+        0,
+        "dependents purged with it"
+    );
+    assert_eq!(series_scan_runs(db, delta_id).await, 1);
+
+    assert_eq!(
+        count(
+            db,
+            "SELECT count(*) FROM series WHERE id = $1 AND removal_confirmed_at IS NULL",
+            vec![eta_id.into()]
+        )
+        .await,
+        1,
+        "series with an archive in its folder kept, confirmation cleared"
+    );
+    assert_eq!(series_scan_runs(db, eta_id).await, 1);
+    assert_eq!(
+        count(
+            db,
+            "SELECT count(*) FROM series WHERE id = $1",
+            vec![theta_id.into()]
+        )
+        .await,
+        0,
+        "empty folder: series purged"
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT count(*) FROM library_events \
+             WHERE library_id = $1 AND action = 'skipped'",
+            vec![lib_id.into()]
+        )
+        .await,
+        1,
+        "one summary event for the kept rows"
+    );
+
+    // Nothing left to purge or keep: the kept rows are unconfirmed now.
+    let stats = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
+        .await
+        .unwrap();
+    assert_eq!(stats, hard_purge::PurgeStats::default());
+}
+
+/// A library whose root is missing is skipped whole: nothing is deleted.
+#[tokio::test]
+async fn purge_skips_a_library_whose_root_is_missing() {
+    let app = TestApp::spawn().await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = parent.path().join("lib");
+    let iota = root.join("Iota (2020)");
+    std::fs::create_dir_all(&iota).unwrap();
+    write_cbz(&iota.join("Iota 001.cbz"), 1);
+    write_cbz(&iota.join("Iota 002.cbz"), 2);
+
+    let lib_id = create_library(&app, &root, 10).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let db = &state.db;
+    let (i1, ..) = issue_by_file(db, "Iota 001.cbz").await;
+    let (i2, ..) = issue_by_file(db, "Iota 002.cbz").await;
+    let iota_id = series_id_of_issue(db, &i1).await;
+    set_removal(db, "issues", i1.clone().into(), Some(60), Some(30)).await;
+    set_removal(db, "issues", i2.clone().into(), Some(60), Some(30)).await;
+    set_removal(db, "series", iota_id.into(), Some(60), Some(30)).await;
+
+    // The share goes away: every file looks absent.
+    std::fs::rename(&root, parent.path().join("lib-unmounted")).unwrap();
+
+    let stats = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
+        .await
+        .unwrap();
+    assert_eq!(stats.libraries_skipped, 1, "{stats:?}");
+    assert_eq!(stats.issues, 0, "{stats:?}");
+    assert_eq!(stats.series, 0, "{stats:?}");
+    assert!(issue_exists(db, &i1).await);
+    assert!(issue_exists(db, &i2).await);
+    assert!(removal_confirmed(db, &i1).await, "left exactly as it was");
+    assert_eq!(
+        count(
+            db,
+            "SELECT count(*) FROM library_events \
+             WHERE library_id = $1 AND action = 'skipped'",
+            vec![lib_id.into()]
+        )
+        .await,
+        1
     );
 }

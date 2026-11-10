@@ -535,11 +535,14 @@ async fn register_hard_purge(scheduler: &JobScheduler, state: &AppState) {
         Box::pin(async move {
             match crate::jobs::hard_purge::run(&state).await {
                 Ok(stats) => {
-                    if stats.issues > 0 || stats.series > 0 {
+                    if stats.issues > 0 || stats.series > 0 || stats.kept_present > 0 {
                         tracing::info!(
                             issues = stats.issues,
                             series = stats.series,
                             libraries = stats.libraries,
+                            kept_present = stats.kept_present,
+                            rescans_queued = stats.rescans_queued,
+                            libraries_skipped = stats.libraries_skipped,
                             "hard purge: deleted confirmed-removed rows"
                         );
                     }
@@ -567,10 +570,16 @@ async fn register_reconcile_sweep(scheduler: &JobScheduler, state: &AppState) {
     let job_result = Job::new_async("0 0 4 * * *", move |_uuid, _l| {
         let state = state.clone();
         Box::pin(async move {
-            match crate::library::reconcile::auto_confirm_sweep(&state.db).await {
-                Ok(n) => {
-                    if n > 0 {
-                        tracing::info!(confirmed = n, "reconcile sweep: confirmed removals");
+            match crate::library::reconcile::auto_confirm_sweep(&state).await {
+                Ok(stats) => {
+                    if stats.confirmed > 0 || stats.kept_present > 0 {
+                        tracing::info!(
+                            confirmed = stats.confirmed,
+                            kept_present = stats.kept_present,
+                            rescans_queued = stats.rescans_queued,
+                            libraries_skipped = stats.libraries_skipped,
+                            "reconcile sweep: confirmed removals"
+                        );
                     }
                 }
                 Err(e) => tracing::error!(error = %e, "reconcile sweep failed"),

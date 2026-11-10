@@ -784,6 +784,88 @@ pub fn walk_archives_with(folder: &Path, ignore: &IgnoreRules) -> ArchiveWalk {
     out
 }
 
+/// Would a scan of the library rooted at `root` index the archive at
+/// `path`? The one definition of "this file is present" for the removal
+/// sweeps (`reconcile::auto_confirm_sweep`, `jobs::hard_purge`), mirroring
+/// what enumeration plus [`walk_archives_with`] accept:
+///
+/// - `path` lives below a folder of `root` (archives at the root itself are
+///   never indexed) and has a recognised archive extension;
+/// - neither the file nor any folder between `root` and it is skipped by
+///   `ignore` (built-in junk names and the library's globs);
+/// - the file itself is a **regular file**, not a symlink, FIFO, socket,
+///   device or directory (the walk runs with `follow_links(false)` and keeps
+///   only `is_file()` entries, so a symlinked archive is never indexed);
+/// - its canonical path stays inside the canonical root, so a symlinked
+///   folder that points out of the library never makes a file "present".
+///
+/// `root_canon` is `canonicalize(root)`, computed once by the caller.
+/// Blocking: run it on the blocking pool.
+pub fn is_indexable_archive(
+    root: &Path,
+    root_canon: &Path,
+    path: &Path,
+    ignore: &IgnoreRules,
+) -> bool {
+    use crate::library::ignore::is_recognized_archive_ext;
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    if rel.components().count() < 2
+        || rel
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return false;
+    }
+    let is_archive = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+        .is_some_and(is_recognized_archive_ext);
+    if !is_archive {
+        return false;
+    }
+    // Every entry between the root (exclusive) and the file (inclusive).
+    if path
+        .ancestors()
+        .take_while(|a| *a != root)
+        .any(|a| ignore.should_skip(a))
+    {
+        return false;
+    }
+    match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_file() => {}
+        _ => return false,
+    }
+    std::fs::canonicalize(path).is_ok_and(|c| c.starts_with(root_canon) && c != root_canon)
+}
+
+/// Does the series `folder` (inside `root`) hold an archive a scan would
+/// index, other than those `exclude` rejects? Same rules as
+/// [`is_indexable_archive`]: the folder must resolve inside the canonical
+/// root, and the walk is [`walk_archives_with`] itself. Blocking.
+pub fn folder_has_indexable_archive(
+    root: &Path,
+    root_canon: &Path,
+    folder: &Path,
+    ignore: &IgnoreRules,
+    exclude: impl Fn(&Path) -> bool,
+) -> bool {
+    if folder.strip_prefix(root).is_err() {
+        return false;
+    }
+    match std::fs::canonicalize(folder) {
+        Ok(c) if c.starts_with(root_canon) && c != root_canon && c.is_dir() => {}
+        _ => return false,
+    }
+    walk_archives_with(folder, ignore)
+        .archives
+        .iter()
+        .any(|a| is_indexable_archive(root, root_canon, a, ignore) && !exclude(a))
+}
+
 /// Record a walkdir error as an unreadable directory. `NotFound` is not
 /// an error for this purpose (the entry vanished mid-walk; the reconcile
 /// should see it as gone); any other error leaves its subtree unknown.
