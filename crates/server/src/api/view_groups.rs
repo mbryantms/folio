@@ -132,22 +132,37 @@ pub struct UpdateViewGroupReq {
     pub collapsed: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+/// Most view ids one list in a layout write may carry (a group's members
+/// or the ungrouped list). Views per user are not capped, so this is a
+/// safety bound far above any real board.
+pub const MAX_LAYOUT_VIEW_IDS: usize = 10_000;
+/// Most groups a layout write may list: the per-scope group cap.
+const MAX_LAYOUT_GROUPS: usize = MAX_GROUPS_PER_SCOPE as usize;
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct LayoutGroupReq {
+    #[garde(skip)]
     pub id: Uuid,
     /// Member view ids in display order. A view listed under no group is
     /// ungrouped after the write.
+    #[garde(length(max = MAX_LAYOUT_VIEW_IDS))]
     pub view_ids: Vec<Uuid>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct ReplaceLayoutReq {
+    // Checked in the handler (its own 422 message).
+    #[garde(skip)]
     pub scope: String,
     /// Every group in the scope, exactly once, in display order.
+    // A scope holds at most `MAX_GROUPS_PER_SCOPE` groups, so a longer
+    // list can never be valid.
+    #[garde(length(max = MAX_LAYOUT_GROUPS), dive)]
     pub groups: Vec<LayoutGroupReq>,
     /// Ungrouped views in display order. Optional and may be partial:
     /// ungrouped views not listed simply have no pinned position.
     #[serde(default)]
+    #[garde(length(max = MAX_LAYOUT_VIEW_IDS))]
     pub ungrouped: Vec<Uuid>,
 }
 
@@ -568,7 +583,7 @@ pub async fn delete_one(
 pub async fn replace_layout(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<ReplaceLayoutReq>,
+    Validated(req): Validated<ReplaceLayoutReq>,
 ) -> impl IntoResponse {
     if !SCOPES.contains(&req.scope.as_str()) {
         return invalid_scope_response();

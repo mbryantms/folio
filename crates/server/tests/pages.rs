@@ -802,3 +802,22 @@ async fn sidebar_toggle_on_system_page_returns_409() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "system_page");
 }
+
+#[tokio::test]
+async fn reorder_rejects_a_list_over_the_cap_with_field_details() {
+    let app = TestApp::spawn().await;
+    let user = register(&app, "reorder-cap@example.com").await;
+    let max = server::api::pages::MAX_REORDER_PAGE_IDS;
+    let ids: Vec<Uuid> = (0..=max).map(|_| Uuid::now_v7()).collect();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/pages/reorder",
+        Some(&user),
+        Some(serde_json::json!({ "page_ids": ids })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["details"][0]["field"], "page_ids");
+}

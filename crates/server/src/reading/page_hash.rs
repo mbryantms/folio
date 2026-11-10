@@ -93,6 +93,10 @@ pub async fn hash_all_pages(state: &AppState, path: PathBuf) -> Option<Vec<Strin
 /// just without a hash.
 pub async fn capture(state: &AppState, row: &issue::Model, page: i32) -> Option<String> {
     let index = usize::try_from(page).ok()?;
+    // Same no-symlink rule as the page routes; the reader is cached.
+    if !crate::library::no_follow::issue_path_ok(state, row).await {
+        return None;
+    }
     let arc = match state
         .zip_lru
         .get_or_open(&row.id, Path::new(&row.file_path))

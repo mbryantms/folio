@@ -325,7 +325,7 @@ async fn markdown_export_matches_snapshot() {
         .unwrap()
         .to_owned();
     assert!(
-        cd.starts_with("attachment; filename=\"folio-notes-") && cd.ends_with(".md\""),
+        cd.starts_with("attachment; filename=\"folio-notes-") && cd.ends_with(".md"),
         "content-disposition: {cd}"
     );
     let md = String::from_utf8(body_bytes(resp.into_body()).await).unwrap();
@@ -378,7 +378,7 @@ async fn json_export_groups_series_issue_page() {
         .to_str()
         .unwrap()
         .to_owned();
-    assert!(cd.ends_with(".json\""), "content-disposition: {cd}");
+    assert!(cd.ends_with(".json"), "content-disposition: {cd}");
     let doc: Value = serde_json::from_slice(&body_bytes(resp.into_body()).await).unwrap();
 
     assert_eq!(doc["format"], "folio-notes-export");

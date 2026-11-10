@@ -137,7 +137,10 @@ async fn csv_ok(app: &TestApp, auth: &Authed, query: &str, scope: &str) -> Csv {
     let date = Utc::now().format("%Y-%m-%d").to_string();
     assert_eq!(
         cd,
-        format!("attachment; filename=\"folio-holdings-{scope}-{date}.csv\"")
+        format!(
+            "attachment; filename=\"folio-holdings-{scope}-{date}.csv\"; \
+             filename*=UTF-8''folio-holdings-{scope}-{date}.csv"
+        )
     );
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert!(
