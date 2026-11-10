@@ -45,6 +45,7 @@ import type {
   ReadingLogEventView,
   ReadingStatsRange,
 } from "@/lib/api/types";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 type GroupBy = "day" | "week" | "month";
 
@@ -109,10 +110,15 @@ export function ActivityReportPage() {
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   // Depend on the three fields, not the whole query object (audit G10) —
   // `[query]` rebuilt the observer every render.
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
   React.useEffect(() => {
     const node = sentinelRef.current;
-    if (!node) return;
+    if (!node || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (
@@ -127,7 +133,7 @@ export function ActivityReportPage() {
     );
     obs.observe(node);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const events = React.useMemo(
     () => query.data?.pages.flatMap((p) => p.events) ?? [],
@@ -172,6 +178,7 @@ export function ActivityReportPage() {
         </div>
       )}
       <div ref={sentinelRef} aria-hidden className="h-px" />
+      <LoadMoreError query={query} />
       {query.isFetchingNextPage && (
         <div className="text-muted-foreground flex justify-center gap-1 text-sm">
           <ChevronDown className="size-4 animate-pulse" />

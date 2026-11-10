@@ -42,6 +42,7 @@ import { useSelection } from "@/lib/selection/use-selection";
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
 import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 const CARD_SIZE_MIN = 120;
 const CARD_SIZE_MAX = 280;
@@ -69,10 +70,15 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
   const isAdmin = useMe().data?.role === "admin";
 
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = results;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = results;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -85,7 +91,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const fetchViewMetadata = () => {
     createBatch.mutate(
@@ -337,6 +343,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
         aria-hidden="true"
         className={results.hasNextPage ? "h-12" : "hidden"}
       />
+      <LoadMoreError query={results} />
       {results.isFetchingNextPage ? (
         <p className="text-muted-foreground text-center text-xs">
           Loading more…

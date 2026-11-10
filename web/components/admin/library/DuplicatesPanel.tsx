@@ -30,6 +30,8 @@ import type {
   DuplicateIssueView,
   DuplicateKindFilter,
 } from "@/lib/api/types";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 
 const FILTERS: { value: DuplicateKindFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -72,7 +74,14 @@ function issueLabel(issue: DuplicateIssueView): string {
 export function DuplicatesPanel({ libraryId }: { libraryId: string }) {
   const [kind, setKind] = React.useState<DuplicateKindFilter>("all");
   const query = useDuplicatesInfinite(libraryId, kind);
-  const { data, isLoading, error, hasNextPage, isFetchingNextPage } = query;
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = query;
   const fetchNextPage = query.fetchNextPage;
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -80,7 +89,7 @@ export function DuplicatesPanel({ libraryId }: { libraryId: string }) {
   // on the fields, not the result object (fresh identity per render).
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -91,7 +100,7 @@ export function DuplicatesPanel({ libraryId }: { libraryId: string }) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const groups = data?.pages.flatMap((p) => p.items) ?? [];
   const first = data?.pages[0];
@@ -126,8 +135,11 @@ export function DuplicatesPanel({ libraryId }: { libraryId: string }) {
 
       {isLoading ? (
         <DuplicateGroupsSkeleton />
-      ) : error ? (
-        <p className="text-destructive text-sm">{error.message}</p>
+      ) : error && !data ? (
+        <RailError
+          message="Couldn't load duplicates."
+          onRetry={() => void query.refetch()}
+        />
       ) : groups.length === 0 ? (
         <p className="border-border bg-card/40 text-muted-foreground rounded-md border border-dashed px-4 py-12 text-center text-sm">
           No duplicates found.
@@ -150,6 +162,7 @@ export function DuplicatesPanel({ libraryId }: { libraryId: string }) {
         aria-hidden
         className={hasNextPage ? "h-12" : "hidden"}
       />
+      <LoadMoreError query={query} />
       {isFetchingNextPage ? (
         <div className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
           <Loader2 className="size-3.5 animate-spin" /> Loading more…

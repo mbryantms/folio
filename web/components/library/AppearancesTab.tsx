@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { entityUrl } from "@/lib/entities";
 import { useIssueAppearances, useSeriesAppearances } from "@/lib/api/queries";
 import type { AppearanceView, AppearancesView } from "@/lib/api/types";
+import { RailError } from "@/components/saved-views/RailError";
 
 type Props = (
   | { variant: "issue"; seriesSlug: string; issueSlug: string }
@@ -65,9 +66,11 @@ export function AppearancesTab(props: Props) {
   }
   if (q.isError || !q.data) {
     return (
-      <p className="text-muted-foreground py-8 text-sm">
-        Couldn&rsquo;t load where this {props.variant} appears.
-      </p>
+      <RailError
+        message={`Couldn't load where this ${props.variant} appears.`}
+        onRetry={() => void q.refetch()}
+        className="py-8"
+      />
     );
   }
 

@@ -46,6 +46,7 @@ import type { SavedViewView } from "@/lib/api/types";
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
 import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 /** Saved-view-page card-size bounds. Mirrors the series Issues panel
  *  but stored under a separate localStorage key so users can tune the
@@ -72,10 +73,15 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   // index. Depend on the three result fields (not the whole object) so the
   // observer isn't rebuilt every render.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = results;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = results;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -88,7 +94,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const fetchViewMetadata = () => {
     createBatch.mutate(
@@ -391,6 +397,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
         aria-hidden="true"
         className={results.hasNextPage ? "h-12" : "hidden"}
       />
+      <LoadMoreError query={results} />
       {results.isFetchingNextPage ? (
         <p className="text-muted-foreground text-center text-xs">
           Loading more…

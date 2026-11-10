@@ -42,6 +42,7 @@ import type {
 } from "@/lib/api/types";
 import { seriesUrl } from "@/lib/urls";
 import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 /** Query filters for the New Issues detail grid: the FULL ingest-ordered
  *  issue list. Deliberately uncapped — the home rail's per-series cap is
@@ -231,10 +232,15 @@ function NewIssuesGrid() {
   // Depend on the three fields, not the whole result object — TanStack
   // returns a fresh object identity per render, so `[query]` would tear
   // the observer down and rebuild it on every state change.
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -247,7 +253,7 @@ function NewIssuesGrid() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   if (query.isLoading) {
     return (
@@ -272,6 +278,7 @@ function NewIssuesGrid() {
         <IssueCard key={issue.id} issue={issue} />
       ))}
       <div ref={sentinelRef} aria-hidden className="col-span-full h-px" />
+      <LoadMoreError query={query} className="col-span-full" />
       {isFetchingNextPage
         ? Array.from({ length: 6 }).map((_, i) => (
             <IssueCardSkeleton key={`next-${i}`} />
@@ -286,10 +293,15 @@ function NewIssuesGrid() {
 function SimilarSeriesGrid() {
   const query = useSimilarRailInfinite();
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -302,7 +314,7 @@ function SimilarSeriesGrid() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   if (query.isLoading) {
     return (
@@ -328,6 +340,7 @@ function SimilarSeriesGrid() {
         <SimilarSeriesCard key={item.series.id} item={item} />
       ))}
       <div ref={sentinelRef} aria-hidden className="col-span-full h-px" />
+      <LoadMoreError query={query} className="col-span-full" />
       {isFetchingNextPage
         ? Array.from({ length: 6 }).map((_, i) => (
             <SeriesCardSkeleton key={`next-${i}`} />

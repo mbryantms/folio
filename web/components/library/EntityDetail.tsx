@@ -31,6 +31,8 @@ import type { ArcTieInView, EntityDetailView } from "@/lib/api/types";
 import { scopeCaption } from "@/lib/relationships";
 import { ENTITY_KINDS } from "@/lib/entities";
 import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 
 const GRID_STYLE: React.CSSProperties = {
   gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
@@ -240,11 +242,12 @@ function ArcTieIns({ slug }: { slug: string }) {
     [query.data],
   );
   if (query.isLoading) return <SkeletonGrid />;
-  if (query.isError) {
+  if (query.isError && !query.data) {
     return (
-      <p className="text-muted-foreground text-sm">
-        Couldn&apos;t load tie-ins. Try refreshing.
-      </p>
+      <RailError
+        message="Couldn't load tie-ins."
+        onRetry={() => void query.refetch()}
+      />
     );
   }
   return (
@@ -277,6 +280,7 @@ function ArcTieIns({ slug }: { slug: string }) {
         active={query.hasNextPage}
         loading={query.isFetchingNextPage}
       />
+      <LoadMoreError query={query} />
     </div>
   );
 }
@@ -289,11 +293,12 @@ function IssuesGrid({ kind, slug }: { kind: EntityKindPath; slug: string }) {
     [query.data],
   );
   if (query.isLoading) return <SkeletonGrid />;
-  if (query.isError) {
+  if (query.isError && !query.data) {
     return (
-      <p className="text-muted-foreground text-sm">
-        Couldn&apos;t load issues. Try refreshing.
-      </p>
+      <RailError
+        message="Couldn't load issues."
+        onRetry={() => void query.refetch()}
+      />
     );
   }
   if (items.length === 0) {
@@ -313,6 +318,7 @@ function IssuesGrid({ kind, slug }: { kind: EntityKindPath; slug: string }) {
         active={query.hasNextPage}
         loading={query.isFetchingNextPage}
       />
+      <LoadMoreError query={query} />
     </>
   );
 }
@@ -325,11 +331,12 @@ function SeriesGrid({ kind, slug }: { kind: EntityKindPath; slug: string }) {
     [query.data],
   );
   if (query.isLoading) return <SkeletonGrid />;
-  if (query.isError) {
+  if (query.isError && !query.data) {
     return (
-      <p className="text-muted-foreground text-sm">
-        Couldn&apos;t load series. Try refreshing.
-      </p>
+      <RailError
+        message="Couldn't load series."
+        onRetry={() => void query.refetch()}
+      />
     );
   }
   if (items.length === 0) {
@@ -349,6 +356,7 @@ function SeriesGrid({ kind, slug }: { kind: EntityKindPath; slug: string }) {
         active={query.hasNextPage}
         loading={query.isFetchingNextPage}
       />
+      <LoadMoreError query={query} />
     </>
   );
 }

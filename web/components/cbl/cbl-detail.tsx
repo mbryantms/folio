@@ -77,6 +77,8 @@ import type {
   RefreshLogEntryView,
   SavedViewView,
 } from "@/lib/api/types";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 
 import { ManualMatchPopover } from "./manual-match-popover";
 
@@ -137,9 +139,11 @@ function CblDetailInner({
   }
   if (list.isError || !list.data) {
     return (
-      <div className="text-destructive rounded-md border p-4 text-sm">
-        Failed to load list: {String(list.error)}
-      </div>
+      <RailError
+        message="Couldn't load this reading list."
+        onRetry={() => void list.refetch()}
+        className="rounded-md border p-4"
+      />
     );
   }
 
@@ -571,10 +575,15 @@ function ResolutionTab({
   // Depend on the three fields, not the whole query object — TanStack
   // returns a fresh object identity each render, so `[query]` tore the
   // observer down and rebuilt it on every render (audit G10).
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -587,7 +596,7 @@ function ResolutionTab({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   if (stats.ambiguous + stats.missing === 0) {
     return (
@@ -650,6 +659,7 @@ function ResolutionTab({
         aria-hidden
         className={cn("h-12", query.hasNextPage ? "" : "hidden")}
       />
+      <LoadMoreError query={query} />
       <div className="text-muted-foreground text-xs">
         {items.length} of {filterTotal} loaded
         {query.isFetchingNextPage ? " · loading more…" : ""}

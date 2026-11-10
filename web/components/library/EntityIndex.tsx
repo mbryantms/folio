@@ -12,6 +12,8 @@ import { useEntityListInfinite, type EntityKindPath } from "@/lib/api/queries";
 import type { EntityListItem } from "@/lib/api/types";
 import { ENTITY_KINDS, entityUrl } from "@/lib/entities";
 import { useInfiniteSentinel } from "@/lib/ui/use-infinite-sentinel";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 
 const SEARCH_DEBOUNCE_MS = 250;
 
@@ -120,10 +122,11 @@ export function EntityIndex({
 
       {query.isLoading ? (
         <EntityGridSkeleton />
-      ) : query.isError ? (
-        <p className="text-muted-foreground text-sm">
-          Couldn&apos;t load {meta.plural.toLowerCase()}. Try refreshing.
-        </p>
+      ) : query.isError && !query.data ? (
+        <RailError
+          message={`Couldn't load ${meta.plural.toLowerCase()}.`}
+          onRetry={() => void query.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="text-muted-foreground text-sm">
           No {meta.plural.toLowerCase()} match.
@@ -149,6 +152,7 @@ export function EntityIndex({
         aria-hidden="true"
         className={query.hasNextPage ? "h-12" : "hidden"}
       />
+      <LoadMoreError query={query} />
       {query.isFetchingNextPage ? (
         <p className="text-muted-foreground text-center text-xs">
           Loading more…
