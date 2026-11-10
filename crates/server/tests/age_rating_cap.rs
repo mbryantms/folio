@@ -2116,3 +2116,631 @@ async fn completeness_filters_run_under_the_cap() {
     let got = saved_view_slugs(&w.app, &w.uncapped, "collection_completeness", "complete").await;
     assert!(got.contains(&gap_run), "{got:?}");
 }
+
+// ───── entity surfaces under the issue-level cap ─────
+//
+// `entity_world` tags the Gap fixture and runs the scanner's junction and
+// rollup passes, so the `series_*` rollups carry what the hidden #2 adds:
+//
+// - hidden-only: writer "Hidden Hand", character "Secret Agent", team
+//   "Hidden Squad", location "Hidden Lair", genre "Hidden Genre", tag
+//   "Hidden Tag", arc "Hidden Arc";
+// - shared: character "Shared Sidekick" (#1 and #2) and creator "Cap
+//   Writer" (writer everywhere, colorist only on #2).
+//
+// "Twin Run" (`Teen`) repeats the shape: #1 visible with the Sidekick, #2
+// above the cap with the hidden-only names, so the similar-series rail
+// pairs it with Gap Run on both visible and hidden entities.
+
+#[allow(clippy::too_many_arguments)]
+async fn tag_issue(
+    db: &sea_orm::DatabaseConnection,
+    id: &str,
+    writer: &str,
+    colorist: Option<&str>,
+    characters: Option<&str>,
+    teams: Option<&str>,
+    locations: Option<&str>,
+    genre: Option<&str>,
+    tags: Option<&str>,
+    story_arc: Option<&str>,
+) {
+    entity::issue::ActiveModel {
+        id: Unchanged(id.to_owned()),
+        writer: Set(Some(writer.into())),
+        colorist: Set(colorist.map(str::to_owned)),
+        characters: Set(characters.map(str::to_owned)),
+        teams: Set(teams.map(str::to_owned)),
+        locations: Set(locations.map(str::to_owned)),
+        genre: Set(genre.map(str::to_owned)),
+        tags: Set(tags.map(str::to_owned)),
+        story_arc: Set(story_arc.map(str::to_owned)),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .unwrap();
+    server::library::scanner::metadata_rollup::replace_issue_metadata_from_row(db, id)
+        .await
+        .unwrap();
+}
+
+struct EntityWorld {
+    w: World,
+    gap: Gap,
+    twin_one: String,
+}
+
+async fn entity_world() -> EntityWorld {
+    let (w, gap) = gap_world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let hidden = (
+        Some("Secret Agent, Shared Sidekick"),
+        Some("Hidden Squad"),
+        Some("Hidden Lair"),
+        Some("Hidden Genre"),
+        Some("Hidden Tag"),
+        Some("Hidden Arc"),
+    );
+    tag_issue(
+        &db,
+        &gap.one,
+        "Cap Writer",
+        None,
+        Some("Shared Sidekick"),
+        None,
+        None,
+        Some("Shared Genre"),
+        None,
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &gap.two,
+        "Cap Writer, Hidden Hand",
+        Some("Cap Writer"),
+        hidden.0,
+        hidden.1,
+        hidden.2,
+        hidden.3,
+        hidden.4,
+        hidden.5,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &gap.three,
+        "Cap Writer",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let twin = seed_series(&db, w.fx.lib_id, "Twin Run", "twin-run", Some("Teen")).await;
+    let twin_one = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        twin,
+        1,
+        "twin-1",
+        "Twin One",
+        None,
+        None,
+    )
+    .await;
+    let twin_two = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        twin,
+        2,
+        "twin-2",
+        "Twin Two",
+        Some("Mature 17+"),
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &twin_one,
+        "Cap Writer",
+        None,
+        Some("Shared Sidekick"),
+        None,
+        None,
+        Some("Shared Genre"),
+        None,
+        None,
+    )
+    .await;
+    tag_issue(
+        &db,
+        &twin_two,
+        "Cap Writer, Hidden Hand",
+        None,
+        hidden.0,
+        hidden.1,
+        hidden.2,
+        hidden.3,
+        hidden.4,
+        hidden.5,
+    )
+    .await;
+    for series_id in [gap.series_id, twin] {
+        server::library::scanner::metadata_rollup::rollup_series_metadata(&db, series_id)
+            .await
+            .unwrap();
+    }
+    EntityWorld { w, gap, twin_one }
+}
+
+/// `items[*][key]` of a list page.
+fn item_strings(body: &serde_json::Value, key: &str) -> Vec<String> {
+    names(body, key)
+}
+
+/// The slug the admin's browse index gives the entity named `name`.
+async fn admin_slug(w: &World, list: &str, name_key: &str, name: &str) -> String {
+    let (st, body) = get_json(&w.app, &format!("{list}?limit=100"), &w.admin).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i[name_key] == name)
+        .and_then(|i| i["slug"].as_str())
+        .unwrap_or_else(|| panic!("{name} missing from {list}: {body}"))
+        .to_owned()
+}
+
+#[tokio::test]
+async fn entity_lists_and_search_leave_out_a_hidden_only_entity() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let cases: [(&str, &str, &str); 7] = [
+        ("/api/characters", "name", "Secret Agent"),
+        ("/api/characters?q=secret", "name", "Secret Agent"),
+        ("/api/teams", "name", "Hidden Squad"),
+        ("/api/teams?q=hidden", "name", "Hidden Squad"),
+        ("/api/locations", "name", "Hidden Lair"),
+        ("/api/creators", "person", "Hidden Hand"),
+        ("/api/people?q=hidden", "person", "Hidden Hand"),
+    ];
+    for (path, key, hidden) in cases {
+        let (st, body) = get_json(&w.app, path, &w.capped).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {body}");
+        assert!(
+            !item_strings(&body, key).contains(&hidden.to_owned()),
+            "{path} names {hidden} for the capped reader: {body}"
+        );
+        for user in [&w.uncapped, &w.admin] {
+            let (_, body) = get_json(&w.app, path, user).await;
+            assert!(
+                item_strings(&body, key).contains(&hidden.to_owned()),
+                "{path} lost {hidden}: {body}"
+            );
+        }
+    }
+    // The shared character stays listed, counted over visible issues only.
+    let count = |body: &serde_json::Value| {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["name"] == "Shared Sidekick")
+            .map(|i| (i["series_count"].as_i64(), i["issue_count"].as_i64()))
+    };
+    let (_, body) = get_json(&w.app, "/api/characters", &w.capped).await;
+    assert_eq!(count(&body), Some((Some(2), Some(2))), "{body}");
+    let (_, body) = get_json(&w.app, "/api/characters", &w.uncapped).await;
+    assert_eq!(count(&body), Some((Some(2), Some(4))), "{body}");
+    // The `total` of the capped first page agrees with its rows.
+    let (_, body) = get_json(&w.app, "/api/teams", &w.capped).await;
+    assert_eq!(body["total"], 0, "{body}");
+}
+
+#[tokio::test]
+async fn hidden_only_entity_pages_answer_like_an_unknown_slug() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let cases = [
+        ("/api/characters", "name", "Secret Agent", "/insights"),
+        ("/api/teams", "name", "Hidden Squad", "/series"),
+        ("/api/locations", "name", "Hidden Lair", "/issues"),
+        ("/api/creators", "person", "Hidden Hand", ""),
+    ];
+    for (list, key, name, sub) in cases {
+        let slug = admin_slug(w, list, key, name).await;
+        let (unknown_st, unknown) = get_json(
+            &w.app,
+            &format!("{list}/no-such-entity-anywhere{sub}"),
+            &w.capped,
+        )
+        .await;
+        assert_eq!(unknown_st, StatusCode::NOT_FOUND, "{unknown}");
+        for path in [format!("{list}/{slug}"), format!("{list}/{slug}{sub}")] {
+            let (st, body) = get_json(&w.app, &path, &w.capped).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}: {body}");
+            assert_eq!(body, unknown, "{path}");
+            for user in [&w.uncapped, &w.admin] {
+                let (st, body) = get_json(&w.app, &path, user).await;
+                assert_eq!(st, StatusCode::OK, "{path}: {body}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn shared_creator_lists_only_roles_on_visible_issues() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let slug = admin_slug(w, "/api/creators", "person", "Cap Writer").await;
+    let roles = |body: &serde_json::Value| -> Vec<String> {
+        body["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r.as_str().map(str::to_owned))
+            .collect()
+    };
+    let path = format!("/api/creators/{slug}");
+    let (st, body) = get_json(&w.app, &path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(roles(&body), vec!["writer"], "{body}");
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, &path, user).await;
+        assert_eq!(roles(&body), vec!["writer", "colorist"], "{body}");
+    }
+    // Same on the browse index and in people search.
+    for (list, key) in [
+        ("/api/creators", "person"),
+        ("/api/people?q=cap%20writer", "person"),
+    ] {
+        let (_, body) = get_json(&w.app, list, &w.capped).await;
+        let item = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i[key] == "Cap Writer")
+            .cloned()
+            .unwrap_or_else(|| panic!("{list}: {body}"));
+        assert_eq!(
+            item["roles"],
+            serde_json::json!(["writer"]),
+            "{list}: {item}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn shared_character_page_counts_and_grids_follow_the_cap() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let slug = admin_slug(w, "/api/characters", "name", "Shared Sidekick").await;
+    let base = format!("/api/characters/{slug}");
+    let (st, body) = get_json(&w.app, &base, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(
+        (body["series_count"].as_i64(), body["issue_count"].as_i64()),
+        (Some(2), Some(2))
+    );
+    let (_, body) = get_json(&w.app, &base, &w.uncapped).await;
+    assert_eq!(body["issue_count"], 4, "{body}");
+
+    let (_, body) = get_json(&w.app, &format!("{base}/issues"), &w.capped).await;
+    let ids: Vec<String> = item_strings(&body, "id");
+    assert_eq!(ids.len(), 2, "{body}");
+    assert!(!ids.contains(&e.gap.two), "{body}");
+    assert!(ids.contains(&e.twin_one), "{body}");
+
+    // Insights name nothing that only the hidden issues carry.
+    let (st, body) = get_json(&w.app, &format!("{base}/insights"), &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let text = body.to_string();
+    for hidden in [
+        "Secret Agent",
+        "Hidden Hand",
+        "Hidden Squad",
+        "Hidden Lair",
+        "Hidden Arc",
+    ] {
+        assert!(!text.contains(hidden), "insights name {hidden}: {body}");
+    }
+    assert_eq!(body["issues"], 2, "{body}");
+    let (_, body) = get_json(&w.app, &format!("{base}/insights"), &w.uncapped).await;
+    assert!(body.to_string().contains("Secret Agent"), "{body}");
+}
+
+#[tokio::test]
+async fn filter_option_pickers_leave_out_hidden_only_values() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let cases = [
+        ("/api/filter-options/genres", "Hidden Genre"),
+        ("/api/filter-options/tags", "Hidden Tag"),
+        ("/api/filter-options/credits", "Hidden Hand"),
+        ("/api/filter-options/credits/writer", "Hidden Hand"),
+    ];
+    let values = |body: &serde_json::Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    };
+    for (path, hidden) in cases {
+        let (st, body) = get_json(&w.app, path, &w.capped).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {body}");
+        assert!(
+            !values(&body).contains(&hidden.to_owned()),
+            "{path}: {body}"
+        );
+        for user in [&w.uncapped, &w.admin] {
+            let (_, body) = get_json(&w.app, path, user).await;
+            assert!(values(&body).contains(&hidden.to_owned()), "{path}: {body}");
+        }
+    }
+    // A value a visible issue carries stays offered.
+    let (_, body) = get_json(&w.app, "/api/filter-options/genres", &w.capped).await;
+    assert!(values(&body).contains(&"Shared Genre".to_owned()), "{body}");
+}
+
+#[tokio::test]
+async fn series_list_rollup_filters_follow_the_cap() {
+    let e = entity_world().await;
+    let w = &e.w;
+    for path in [
+        "/api/series?writers=Hidden%20Hand",
+        "/api/series?credits=Hidden%20Hand",
+        "/api/series?genres=Hidden%20Genre",
+        "/api/series?tags=Hidden%20Tag",
+    ] {
+        let (st, body) = get_json(&w.app, path, &w.capped).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {body}");
+        assert!(item_strings(&body, "slug").is_empty(), "{path}: {body}");
+        for user in [&w.uncapped, &w.admin] {
+            let (_, body) = get_json(&w.app, path, user).await;
+            let mut got = item_strings(&body, "slug");
+            got.sort();
+            assert_eq!(got, vec!["gap-run", "twin-run"], "{path}: {body}");
+        }
+    }
+    let (_, body) = get_json(&w.app, "/api/series?genres=Shared%20Genre", &w.capped).await;
+    let mut got = item_strings(&body, "slug");
+    got.sort();
+    assert_eq!(got, vec!["gap-run", "twin-run"], "{body}");
+}
+
+#[tokio::test]
+async fn series_appearances_leave_out_an_arc_only_on_the_hidden_issue() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let path = "/api/series/gap-run/appearances";
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["arcs"], serde_json::json!([]), "{body}");
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, path, user).await;
+        assert_eq!(body["arcs"][0]["name"], "Hidden Arc", "{body}");
+    }
+}
+
+#[tokio::test]
+async fn similar_series_reasons_never_name_a_hidden_only_entity() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let reasons = |body: &serde_json::Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["series"]["slug"] == "twin-run")
+            .map(|i| {
+                i["because"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|r| r["name"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let path = "/api/series/gap-run/similar";
+    let (_, full) = get_json(&w.app, path, &w.uncapped).await;
+    let full = reasons(&full);
+    assert!(full.contains(&"Secret Agent".to_owned()), "{full:?}");
+    assert!(full.contains(&"Shared Sidekick".to_owned()), "{full:?}");
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let capped = reasons(&body);
+    assert!(capped.contains(&"Shared Sidekick".to_owned()), "{body}");
+    for hidden in [
+        "Secret Agent",
+        "Hidden Hand",
+        "Hidden Squad",
+        "Hidden Genre",
+        "Hidden Tag",
+    ] {
+        assert!(!capped.contains(&hidden.to_owned()), "{hidden}: {body}");
+    }
+    let (_, body) = get_json(&w.app, path, &w.admin).await;
+    assert_eq!(reasons(&body), full);
+}
+
+#[tokio::test]
+async fn opds_author_facets_and_by_creator_feeds_follow_the_cap() {
+    let e = entity_world().await;
+    let w = &e.w;
+    for path in ["/opds/v1/series", "/opds/v2/series"] {
+        let (st, bytes) = raw(&w.app, Method::GET, path, &w.capped, None).await;
+        assert_eq!(st, StatusCode::OK, "{path}");
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("Gap Run"), "{path}: {text}");
+        assert!(text.contains("Cap Writer"), "{path}: {text}");
+        assert!(!text.contains("Hidden Hand"), "{path}: {text}");
+        assert!(!text.contains("Hidden Genre"), "{path}: {text}");
+        let (_, bytes) = raw(&w.app, Method::GET, path, &w.uncapped, None).await;
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("Hidden Hand"), "{path}: {text}");
+    }
+    for path in [
+        "/opds/v1/by-creator/Hidden%20Hand",
+        "/opds/v2/by-creator/Hidden%20Hand",
+    ] {
+        let (st, bytes) = raw(&w.app, Method::GET, path, &w.capped, None).await;
+        assert_eq!(st, StatusCode::OK, "{path}");
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains("Gap Run"), "{path}: {text}");
+        assert!(!text.contains("Twin Run"), "{path}: {text}");
+        let (_, bytes) = raw(&w.app, Method::GET, path, &w.uncapped, None).await;
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("Gap Run"), "{path}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn reading_stats_top_creators_follow_the_cap() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    for user in [&w.capped, &w.uncapped] {
+        entity::reading_session::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            user_id: Set(user.user_id),
+            issue_id: Set(e.gap.one.clone()),
+            series_id: Set(e.gap.series_id),
+            client_session_id: Set(Uuid::new_v4().to_string()),
+            started_at: Set(now - chrono::Duration::minutes(10)),
+            ended_at: Set(Some(now)),
+            last_heartbeat_at: Set(now),
+            active_ms: Set(600_000),
+            distinct_pages_read: Set(2),
+            page_turns: Set(2),
+            start_page: Set(0),
+            end_page: Set(1),
+            furthest_page: Set(1),
+            device: Set(None),
+            view_mode: Set(None),
+            client_meta: Set(serde_json::json!({})),
+            hidden_from_log: Set(false),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+    }
+    let people = |body: &serde_json::Value| -> Vec<String> {
+        body["top_creators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|c| c["person"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let (st, body) = get_json(&w.app, "/api/me/reading-stats", &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let got = people(&body);
+    assert!(got.contains(&"Cap Writer".to_owned()), "{body}");
+    assert!(!got.contains(&"Hidden Hand".to_owned()), "{body}");
+    let (_, body) = get_json(&w.app, "/api/me/reading-stats", &w.uncapped).await;
+    assert!(people(&body).contains(&"Hidden Hand".to_owned()), "{body}");
+}
+
+async fn saved_view_multi(
+    app: &TestApp,
+    user: &Authed,
+    field: &str,
+    op: &str,
+    value: serde_json::Value,
+) -> Vec<String> {
+    let (st, view) = post_json(
+        app,
+        "/api/me/saved-views",
+        user,
+        serde_json::json!({
+            "kind": "filter_series",
+            "name": format!("{field} {op} {value}"),
+            "filter": {
+                "match_mode": "all",
+                "conditions": [
+                    { "group_id": 0, "field": field, "op": op, "value": value }
+                ]
+            },
+            "sort_field": "name",
+            "sort_order": "asc",
+            "result_limit": 50,
+        }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{view}");
+    let id = view["id"].as_str().unwrap();
+    let (st, body) = get_json(app, &format!("/api/me/saved-views/{id}/results"), user).await;
+    assert_eq!(st, StatusCode::OK, "{field}: {body}");
+    let mut got = names(&body, "slug");
+    got.sort();
+    got
+}
+
+#[tokio::test]
+async fn saved_view_junction_filters_follow_the_cap() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let both = vec!["gap-run".to_owned(), "twin-run".to_owned()];
+    for (field, value) in [
+        ("writer", "Hidden Hand"),
+        ("characters", "Secret Agent"),
+        ("teams", "Hidden Squad"),
+        ("locations", "Hidden Lair"),
+        ("genres", "Hidden Genre"),
+        ("tags", "Hidden Tag"),
+    ] {
+        let v = serde_json::json!([value]);
+        let got = saved_view_multi(&w.app, &w.capped, field, "includes_any", v.clone()).await;
+        assert!(got.is_empty(), "{field}: {got:?}");
+        let got = saved_view_multi(&w.app, &w.capped, field, "includes_all", v.clone()).await;
+        assert!(got.is_empty(), "{field}: {got:?}");
+        for user in [&w.uncapped, &w.admin] {
+            let got = saved_view_multi(&w.app, user, field, "includes_any", v.clone()).await;
+            assert_eq!(got, both, "{field}");
+        }
+    }
+    // `is_empty` on teams: for the capped reader neither series has a
+    // visible team.
+    let got = saved_view_multi(
+        &w.app,
+        &w.capped,
+        "teams",
+        "is_empty",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(got.contains(&"gap-run".to_owned()), "{got:?}");
+    let got = saved_view_multi(
+        &w.app,
+        &w.uncapped,
+        "teams",
+        "is_empty",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert!(!got.contains(&"gap-run".to_owned()), "{got:?}");
+    // A value on a visible issue still selects for the capped reader.
+    let got = saved_view_multi(
+        &w.app,
+        &w.capped,
+        "characters",
+        "includes_any",
+        serde_json::json!(["Shared Sidekick"]),
+    )
+    .await;
+    assert_eq!(got, both);
+}

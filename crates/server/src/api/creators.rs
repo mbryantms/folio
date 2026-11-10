@@ -82,6 +82,41 @@ const ROLE_ORDER: &[&str] = &[
     "translator",
 ];
 
+/// The series-level arm of the creator credit union (`person`, `role`,
+/// `ref_id = 'series:<id>'`, `library_id`) shared by `/creators` and
+/// `/people`. `library_filter`, `series_cap` and `issue_cap` are the
+/// caller's fragments over the aliases `s` / `i`.
+///
+/// Uncapped callers read the `series_credits` rollup. For a caller whose
+/// cap hides anything (`capped`) a rollup row counts only while an issue
+/// of the series that caller can see carries the same credit, because the
+/// rollup also carries the credits of issues above the cap.
+pub(crate) fn series_credit_arm(
+    library_filter: &str,
+    series_cap: &str,
+    issue_cap: &str,
+    capped: bool,
+) -> String {
+    let arm = format!(
+        "SELECT sc.person AS person, sc.role AS role, \
+                'series:' || sc.series_id::text AS ref_id, s.library_id AS library_id \
+           FROM series_credits sc JOIN series s ON s.id = sc.series_id \
+          WHERE s.removed_at IS NULL{library_filter}{series_cap}"
+    );
+    if !capped {
+        return arm;
+    }
+    // Keep a rollup row only while an issue of that series the caller
+    // can see carries the same credit. `issue_cap` is over `i` + `s`.
+    format!(
+        "{arm} AND EXISTS (SELECT 1 FROM issue_credits ic \
+           JOIN issues i ON i.id = ic.issue_id \
+          WHERE i.series_id = sc.series_id AND ic.role = sc.role \
+            AND ic.person = sc.person AND i.removed_at IS NULL \
+            AND i.state = 'active'{issue_cap})"
+    )
+}
+
 #[derive(Debug, FromQueryResult)]
 struct CreditRow {
     series_id: Uuid,
@@ -222,12 +257,15 @@ pub async fn list(
         None => None,
     };
 
+    let series_arm = series_credit_arm(
+        &library_filter,
+        &series_cap,
+        &issue_cap,
+        visible.hides_any(),
+    );
     let credits_cte = format!(
         "WITH all_credits AS ( \
-           SELECT sc.person AS person, sc.role AS role, \
-                  'series:' || sc.series_id::text AS ref_id, s.library_id AS library_id \
-             FROM series_credits sc JOIN series s ON s.id = sc.series_id \
-            WHERE s.removed_at IS NULL{library_filter}{series_cap} \
+           {series_arm} \
            UNION ALL \
            SELECT ic.person AS person, ic.role AS role, \
                   'issue:' || ic.issue_id AS ref_id, s.library_id AS library_id \
@@ -405,25 +443,38 @@ pub async fn get_one(
     // credits join through `issues` to reach the series. We dedupe
     // by (series_id, role) so a creator who's "writer" on every issue
     // of a series appears once as writer for that series.
-    let sql = format!(
-        "WITH credits AS ( \
-           SELECT s.id AS series_id, sc.role AS role \
-             FROM series_credits sc \
-             JOIN series s ON s.id = sc.series_id \
-            WHERE s.removed_at IS NULL \
-              AND btrim(lower(sc.person)) = $1{library_filter}{series_cap} \
-           UNION \
-           SELECT s.id AS series_id, ic.role AS role \
-             FROM issue_credits ic \
-             JOIN issues i ON i.id = ic.issue_id \
-             JOIN series s ON s.id = i.series_id \
-            WHERE s.removed_at IS NULL \
-              AND i.removed_at IS NULL \
-              AND i.state = 'active' \
-              AND btrim(lower(ic.person)) = $1{library_filter}{issue_cap} \
-         ) \
-         SELECT series_id, role FROM credits",
+    let issue_arm = format!(
+        "SELECT s.id AS series_id, ic.role AS role \
+           FROM issue_credits ic \
+           JOIN issues i ON i.id = ic.issue_id \
+           JOIN series s ON s.id = i.series_id \
+          WHERE s.removed_at IS NULL \
+            AND i.removed_at IS NULL \
+            AND i.state = 'active' \
+            AND btrim(lower(ic.person)) = $1{library_filter}{issue_cap}"
     );
+    let sql = if visible.hides_any() {
+        // Capped caller: the `series_credits` rollup includes credits on
+        // issues above the cap, so only credits on visible issues count —
+        // in series the caller can see (the rails are series cards).
+        format!(
+            "WITH credits AS ({issue_arm}{series_cap}) \
+             SELECT DISTINCT series_id, role FROM credits"
+        )
+    } else {
+        format!(
+            "WITH credits AS ( \
+               SELECT s.id AS series_id, sc.role AS role \
+                 FROM series_credits sc \
+                 JOIN series s ON s.id = sc.series_id \
+                WHERE s.removed_at IS NULL \
+                  AND btrim(lower(sc.person)) = $1{library_filter}{series_cap} \
+               UNION \
+               {issue_arm} \
+             ) \
+             SELECT series_id, role FROM credits",
+        )
+    };
 
     let backend = app.db.get_database_backend();
     let stmt = Statement::from_sql_and_values(backend, sql, params);

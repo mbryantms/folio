@@ -202,6 +202,15 @@ Applied per request, never cached:
   The web's similar-series cards add "Hide from suggestions" to the
   cover menu, which writes that dismissal.
 - **Removed series** never enter the cached list.
+- **Reasons under an age cap**: the cached reasons come from the
+  `series_*` rollups, which hold every issue of a series. For a caller
+  whose cap hides anything, each reason of an issue-derived kind
+  (creator, character, team, genre, tag, an arc that is not a tie-in) is
+  kept only when an issue the caller can see carries that entity, on the
+  target and on the neighbour (checked in libraries where the cap hides a
+  rung; `series_arcs` rows count as series-level). One extra query per
+  page; uncapped callers get the cached reasons unchanged. The score and
+  the order of the neighbours are not recomputed.
 - **Home rail only**: excludes every series the caller has started
   (progress with `last_page > 0` or `finished` on a live issue), and the seed. The seed
   is the most recently read visible, unhidden series; if its neighbours

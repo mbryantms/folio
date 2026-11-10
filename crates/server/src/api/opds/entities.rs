@@ -198,7 +198,7 @@ async fn publisher_series_feed(
     };
     let rows: Vec<series::Model> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &ids, &visible).await;
-    let facets = fetch_series_facets(&app.db, &ids).await;
+    let facets = fetch_series_facets(&app.db, &ids, &visible).await;
     let mut entries = String::new();
     for s in &rows {
         let cover = covers.get(&s.id).map(String::as_str);

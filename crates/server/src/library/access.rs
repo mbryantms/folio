@@ -72,6 +72,24 @@ impl VisibleLibraries {
         !self.caps.is_empty()
     }
 
+    /// True iff some cap actually hides a rating rung (a cap on the top
+    /// rung hides nothing). The switch between the two shapes of an
+    /// entity query: the `series_*` rollup junctions are the union of
+    /// every issue in the series, so a caller this returns `true` for
+    /// reads the `issue_*` twin over the issues it can see instead; every
+    /// other caller keeps the rollup (and its query plan).
+    pub fn hides_any(&self) -> bool {
+        self.caps
+            .values()
+            .any(|cap| !age_rating::hidden_ratings(cap).is_empty())
+    }
+
+    /// [`Self::hides_any`] for one library.
+    pub fn hides_in(&self, library_id: Uuid) -> bool {
+        self.cap_for(library_id)
+            .is_some_and(|cap| !age_rating::hidden_ratings(cap).is_empty())
+    }
+
     /// Membership + cap check for a series row.
     pub fn series_ok(&self, library_id: Uuid, rating: Option<&str>) -> bool {
         self.contains(library_id) && age_rating::passes(rating, self.cap_for(library_id))
@@ -640,6 +658,13 @@ mod tests {
     fn top_rung_cap_hides_nothing() {
         let lib = Uuid::now_v7();
         let v = capped(lib, "X18+");
+        assert!(v.has_caps());
+        assert!(!v.hides_any());
+        assert!(capped(lib, "Teen").hides_any());
+        assert!(capped(lib, "Teen").hides_in(lib));
+        assert!(!capped(lib, "Teen").hides_in(Uuid::now_v7()));
+        assert!(!v.hides_in(lib));
+        assert!(!VisibleLibraries::unrestricted().hides_any());
         assert!(v.series_cap_condition().is_none());
         let mut params = Vec::new();
         assert_eq!(v.raw_cap_clause("l", "r", &mut params), "");

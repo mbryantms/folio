@@ -671,13 +671,38 @@ async fn fetch_distinct(
     };
     let limit = parse_limit(q.limit);
     let visible = access::for_user(app, user).await;
+    // The `series_*` rollups are the union of every issue in the series.
+    // A caller whose cap hides anything reads the issue twin over the
+    // issues it can see instead, so a value carried only by an issue above
+    // the cap is never offered. Everyone else keeps the rollup.
+    let issue_twin = if visible.hides_any() {
+        match junction_table {
+            "series_genres" => Some("issue_genres"),
+            "series_tags" => Some("issue_tags"),
+            "series_credits" => Some("issue_credits"),
+            _ => None,
+        }
+    } else {
+        None
+    };
 
-    let mut sql = format!(
-        "SELECT DISTINCT j.{value_col} AS value
-           FROM {junction_table} j
-           JOIN series s ON s.id = j.series_id
-          WHERE s.removed_at IS NULL"
-    );
+    let mut sql = match issue_twin {
+        Some(twin) => format!(
+            "SELECT DISTINCT j.{value_col} AS value
+               FROM {twin} j
+               JOIN issues i ON i.id = j.issue_id
+               JOIN series s ON s.id = i.series_id
+              WHERE s.removed_at IS NULL
+                AND i.removed_at IS NULL
+                AND i.state = 'active'"
+        ),
+        None => format!(
+            "SELECT DISTINCT j.{value_col} AS value
+               FROM {junction_table} j
+               JOIN series s ON s.id = j.series_id
+              WHERE s.removed_at IS NULL"
+        ),
+    };
     let mut params: Vec<Value> = Vec::new();
 
     if let Some(role) = role_filter.as_deref() {
@@ -710,6 +735,14 @@ async fn fetch_distinct(
     }
     // WP-2.7: age-rating cap on the series rating.
     sql.push_str(&visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params));
+    if issue_twin.is_some() {
+        // ... and on the issue's own rating (series fallback).
+        sql.push_str(&visible.raw_cap_clause(
+            "s.library_id",
+            "COALESCE(i.age_rating, s.age_rating)",
+            &mut params,
+        ));
+    }
 
     if let Some(prefix) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         params.push(q_prefix_param(prefix));

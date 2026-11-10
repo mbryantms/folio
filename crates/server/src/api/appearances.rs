@@ -199,15 +199,22 @@ const SERIES_COLLECTIONS: &str = "\
     GROUP BY sv.id, sv.name \
     ORDER BY sv.name";
 
-const SERIES_ARCS: &str = "\
-    SELECT sa.slug AS id, sa.name AS name, NULL::int AS position, \
+/// Story arcs tagged on the series' issues. `cap` is the caller's
+/// issue-level age cap over `i` ([`crate::library::access::VisibleLibraries::issue_cap_sql`],
+/// empty when nothing is capped): an arc tagged only on issues above the
+/// cap is not listed, and no count includes them.
+fn series_arcs_sql(cap: &str) -> String {
+    format!(
+        "SELECT sa.slug AS id, sa.name AS name, NULL::int AS position, \
            count(DISTINCT ia.issue_id)::bigint AS issue_count \
-    FROM issue_arcs ia \
-    JOIN issues i ON i.id = ia.issue_id \
-    JOIN story_arc sa ON sa.id = ia.arc_id \
-    WHERE i.series_id = $1 \
-    GROUP BY sa.slug, sa.name \
-    ORDER BY sa.name";
+         FROM issue_arcs ia \
+         JOIN issues i ON i.id = ia.issue_id \
+         JOIN story_arc sa ON sa.id = ia.arc_id \
+         WHERE i.series_id = $1{cap} \
+         GROUP BY sa.slug, sa.name \
+         ORDER BY sa.name"
+    )
+}
 
 #[utoipa::path(
     operation_id = "series_appearances",
@@ -256,7 +263,9 @@ pub async fn series_appearances(
         pg(SERIES_COLLECTIONS, vec![uid, sid.clone()]),
     )
     .await;
-    let arcs = collect(&app, "arc", pg(SERIES_ARCS, vec![sid])).await;
+    let mut arc_params = vec![sid];
+    let arc_cap = acl.issue_cap_sql("i", &mut arc_params);
+    let arcs = collect(&app, "arc", pg(&series_arcs_sql(&arc_cap), arc_params)).await;
 
     respond(reading_lists, collections, arcs)
 }

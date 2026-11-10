@@ -730,6 +730,13 @@ const MAX_QUERIES_USER_EXPORT: u64 = 25; // observed ≈ 15
 // probe or a per-card hydrate would add ~9-40.
 const MAX_QUERIES_SIMILAR_COLD: u64 = 20; // observed 13 (+1 progress batch)
 const MAX_QUERIES_SIMILAR_WARM: u64 = 15; // observed 9 (+1 progress batch)
+// Entity browse indexes for a reader without an age cap: the issue-level
+// cap (a capped reader reads the issue junctions instead of the `series_*`
+// rollups) must not add a statement to this path. Grant lookup + page +
+// first-page total, plus auth.
+// Observed 2026-11-10: admin 3 (people / filter-options 2), uncapped
+// reader 4 (3) — the reader adds the grant lookup.
+const MAX_QUERIES_ENTITY_INDEX: u64 = 4;
 
 #[tokio::test]
 async fn realistic_dataset_endpoints_respond_correctly() {
@@ -895,6 +902,37 @@ async fn realistic_dataset_endpoints_respond_correctly() {
         MAX_QUERIES_SIMILAR_WARM,
         "/api/series/{slug}/similar (warm)",
     );
+
+    // ── entity browse indexes + people search: the admin and a reader
+    // with an uncapped grant.
+    let reader = register(&app, "perf-reader@example.com").await;
+    {
+        let db = Database::connect(&app.db_url).await.unwrap();
+        entity::user::ActiveModel {
+            id: sea_orm::Unchanged(reader.user_id),
+            role: Set(entity::user::UserRole::User),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+    }
+    grant_access(&app, reader.user_id, lib_id).await;
+    for who in [&user, &reader] {
+        for path in [
+            "/api/characters",
+            "/api/characters?q=link",
+            "/api/creators",
+            "/api/people?q=perf",
+            "/api/filter-options/credits",
+        ] {
+            let snap = QueryCount::snapshot(&counter);
+            let (status, body, elapsed) = get(&app, who, path).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+            assert_quick(elapsed, path);
+            assert_query_count(snap.taken(), MAX_QUERIES_ENTITY_INDEX, path);
+        }
+    }
 
     // ── collections bulk-add — PERF-1 replaced the per-member existence
     // probe (~2N queries) with two batched `is_in` checks; WP-8.3 folded
