@@ -418,11 +418,15 @@ pub async fn create(
             let Some(target) = target else {
                 return internal_msg();
             };
-            let Some(sv) = super::series::hydrate_series(&app, vec![target], actor.id)
-                .await
-                .into_iter()
-                .next()
-            else {
+            let Some(sv) = super::series::hydrate_series(
+                &app,
+                vec![target],
+                actor.id,
+                &access::VisibleLibraries::unrestricted(),
+            )
+            .await
+            .into_iter()
+            .next() else {
                 return internal_msg();
             };
             let view = super::series_relationships::edge_view_pub(pair.forward, sv);

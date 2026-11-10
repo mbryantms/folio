@@ -1507,3 +1507,26 @@ async fn add_rejects_invisible_targets_like_missing_ones() {
         .unwrap();
     assert_eq!(stored, 2);
 }
+
+/// A reorder carries every visible entry and collections have no size
+/// limit, so its cap is a safety bound just under what the body limit
+/// already allows: one id over it is a 422 naming the field, not a 413.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reorder_rejects_a_list_over_the_cap_with_field_details() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "reorder-cap@example.com").await;
+    let cid = create_collection(&app, &auth, "Big").await;
+    let max = server::api::collections::MAX_REORDER_ENTRY_IDS;
+    let ids: Vec<Uuid> = (0..=max).map(|_| Uuid::now_v7()).collect();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/collections/{cid}/entries/reorder"),
+        Some(&auth),
+        Some(serde_json::json!({ "entry_ids": ids })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["details"][0]["field"], "entry_ids");
+}

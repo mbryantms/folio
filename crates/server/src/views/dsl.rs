@@ -220,18 +220,46 @@ pub enum Op {
     IsNotEmpty,
 }
 
+// ───── size bounds (enforced on writes and previews only) ─────
+//
+// Every condition compiles to its own predicate and a list value to one
+// bound parameter per element, so an unbounded filter compiles to an
+// unbounded query. These caps are enforced by `garde` on the request
+// bodies that carry a `FilterDsl` (saved-view create / update and the two
+// preview routes, through `Validated<T>`); a failure is a 422 with an
+// `error.details` entry. Stored views are NOT re-checked on read: rows
+// written before the caps existed keep running (one WARN per run, see
+// `log_if_over_bounds`) with the filter statement timeout as the backstop.
+// Mirrored by hand in `web/lib/saved-views/filter-bounds.ts`.
+
+/// Most conditions one filter may hold. The DSL is a flat list today
+/// (`group_id` is always 0, no nested groups), so this is simply
+/// `conditions.len()`; once groups land, count every leaf condition in
+/// every group against the same cap.
+pub const MAX_FILTER_CONDITIONS: usize = 50;
+/// Most elements in one list-valued condition (`in`, `includes_any`, …).
+pub const MAX_FILTER_LIST_VALUES: usize = 200;
+/// Longest single string value, in UTF-8 bytes (the same 200-byte cap the
+/// free-text search endpoints put on their query).
+pub const MAX_FILTER_VALUE_LEN: usize = 200;
+
 /// One condition row in a filter DSL. `group_id` always 0 in v1; reserved
 /// for nested-group support without a wire-format break.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
 pub struct Condition {
     #[serde(default)]
+    #[garde(skip)]
     pub group_id: u8,
+    #[garde(skip)]
     pub field: Field,
+    #[garde(skip)]
     pub op: Op,
     /// Shape varies by `(field, op)`. The compiler validates and rejects
     /// mismatches with a clear error. See [`super::registry`] for the
-    /// matrix of allowed combinations.
+    /// matrix of allowed combinations. Bounded by
+    /// [`MAX_FILTER_LIST_VALUES`] / [`MAX_FILTER_VALUE_LEN`].
     #[serde(default = "default_value")]
+    #[garde(custom(value_within_bounds))]
     pub value: serde_json::Value,
 }
 
@@ -239,10 +267,82 @@ fn default_value() -> serde_json::Value {
     serde_json::Value::Null
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
 pub struct FilterDsl {
+    #[garde(skip)]
     pub match_mode: MatchMode,
+    /// At most [`MAX_FILTER_CONDITIONS`] on a write or preview.
+    #[garde(custom(conditions_within_bounds), dive)]
     pub conditions: Vec<Condition>,
+}
+
+fn conditions_within_bounds(conditions: &[Condition], _: &()) -> garde::Result {
+    if conditions.len() > MAX_FILTER_CONDITIONS {
+        return Err(garde::Error::new(format!(
+            "a filter can have at most {MAX_FILTER_CONDITIONS} conditions"
+        )));
+    }
+    Ok(())
+}
+
+fn value_within_bounds(value: &serde_json::Value, _: &()) -> garde::Result {
+    let too_long = || {
+        garde::Error::new(format!(
+            "a value can be at most {MAX_FILTER_VALUE_LEN} bytes long"
+        ))
+    };
+    match value {
+        serde_json::Value::String(s) if s.len() > MAX_FILTER_VALUE_LEN => Err(too_long()),
+        serde_json::Value::Array(items) => {
+            if items.len() > MAX_FILTER_LIST_VALUES {
+                return Err(garde::Error::new(format!(
+                    "a condition can list at most {MAX_FILTER_LIST_VALUES} values"
+                )));
+            }
+            if items
+                .iter()
+                .any(|v| v.as_str().is_some_and(|s| s.len() > MAX_FILTER_VALUE_LEN))
+            {
+                return Err(too_long());
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+impl FilterDsl {
+    /// Size of the filter against the write-time caps:
+    /// `(conditions, largest list value)`.
+    pub fn size(&self) -> (usize, usize) {
+        let largest_list = self
+            .conditions
+            .iter()
+            .filter_map(|c| c.value.as_array().map(Vec::len))
+            .max()
+            .unwrap_or(0);
+        (self.conditions.len(), largest_list)
+    }
+
+    /// Stored-view grandfathering: a view read from the database is never
+    /// rejected on the size caps (they apply to new writes and previews
+    /// only), but one over them is logged so an operator can find it.
+    /// Called from every place that compiles a STORED view
+    /// (`saved_views::dsl_from_view`, `opds::dsl_from_view`); to start
+    /// enforcing the caps on stored views, reject here instead.
+    pub fn log_if_over_bounds(&self, view_id: uuid::Uuid) {
+        let (conditions, largest_list) = self.size();
+        if conditions > MAX_FILTER_CONDITIONS || largest_list > MAX_FILTER_LIST_VALUES {
+            tracing::warn!(
+                view_id = %view_id,
+                conditions,
+                largest_list,
+                max_conditions = MAX_FILTER_CONDITIONS,
+                max_list_values = MAX_FILTER_LIST_VALUES,
+                "saved view filter exceeds the write-time bounds; running it anyway"
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

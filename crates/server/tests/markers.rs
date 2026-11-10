@@ -759,9 +759,10 @@ async fn per_issue_endpoint_acl_blocks_unauthorized_user() {
     let (_lib, _series, issue_id) = seed_issue(&app, "private").await;
     // outsider is a non-admin without an explicit grant for this lib.
 
+    // Answers like an unknown id: 404, not a 403 that confirms it exists.
     let url = format!("/api/me/issues/{issue_id}/markers");
     let (status, _) = http(&app, Method::GET, &url, Some(&outsider), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

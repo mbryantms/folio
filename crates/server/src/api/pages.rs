@@ -125,8 +125,14 @@ pub struct SetSidebarQuery {
     pub show: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+/// Most ids a page reorder may carry. A user has at most
+/// [`MAX_PAGES_PER_USER`] custom pages plus the system Home page; five
+/// times that leaves room without letting one request carry thousands.
+pub const MAX_REORDER_PAGE_IDS: usize = MAX_PAGES_PER_USER as usize * 5;
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct ReorderPagesReq {
+    #[garde(length(max = MAX_REORDER_PAGE_IDS))]
     pub page_ids: Vec<Uuid>,
 }
 
@@ -446,7 +452,7 @@ pub async fn delete_one(
 pub async fn reorder(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<ReorderPagesReq>,
+    Validated(req): Validated<ReorderPagesReq>,
 ) -> impl IntoResponse {
     let owned = match user_page::Entity::find()
         .filter(user_page::Column::UserId.eq(user.id))

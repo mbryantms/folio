@@ -196,7 +196,10 @@ pub async fn export(
             StatusCode::OK,
             [(
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"folio-notes-{date}.json\""),
+                crate::util::content_disposition::content_disposition(
+                    crate::util::content_disposition::Disposition::Attachment,
+                    &format!("folio-notes-{date}.json"),
+                ),
             )],
             Json(doc),
         )
@@ -206,11 +209,14 @@ pub async fn export(
             [
                 (
                     header::CONTENT_TYPE,
-                    "text/markdown; charset=utf-8".to_owned(),
+                    axum::http::HeaderValue::from_static("text/markdown; charset=utf-8"),
                 ),
                 (
                     header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"folio-notes-{date}.md\""),
+                    crate::util::content_disposition::content_disposition(
+                        crate::util::content_disposition::Disposition::Attachment,
+                        &format!("folio-notes-{date}.md"),
+                    ),
                 ),
             ],
             render_markdown(&doc),

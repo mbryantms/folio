@@ -37,6 +37,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use super::error;
+use super::extractors::Validated;
 use crate::auth::CurrentUser;
 use crate::state::AppState;
 use server_macros::handler;
@@ -99,11 +100,17 @@ pub struct PatchWidgetReq {
     pub config: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+/// Most ids a widget reorder may carry. The log page holds one widget per
+/// placement and a user has a few dozen at most; this is a safety bound
+/// far above that.
+pub const MAX_REORDER_WIDGET_IDS: usize = 500;
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct ReorderReq {
     /// Full set of widget ids in the new order. Server rejects when
     /// the set doesn't match the user's owned ids exactly — partial
     /// reorders would leave gaps in `position`.
+    #[garde(length(max = MAX_REORDER_WIDGET_IDS))]
     pub ids: Vec<String>,
 }
 
@@ -556,7 +563,7 @@ pub async fn remove(
 pub async fn reorder(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<ReorderReq>,
+    Validated(req): Validated<ReorderReq>,
 ) -> Response {
     let parsed_ids: Result<Vec<Uuid>, _> = req.ids.iter().map(|s| Uuid::parse_str(s)).collect();
     let parsed_ids = match parsed_ids {

@@ -22,7 +22,7 @@
 use chrono::{NaiveDate, Utc};
 use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
-use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -232,19 +232,31 @@ pub struct LocalDbProbe {
 /// change underneath it, so no lock is taken and no journal is touched:
 /// safe on a mounted volume, and a file the operator replaces by rename
 /// is simply re-opened next time.
+///
+/// The options are built with the driver's typed builder from the file
+/// name, never by pasting the path into a `sqlite://` URL, so a path
+/// containing `?`, `#` or `%` is opened as that file and cannot change
+/// the connection options.
 pub async fn open(path: &Path) -> Result<DatabaseConnection, LocalDbError> {
+    use sea_orm::sqlx::ConnectOptions as _;
+    use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     check_header(path)?;
-    let url = format!("sqlite://{}?mode=ro&immutable=true", path.to_string_lossy());
-    let mut opts = ConnectOptions::new(url);
-    opts.max_connections(2)
-        .sqlx_logging(false)
-        .connect_timeout(Duration::from_secs(10));
-    Database::connect(opts)
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .immutable(true)
+        .create_if_missing(false)
+        .disable_statement_logging();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect_with(options)
         .await
         .map_err(|e| LocalDbError::Open {
             path: path.display().to_string(),
             reason: e.to_string(),
-        })
+        })?;
+    Ok(sea_orm::SqlxSqliteConnector::from_sqlx_sqlite_pool(pool))
 }
 
 fn check_header(path: &Path) -> Result<(), LocalDbError> {

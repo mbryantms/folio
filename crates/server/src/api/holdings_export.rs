@@ -30,6 +30,8 @@
 //! Rows come out in id order; sort in the spreadsheet.
 
 use std::borrow::Cow;
+
+use crate::util::csv_cell::formula_safe as text;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -224,12 +226,21 @@ pub async fn holdings_csv(
     (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("text/csv; charset=utf-8"),
+            ),
             (
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{filename}\""),
+                crate::util::content_disposition::content_disposition(
+                    crate::util::content_disposition::Disposition::Attachment,
+                    &filename,
+                ),
             ),
-            (header::CACHE_CONTROL, "private, no-store".to_string()),
+            (
+                header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("private, no-store"),
+            ),
         ],
         Body::from_stream(body),
     )
@@ -686,30 +697,6 @@ fn cover_date(year: Option<i32>, month: Option<i32>, day: Option<i32>) -> String
     }
 }
 
-/// Neutralise spreadsheet formula injection: a text cell that a
-/// spreadsheet would evaluate (leading `=`, `+`, `-`, `@`, tab, CR) gets a
-/// leading `'`, unless it is a plain number such as issue `-1`.
-pub fn text(s: &str) -> Cow<'_, str> {
-    let risky = s
-        .chars()
-        .next()
-        .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r'));
-    if risky && !is_plain_number(s) {
-        Cow::Owned(format!("'{s}"))
-    } else {
-        Cow::Borrowed(s)
-    }
-}
-
-/// `[+-]digits[.digits]` and nothing else. Stricter than `f64::from_str`,
-/// which also takes `inf` / `NaN` and would let `-inf` through unguarded.
-fn is_plain_number(s: &str) -> bool {
-    let body = s.strip_prefix(['+', '-']).unwrap_or(s);
-    let (int, frac) = body.split_once('.').unwrap_or((body, ""));
-    let digits = |p: &str| p.bytes().all(|b| b.is_ascii_digit());
-    !int.is_empty() && digits(int) && digits(frac) && !(body.contains('.') && frac.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -727,24 +714,6 @@ mod tests {
             encode(&["plain", "a, b", "say \"hi\"", "two\nlines"]),
             "plain,\"a, b\",\"say \"\"hi\"\"\",\"two\nlines\"\r\n"
         );
-    }
-
-    #[test]
-    fn neutralises_formula_cells_but_not_numbers() {
-        assert_eq!(text("=HYPERLINK(\"x\")"), "'=HYPERLINK(\"x\")");
-        assert_eq!(text("+cmd"), "'+cmd");
-        assert_eq!(text("@SUM(A1)"), "'@SUM(A1)");
-        assert_eq!(text("-1"), "-1");
-        assert_eq!(text("-0.5"), "-0.5");
-        assert_eq!(text("-Hellblazer"), "'-Hellblazer");
-        assert_eq!(text("-inf"), "'-inf");
-        assert_eq!(text("+Infinity"), "'+Infinity");
-        assert_eq!(text("-NaN"), "'-NaN");
-        assert_eq!(text("\t1"), "'\t1");
-        assert_eq!(text("-1."), "'-1.");
-        assert_eq!(text("+3"), "+3");
-        assert_eq!(text("Batman"), "Batman");
-        assert_eq!(text(""), "");
     }
 
     #[test]

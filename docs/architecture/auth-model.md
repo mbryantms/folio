@@ -122,6 +122,18 @@ upsert users (external_id = "oidc:<iss>|<sub>")
 issue cookie session (same as local)
 ```
 
+A first OIDC login whose email belongs to a local (password) account is refused with 409 `auth.email_in_use` unless `auth.oidc.link_local_by_verified_email` is on. With it on, `auth/oidc.rs::callback` applies one rule:
+
+- The ID token's `email_verified` is not the JSON boolean `true` (absent, even when the trust-unverified opt-in admits the login, or `false`; a string `"true"` fails ID-token parsing): no link. A pending local row gets 403 "verify your email first", any other row 409.
+- A disabled local row is refused (403 `auth.disabled`) before anything is written.
+- Otherwise the identity is linked and the account becomes **single sign-on only**, whatever the local row's own `email_verified` says (self-registration without mail sets it with no proof): the local password is dropped, `token_version` is bumped, every refresh session and app password is revoked, `email_verified` is set, and a pending row becomes active. The row update is conditional on the external id and `token_version` that were read; the update, the revocations and the audit row commit in one transaction, and a concurrent change answers a retryable 409 `auth.conflict`. The new session is minted only after the commit.
+
+The `auth.oidc.auto_link` audit row records the account's `role`, `activated`, `password_dropped`, `sessions_revoked` and `app_passwords_revoked`, and the takeover is logged at WARN. A row an earlier build linked while keeping its local password loses that password the same way at its next single sign-on (`auth.oidc.local_password_dropped`); no supported path gives an OIDC-keyed account a password otherwise.
+
+Because a linked account can no longer sign in with a password, keep a separate local admin account with a different email as a fallback for when the identity provider is unavailable.
+
+Verified against the code at `59714b1f` on 2026-11-10.
+
 ### Refresh
 
 ```
@@ -167,7 +179,7 @@ Registration still answers 409 for an address that has an account; that is an ac
 
 Every argon2 hash and verify reached from an async handler (sign-in and its dummy verify, registration, password change, password reset, account deletion and the email/password re-checks through `failed_auth::verify_password_counted`, admin-created users) runs on tokio's blocking pool through `auth::password::{hash_blocking, verify_rotating_blocking, dummy_verify_blocking}`; app-password verification is handled in `auth::app_password` separately. A process-wide semaphore admits at most `password::hash_permits()` of these at once (the available parallelism, at least 2: the bound hashing had when it ran inline on the async workers); further callers wait in line, with no timeout. A failed hashing task (a panic or cancellation) answers 500 `internal` and is not counted as a wrong password; an unparsable stored hash counts as a non-match.
 
-Verified against the code at `5a1d2f64` on 2026-11-10.
+Verified against the code at `9492ac1b` on 2026-11-10.
 
 ### WebSocket auth (one-shot ticket)
 

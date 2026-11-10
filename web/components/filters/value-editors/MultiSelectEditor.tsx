@@ -20,6 +20,8 @@ import {
   PopoverTrigger,
 } from "@/components/folio/popover";
 
+import { MAX_FILTER_LIST_VALUES } from "@/lib/saved-views/filter-bounds";
+
 import type { OptionsEndpoint } from "../field-registry";
 import { useFilterOptions } from "../use-filter-options";
 
@@ -53,6 +55,8 @@ export function MultiSelectEditor({
   const selected = Array.isArray(value) ? (value as string[]) : [];
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
+  // The server refuses a list over this many values; stop adding there.
+  const atCap = selected.length >= MAX_FILTER_LIST_VALUES;
 
   const remote = useFilterOptions(endpoint, { library, q: search });
   const options = staticOptions
@@ -62,7 +66,7 @@ export function MultiSelectEditor({
   function toggle(v: string) {
     if (selected.includes(v)) {
       onChange(selected.filter((x) => x !== v));
-    } else {
+    } else if (!atCap) {
       onChange([...selected, v]);
     }
   }
@@ -116,6 +120,7 @@ export function MultiSelectEditor({
                     <CommandItem
                       key={opt}
                       value={opt}
+                      disabled={!checked && atCap}
                       onSelect={() => toggle(opt)}
                     >
                       <Check
@@ -131,6 +136,11 @@ export function MultiSelectEditor({
               </CommandGroup>
             </CommandList>
           </Command>
+          {atCap ? (
+            <p className="text-muted-foreground border-t px-3 py-2 text-xs">
+              Up to {MAX_FILTER_LIST_VALUES} values
+            </p>
+          ) : null}
         </PopoverContent>
       </Popover>
       {selected.length > 0 ? (

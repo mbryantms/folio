@@ -16,6 +16,7 @@ import type {
   StarterListListView,
   StarterListView,
 } from "./types";
+import { apiPath } from "./path";
 
 export type { StarterListView };
 
@@ -126,7 +127,7 @@ export function useSetStarterListHidden() {
 export function useRemoveStarterList() {
   return useAdminWrite<string>(
     (id) => ({
-      path: `/admin/starter-lists/${encodeURIComponent(id)}`,
+      path: apiPath`/admin/starter-lists/${id}`,
       method: "DELETE",
     }),
     "Starter list removed",

@@ -1156,6 +1156,43 @@ pub async fn me(
     (StatusCode::OK, jar, Json(body)).into_response()
 }
 
+/// Most reader key bindings one user may save. The web keymap
+/// (`web/lib/reader/keybinds.ts`, `KEYBIND_ACTIONS`) registers about 30
+/// actions and a binding is keyed by action, so this leaves ample room
+/// for new actions while bounding what one PATCH can store.
+pub const MAX_KEYBINDS: usize = 128;
+/// Longest action name or key combo in a binding. Real ones are a few
+/// characters (`nextPage`, `Ctrl+Shift+ArrowLeft`).
+pub const MAX_KEYBIND_LEN: usize = 64;
+
+/// The `keybinds` object, checked for size after its shape.
+#[derive(garde::Validate)]
+struct KeybindsBounds<'a> {
+    #[garde(custom(keybinds_within_bounds))]
+    keybinds: &'a serde_json::Value,
+}
+
+fn keybinds_within_bounds(value: &&serde_json::Value, _: &()) -> garde::Result {
+    let Some(map) = value.as_object() else {
+        return Ok(());
+    };
+    if map.len() > MAX_KEYBINDS {
+        return Err(garde::Error::new(format!(
+            "at most {MAX_KEYBINDS} key bindings"
+        )));
+    }
+    let too_long = |s: &str| s.chars().count() > MAX_KEYBIND_LEN;
+    if map
+        .iter()
+        .any(|(action, key)| too_long(action) || key.as_str().is_some_and(too_long))
+    {
+        return Err(garde::Error::new(format!(
+            "action names and key combos are at most {MAX_KEYBIND_LEN} characters"
+        )));
+    }
+    Ok(())
+}
+
 /// `PATCH /me/preferences` — update the calling user's preferences.
 /// Phase 3 only ships `default_reading_direction`. CSRF-checked by middleware
 /// (cookie auth, unsafe verb).
@@ -1207,6 +1244,10 @@ pub async fn update_preferences(
                     );
                 }
             }
+        }
+        // Size bounds, as a field-level 422 (`error.details`).
+        if let Err(report) = garde::Validate::validate(&KeybindsBounds { keybinds: kb }) {
+            return crate::api::extractors::from_garde(&report);
         }
     }
     if let Some(tz) = req.timezone.as_deref()

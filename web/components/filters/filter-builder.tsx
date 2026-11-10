@@ -32,6 +32,9 @@ import type {
   SortOrder,
 } from "@/lib/api/types";
 import { HttpError } from "@/lib/api/queries";
+import { collectServerErrors } from "@/lib/api/form-errors";
+import { ApiMutationError } from "@/lib/api/mutations/_core";
+import { MAX_FILTER_CONDITIONS } from "@/lib/saved-views/filter-bounds";
 
 import { ConditionRow } from "./condition-row";
 import { fieldAvailableOn, specFor, type ViewEntity } from "./field-registry";
@@ -157,12 +160,21 @@ export function FilterBuilder({
   const [previewError, setPreviewError] = React.useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
+  /** The server's 422 `error.details`, keyed by field path (`name`,
+   *  `filter.conditions`, `filter.conditions[3].value`, …). Cleared on
+   *  the next edit. */
+  const [serverErrors, setServerErrors] = React.useState<
+    Record<string, string>
+  >({});
+  const atConditionCap = state.conditions.length >= MAX_FILTER_CONDITIONS;
 
   function patch(p: Partial<FilterBuilderState>) {
     setState((prev) => ({ ...prev, ...p }));
+    setServerErrors({});
   }
 
   function addCondition() {
+    if (atConditionCap) return;
     const seed = specFor("name");
     const next: Condition = { field: "name", op: seed.allowedOps[0] };
     patch({ conditions: [...state.conditions, next] });
@@ -183,6 +195,7 @@ export function FilterBuilder({
   async function runPreview() {
     setIsPreviewing(true);
     setPreviewError(null);
+    setServerErrors({});
     try {
       const filter: FilterDsl = {
         match_mode: state.matchMode,
@@ -206,7 +219,17 @@ export function FilterBuilder({
           : e instanceof Error
             ? e.message
             : "Preview failed";
-      setPreviewError(msg);
+      // A 422 with field errors binds them like a save would; the
+      // too-slow notice (and any other failure) shows inline below.
+      const fields =
+        e instanceof HttpError && e.fields.length > 0
+          ? collectServerErrors(
+              new ApiMutationError(msg, e.status, e.fields, e.code),
+            )
+          : {};
+      setServerErrors(fields);
+      setPreview(null);
+      setPreviewError(Object.keys(fields).length > 0 ? null : msg);
     } finally {
       setIsPreviewing(false);
     }
@@ -215,12 +238,25 @@ export function FilterBuilder({
   async function handleSave() {
     if (!onSave) return;
     setIsSaving(true);
+    setServerErrors({});
     try {
       await onSave(state);
+    } catch (e) {
+      // `onSave` rethrows the mutation error (its toast already fired);
+      // bind a 422's field errors inline.
+      setServerErrors(collectServerErrors(e));
     } finally {
       setIsSaving(false);
     }
   }
+
+  const conditionsError = serverErrors["filter.conditions"];
+  const otherErrors = Object.entries(serverErrors).filter(
+    ([field]) =>
+      field !== "name" &&
+      field !== "filter.conditions" &&
+      !/^filter\.conditions\[\d+\]/.test(field),
+  );
 
   function reset() {
     setState(mergeInitial(initial));
@@ -238,7 +274,16 @@ export function FilterBuilder({
             value={state.name}
             onChange={(e) => patch({ name: e.target.value })}
             placeholder="My horror shelf"
+            aria-invalid={serverErrors.name ? true : undefined}
+            aria-describedby={
+              serverErrors.name ? "filter-name-error" : undefined
+            }
           />
+          {serverErrors.name ? (
+            <p id="filter-name-error" className="text-destructive text-sm">
+              {serverErrors.name}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="filter-desc">Description (optional)</Label>
@@ -292,15 +337,34 @@ export function FilterBuilder({
             </Select>
             <span className="text-muted-foreground text-sm">the following</span>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addCondition}
-          >
-            <Plus className="mr-1 size-4" /> Add condition
-          </Button>
+          <div className="flex items-center gap-2">
+            {atConditionCap ? (
+              <span
+                id="filter-condition-cap"
+                className="text-muted-foreground text-xs"
+              >
+                Up to {MAX_FILTER_CONDITIONS} conditions
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addCondition}
+              disabled={atConditionCap}
+              aria-describedby={
+                atConditionCap ? "filter-condition-cap" : undefined
+              }
+            >
+              <Plus className="mr-1 size-4" /> Add condition
+            </Button>
+          </div>
         </div>
+        {conditionsError ? (
+          <p role="alert" className="text-destructive text-sm">
+            {conditionsError}
+          </p>
+        ) : null}
         {state.conditions.length === 0 ? (
           // Compact (no cover illustration): it sits inside the
           // filter dialog above the live preview grid.
@@ -312,16 +376,25 @@ export function FilterBuilder({
             description="No conditions yet. Add one to start filtering."
           />
         ) : (
-          state.conditions.map((c, i) => (
-            <ConditionRow
-              key={i}
-              condition={c}
-              library={library}
-              entity={state.entity}
-              onChange={(next) => updateCondition(i, next)}
-              onRemove={() => removeCondition(i)}
-            />
-          ))
+          state.conditions.map((c, i) => {
+            const rowError = Object.entries(serverErrors).find(([field]) =>
+              field.startsWith(`filter.conditions[${i}]`),
+            )?.[1];
+            return (
+              <React.Fragment key={i}>
+                <ConditionRow
+                  condition={c}
+                  library={library}
+                  entity={state.entity}
+                  onChange={(next) => updateCondition(i, next)}
+                  onRemove={() => removeCondition(i)}
+                />
+                {rowError ? (
+                  <p className="text-destructive text-sm">{rowError}</p>
+                ) : null}
+              </React.Fragment>
+            );
+          })
         )}
       </div>
 
@@ -410,8 +483,22 @@ export function FilterBuilder({
         ) : null}
       </div>
 
+      {otherErrors.length > 0 ? (
+        <div
+          role="alert"
+          className="border-destructive bg-destructive/10 text-destructive rounded-md border p-3 text-sm"
+        >
+          {otherErrors.map(([field, message]) => (
+            <p key={field}>{message}</p>
+          ))}
+        </div>
+      ) : null}
+
       {previewError ? (
-        <div className="border-destructive bg-destructive/10 text-destructive rounded-md border p-3 text-sm">
+        <div
+          role="alert"
+          className="border-destructive bg-destructive/10 text-destructive rounded-md border p-3 text-sm"
+        >
           {previewError}
         </div>
       ) : null}

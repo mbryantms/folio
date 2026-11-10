@@ -8225,7 +8225,8 @@ export interface components {
             /**
              * @description Shape varies by `(field, op)`. The compiler validates and rejects
              *     mismatches with a clear error. See [`super::registry`] for the
-             *     matrix of allowed combinations.
+             *     matrix of allowed combinations. Bounded by
+             *     [`MAX_FILTER_LIST_VALUES`] / [`MAX_FILTER_VALUE_LEN`].
              */
             value?: unknown;
         };
@@ -10265,6 +10266,7 @@ export interface components {
             weekly_refresh_enabled: boolean;
         };
         FilterDsl: {
+            /** @description At most [`MAX_FILTER_CONDITIONS`] on a write or preview. */
             conditions: components["schemas"]["Condition"][];
             match_mode: components["schemas"]["MatchMode"];
         };
@@ -10388,7 +10390,7 @@ export interface components {
          *     one of these.
          * @enum {string}
          */
-        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "MetadataDriftFromXml";
+        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "MetadataDriftFromXml";
         /**
          * @description One kind-facet tally within the current status+severity scope (drives the
          *     per-kind filter pills).
@@ -12766,6 +12768,7 @@ export interface components {
             item?: components["schemas"]["IssueSummaryView"] | null;
         };
         PreviewReq: {
+            /** @description Bounded like a saved filter (`views::dsl::MAX_FILTER_*`). */
             filter: components["schemas"]["FilterDsl"];
             /** Format: int32 */
             result_limit: number;
@@ -16239,16 +16242,14 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Issues the caller doesn't have library access to read. Silent
-             *     from the user's perspective; surfaced here so an admin
-             *     debugging a "mark read did nothing" report can see the
-             *     filter fired.
+             * @description Always 0. Kept for response shape: an issue the caller can't see
+             *     is counted in `not_found`, indistinguishable from an unknown id.
              */
             forbidden: number;
             /**
              * Format: int32
              * @description Issues whose id didn't resolve to a row (removed / never
-             *     existed / typo). Treated the same as forbidden — the caller
+             *     existed / typo) or that the caller can't see — the caller
              *     doesn't get to distinguish a missing row from one they're
              *     not allowed to see.
              */
@@ -16322,12 +16323,13 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Series the caller can't see (library access denied).
+             * @description Always 0. Kept for response shape: a series the caller can't see
+             *     is counted in `not_found_series`.
              */
             forbidden_series: number;
             /**
              * Format: int32
-             * @description Series whose id didn't resolve.
+             * @description Series whose id didn't resolve, or that the caller can't see.
              */
             not_found_series: number;
             /**
@@ -18557,6 +18559,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_admin_delete: {
@@ -18600,6 +18609,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -21275,14 +21291,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueCoversResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description issue not found */
+            /** @description issue not found, or not visible to the caller */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -25205,6 +25214,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_preview: {
@@ -25228,6 +25244,20 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
             };
+            /** @description invalid filter, filter over the size bounds, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description saved-view preview rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_preview_issues: {
@@ -25250,6 +25280,20 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueListView"];
                 };
+            };
+            /** @description invalid filter, filter over the size bounds, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description saved-view preview rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25323,6 +25367,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description saved-view write rate limit */
             429: {
                 headers: {
@@ -25377,6 +25428,13 @@ export interface operations {
                     "application/json": components["schemas"]["IssueListView"];
                 };
             };
+            /** @description not a filter_issues view, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_pin: {
@@ -25425,6 +25483,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
+            };
+            /** @description not a filter_series view, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

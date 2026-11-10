@@ -36,6 +36,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
 
+use crate::api::extractors::Validated;
 use crate::api::series::{IssueListView, IssueSummaryView, SeriesListView};
 use crate::auth::{CurrentUser, RequireAdmin};
 use crate::library::access;
@@ -45,6 +46,7 @@ use crate::state::AppState;
 use crate::views::{
     compile::{self, CompileError, CompileInput, Cursor, IssueCompileInput},
     dsl::{FilterDsl, MatchMode, SortField, SortOrder, ViewEntity},
+    timebox::{self, FilterQueryError},
 };
 
 use super::error;
@@ -112,6 +114,13 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(update))
         .routes(routes!(delete_one))
         .route_layer(rate_limit::SAVED_VIEW_WRITE.build_per_user());
+    // The two stateless previews share one per-user bucket
+    // (`SAVED_VIEW_PREVIEW`): each runs an arbitrary filter, so a script
+    // looping them is the cheapest way to keep the database busy.
+    let previews = OpenApiRouter::new()
+        .routes(routes!(preview))
+        .routes(routes!(preview_issues))
+        .route_layer(rate_limit::SAVED_VIEW_PREVIEW.build_per_user());
     OpenApiRouter::new()
         .routes(routes!(list))
         .routes(routes!(create))
@@ -122,9 +131,8 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(set_icon))
         .routes(routes!(reorder))
         .routes(routes!(results))
-        .routes(routes!(preview))
         .routes(routes!(issue_results))
-        .routes(routes!(preview_issues))
+        .merge(previews)
         .routes(routes!(admin_create))
         .routes(routes!(admin_update, admin_delete))
 }
@@ -209,38 +217,64 @@ pub struct CreateSavedViewReq {
     pub cbl_list_id: Option<Uuid>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, utoipa::ToSchema, garde::Validate)]
 pub struct UpdateSavedViewReq {
     #[serde(default)]
+    #[garde(custom(name_not_blank))]
     pub name: Option<String>,
     #[serde(default)]
+    #[garde(skip)]
     pub description: Option<Option<String>>,
     #[serde(default)]
+    #[garde(skip)]
     pub custom_year_start: Option<Option<i32>>,
     #[serde(default)]
+    #[garde(skip)]
     pub custom_year_end: Option<Option<i32>>,
     #[serde(default)]
+    #[garde(skip)]
     pub custom_tags: Option<Vec<String>>,
+    /// Bounded like every written filter (`views::dsl::MAX_FILTER_*`).
     #[serde(default)]
+    #[garde(dive)]
     pub filter: Option<FilterDsl>,
     #[serde(default)]
+    #[garde(skip)]
     pub sort_field: Option<SortField>,
     #[serde(default)]
+    #[garde(skip)]
     pub sort_order: Option<SortOrder>,
+    // Kind-dependent (only filter views store a limit), so it stays a
+    // handler check in `apply_update`.
     #[serde(default)]
+    #[garde(skip)]
     pub result_limit: Option<i32>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+fn name_not_blank(name: &Option<String>, _: &()) -> garde::Result {
+    match name {
+        Some(n) if n.trim().is_empty() => Err(garde::Error::new("name required")),
+        _ => Ok(()),
+    }
+}
+
+/// Most view ids a pin reorder may carry. Pins on one page are bounded by
+/// the user's rails-per-page setting (12 by default); views a user owns
+/// are not capped, so this is a safety bound well above any page.
+pub const MAX_REORDER_VIEW_IDS: usize = 1_000;
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct ReorderReq {
     /// Page whose pins are being reordered. Omit to default to the
     /// caller's system "Home" page — transitional shim until the web
     /// migrates to explicit page ids (M5/M6).
     #[serde(default)]
+    #[garde(skip)]
     pub page_id: Option<Uuid>,
     /// View IDs in desired pin order. Views not currently pinned to
     /// `page_id` are rejected; pinned views absent from the list keep
     /// their existing position.
+    #[garde(length(max = MAX_REORDER_VIEW_IDS))]
     pub view_ids: Vec<Uuid>,
 }
 
@@ -275,11 +309,16 @@ pub struct PinView {
     pub position: Option<i32>,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, utoipa::ToSchema, garde::Validate)]
 pub struct PreviewReq {
+    /// Bounded like a saved filter (`views::dsl::MAX_FILTER_*`).
+    #[garde(dive)]
     pub filter: FilterDsl,
+    #[garde(skip)]
     pub sort_field: SortField,
+    #[garde(skip)]
     pub sort_order: SortOrder,
+    #[garde(skip)]
     pub result_limit: i32,
 }
 
@@ -327,22 +366,18 @@ pub struct ResultsQuery {
 
 /// Cross-field validation for saved-view bodies: rules depend on the
 /// `kind` discriminator, which is awkward to express in garde
-/// attributes. Kept as a free function; all responses are 422
-/// (semantic-validation) per audit-remediation M9.3.
-fn validate_create(
-    req: &CreateSavedViewReq,
-) -> Result<SavedViewKind, (StatusCode, &'static str, String)> {
+/// attributes. Kept as a free function and run from the body's
+/// [`garde::Validate`] impl below, so its failure and the filter's size
+/// bounds land in ONE garde report: a 422 through `Validated<T>` with an
+/// `error.details` entry per failing field (audit-remediation M9.3).
+/// `Err` is `(field, message)`; the first failing rule wins, as before.
+fn validate_create(req: &CreateSavedViewReq) -> Result<SavedViewKind, (&'static str, String)> {
     if req.name.trim().is_empty() {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation",
-            "name required".into(),
-        ));
+        return Err(("name", "name required".into()));
     }
     let bad_kind = || {
         (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "validation",
+            "kind",
             "kind must be filter_series, filter_issues or cbl".to_owned(),
         )
     };
@@ -351,41 +386,27 @@ fn validate_create(
         KIND_FILTER_SERIES | KIND_FILTER_ISSUES => {
             if req.cbl_list_id.is_some() {
                 return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation",
+                    "cbl_list_id",
                     format!("{} view must not set cbl_list_id", req.kind),
                 ));
             }
             if req.filter.is_none() {
-                return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation",
-                    format!("{} view requires `filter`", req.kind),
-                ));
+                return Err(("filter", format!("{} view requires `filter`", req.kind)));
             }
             let limit = req.result_limit.unwrap_or(12);
             if !(MIN_RESULT_LIMIT..=MAX_RESULT_LIMIT).contains(&(limit as u64)) {
                 return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation",
+                    "result_limit",
                     format!("result_limit must be {MIN_RESULT_LIMIT}..={MAX_RESULT_LIMIT}"),
                 ));
             }
         }
         KIND_CBL => {
             if req.cbl_list_id.is_none() {
-                return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation",
-                    "cbl view requires cbl_list_id".into(),
-                ));
+                return Err(("cbl_list_id", "cbl view requires cbl_list_id".into()));
             }
             if req.filter.is_some() {
-                return Err((
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "validation",
-                    "cbl view must not set filter".into(),
-                ));
+                return Err(("filter", "cbl view must not set filter".into()));
             }
         }
         // `system` / `collection` are created by migrations and the
@@ -393,6 +414,25 @@ fn validate_create(
         KIND_SYSTEM | KIND_COLLECTION => return Err(bad_kind()),
     }
     Ok(kind)
+}
+
+impl garde::Validate for CreateSavedViewReq {
+    type Context = ();
+
+    fn validate_into(
+        &self,
+        ctx: &Self::Context,
+        parent: &mut dyn FnMut() -> garde::Path,
+        report: &mut garde::Report,
+    ) {
+        if let Err((field, message)) = validate_create(self) {
+            report.append(parent().join(field), garde::Error::new(message));
+        }
+        if let Some(filter) = &self.filter {
+            let mut filter_path = || parent().join("filter");
+            filter.validate_into(ctx, &mut filter_path, report);
+        }
+    }
 }
 
 async fn fetch_view(
@@ -709,13 +749,16 @@ pub async fn list(
     operation_id = "saved_views_create",    post,
     path = "/me/saved-views",
     request_body = CreateSavedViewReq,
-    responses((status = 201, body = SavedViewView))
+    responses(
+        (status = 201, body = SavedViewView),
+        (status = 422, description = "invalid body or filter over the size bounds")
+    )
 )]
 #[handler]
 pub async fn create(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<CreateSavedViewReq>,
+    Validated(req): Validated<CreateSavedViewReq>,
 ) -> impl IntoResponse {
     create_inner(&app, user.id.into(), &req, false).await
 }
@@ -724,14 +767,17 @@ pub async fn create(
     operation_id = "saved_views_admin_create",    post,
     path = "/admin/saved-views",
     request_body = CreateSavedViewReq,
-    responses((status = 201, body = SavedViewView))
+    responses(
+        (status = 201, body = SavedViewView),
+        (status = 422, description = "invalid body or filter over the size bounds")
+    )
 )]
 #[handler]
 pub async fn admin_create(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
-    Json(req): Json<CreateSavedViewReq>,
+    Validated(req): Validated<CreateSavedViewReq>,
 ) -> impl IntoResponse {
     let resp = create_inner(&app, None, &req, true).await;
     crate::audit::record(
@@ -758,9 +804,17 @@ async fn create_inner(
     req: &CreateSavedViewReq,
     is_admin_caller: bool,
 ) -> axum::response::Response {
+    // Already checked by `Validated<CreateSavedViewReq>` (the garde impl
+    // runs `validate_create`); re-run here only to recover the kind.
     let kind = match validate_create(req) {
         Ok(kind) => kind,
-        Err((status, code, msg)) => return error(status, code, &msg),
+        Err((field, msg)) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                &format!("{field}: {msg}"),
+            );
+        }
     };
     // Compile-validate the DSL on filter views before persisting.
     let entity = filter_entity(kind);
@@ -932,14 +986,18 @@ async fn cbl_year_range(
     path = "/me/saved-views/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateSavedViewReq,
-    responses((status = 200, body = SavedViewView), (status = 429, description = "saved-view write rate limit"))
+    responses(
+        (status = 200, body = SavedViewView),
+        (status = 422, description = "invalid body or filter over the size bounds"),
+        (status = 429, description = "saved-view write rate limit")
+    )
 )]
 #[handler]
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Json(req): Json<UpdateSavedViewReq>,
+    Validated(req): Validated<UpdateSavedViewReq>,
 ) -> impl IntoResponse {
     let row = match fetch_view(&app.db, id).await {
         Ok(Some(r)) => r,
@@ -961,7 +1019,10 @@ pub async fn update(
     path = "/admin/saved-views/{id}",
     params(("id" = String, Path,)),
     request_body = UpdateSavedViewReq,
-    responses((status = 200, body = SavedViewView))
+    responses(
+        (status = 200, body = SavedViewView),
+        (status = 422, description = "invalid body or filter over the size bounds")
+    )
 )]
 #[handler]
 pub async fn admin_update(
@@ -969,7 +1030,7 @@ pub async fn admin_update(
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<Uuid>,
-    Json(req): Json<UpdateSavedViewReq>,
+    Validated(req): Validated<UpdateSavedViewReq>,
 ) -> impl IntoResponse {
     let row = match fetch_view(&app.db, id).await {
         Ok(Some(r)) => r,
@@ -1053,16 +1114,9 @@ async fn apply_update(
     }
 
     let mut am: saved_view::ActiveModel = row.clone().into();
+    // Blank names are refused by `Validated<UpdateSavedViewReq>`.
     if let Some(name) = req.name.as_ref() {
-        let trimmed = name.trim();
-        if trimmed.is_empty() {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "validation",
-                "name required",
-            );
-        }
-        am.name = Set(trimmed.to_owned());
+        am.name = Set(name.trim().to_owned());
     }
     if let Some(desc) = req.description.as_ref() {
         am.description = Set(desc
@@ -1755,7 +1809,7 @@ async fn compact_pin_positions(
 pub async fn reorder(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<ReorderReq>,
+    Validated(req): Validated<ReorderReq>,
 ) -> impl IntoResponse {
     let txn = match app.db.begin().await {
         Ok(t) => t,
@@ -1843,13 +1897,17 @@ pub async fn reorder(
     operation_id = "saved_views_preview",    post,
     path = "/me/saved-views/preview",
     request_body = PreviewReq,
-    responses((status = 200, body = SeriesListView))
+    responses(
+        (status = 200, body = SeriesListView),
+        (status = 422, description = "invalid filter, filter over the size bounds, or `filter_too_slow`"),
+        (status = 429, description = "saved-view preview rate limit")
+    )
 )]
 #[handler]
 pub async fn preview(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<PreviewReq>,
+    Validated(req): Validated<PreviewReq>,
 ) -> impl IntoResponse {
     let limit = (req.result_limit as u64).clamp(MIN_RESULT_LIMIT, MAX_RESULT_LIMIT);
     let visible = access::for_user(&app, &user).await;
@@ -1873,7 +1931,10 @@ pub async fn preview(
         ("cursor" = Option<String>, Query,),
         ("limit" = Option<u64>, Query,),
     ),
-    responses((status = 200, body = SeriesListView))
+    responses(
+        (status = 200, body = SeriesListView),
+        (status = 422, description = "not a filter_series view, or `filter_too_slow`")
+    )
 )]
 #[handler]
 pub async fn results(
@@ -1954,13 +2015,17 @@ pub async fn results(
     operation_id = "saved_views_preview_issues",    post,
     path = "/me/saved-views/preview-issues",
     request_body = PreviewReq,
-    responses((status = 200, body = IssueListView))
+    responses(
+        (status = 200, body = IssueListView),
+        (status = 422, description = "invalid filter, filter over the size bounds, or `filter_too_slow`"),
+        (status = 429, description = "saved-view preview rate limit")
+    )
 )]
 #[handler]
 pub async fn preview_issues(
     State(app): State<AppState>,
     user: CurrentUser,
-    Json(req): Json<PreviewReq>,
+    Validated(req): Validated<PreviewReq>,
 ) -> impl IntoResponse {
     let limit = (req.result_limit as u64).clamp(MIN_RESULT_LIMIT, MAX_RESULT_LIMIT);
     let visible = access::for_user(&app, &user).await;
@@ -1987,7 +2052,10 @@ pub async fn preview_issues(
         ("cursor" = Option<String>, Query,),
         ("limit" = Option<u64>, Query,),
     ),
-    responses((status = 200, body = IssueListView))
+    responses(
+        (status = 200, body = IssueListView),
+        (status = 422, description = "not a filter_issues view, or `filter_too_slow`")
+    )
 )]
 #[handler]
 pub async fn issue_results(
@@ -2121,20 +2189,42 @@ impl IssueViewRow {
     }
 }
 
+/// The compiled `compile_issues` select as a runnable statement.
+fn issue_view_statement(
+    app: &AppState,
+    input: &IssueCompileInput<'_>,
+) -> Result<Statement, axum::response::Response> {
+    let stmt = compile::compile_issues(input).map_err(issue_compile_error_response)?;
+    let (sql, values) = stmt.build(PostgresQueryBuilder);
+    Ok(Statement::from_sql_and_values(
+        app.db.get_database_backend(),
+        sql,
+        values,
+    ))
+}
+
+fn decode_issue_view_rows(
+    rows: &[sea_orm::QueryResult],
+) -> Result<Vec<IssueViewRow>, axum::response::Response> {
+    rows.iter()
+        .map(|r| IssueViewRow::from_query_result(r, ""))
+        .collect::<Result<_, _>>()
+        .map_err(|e| {
+            tracing::error!(error = %e, "saved_views: issue row decode failed");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })
+}
+
+/// Run an issue view's select under the filter time box.
 async fn fetch_issue_view_rows(
     app: &AppState,
     input: &IssueCompileInput<'_>,
 ) -> Result<Vec<IssueViewRow>, axum::response::Response> {
-    let stmt = compile::compile_issues(input).map_err(issue_compile_error_response)?;
-    let (sql, values) = stmt.build(PostgresQueryBuilder);
-    let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
-    IssueViewRow::find_by_statement(raw)
-        .all(&app.db)
+    let stmt = issue_view_statement(app, input)?;
+    let rows = timebox::query_one_statement(&app.db, app.cfg().filter_statement_timeout, stmt)
         .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "saved_views: issue query failed");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
-        })
+        .map_err(|e| filter_query_error_response(e, "issue query"))?;
+    decode_issue_view_rows(&rows)
 }
 
 /// Like [`compile_error_response`], but a malformed keyset cursor is the
@@ -2148,41 +2238,79 @@ fn issue_compile_error_response(e: CompileError) -> axum::response::Response {
     }
 }
 
-/// First-page `total` for an issue view (same filters, no cursor/limit).
-async fn count_issue_view_rows(
-    app: &AppState,
-    input: &IssueCompileInput<'_>,
-) -> Result<i64, axum::response::Response> {
-    #[derive(FromQueryResult)]
-    struct Total {
-        total: i64,
-    }
-    let stmt = compile::compile_issues_count(input).map_err(issue_compile_error_response)?;
-    let (sql, values) = stmt.build(PostgresQueryBuilder);
-    let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
-    Total::find_by_statement(raw)
-        .one(&app.db)
-        .await
-        .map(|r| r.map(|t| t.total).unwrap_or(0))
-        .map_err(|e| {
-            tracing::error!(error = %e, "saved_views: issue count failed");
+/// Map a time-boxed filter query's failure to a response: the statement
+/// timeout is the caller's filter being too heavy (422
+/// `filter_too_slow`, logged at WARN), anything else is a 500.
+pub(crate) fn filter_query_error_response(
+    e: FilterQueryError,
+    what: &'static str,
+) -> axum::response::Response {
+    match e {
+        FilterQueryError::TimedOut => {
+            tracing::warn!(what, "saved_views: filter query hit the statement timeout");
+            error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                timebox::FILTER_TOO_SLOW_CODE,
+                timebox::FILTER_TOO_SLOW_MESSAGE,
+            )
+        }
+        FilterQueryError::Db(e) => {
+            tracing::error!(error = %e, what, "saved_views: filter query failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
-        })
+        }
+    }
 }
 
 async fn run_issue_filter_query(
     app: &AppState,
     input: IssueCompileInput<'_>,
 ) -> axum::response::Response {
-    let mut rows = match fetch_issue_view_rows(app, &input).await {
+    #[derive(FromQueryResult)]
+    struct Total {
+        total: i64,
+    }
+    let rows_stmt = match issue_view_statement(app, &input) {
+        Ok(s) => s,
+        Err(resp) => return resp,
+    };
+    // `total` rides the first page only, like every cursor list; its
+    // count runs in the same time-boxed transaction as the page.
+    let first_page = input.cursor.is_none();
+    let mut statements = vec![rows_stmt];
+    if first_page {
+        let stmt = match compile::compile_issues_count(&input) {
+            Ok(s) => s,
+            Err(e) => return issue_compile_error_response(e),
+        };
+        let (sql, values) = stmt.build(PostgresQueryBuilder);
+        statements.push(Statement::from_sql_and_values(
+            app.db.get_database_backend(),
+            sql,
+            values,
+        ));
+    }
+    let results =
+        match timebox::query_all(&app.db, app.cfg().filter_statement_timeout, statements).await {
+            Ok(r) => r,
+            Err(e) => return filter_query_error_response(e, "issue query"),
+        };
+    let mut results = results.into_iter();
+    let mut rows = match decode_issue_view_rows(&results.next().unwrap_or_default()) {
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    // `total` rides the first page only, like every cursor list.
-    let total = if input.cursor.is_none() {
-        match count_issue_view_rows(app, &input).await {
-            Ok(n) => Some(n),
-            Err(resp) => return resp,
+    let total = if first_page {
+        let count_rows = results.next().unwrap_or_default();
+        match count_rows
+            .first()
+            .map(|r| Total::from_query_result(r, ""))
+            .transpose()
+        {
+            Ok(t) => Some(t.map(|t| t.total).unwrap_or(0)),
+            Err(e) => {
+                tracing::error!(error = %e, "saved_views: issue count decode failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
         }
     } else {
         None
@@ -2208,6 +2336,10 @@ async fn run_issue_filter_query(
     .into_response()
 }
 
+/// Rebuild a STORED view's filter. Stored views are exempt from the
+/// write-time size bounds (`views::dsl::MAX_FILTER_*`): one over them is
+/// logged and run, with the filter statement timeout as the backstop
+/// (see [`FilterDsl::log_if_over_bounds`]).
 fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde_json::Error> {
     let mode = match view.match_mode.as_deref() {
         Some("any") => MatchMode::Any,
@@ -2217,10 +2349,12 @@ fn dsl_from_view(view: &saved_view::Model) -> Result<FilterDsl, serde_json::Erro
         Some(j) => serde_json::from_value(j.clone())?,
         None => Vec::new(),
     };
-    Ok(FilterDsl {
+    let dsl = FilterDsl {
         match_mode: mode,
         conditions,
-    })
+    };
+    dsl.log_if_over_bounds(view.id);
+    Ok(dsl)
 }
 
 async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::response::Response {
@@ -2234,12 +2368,11 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
     // The compiler projects the sort key as text (`sort_value`) next to
     // the full series row, so the cursor is a real keyset for every sort
     // (including per-user ones that aren't `series` columns).
-    let rows = match app.db.query_all_raw(raw).await {
+    let rows = match timebox::query_one_statement(&app.db, app.cfg().filter_statement_timeout, raw)
+        .await
+    {
         Ok(r) => r,
-        Err(e) => {
-            tracing::error!(error = %e, "saved_views: query failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
+        Err(e) => return filter_query_error_response(e, "series query"),
     };
     let parsed: Result<Vec<(entity::series::Model, String)>, sea_orm::DbErr> = rows
         .iter()
@@ -2272,7 +2405,9 @@ async fn run_filter_query(app: &AppState, input: CompileInput<'_>) -> axum::resp
 
     // hydrate_series attaches `issue_count` + `cover_url`. Skipping it
     // — as we did originally — was the M7 home page's empty-cover bug.
-    let items = crate::api::series::hydrate_series(app, rows, input.user_id).await;
+    let items =
+        crate::api::series::hydrate_series(app, rows, input.user_id, &input.visible_libraries)
+            .await;
     // Saved-view results don't surface a total today — saved views are
     // capped at `result_limit` (12 by default) and the caller knows
     // that ceiling. Leaving `None` so we don't pretend we counted.
@@ -2338,16 +2473,19 @@ pub(crate) async fn resolve_metadata_batch_targets(
                 .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
             let (sql, values) = stmt.build(PostgresQueryBuilder);
             let raw = Statement::from_sql_and_values(app.db.get_database_backend(), sql, values);
-            let rows = entity::series::Model::find_by_statement(raw)
-                .all(&app.db)
-                .await
+            let rows =
+                timebox::query_one_statement(&app.db, app.cfg().filter_statement_timeout, raw)
+                    .await
+                    .map_err(|e| filter_query_error_response(e, "batch targets"))?;
+            let ids = rows
+                .iter()
+                .map(|r| r.try_get::<Uuid>("", "id"))
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| {
-                    tracing::error!(error = %e, "batch targets: filter query failed");
+                    tracing::error!(error = %e, "batch targets: row decode failed");
                     error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
                 })?;
-            Ok(BatchTargets::Series(
-                rows.into_iter().map(|r| r.id).collect(),
-            ))
+            Ok(BatchTargets::Series(ids))
         }
         KIND_FILTER_ISSUES => {
             let filter = dsl_from_view(&view)

@@ -754,8 +754,14 @@ Default admin (first registered user becomes admin):
   `record_admin_action!` (or `audit::record(...)`). Read-only admin
   GETs and delegate-pattern wrappers (handlers that thin-wrap an
   audited helper) belong in
-  [`allowlist.txt`](crates/tools/audit-check/allowlist.txt) with a
-  one-line reason. Run locally via `just audit-check`.
+  [`allowlist.txt`](crates/tools/audit-check/allowlist.txt) as
+  `<file>::<fn>` (file relative to `crates/server/src`, e.g.
+  `api/libraries.rs::scan`) with a one-line reason; an entry that names
+  no `RequireAdmin` handler fails the check. Run locally via
+  `just audit-check`. An admin writing through a `CurrentUser` route to
+  something they do not own (a shared reading list under
+  `/me/cbl-lists`) is audited too (`admin.cbl_list.*`); the tool cannot
+  see that case, so its tests in `tests/shared_lists.rs` guard it.
 - Memoize TanStack Query keys via the `queryKeys` registry in
   [web/lib/api/queries.ts](web/lib/api/queries.ts) — don't inline tuples at
   call sites.

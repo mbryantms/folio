@@ -1321,8 +1321,8 @@ async fn profile_is_queued_on_first_view_and_refreshed_by_admin() {
     let joker = add_entity(&f.db, "character", "joker", "Joker").await;
     add_character(&f.db, &f.a_issues[0], "Joker", Some(joker)).await;
 
-    // First view queues the fetch.
-    let (s, body) = get_json(&app, "/api/characters/joker", &f.user).await;
+    // An admin's first view queues the fetch.
+    let (s, body) = get_json(&app, "/api/characters/joker", &f.admin).await;
     assert_eq!(s, StatusCode::OK, "{body}");
     assert_eq!(body["enrichment"], "pending");
     assert!(body.get("profile").is_none());
@@ -1371,6 +1371,72 @@ async fn profile_is_queued_on_first_view_and_refreshed_by_admin() {
     assert_eq!(body["enrichment"], "unavailable");
     let (s, _) = post(&plain, "/api/characters/robin/profile/refresh", &g.admin).await;
     assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// A reader's page view never queues a provider fetch: it is served what
+/// is cached. Only an admin's view queues one, after which the reader sees
+/// it in flight and then its result.
+#[tokio::test]
+async fn reader_view_queues_no_profile_fetch() {
+    let cv = MockServer::start().await;
+    let metron = MockServer::start().await;
+    let gcd = MockServer::start().await;
+    let app = TestApp::spawn_with_all_providers(cv.uri(), metron.uri(), gcd.uri()).await;
+    let f = fixture(&app).await;
+    Mock::given(method("GET"))
+        .and(path("/api/character/"))
+        .respond_with(json(serde_json::json!({"count": 0, "results": []})))
+        .mount(&metron)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/characters/"))
+        .respond_with(json(serde_json::json!({"status_code": 1, "results": []})))
+        .mount(&cv)
+        .await;
+    let joker = add_entity(&f.db, "character", "joker", "Joker").await;
+    add_character(&f.db, &f.a_issues[0], "Joker", Some(joker)).await;
+    let requested = || async {
+        scalar(
+            &f.db,
+            "SELECT count(*) AS n FROM entity_profile WHERE entity_type = 'character' \
+               AND entity_id = $1 AND requested_at IS NOT NULL",
+            vec![joker.into()],
+        )
+        .await
+    };
+    let state = app.state();
+    let queued_jobs = || async {
+        state
+            .jobs
+            .queue_outstanding(&state.jobs.entity_enrich_storage)
+            .await
+            .unwrap()
+    };
+
+    // Reader views, twice: nothing stamped, nothing queued, nothing to wait for.
+    for _ in 0..2 {
+        let (s, body) = get_json(&app, "/api/characters/joker", &f.user).await;
+        assert_eq!(s, StatusCode::OK, "{body}");
+        assert_eq!(body["enrichment"], "unavailable", "{body}");
+        assert!(body.get("profile").is_none());
+    }
+    assert_eq!(requested().await, Some(0), "reader view stamped a request");
+    assert_eq!(queued_jobs().await, 0, "reader view queued a job");
+
+    // An admin's view queues it.
+    let (_, body) = get_json(&app, "/api/characters/joker", &f.admin).await;
+    assert_eq!(body["enrichment"], "pending", "{body}");
+    assert_eq!(requested().await, Some(1));
+    assert_eq!(queued_jobs().await, 1, "admin view queued one job");
+
+    // The reader now sees the admin's fetch in flight, then its result.
+    let (_, body) = get_json(&app, "/api/characters/joker", &f.user).await;
+    assert_eq!(body["enrichment"], "pending", "{body}");
+    server::jobs::entity_enrich::process(&app.state(), ProfileKind::Character, joker)
+        .await
+        .unwrap();
+    let (_, body) = get_json(&app, "/api/characters/joker", &f.user).await;
+    assert_eq!(body["enrichment"], "failed", "{body}");
 }
 
 #[tokio::test]

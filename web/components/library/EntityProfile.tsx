@@ -235,11 +235,14 @@ function ProfileFooter({
       );
       break;
     default:
-      status = hasBody ? null : (
-        <span>
-          Add a metadata provider under Admin → Metadata to fill this page.
-        </span>
-      );
+      // Readers never see the admin prompt: the page shows its
+      // normal content without a profile.
+      status =
+        hasBody || !isAdmin ? null : (
+          <span>
+            Add a metadata provider under Admin → Metadata to fill this page.
+          </span>
+        );
   }
   const links = detail.links ?? [];
   if (!status && !coverage && links.length === 0 && !isAdmin) {

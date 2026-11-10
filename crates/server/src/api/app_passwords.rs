@@ -166,9 +166,8 @@ pub async fn create(
     // on the raw struct; here we just normalize for storage.
     let label = req.label.trim().to_owned();
 
-    // Per-user soft cap. Bearer auth has to argon2-scan every active
-    // row; cap the working set so a stray script can't push it into the
-    // hundreds.
+    // Per-user soft cap, so a stray script can't push one account's
+    // token list into the hundreds.
     let active_count = match AppPasswordEntity::find()
         .filter(app_password::Column::UserId.eq(user.id))
         .filter(app_password::Column::RevokedAt.is_null())
@@ -283,6 +282,7 @@ pub async fn revoke(
         tracing::error!(error = %e, "revoke app password failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    ap::refresh_legacy_gauge(&app.db).await;
     audit::record(
         &app.db,
         AuditEntry {

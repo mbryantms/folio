@@ -11,6 +11,7 @@ pub mod hash;
 pub mod health;
 pub mod identity;
 pub mod ignore;
+pub mod no_follow;
 pub mod page_variants;
 pub mod reconcile;
 pub mod scanner;

@@ -13,13 +13,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../queries";
 import type { DuplicateDecision } from "../types";
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 type IssueRef = { seriesSlug: string; issueSlug: string };
 
 function decisionPath({ seriesSlug, issueSlug }: IssueRef) {
-  return `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(
-    issueSlug,
-  )}/duplicate-decision`;
+  return apiPath`/series/${seriesSlug}/issues/${issueSlug}/duplicate-decision`;
 }
 
 function useInvalidateDuplicates(libraryId: string) {

@@ -295,8 +295,15 @@ pub struct BulkRemoveMembersResp {
     pub invalid: u32,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+/// Most ids a collection reorder may carry. A reorder lists every visible
+/// entry and collections have no size limit, so this is only a safety
+/// bound: the 2 MiB body limit already stops near 53,000 quoted UUIDs,
+/// and this cap sits just under that.
+pub const MAX_REORDER_ENTRY_IDS: usize = 50_000;
+
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct ReorderEntriesReq {
+    #[garde(length(max = MAX_REORDER_ENTRY_IDS))]
     pub entry_ids: Vec<Uuid>,
 }
 
@@ -1465,7 +1472,7 @@ pub async fn reorder_entries(
     State(app): State<AppState>,
     user: CurrentUser,
     AxPath(id): AxPath<Uuid>,
-    Json(req): Json<ReorderEntriesReq>,
+    Validated(req): Validated<ReorderEntriesReq>,
 ) -> impl IntoResponse {
     if let Err(resp) = fetch_owned(&app.db, user.id, id).await {
         return resp;
@@ -1659,7 +1666,7 @@ async fn hydrate_entries(
             .await
             .unwrap_or_default()
     };
-    let hydrated_series = hydrate_series(app, series_rows, viewer).await;
+    let hydrated_series = hydrate_series(app, series_rows, viewer, acl).await;
     let series_by_id: HashMap<Uuid, SeriesView> = hydrated_series
         .into_iter()
         .filter_map(|v| Uuid::parse_str(&v.id).ok().map(|id| (id, v)))
@@ -1806,11 +1813,14 @@ pub async fn export(
         [
             (
                 header::CONTENT_TYPE,
-                "application/xml; charset=utf-8".to_string(),
+                axum::http::HeaderValue::from_static("application/xml; charset=utf-8"),
             ),
             (
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{filename}\""),
+                crate::util::content_disposition::content_disposition(
+                    crate::util::content_disposition::Disposition::Attachment,
+                    &filename,
+                ),
             ),
         ],
         xml.into_bytes(),
