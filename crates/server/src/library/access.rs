@@ -182,6 +182,22 @@ impl VisibleLibraries {
         )
     }
 
+    /// Raw-SQL twin of [`Self::issue_cap_condition`] for an `issues` row
+    /// aliased `alias`: the cap on the issue's own rating, the series
+    /// rating as the fallback. Same ` AND ` / `params` convention as
+    /// [`Self::raw_cap_clause`]; empty when nothing is capped. For
+    /// statements scoped to one already-visible series (membership is
+    /// settled), and the cap half of [`visible_issues_sql`].
+    pub fn issue_cap_sql(&self, alias: &str, params: &mut Vec<Value>) -> String {
+        self.raw_cap_clause(
+            &format!("{alias}.library_id"),
+            &format!(
+                "COALESCE({alias}.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = {alias}.series_id))"
+            ),
+            params,
+        )
+    }
+
     /// Cap-only predicate for a `series` query (membership handled by
     /// the caller). `None` when nothing is capped.
     pub fn series_cap_condition(&self) -> Option<Condition> {
@@ -316,13 +332,7 @@ pub fn visible_issues_sql(acl: &VisibleLibraries, alias: &str, params: &mut Vec<
             acl.allowed.iter().copied().collect::<Vec<Uuid>>(),
         ));
         sql.push_str(&format!(" AND {alias}.library_id = ANY(${})", params.len()));
-        sql.push_str(&acl.raw_cap_clause(
-            &format!("{alias}.library_id"),
-            &format!(
-                "COALESCE({alias}.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = {alias}.series_id))"
-            ),
-            params,
-        ));
+        sql.push_str(&acl.issue_cap_sql(alias, params));
     }
     sql
 }
@@ -450,8 +460,11 @@ pub async fn series_ratings(app: &AppState, series_ids: &[Uuid]) -> HashMap<Uuid
 /// Full visibility check for one issue row: membership + cap, with the
 /// series-rating fallback fetched only when it's actually needed (the
 /// caller is capped in that library and the issue carries no rating).
-pub async fn issue_visible(app: &AppState, user: &CurrentUser, row: &issue::Model) -> bool {
-    let acl = for_library(app, user, row.library_id).await;
+/// The one gate for every issue-scoped route: a `false` must answer
+/// exactly like an unknown id. Takes the full model or a slim projection
+/// (`IssueCardRow`).
+pub async fn issue_visible<T: IssueAclFields>(app: &AppState, user: &CurrentUser, row: &T) -> bool {
+    let acl = for_library(app, user, row.acl_library_id()).await;
     issue_allowed(app, &acl, row).await
 }
 
@@ -602,6 +615,25 @@ mod tests {
              OR lower(btrim(COALESCE(i.age_rating, s.age_rating))) <> ALL($3))"
         );
         assert_eq!(params.len(), 3);
+    }
+
+    #[test]
+    fn issue_cap_sql_falls_back_to_the_series_rating() {
+        let lib = Uuid::now_v7();
+        let mut params = Vec::new();
+        assert_eq!(
+            VisibleLibraries::unrestricted().issue_cap_sql("i", &mut params),
+            ""
+        );
+        let sql = capped(lib, "Teen").issue_cap_sql("i", &mut params);
+        assert!(sql.starts_with(" AND (i.library_id <> $1 OR "), "{sql}");
+        assert!(
+            sql.contains(
+                "COALESCE(i.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = i.series_id))"
+            ),
+            "{sql}"
+        );
+        assert_eq!(params.len(), 2);
     }
 
     #[test]

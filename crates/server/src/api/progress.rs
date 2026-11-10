@@ -601,7 +601,8 @@ pub async fn upsert_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::series_visible(&app, &user, &srow).await {
+    let acl = access::for_library(&app, &user, srow.library_id).await;
+    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -610,10 +611,16 @@ pub async fn upsert_series(
     // future "unread series" queries.
     // WP-3.6: only id / page_count are read — project, don't hydrate the
     // wide rows of every issue in the series.
-    let issues = match issue::Entity::find()
+    let mut issues_sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(srow.id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: never write (or count) progress for an issue rated above
+    // the caller's cap, even inside a visible series.
+    if let Some(cap) = acl.issue_cap_condition() {
+        issues_sel = issues_sel.filter(cap);
+    }
+    let issues = match issues_sel
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
@@ -738,7 +745,8 @@ pub async fn upsert_series_matching(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::series_visible(&app, &user, &srow).await {
+    let acl = access::for_library(&app, &user, srow.library_id).await;
+    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -746,6 +754,10 @@ pub async fn upsert_series_matching(
         .filter(issue::Column::SeriesId.eq(srow.id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: the issue-level cap applies inside a visible series.
+    if let Some(cap) = acl.issue_cap_condition() {
+        query = query.filter(cap);
+    }
 
     if let Some(raw) = req.q.as_deref() {
         let trimmed = raw.trim();
@@ -1182,10 +1194,15 @@ pub async fn upsert_series_bulk(
         // Pull every active, on-disk issue for the series in one
         // query. Mirrors `upsert_series`'s filter.
         // WP-3.6: id / page_count only — project.
-        let issues = match issue::Entity::find()
+        let mut issues_sel = issue::Entity::find()
             .filter(issue::Column::SeriesId.eq(srow.id))
             .filter(issue::Column::State.eq(issue::IssueState::Active))
-            .filter(issue::Column::RemovedAt.is_null())
+            .filter(issue::Column::RemovedAt.is_null());
+        // WP-2.7: the issue-level cap applies inside a visible series.
+        if let Some(cap) = acl.issue_cap_condition() {
+            issues_sel = issues_sel.filter(cap);
+        }
+        let issues = match issues_sel
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await

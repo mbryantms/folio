@@ -30,11 +30,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, FixedOffset};
-use entity::user::UserRole;
-use entity::{issue, library_user_access, marker, progress_record, reading_session, series};
+use entity::{issue, marker, progress_record, reading_session, series};
 use sea_orm::{
     ActiveValue::Set,
-    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
+    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+    Statement,
     sea_query::{Expr, ExprTrait},
 };
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,7 @@ use uuid::Uuid;
 use super::error;
 use super::extractors::Validated;
 use crate::auth::CurrentUser;
+use crate::library::access;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -459,11 +460,18 @@ async fn gather_events(
     // tens of MB up front; the Vec still grows to whatever the sources
     // return.
     let mut candidates: Vec<Candidate> = Vec::with_capacity((limit.clamp(0, 1000) as usize) * 4);
+    // The caller's grant + age cap. Every harvester folds the issue-level
+    // visibility predicate into its own statement, so a page is never
+    // short and an issue the caller can no longer see (rated above the
+    // cap, removed, or outside the grant) leaves no event — including
+    // reads recorded before the cap was set.
+    let acl = access::for_user(app, user).await;
 
     if p.kinds.contains(&EventKind::IssueFinished) {
         candidates.extend(
             fetch_issue_finished(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -479,6 +487,7 @@ async fn gather_events(
         candidates.extend(
             fetch_sessions(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -494,6 +503,7 @@ async fn gather_events(
         candidates.extend(
             fetch_markers(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -513,6 +523,7 @@ async fn gather_events(
         candidates.extend(
             fetch_series_finished(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -572,13 +583,14 @@ async fn gather_events(
     let series_cover_by_id: HashMap<Uuid, String> = if series_ids.is_empty() {
         HashMap::new()
     } else {
-        let candidates_for_cover = issue::Entity::find()
+        let candidates_for_cover = access::visible_issues_select(&acl)
             .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
             .filter(issue::Column::State.eq(issue::IssueState::Active))
-            .filter(issue::Column::RemovedAt.is_null())
             .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await?;
+        let cover_candidates: HashSet<String> =
+            candidates_for_cover.iter().map(|i| i.id.clone()).collect();
         let mut by_series: HashMap<Uuid, (Option<f64>, String)> = HashMap::new();
         for i in candidates_for_cover {
             let url = format!("/issues/{}/pages/0/thumb", i.id);
@@ -604,26 +616,15 @@ async fn gather_events(
         )
         .await
         {
-            by_series.insert(sid, (None, format!("/issues/{iid}/pages/0/thumb")));
+            // A pick the caller can't see never stands in as the cover.
+            if cover_candidates.contains(&iid) {
+                by_series.insert(sid, (None, format!("/issues/{iid}/pages/0/thumb")));
+            }
         }
         by_series
             .into_iter()
             .map(|(k, (_, url))| (k, url))
             .collect()
-    };
-
-    let allowed_libraries: Option<HashSet<Uuid>> = if user.role == UserRole::Admin {
-        None
-    } else {
-        Some(
-            library_user_access::Entity::find()
-                .filter(library_user_access::Column::UserId.eq(user.id))
-                .all(&app.db)
-                .await?
-                .into_iter()
-                .map(|r| r.library_id)
-                .collect(),
-        )
     };
 
     let library_filter = p.library_id;
@@ -633,10 +634,7 @@ async fn gather_events(
         {
             return false;
         }
-        match &allowed_libraries {
-            None => true, // admin
-            Some(set) => set.contains(&library_id),
-        }
+        acl.contains(library_id)
     };
 
     let events: Vec<ReadingLogEventView> = candidates
@@ -1015,9 +1013,19 @@ fn hydrate(
 
 // ───────── Per-source harvesters ─────────
 
+/// `SELECT issues.id` over [`access::visible_issues_select`] — the
+/// semi-join every per-issue harvester filters its source rows through.
+fn visible_issue_ids(acl: &access::VisibleLibraries) -> sea_orm::sea_query::SelectStatement {
+    access::visible_issues_select(acl)
+        .select_only()
+        .column(issue::Column::Id)
+        .into_query()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn fetch_issue_finished(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1032,7 +1040,8 @@ async fn fetch_issue_finished(
     // we don't over-fetch.
     let mut query = progress_record::Entity::find()
         .filter(progress_record::Column::UserId.eq(user_id))
-        .filter(progress_record::Column::FinishedAt.is_not_null());
+        .filter(progress_record::Column::FinishedAt.is_not_null())
+        .filter(progress_record::Column::IssueId.in_subquery(visible_issue_ids(acl)));
     // Catalog/sync writes (`is_backfill = true`) are intentionally
     // excluded from the reading-log feed by default — they represent
     // issues the user is *recording* as read, not *just read*. The
@@ -1120,6 +1129,7 @@ async fn fetch_issue_finished(
 #[allow(clippy::too_many_arguments)]
 async fn fetch_sessions(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1132,7 +1142,8 @@ async fn fetch_sessions(
         .filter(reading_session::Column::UserId.eq(user_id))
         .filter(reading_session::Column::EndedAt.is_not_null())
         .filter(reading_session::Column::ActiveMs.gte(SESSION_MIN_ACTIVE_MS))
-        .filter(reading_session::Column::DistinctPagesRead.gt(0));
+        .filter(reading_session::Column::DistinctPagesRead.gt(0))
+        .filter(reading_session::Column::IssueId.in_subquery(visible_issue_ids(acl)));
     if !include_hidden {
         query = query.filter(reading_session::Column::HiddenFromLog.eq(false));
     }
@@ -1189,6 +1200,7 @@ async fn fetch_sessions(
 #[allow(clippy::too_many_arguments)]
 async fn fetch_markers(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1197,7 +1209,9 @@ async fn fetch_markers(
     series_id: Option<Uuid>,
     include_hidden: bool,
 ) -> Result<Vec<Candidate>, sea_orm::DbErr> {
-    let mut query = marker::Entity::find().filter(marker::Column::UserId.eq(user_id));
+    let mut query = marker::Entity::find()
+        .filter(marker::Column::UserId.eq(user_id))
+        .filter(marker::Column::IssueId.in_subquery(visible_issue_ids(acl)));
     if !include_hidden {
         query = query.filter(marker::Column::HiddenFromLog.eq(false));
     }
@@ -1255,8 +1269,10 @@ struct SeriesFinishedRow {
     series_finished_at: DateTime<FixedOffset>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_series_finished(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1310,6 +1326,14 @@ async fn fetch_series_finished(
         None => String::new(),
     };
 
+    // Both sides count only what the caller can see: the series itself
+    // (grant + cap) and, within it, the issues (grant + issue-level cap),
+    // so a capped reader's "finished" is judged over the issues they can
+    // open and a hidden issue never feeds the timestamp.
+    let mut params: Vec<sea_orm::Value> = vec![user_id.into(), limit.into()];
+    let series_vis = access::visible_series_sql(acl, "s", &mut params);
+    let active_vis = access::visible_issues_sql(acl, "i", &mut params);
+    let finished_vis = access::visible_issues_sql(acl, "i", &mut params);
     let sql = format!(
         r#"
         WITH active_counts AS (
@@ -1317,6 +1341,7 @@ async fn fetch_series_finished(
             FROM   series s
             JOIN   issues i ON i.series_id = s.id
             WHERE  i.state = 'active' AND i.removed_at IS NULL
+                   {series_vis}{active_vis}
             GROUP BY s.id
         ),
         user_finishes AS (
@@ -1333,6 +1358,7 @@ async fn fetch_series_finished(
               AND  pr.is_backfill = FALSE
               AND  i.state = 'active'
               AND  i.removed_at IS NULL
+                   {finished_vis}
             GROUP BY i.series_id
         )
         SELECT uf.series_id, uf.series_finished_at
@@ -1348,14 +1374,11 @@ async fn fetch_series_finished(
         "#
     );
 
-    let rows: Vec<SeriesFinishedRow> =
-        SeriesFinishedRow::find_by_statement(Statement::from_sql_and_values(
-            sea_orm::DatabaseBackend::Postgres,
-            sql,
-            [user_id.into(), limit.into()],
-        ))
-        .all(&app.db)
-        .await?;
+    let rows: Vec<SeriesFinishedRow> = SeriesFinishedRow::find_by_statement(
+        Statement::from_sql_and_values(sea_orm::DatabaseBackend::Postgres, sql, params),
+    )
+    .all(&app.db)
+    .await?;
 
     Ok(rows
         .into_iter()

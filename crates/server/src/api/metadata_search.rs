@@ -1074,16 +1074,10 @@ pub async fn search_issue(
     Path((slug, issue_slug)): Path<(String, String)>,
     OptionalValidated(overrides): OptionalValidated<SearchOverrides>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
-        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    let (s, i) = match visible_series_issue(&app, &user, &slug, &issue_slug).await {
+        Ok(found) => found,
+        Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
 
     // WP-2.8: an `issue_number` override makes an un-numbered issue
     // searchable; otherwise the local `number_raw` is required.
@@ -1321,16 +1315,10 @@ pub async fn lookup_issue(
     Path((slug, issue_slug)): Path<(String, String)>,
     Validated(req): Validated<LookupReq>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
-        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    let (s, i) = match visible_series_issue(&app, &user, &slug, &issue_slug).await {
+        Ok(found) => found,
+        Err(resp) => return resp,
     };
-    if !user_can_see_library(&app, &user, s.library_id).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let facts = IssueQueryFacts {
         series_name: s.name.clone(),
         series_year: s.year,
@@ -1600,16 +1588,10 @@ pub async fn candidates_issue(
     Path((slug, issue_slug)): Path<(String, String)>,
     Query(q): Query<CandidatesQuery>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
-        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    let (_, i) = match visible_series_issue(&app, &user, &slug, &issue_slug).await {
+        Ok(found) => found,
+        Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let run = match q.run_id {
         Some(id) => match orchestrator::fetch_run(&app.db, id).await {
             Ok(Some(r)) => r,
@@ -2054,16 +2036,10 @@ pub async fn proposed_diff_issue(
     Path((slug, issue_slug)): Path<(String, String)>,
     Query(q): Query<ProposedDiffQuery>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
-        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    let (_, i) = match visible_series_issue(&app, &user, &slug, &issue_slug).await {
+        Ok(found) => found,
+        Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
         .await
         .ok()
@@ -2203,16 +2179,10 @@ pub async fn composite_diff_issue(
     Path((slug, issue_slug)): Path<(String, String)>,
     Query(q): Query<CompositeDiffQuery>,
 ) -> Response {
-    let Some((s, i)) = find_series_issue(&app, &slug, &issue_slug).await else {
-        return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    let (_, i) = match visible_series_issue(&app, &user, &slug, &issue_slug).await {
+        Ok(found) => found,
+        Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
     let Some(run) = orchestrator::fetch_run(&app.db, q.run_id)
         .await
         .ok()
@@ -4434,6 +4404,34 @@ async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) 
         .await
         .unwrap_or(None);
     row.is_some()
+}
+
+/// [`find_series_issue`] for the per-issue reader routes: 404 for an
+/// unknown slug, 403 when the series is outside the caller's grant or cap,
+/// and the same 404 as an unknown slug when the issue's own rating is
+/// above the cap (WP-2.7).
+async fn visible_series_issue(
+    app: &AppState,
+    user: &CurrentUser,
+    series_slug: &str,
+    issue_slug: &str,
+) -> Result<(series::Model, issue::Model), Response> {
+    let not_found = || error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
+    let Some((s, i)) = find_series_issue(app, series_slug, issue_slug).await else {
+        return Err(not_found());
+    };
+    let acl = crate::library::access::for_library(app, user, s.library_id).await;
+    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "auth.forbidden",
+            "library access denied",
+        ));
+    }
+    if !crate::library::access::issue_allowed(app, &acl, &i).await {
+        return Err(not_found());
+    }
+    Ok((s, i))
 }
 
 async fn find_series_issue(

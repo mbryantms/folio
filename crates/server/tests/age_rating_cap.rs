@@ -181,6 +181,171 @@ struct Fixture {
     unrated_mature_2: String,
 }
 
+async fn seed_series(
+    db: &sea_orm::DatabaseConnection,
+    lib_id: Uuid,
+    name: &str,
+    slug: &str,
+    rating: Option<&str>,
+) -> Uuid {
+    let now = Utc::now().fixed_offset();
+    let id = Uuid::now_v7();
+    SeriesAM {
+        id: Set(id),
+        library_id: Set(lib_id),
+        name: Set(name.into()),
+        normalized_name: Set(normalize_name(name)),
+        year: Set(Some(2020)),
+        volume: Set(None),
+        publisher: Set(Some("Cap Comics".into())),
+        imprint: Set(None),
+        status: Set("continuing".into()),
+        total_issues: Set(None),
+        age_rating: Set(rating.map(str::to_owned)),
+        summary: Set(None),
+        language_code: Set("en".into()),
+        sort_name: Set(None),
+        year_end: Set(None),
+        series_type: Set(None),
+        aliases: Set(serde_json::json!([])),
+        deck: Set(None),
+        publisher_id: Set(None),
+        imprint_id: Set(None),
+        last_metadata_sync_at: Set(None),
+        metadata_sync_paused: Set(false),
+        series_json_present: Set(None),
+        series_group: Set(None),
+        slug: Set(slug.into()),
+        alternate_names: Set(serde_json::json!([])),
+        created_at: Set(now),
+        updated_at: Set(now),
+        folder_path: Set(None),
+        last_scanned_at: Set(None),
+        match_key: Set(None),
+        removed_at: Set(None),
+        removal_confirmed_at: Set(None),
+        status_user_set_at: Set(None),
+        reading_direction: Set(None),
+        text_language: Set(None),
+        preserve_canonical_order: Set(false),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn seed_issue(
+    db: &sea_orm::DatabaseConnection,
+    root: &std::path::Path,
+    lib_id: Uuid,
+    series_id: Uuid,
+    n: u8,
+    slug: &str,
+    title: &str,
+    rating: Option<&str>,
+    special: Option<&str>,
+) -> String {
+    let now = Utc::now().fixed_offset();
+    let id = format!("{:0>62}{:02x}", series_id.simple(), n);
+    let file = root.join(format!("{slug}.cbz"));
+    write_cbz(&file);
+    IssueAM {
+        id: Set(id.clone()),
+        library_id: Set(lib_id),
+        series_id: Set(series_id),
+        slug: Set(slug.into()),
+        file_path: Set(file.to_string_lossy().into_owned()),
+        file_size: Set(1),
+        file_mtime: Set(now),
+        state: Set(entity::issue::IssueState::Active),
+        content_hash: Set(id.clone()),
+        title: Set(Some(title.into())),
+        sort_number: Set(Some(n as f64)),
+        number_raw: Set(Some(n.to_string())),
+        volume: Set(None),
+        year: Set(Some(2020)),
+        month: Set(None),
+        day: Set(None),
+        summary: Set(None),
+        notes: Set(None),
+        language_code: Set(None),
+        format: Set(None),
+        black_and_white: Set(None),
+        manga: Set(None),
+        age_rating: Set(rating.map(str::to_owned)),
+        page_count: Set(Some(2)),
+        pages: Set(serde_json::json!([])),
+        comic_info_raw: Set(serde_json::json!({})),
+        alternate_series: Set(None),
+        story_arc: Set(None),
+        story_arc_number: Set(None),
+        characters: Set(None),
+        teams: Set(None),
+        locations: Set(None),
+        tags: Set(None),
+        genre: Set(None),
+        writer: Set(Some("Cap Writer".into())),
+        penciller: Set(None),
+        inker: Set(None),
+        colorist: Set(None),
+        letterer: Set(None),
+        cover_artist: Set(None),
+        editor: Set(None),
+        translator: Set(None),
+        publisher: Set(None),
+        imprint: Set(None),
+        scan_information: Set(None),
+        community_rating: Set(None),
+        review: Set(None),
+        web_url: Set(None),
+        deck: Set(None),
+        store_date: Set(None),
+        foc_date: Set(None),
+        price: Set(None),
+        sku: Set(None),
+        staff_rating: Set(None),
+        aliases: Set(serde_json::json!([])),
+        last_metadata_sync_at: Set(None),
+        created_at: Set(now),
+        updated_at: Set(now),
+        removed_at: Set(None),
+        removal_confirmed_at: Set(None),
+        superseded_by: Set(None),
+        special_type: Set(special.map(str::to_owned)),
+        hash_algorithm: Set(0),
+        metroninfo_present: Set(None),
+        thumbnails_generated_at: Set(None),
+        thumbnail_version: Set(0),
+        thumbnails_error: Set(None),
+        additional_links: Set(serde_json::json!([])),
+        comicinfo_count: Set(Some(0)),
+        last_rewrite_at: Set(None),
+        last_rewrite_kind: Set(None),
+        last_sidecar_rewrite_at: Set(None),
+        metron_info_raw: Set(None),
+        cover_page_index: Set(0),
+        metadata_review_accepted_at: Set(None),
+        metadata_review_accepted_by: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    // Junction credit row — what `/people` and `/creators` aggregate.
+    entity::issue_credit::ActiveModel {
+        issue_id: Set(id.clone()),
+        role: Set("writer".into()),
+        person: Set("Cap Writer".into()),
+        person_id: Set(None),
+        ordinal: Set(0),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
 async fn seed_library(app: &TestApp) -> Fixture {
     let db = Database::connect(&app.db_url).await.unwrap();
     let now = Utc::now().fixed_offset();
@@ -228,172 +393,8 @@ async fn seed_library(app: &TestApp) -> Fixture {
     .await
     .unwrap();
 
-    async fn series(
-        db: &sea_orm::DatabaseConnection,
-        lib_id: Uuid,
-        name: &str,
-        slug: &str,
-        rating: Option<&str>,
-    ) -> Uuid {
-        let now = Utc::now().fixed_offset();
-        let id = Uuid::now_v7();
-        SeriesAM {
-            id: Set(id),
-            library_id: Set(lib_id),
-            name: Set(name.into()),
-            normalized_name: Set(normalize_name(name)),
-            year: Set(Some(2020)),
-            volume: Set(None),
-            publisher: Set(Some("Cap Comics".into())),
-            imprint: Set(None),
-            status: Set("continuing".into()),
-            total_issues: Set(None),
-            age_rating: Set(rating.map(str::to_owned)),
-            summary: Set(None),
-            language_code: Set("en".into()),
-            sort_name: Set(None),
-            year_end: Set(None),
-            series_type: Set(None),
-            aliases: Set(serde_json::json!([])),
-            deck: Set(None),
-            publisher_id: Set(None),
-            imprint_id: Set(None),
-            last_metadata_sync_at: Set(None),
-            metadata_sync_paused: Set(false),
-            series_json_present: Set(None),
-            series_group: Set(None),
-            slug: Set(slug.into()),
-            alternate_names: Set(serde_json::json!([])),
-            created_at: Set(now),
-            updated_at: Set(now),
-            folder_path: Set(None),
-            last_scanned_at: Set(None),
-            match_key: Set(None),
-            removed_at: Set(None),
-            removal_confirmed_at: Set(None),
-            status_user_set_at: Set(None),
-            reading_direction: Set(None),
-            text_language: Set(None),
-            preserve_canonical_order: Set(false),
-        }
-        .insert(db)
-        .await
-        .unwrap();
-        id
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn issue(
-        db: &sea_orm::DatabaseConnection,
-        root: &std::path::Path,
-        lib_id: Uuid,
-        series_id: Uuid,
-        n: u8,
-        slug: &str,
-        title: &str,
-        rating: Option<&str>,
-    ) -> String {
-        let now = Utc::now().fixed_offset();
-        let id = format!("{:0>62}{:02x}", series_id.simple(), n);
-        let file = root.join(format!("{slug}.cbz"));
-        write_cbz(&file);
-        IssueAM {
-            id: Set(id.clone()),
-            library_id: Set(lib_id),
-            series_id: Set(series_id),
-            slug: Set(slug.into()),
-            file_path: Set(file.to_string_lossy().into_owned()),
-            file_size: Set(1),
-            file_mtime: Set(now),
-            state: Set(entity::issue::IssueState::Active),
-            content_hash: Set(id.clone()),
-            title: Set(Some(title.into())),
-            sort_number: Set(Some(n as f64)),
-            number_raw: Set(Some(n.to_string())),
-            volume: Set(None),
-            year: Set(Some(2020)),
-            month: Set(None),
-            day: Set(None),
-            summary: Set(None),
-            notes: Set(None),
-            language_code: Set(None),
-            format: Set(None),
-            black_and_white: Set(None),
-            manga: Set(None),
-            age_rating: Set(rating.map(str::to_owned)),
-            page_count: Set(Some(2)),
-            pages: Set(serde_json::json!([])),
-            comic_info_raw: Set(serde_json::json!({})),
-            alternate_series: Set(None),
-            story_arc: Set(None),
-            story_arc_number: Set(None),
-            characters: Set(None),
-            teams: Set(None),
-            locations: Set(None),
-            tags: Set(None),
-            genre: Set(None),
-            writer: Set(Some("Cap Writer".into())),
-            penciller: Set(None),
-            inker: Set(None),
-            colorist: Set(None),
-            letterer: Set(None),
-            cover_artist: Set(None),
-            editor: Set(None),
-            translator: Set(None),
-            publisher: Set(None),
-            imprint: Set(None),
-            scan_information: Set(None),
-            community_rating: Set(None),
-            review: Set(None),
-            web_url: Set(None),
-            deck: Set(None),
-            store_date: Set(None),
-            foc_date: Set(None),
-            price: Set(None),
-            sku: Set(None),
-            staff_rating: Set(None),
-            aliases: Set(serde_json::json!([])),
-            last_metadata_sync_at: Set(None),
-            created_at: Set(now),
-            updated_at: Set(now),
-            removed_at: Set(None),
-            removal_confirmed_at: Set(None),
-            superseded_by: Set(None),
-            special_type: Set(None),
-            hash_algorithm: Set(0),
-            metroninfo_present: Set(None),
-            thumbnails_generated_at: Set(None),
-            thumbnail_version: Set(0),
-            thumbnails_error: Set(None),
-            additional_links: Set(serde_json::json!([])),
-            comicinfo_count: Set(Some(0)),
-            last_rewrite_at: Set(None),
-            last_rewrite_kind: Set(None),
-            last_sidecar_rewrite_at: Set(None),
-            metron_info_raw: Set(None),
-            cover_page_index: Set(0),
-            metadata_review_accepted_at: Set(None),
-            metadata_review_accepted_by: Set(None),
-        }
-        .insert(db)
-        .await
-        .unwrap();
-        // Junction credit row — what `/people` and `/creators` aggregate.
-        entity::issue_credit::ActiveModel {
-            issue_id: Set(id.clone()),
-            role: Set("writer".into()),
-            person: Set("Cap Writer".into()),
-            person_id: Set(None),
-            ordinal: Set(0),
-        }
-        .insert(db)
-        .await
-        .unwrap();
-        id
-    }
-
-    let teen_series = series(&db, lib_id, "Teen Tales", "teen-tales", Some("Teen")).await;
-    let mature_series = series(
+    let teen_series = seed_series(&db, lib_id, "Teen Tales", "teen-tales", Some("Teen")).await;
+    let mature_series = seed_series(
         &db,
         lib_id,
         "Mature Matters",
@@ -401,9 +402,9 @@ async fn seed_library(app: &TestApp) -> Fixture {
         Some("Mature 17+"),
     )
     .await;
-    let unrated_series = series(&db, lib_id, "Unrated Stories", "unrated-stories", None).await;
+    let unrated_series = seed_series(&db, lib_id, "Unrated Stories", "unrated-stories", None).await;
 
-    let teen_1 = issue(
+    let teen_1 = seed_issue(
         &db,
         &root,
         lib_id,
@@ -412,9 +413,10 @@ async fn seed_library(app: &TestApp) -> Fixture {
         "teen-1",
         "Teen One",
         None,
+        None,
     )
     .await;
-    let teen_2 = issue(
+    let teen_2 = seed_issue(
         &db,
         &root,
         lib_id,
@@ -423,9 +425,10 @@ async fn seed_library(app: &TestApp) -> Fixture {
         "teen-2",
         "Teen Two",
         None,
+        None,
     )
     .await;
-    let mature_1 = issue(
+    let mature_1 = seed_issue(
         &db,
         &root,
         lib_id,
@@ -434,9 +437,10 @@ async fn seed_library(app: &TestApp) -> Fixture {
         "mature-1",
         "Mature One",
         None,
+        None,
     )
     .await;
-    let mature_2 = issue(
+    let mature_2 = seed_issue(
         &db,
         &root,
         lib_id,
@@ -445,9 +449,10 @@ async fn seed_library(app: &TestApp) -> Fixture {
         "mature-2",
         "Mature Two",
         None,
+        None,
     )
     .await;
-    let unrated_1 = issue(
+    let unrated_1 = seed_issue(
         &db,
         &root,
         lib_id,
@@ -456,10 +461,11 @@ async fn seed_library(app: &TestApp) -> Fixture {
         "unrated-1",
         "Unrated One",
         None,
+        None,
     )
     .await;
     // Issue-level override: the series is unrated but this issue is not.
-    let unrated_mature_2 = issue(
+    let unrated_mature_2 = seed_issue(
         &db,
         &root,
         lib_id,
@@ -468,6 +474,7 @@ async fn seed_library(app: &TestApp) -> Fixture {
         "unrated-2",
         "Unrated Mature Two",
         Some("mature 17+"),
+        None,
     )
     .await;
 
@@ -904,4 +911,521 @@ async fn admin_grant_api_round_trips_the_cap_and_rejects_bad_values() {
             .any(|e| e["payload"]["age_rating_caps"][&lib] == "Everyone 10+"),
         "{body}"
     );
+}
+
+// ───── issue-level cap inside a visible series ─────
+//
+// "Gap Run" is rated `Teen` (visible to the `Teen`-capped reader) and holds
+// three main-run issues; only #2 carries its own `Mature 17+` rating, so it
+// is the one issue the capped reader must not learn about. It also carries
+// the only "Hidden Hand" credit, the only "Secret Agent" character and the
+// only 2031 cover year, so every rollup can be checked for it. "Gap
+// Annuals" (unrated) repeats the shape in the `Annual` specials lane.
+
+struct Gap {
+    series_id: Uuid,
+    one: String,
+    two: String,
+    three: String,
+}
+
+async fn seed_gap(app: &TestApp, lib_id: Uuid) -> Gap {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let root = app._data_dir.path().join("cap-lib");
+    let series_id = seed_series(&db, lib_id, "Gap Run", "gap-run", Some("Teen")).await;
+    let one = seed_issue(
+        &db, &root, lib_id, series_id, 1, "gap-1", "Gap One", None, None,
+    )
+    .await;
+    let two = seed_issue(
+        &db,
+        &root,
+        lib_id,
+        series_id,
+        2,
+        "gap-2",
+        "Gap Two",
+        Some("Mature 17+"),
+        None,
+    )
+    .await;
+    let three = seed_issue(
+        &db,
+        &root,
+        lib_id,
+        series_id,
+        3,
+        "gap-3",
+        "Gap Three",
+        None,
+        None,
+    )
+    .await;
+    entity::issue_credit::ActiveModel {
+        issue_id: Set(two.clone()),
+        role: Set("writer".into()),
+        person: Set("Hidden Hand".into()),
+        person_id: Set(None),
+        ordinal: Set(1),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+    entity::issue::ActiveModel {
+        id: Unchanged(two.clone()),
+        characters: Set(Some("Secret Agent".into())),
+        year: Set(Some(2031)),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+
+    let annuals = seed_series(&db, lib_id, "Gap Annuals", "gap-annuals", None).await;
+    for (n, rating) in [(1u8, None), (2, Some("Mature 17+")), (3, None)] {
+        seed_issue(
+            &db,
+            &root,
+            lib_id,
+            annuals,
+            n,
+            &format!("gap-annual-{n}"),
+            &format!("Gap Annual {n}"),
+            rating,
+            Some("Annual"),
+        )
+        .await;
+    }
+    Gap {
+        series_id,
+        one,
+        two,
+        three,
+    }
+}
+
+async fn gap_world() -> (World, Gap) {
+    let w = world().await;
+    let gap = seed_gap(&w.app, w.fx.lib_id).await;
+    (w, gap)
+}
+
+async fn post_json(
+    app: &TestApp,
+    path: &str,
+    user: &Authed,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let (status, bytes) = raw(app, Method::POST, path, user, Some(body)).await;
+    let body = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, body)
+}
+
+fn item_titles(items: &serde_json::Value) -> Vec<String> {
+    items
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|i| i["title"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn has_progress_row(app: &TestApp, user_id: Uuid, issue_id: &str) -> bool {
+    use sea_orm::{ColumnTrait, QueryFilter};
+    let db = Database::connect(&app.db_url).await.unwrap();
+    progress_record::Entity::find()
+        .filter(progress_record::Column::UserId.eq(user_id))
+        .filter(progress_record::Column::IssueId.eq(issue_id))
+        .one(&db)
+        .await
+        .unwrap()
+        .is_some()
+}
+
+#[tokio::test]
+async fn next_and_prev_skip_an_issue_above_the_cap() {
+    let (w, _gap) = gap_world().await;
+    let next = "/api/series/gap-run/issues/gap-1/next";
+    let prev = "/api/series/gap-run/issues/gap-3/prev";
+
+    let (st, body) = get_json(&w.app, next, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(item_titles(&body["items"]), vec!["Gap Three"], "{body}");
+    let (st, body) = get_json(&w.app, prev, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["item"]["title"], "Gap One", "{body}");
+
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, next, user).await;
+        assert_eq!(
+            item_titles(&body["items"]),
+            vec!["Gap Two", "Gap Three"],
+            "{body}"
+        );
+        let (_, body) = get_json(&w.app, prev, user).await;
+        assert_eq!(body["item"]["title"], "Gap Two", "{body}");
+    }
+
+    // Specials lane: the same skip in both directions.
+    let next = "/api/series/gap-annuals/issues/gap-annual-1/next";
+    let prev = "/api/series/gap-annuals/issues/gap-annual-3/prev";
+    let (_, body) = get_json(&w.app, next, &w.capped).await;
+    assert_eq!(item_titles(&body["items"]), vec!["Gap Annual 3"], "{body}");
+    let (_, body) = get_json(&w.app, prev, &w.capped).await;
+    assert_eq!(body["item"]["title"], "Gap Annual 1", "{body}");
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, next, user).await;
+        assert_eq!(
+            item_titles(&body["items"]),
+            vec!["Gap Annual 2", "Gap Annual 3"],
+            "{body}"
+        );
+        let (_, body) = get_json(&w.app, prev, user).await;
+        assert_eq!(body["item"]["title"], "Gap Annual 2", "{body}");
+    }
+}
+
+#[tokio::test]
+async fn hidden_issue_routes_answer_like_an_unknown_id() {
+    let (w, gap) = gap_world().await;
+    let hidden = &gap.two;
+    let unknown = format!("{:0>64}", "f");
+
+    // Slug-addressed routes: (hidden path, unknown path).
+    let slug_routes: Vec<(String, String)> = [
+        "",
+        "/metadata-overview",
+        "/health-issues",
+        "/appearances",
+        "/next",
+        "/prev",
+        "/external-ids",
+        "/metadata/candidates",
+    ]
+    .iter()
+    .map(|suffix| {
+        (
+            format!("/api/series/gap-run/issues/gap-2{suffix}"),
+            format!("/api/series/gap-run/issues/no-such-issue{suffix}"),
+        )
+    })
+    .collect();
+    // Id-addressed routes.
+    let id_routes: Vec<(String, String)> = [
+        "/api/issues/{}/covers",
+        "/api/me/issues/{}/markers",
+        "/api/me/issues/{}/page-overrides",
+        "/api/issues/{}/next-up",
+        "/api/issues/{}/prev-up",
+        "/issues/{}/pages/0",
+        "/issues/{}/pages/0/thumb",
+        "/issues/{}",
+    ]
+    .iter()
+    .map(|t| (t.replace("{}", hidden), t.replace("{}", &unknown)))
+    .collect();
+
+    for (hidden_path, unknown_path) in slug_routes.iter().chain(id_routes.iter()) {
+        let (st_h, body_h) = raw(&w.app, Method::GET, hidden_path, &w.capped, None).await;
+        let (st_u, body_u) = raw(&w.app, Method::GET, unknown_path, &w.capped, None).await;
+        assert_eq!(st_h, StatusCode::NOT_FOUND, "{hidden_path}");
+        assert_eq!(st_h, st_u, "{hidden_path} vs {unknown_path}");
+        assert_eq!(
+            String::from_utf8_lossy(&body_h),
+            String::from_utf8_lossy(&body_u),
+            "{hidden_path} body must match an unknown id's"
+        );
+        // Found for an uncapped reader and for the admin. The candidates
+        // route has no run yet, which is its own, different 404.
+        for user in [&w.uncapped, &w.admin] {
+            let (st, body) = raw(&w.app, Method::GET, hidden_path, user, None).await;
+            if hidden_path.ends_with("/metadata/candidates") {
+                let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    v["error"]["code"], "metadata.run_not_found",
+                    "{hidden_path}"
+                );
+            } else {
+                assert!(
+                    st.is_success() || st.is_redirection(),
+                    "{hidden_path}: {st} {}",
+                    String::from_utf8_lossy(&body)
+                );
+            }
+        }
+    }
+
+    // Writes keyed on the issue: a marker on it and an OCR request.
+    for (path, body) in [
+        (
+            "/api/me/markers".to_owned(),
+            serde_json::json!({"issue_id": "{}", "page_index": 0, "kind": "bookmark"}),
+        ),
+        (
+            "/api/me/issues/{}/ocr".to_owned(),
+            serde_json::json!({"page": 0, "region": {"x": 0, "y": 0, "w": 1, "h": 1}}),
+        ),
+    ] {
+        let fill = |id: &str| {
+            (
+                path.replace("{}", id),
+                serde_json::from_str::<serde_json::Value>(&body.to_string().replace("{}", id))
+                    .unwrap(),
+            )
+        };
+        let (hp, hb) = fill(hidden);
+        let (up, ub) = fill(&unknown);
+        let (st_h, body_h) = raw(&w.app, Method::POST, &hp, &w.capped, Some(hb)).await;
+        let (st_u, body_u) = raw(&w.app, Method::POST, &up, &w.capped, Some(ub)).await;
+        assert_eq!(st_h, StatusCode::NOT_FOUND, "{hp}");
+        assert_eq!(st_h, st_u, "{hp}");
+        assert_eq!(body_h, body_u, "{hp} body must match an unknown id's");
+    }
+    let (st, body) = post_json(
+        &w.app,
+        "/api/me/markers",
+        &w.uncapped,
+        serde_json::json!({"issue_id": hidden, "page_index": 0, "kind": "bookmark"}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+
+    // A visible sibling still answers for the capped reader.
+    let (st, _) = get_json(
+        &w.app,
+        &format!("/api/issues/{}/covers", gap.one),
+        &w.capped,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = get_json(
+        &w.app,
+        "/api/series/gap-run/issues/gap-3/external-ids",
+        &w.capped,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn series_detail_and_card_leave_out_the_hidden_issue() {
+    let (w, gap) = gap_world().await;
+    let detail = |body: &serde_json::Value| {
+        (
+            body["issue_count"].as_i64(),
+            body["progress_summary"]["total"].as_i64(),
+            body["total_page_count"].as_i64(),
+            body["latest_year"].as_i64(),
+        )
+    };
+    let (st, capped) = get_json(&w.app, "/api/series/gap-run", &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{capped}");
+    assert_eq!(
+        detail(&capped),
+        (Some(2), Some(2), Some(4), Some(2020)),
+        "{capped}"
+    );
+    for user in [&w.uncapped, &w.admin] {
+        let (_, full) = get_json(&w.app, "/api/series/gap-run", user).await;
+        assert_eq!(
+            detail(&full),
+            (Some(3), Some(3), Some(6), Some(2031)),
+            "{full}"
+        );
+        let writers = full["writers"].to_string();
+        assert!(writers.contains("Hidden Hand"), "{full}");
+        assert!(
+            full["characters"].to_string().contains("Secret Agent"),
+            "{full}"
+        );
+    }
+    assert!(
+        !capped["writers"].to_string().contains("Hidden Hand"),
+        "{capped}"
+    );
+    assert!(
+        !capped["characters"].to_string().contains("Secret Agent"),
+        "{capped}"
+    );
+    assert!(!capped.to_string().contains(&gap.two), "{capped}");
+
+    // The series card on the library grid agrees with the detail page and
+    // with what the reader can list.
+    let card = |body: &serde_json::Value| {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["slug"] == "gap-run")
+            .map(|s| {
+                (
+                    s["issue_count"].as_i64(),
+                    s["progress_summary"]["total"].as_i64(),
+                )
+            })
+    };
+    let (_, body) = get_json(&w.app, "/api/series?limit=50", &w.capped).await;
+    assert_eq!(card(&body), Some((Some(2), Some(2))), "{body}");
+    let (_, listed) = get_json(&w.app, "/api/series/gap-run/issues", &w.capped).await;
+    assert_eq!(names(&listed, "title").len(), 2, "{listed}");
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, "/api/series?limit=50", user).await;
+        assert_eq!(card(&body), Some((Some(3), Some(3))), "{body}");
+    }
+
+    // Collection report: the hidden issue is neither owned nor listed.
+    let (st, body) = get_json(&w.app, "/api/series/gap-run/collection", &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["issues"].as_array().map(Vec::len), Some(2), "{body}");
+    assert!(!body.to_string().contains("Gap Two"), "{body}");
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, "/api/series/gap-run/collection", user).await;
+        assert_eq!(body["issues"].as_array().map(Vec::len), Some(3), "{body}");
+    }
+    let _ = gap.series_id;
+}
+
+#[tokio::test]
+async fn series_metadata_tab_counts_only_visible_issues() {
+    let (w, gap) = gap_world().await;
+    let ids = |body: &serde_json::Value| -> Vec<String> {
+        body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|i| i["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let path = "/api/series/gap-run/metadata/issues";
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["series_total"], 2, "{body}");
+    assert_eq!(body["total"], 2, "{body}");
+    assert_eq!(ids(&body), vec![gap.one.clone(), gap.three.clone()]);
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, path, user).await;
+        assert_eq!(body["series_total"], 3, "{body}");
+        assert!(ids(&body).contains(&gap.two), "{body}");
+    }
+
+    let path = "/api/series/gap-run/metadata/overview";
+    let figures = |body: &serde_json::Value| {
+        (
+            body["issue_ids"]["total"].as_i64(),
+            body["files"]["archives"].as_i64(),
+        )
+    };
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(figures(&body), (Some(2), Some(2)), "{body}");
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = get_json(&w.app, path, user).await;
+        assert_eq!(figures(&body), (Some(3), Some(3)), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn series_wide_progress_never_touches_the_hidden_issue() {
+    let (w, gap) = gap_world().await;
+    let (st, body) = post_json(
+        &w.app,
+        "/api/series/gap-run/progress",
+        &w.capped,
+        serde_json::json!({"finished": true}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["updated"], 2, "{body}");
+    assert!(has_progress_row(&w.app, w.capped.user_id, &gap.one).await);
+    assert!(has_progress_row(&w.app, w.capped.user_id, &gap.three).await);
+    assert!(!has_progress_row(&w.app, w.capped.user_id, &gap.two).await);
+
+    let (st, body) = post_json(
+        &w.app,
+        "/api/series/gap-run/progress-matching",
+        &w.capped,
+        serde_json::json!({"finished": false}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["updated"], 2, "{body}");
+    let (st, body) = post_json(
+        &w.app,
+        "/api/me/progress/series-bulk",
+        &w.capped,
+        serde_json::json!({"series_ids": [gap.series_id], "finished": true}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["updated"], 2, "{body}");
+    assert!(!has_progress_row(&w.app, w.capped.user_id, &gap.two).await);
+
+    // The progress summary counts what the reader can see: all read.
+    let (_, body) = get_json(&w.app, "/api/series/gap-run", &w.capped).await;
+    assert_eq!(body["progress_summary"]["total"], 2, "{body}");
+    assert_eq!(body["progress_summary"]["finished"], 2, "{body}");
+
+    // Uncapped and admin readers mark all three.
+    for user in [&w.uncapped, &w.admin] {
+        let (_, body) = post_json(
+            &w.app,
+            "/api/series/gap-run/progress",
+            user,
+            serde_json::json!({"finished": true}),
+        )
+        .await;
+        assert_eq!(body["updated"], 3, "{body}");
+        assert!(has_progress_row(&w.app, user.user_id, &gap.two).await);
+    }
+}
+
+#[tokio::test]
+async fn reading_log_leaves_out_a_read_of_the_hidden_issue() {
+    let (w, gap) = gap_world().await;
+    // Reads recorded as if before the cap applied: the capped reader
+    // finished all three issues, so did the uncapped reader.
+    for user in [&w.capped, &w.uncapped] {
+        for id in [&gap.one, &gap.two, &gap.three] {
+            progress(&w.app, user.user_id, id, true).await;
+        }
+    }
+    let issue_ids = |body: &serde_json::Value| -> Vec<String> {
+        body["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["issue"]["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let (st, body) = get_json(&w.app, "/api/me/reading-log", &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let got = issue_ids(&body);
+    assert!(got.contains(&gap.one) && got.contains(&gap.three), "{body}");
+    assert!(!got.contains(&gap.two), "{body}");
+    assert!(!body.to_string().contains("Gap Two"), "{body}");
+    // Every visible issue read → the series counts as finished for them.
+    let series_finished = body["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["kind"] == "series_finished" && e["series"]["slug"] == "gap-run");
+    assert!(series_finished, "{body}");
+
+    let (_, body) = get_json(&w.app, "/api/me/reading-log", &w.uncapped).await;
+    assert!(issue_ids(&body).contains(&gap.two), "{body}");
+
+    // The CSV export runs the same pipeline.
+    let (st, bytes) = raw(
+        &w.app,
+        Method::GET,
+        "/api/me/reading-log/export",
+        &w.capped,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let csv = String::from_utf8(bytes).unwrap();
+    assert!(csv.contains("Gap One") && !csv.contains("Gap Two"), "{csv}");
 }

@@ -2388,7 +2388,7 @@ pub async fn list(
                 std::collections::HashMap::new()
             }
         };
-        let mut items = hydrate_series(&app, page_rows, user.id).await;
+        let mut items = hydrate_series(&app, page_rows, user.id, &visible_libs).await;
         for item in items.iter_mut() {
             if let Ok(uuid) = Uuid::parse_str(&item.id)
                 && let Some(s) = snippets.get(&uuid).cloned()
@@ -2449,7 +2449,7 @@ pub async fn list(
     let page: Vec<series::Model> = rows.into_iter().take(limit as usize).collect();
 
     Json(SeriesListView {
-        items: hydrate_series(&app, page, user.id).await,
+        items: hydrate_series(&app, page, user.id, &visible_libs).await,
         next_cursor,
         total,
     })
@@ -2466,15 +2466,19 @@ pub(crate) async fn hydrate_series(
     app: &AppState,
     rows: Vec<series::Model>,
     viewer: Uuid,
+    acl: &access::VisibleLibraries,
 ) -> Vec<SeriesView> {
     if rows.is_empty() {
         return Vec::new();
     }
 
+    // `acl` is the viewer's: every per-issue tally below (counts, cover,
+    // completeness badge, read progress) leaves out issues rated above the
+    // viewer's cap, so the card agrees with what they can list (WP-2.7).
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let counts = fetch_issue_counts(&app.db, &series_ids).await;
+    let counts = fetch_issue_counts(&app.db, &series_ids, acl).await;
 
-    let covers = series_cover_issue_ids(&app.db, &series_ids).await;
+    let covers = series_cover_issue_ids(&app.db, &series_ids, acl).await;
 
     // Batch-fetch external IDs once for the whole page so the
     // per-row enrichment doesn't N+1.
@@ -2502,7 +2506,7 @@ pub(crate) async fn hydrate_series(
     // Batched metadata-completeness tier for the card badge — one aggregate
     // over the whole page, same FILTER predicate as the saved-view filter and
     // the series rollup so all three agree.
-    let tiers = fetch_metadata_completeness_tiers(app, &rows).await;
+    let tiers = fetch_metadata_completeness_tiers(app, &rows, acl).await;
 
     // Per-viewer read progress for the card hover preview — one grouped
     // query over the page, shared with `get_one` so the numbers match.
@@ -2511,7 +2515,7 @@ pub(crate) async fn hydrate_series(
     // single account + override query for the page, run alongside the
     // progress rollup.
     let (progress, completion) = tokio::join!(
-        fetch_progress_summaries(app, viewer, &page_ids),
+        fetch_progress_summaries(app, viewer, &page_ids, acl),
         CompletionPrefs::load(&app.db, viewer, &page_ids),
     );
 
@@ -2551,6 +2555,7 @@ pub(crate) async fn hydrate_series(
 async fn fetch_metadata_completeness_tiers(
     app: &AppState,
     rows: &[series::Model],
+    acl: &access::VisibleLibraries,
 ) -> HashMap<Uuid, String> {
     use sea_orm::{FromQueryResult, Statement, Value};
     if rows.is_empty() {
@@ -2576,6 +2581,7 @@ async fn fetch_metadata_completeness_tiers(
     // per-series summary and the `metadata_completeness` grid filter so they
     // never disagree about a row.
     let satisfied = crate::metadata::completeness::issue_metadata_satisfied_sql("i");
+    let cap = acl.issue_cap_sql("i", &mut params);
     let sql = format!(
         r#"
         SELECT i.series_id AS series_id,
@@ -2583,7 +2589,7 @@ async fn fetch_metadata_completeness_tiers(
                COUNT(*) FILTER (WHERE {satisfied})::bigint AS complete_count
           FROM issues i
          WHERE i.state = 'active' AND i.removed_at IS NULL
-           AND i.series_id IN ({placeholders})
+           AND i.series_id IN ({placeholders}){cap}
          GROUP BY i.series_id
     "#,
         placeholders = placeholders.join(",")
@@ -2746,18 +2752,24 @@ impl SeriesIssueCountRow {
 }
 
 /// `COUNT(*)` and `COUNT(*) FILTER (WHERE special_type IS NULL)` per
-/// series over non-removed issues. Series with no issues are absent from
-/// the map (callers leave the view's counts `None`, as before).
+/// series over non-removed issues the viewer can see (`acl`'s issue-level
+/// cap). Series with no issues are absent from the map (callers leave the
+/// view's counts `None`, as before).
 async fn fetch_issue_counts(
     db: &sea_orm::DatabaseConnection,
     series_ids: &[Uuid],
+    acl: &access::VisibleLibraries,
 ) -> HashMap<Uuid, SeriesIssueCountRow> {
     if series_ids.is_empty() {
         return HashMap::new();
     }
-    issue::Entity::find()
+    let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied()))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    if let Some(cap) = acl.issue_cap_condition() {
+        select = select.filter(cap);
+    }
+    select
         .select_only()
         .column(issue::Column::SeriesId)
         .column_as(
@@ -2780,11 +2792,14 @@ async fn fetch_issue_counts(
 
 /// Cover issue id per series: the user's explicit cover pick if any, else
 /// the main run's lowest regular issue (see the ordering notes below).
-/// Shared by series cards and collection cover stacks so both show the
-/// same cover.
+/// Shared by series cards, the series detail page and collection cover
+/// stacks so all show the same cover. Only issues `acl` can see qualify,
+/// the pick included; system callers pass
+/// [`access::VisibleLibraries::unrestricted`].
 pub(crate) async fn series_cover_issue_ids(
     db: &sea_orm::DatabaseConnection,
     series_ids: &[Uuid],
+    acl: &access::VisibleLibraries,
 ) -> HashMap<Uuid, String> {
     let mut covers: HashMap<Uuid, String> = HashMap::new();
     if series_ids.is_empty() {
@@ -2805,10 +2820,16 @@ pub(crate) async fn series_cover_issue_ids(
     // on `sort_number` avoids an unnumbered ALWAYS-LAST file dragging
     // in front of real numbered issues. M5/series-cover-issue-1
     // (2026-05-23 ask); specials + preludes excluded 2026-10-05.
-    let cover_rows = issue::Entity::find()
+    let mut cover_select = issue::Entity::find()
         .filter(issue::Column::SeriesId.is_in(series_ids.to_vec()))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    let cap = acl.issue_cap_condition();
+    let capped = cap.is_some();
+    if let Some(cap) = cap {
+        cover_select = cover_select.filter(cap);
+    }
+    let cover_rows = cover_select
         .select_only()
         .column(issue::Column::SeriesId)
         .column(issue::Column::Id)
@@ -2822,11 +2843,21 @@ pub(crate) async fn series_cover_issue_ids(
         .all(db)
         .await
         .unwrap_or_default();
+    // Every active issue the caller may see — a pick outside this set is
+    // ignored for a capped caller (the heuristic cover stands instead).
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for row in cover_rows {
+        if capped {
+            seen.insert(row.id.clone());
+        }
         covers.entry(row.series_id).or_insert(row.id);
     }
     // An explicit series cover pick (post-audit T4.2) beats the heuristic.
-    covers.extend(crate::api::cover_pick::user_cover_picks(db, series_ids).await);
+    for (sid, iid) in crate::api::cover_pick::user_cover_picks(db, series_ids).await {
+        if !capped || seen.contains(&iid) {
+            covers.insert(sid, iid);
+        }
+    }
     covers
 }
 
@@ -3328,6 +3359,7 @@ pub(crate) struct IssueCompletenessRow {
 pub(crate) async fn score_series_issues(
     app: &AppState,
     series_id: Uuid,
+    acl: &access::VisibleLibraries,
 ) -> Vec<(
     IssueCompletenessRow,
     crate::metadata::completeness::CompletenessReport,
@@ -3335,10 +3367,15 @@ pub(crate) async fn score_series_issues(
     use crate::metadata::completeness::{
         IssueCompletenessInput, assess_issue, non_empty, plausible_year,
     };
-    let rows = issue::Entity::find()
+    let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(series_id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: only the issues the caller can see are scored.
+    if let Some(cap) = acl.issue_cap_condition() {
+        select = select.filter(cap);
+    }
+    let rows = select
         .select_only()
         .column(issue::Column::Id)
         .column(issue::Column::Slug)
@@ -3417,9 +3454,13 @@ pub(crate) async fn score_series_issues(
         .collect()
 }
 
-async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<CollectionIssueEntry> {
+async fn collect_issue_completeness(
+    app: &AppState,
+    series_id: Uuid,
+    acl: &access::VisibleLibraries,
+) -> Vec<CollectionIssueEntry> {
     use crate::metadata::completeness::CompletenessTier;
-    score_series_issues(app, series_id)
+    score_series_issues(app, series_id, acl)
         .await
         .into_iter()
         .map(|(r, report)| {
@@ -3443,14 +3484,14 @@ async fn collect_issue_completeness(app: &AppState, series_id: Uuid) -> Vec<Coll
 }
 
 /// Per-issue completeness tiers for a series — `(issue id, tier)` in
-/// `sort_number` order. Backs the bulk-fetch "only missing or partial" scope;
-/// shares [`score_series_issues`] with the Collection grid so the two can't
-/// drift.
+/// `sort_number` order. Backs the admin bulk-fetch "only missing or
+/// partial" scope (every issue, no viewer cap); shares
+/// [`score_series_issues`] with the Collection grid so the two can't drift.
 pub(crate) async fn assess_series_issue_tiers(
     app: &AppState,
     series_id: Uuid,
 ) -> Vec<(String, crate::metadata::completeness::CompletenessTier)> {
-    score_series_issues(app, series_id)
+    score_series_issues(app, series_id, &access::VisibleLibraries::unrestricted())
         .await
         .into_iter()
         .map(|(r, report)| (r.id, report.tier))
@@ -3476,17 +3517,23 @@ pub async fn collection_report(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::series_visible(&app, &user, &row).await {
+    let acl = access::for_library(&app, &user, row.library_id).await;
+    if !acl.series_ok(row.library_id, row.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // No `.limit()` — the whole run must be visible for gap detection. The
     // three-column projection keeps this cheap even at 1000+ issues. Filter
     // matches `active_issue_count_subquery` so `counted_owned` lines up with
-    // the saved-view `collection_completeness` count.
-    let rows = match issue::Entity::find()
+    // the saved-view `collection_completeness` count. WP-2.7: an issue rated
+    // above the caller's cap is left out (it reads as not owned).
+    let mut owned_select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    if let Some(cap) = acl.issue_cap_condition() {
+        owned_select = owned_select.filter(cap);
+    }
+    let rows = match owned_select
         .select_only()
         .column(issue::Column::SortNumber)
         .column(issue::Column::NumberRaw)
@@ -3524,7 +3571,7 @@ pub async fn collection_report(
             tracing::warn!(series_id = %row.id, error = %e, "collection report: provider manifest failed");
         }
     }
-    report.issues = collect_issue_completeness(&app, row.id).await;
+    report.issues = collect_issue_completeness(&app, row.id, &acl).await;
     Json(report).into_response()
 }
 
@@ -3562,7 +3609,8 @@ pub async fn get_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::series_visible(&app, &user, &row).await {
+    let acl = access::for_library(&app, &user, row.library_id).await;
+    if !acl.series_ok(row.library_id, row.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // A soft-deleted series is gone for readers (its issues are hidden
@@ -3576,7 +3624,11 @@ pub async fn get_one(
     // library's Removed tab, not on the series detail page.
     // Same grouped tally as `hydrate_series` (total + main-run), so the
     // "Issues" card and the library grid dot agree on completeness.
-    let counts = fetch_issue_counts(&app.db, std::slice::from_ref(&row.id))
+    // WP-2.7: every per-issue figure below (counts, cover, page total,
+    // years, credit / cast rollups, completeness, read progress) is taken
+    // over the issues the caller can see — an issue rated above their cap
+    // is left out even though the series itself is visible.
+    let counts = fetch_issue_counts(&app.db, std::slice::from_ref(&row.id), &acl)
         .await
         .remove(&row.id);
     let count = counts.map(|c| c.issue_count as u64);
@@ -3586,36 +3638,24 @@ pub async fn get_one(
     // the grid card on /library and home rails shows. See
     // `hydrate_series` for the full rationale.
     // An explicit series cover pick (post-audit T4.2) beats the heuristic.
-    let picked_cover_id = crate::api::cover_pick::user_cover_picks(&app.db, &[row.id])
-        .await
-        .remove(&row.id);
-    let cover_issue_id: Option<String> = match picked_cover_id {
-        Some(id) => Some(id),
-        None => issue::Entity::find()
-            .filter(issue::Column::SeriesId.eq(row.id))
-            .filter(issue::Column::State.eq(issue::IssueState::Active))
-            .filter(issue::Column::RemovedAt.is_null())
-            .order_by_asc(Expr::cust("special_type IS NOT NULL"))
-            .order_by_asc(Expr::cust("CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END"))
-            .order_by_asc(Expr::cust("sort_number IS NULL"))
-            .order_by_asc(issue::Column::SortNumber)
-            .order_by_asc(issue::Column::FilePath)
-            .select_only()
-            .column(issue::Column::Id)
-            .into_tuple::<String>()
-            .one(&app.db)
+    // One shared helper with the cards, so a pick the caller can't see is
+    // never the hero cover.
+    let cover_issue_id: Option<String> =
+        series_cover_issue_ids(&app.db, std::slice::from_ref(&row.id), &acl)
             .await
-            .ok()
-            .flatten(),
-    };
+            .remove(&row.id);
     // Pull the per-issue stats columns + the still-CSV-shaped fields
     // (characters / teams / locations) we don't yet normalize. Capped at 500
     // to bound the work for absurdly long series. Genres / tags / credits
     // come from the junction tables below.
-    let agg_rows = issue::Entity::find()
+    let mut agg_select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    if let Some(cap) = acl.issue_cap_condition() {
+        agg_select = agg_select.filter(cap);
+    }
+    let agg_rows = agg_select
         .order_by_asc(issue::Column::SortNumber)
         .select_only()
         .column(issue::Column::Characters)
@@ -3636,7 +3676,7 @@ pub async fn get_one(
     // `issue_*` junction tables joined with this series's active issues.
     // One query per facet; counts are computed by Postgres so the API
     // doesn't have to split / dedupe CSVs in Rust.
-    let metadata_facets = aggregate_series_metadata(&app, row.id).await;
+    let metadata_facets = aggregate_series_metadata(&app, row.id, &acl).await;
 
     let mut total_pages: i64 = 0;
     let mut last_added: Option<chrono::DateTime<chrono::FixedOffset>> = None;
@@ -3730,13 +3770,13 @@ pub async fn get_one(
     // Per-issue rollup ("N of M issues have complete metadata") via one
     // aggregate query — drives the Collection tab's metadata-health line.
     v.metadata_completeness_summary =
-        Some(compute_metadata_completeness_summary(&app, series_id_for_lookups).await);
+        Some(compute_metadata_completeness_summary(&app, series_id_for_lookups, &acl).await);
 
     // Per-user read-progress summary — computed against the *full* series,
     // not the 100-issue page the client typically pulls. Two cheap counts
     // (finished / in-progress) plus the active-issue count we already
     // have, so the UI can render "n / N" without paginating.
-    let progress = fetch_progress_summaries(&app, user.id, &[series_id_for_lookups]).await;
+    let progress = fetch_progress_summaries(&app, user.id, &[series_id_for_lookups], &acl).await;
     v.progress_summary = Some(progress_summary_for(
         &progress,
         series_id_for_lookups,
@@ -3856,6 +3896,7 @@ pub(crate) async fn fetch_progress_summaries(
     app: &AppState,
     user_id: Uuid,
     series_ids: &[Uuid],
+    acl: &access::VisibleLibraries,
 ) -> HashMap<Uuid, SeriesProgressCounts> {
     use sea_orm::{Statement, Value};
     if series_ids.is_empty() {
@@ -3877,6 +3918,9 @@ pub(crate) async fn fetch_progress_summaries(
             format!("${}", params.len())
         })
         .collect();
+    // Same issue set as `fetch_issue_counts` (the summary's `total`): a
+    // read of an issue now above the viewer's cap is not counted.
+    let cap = acl.issue_cap_sql("i", &mut params);
     let sql = format!(
         r#"
         SELECT i.series_id AS series_id,
@@ -3889,7 +3933,7 @@ pub(crate) async fn fetch_progress_summaries(
           JOIN issues i ON i.id = pr.issue_id
          WHERE pr.user_id = $1
            AND i.state = 'active' AND i.removed_at IS NULL
-           AND i.series_id IN ({placeholders})
+           AND i.series_id IN ({placeholders}){cap}
          GROUP BY i.series_id
     "#,
         placeholders = placeholders.join(",")
@@ -3947,6 +3991,7 @@ fn progress_summary_for(
 async fn compute_metadata_completeness_summary(
     app: &AppState,
     series_id: Uuid,
+    acl: &access::VisibleLibraries,
 ) -> MetadataCompletenessSummary {
     use sea_orm::{FromQueryResult, Statement};
     #[derive(FromQueryResult)]
@@ -3956,17 +4001,19 @@ async fn compute_metadata_completeness_summary(
     }
     // Same shared "satisfied" predicate as the worklist rollup / grid filter.
     let satisfied = crate::metadata::completeness::issue_metadata_satisfied_sql("i");
+    let mut params: Vec<sea_orm::Value> = vec![series_id.into()];
+    let cap = acl.issue_cap_sql("i", &mut params);
     let sql = format!(
         r#"
         SELECT
           COUNT(*)::bigint AS active_count,
           COUNT(*) FILTER (WHERE {satisfied})::bigint AS complete_count
         FROM issues i
-        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+        WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL{cap}
     "#
     );
     let backend = app.db.get_database_backend();
-    let stmt = Statement::from_sql_and_values(backend, &sql, [series_id.into()]);
+    let stmt = Statement::from_sql_and_values(backend, &sql, params);
     Row::find_by_statement(stmt)
         .one(&app.db)
         .await
@@ -4043,9 +4090,17 @@ impl SeriesMetadataFacets {
 
 const FACET_RESULT_CAP: u64 = 12;
 
-async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMetadataFacets {
+async fn aggregate_series_metadata(
+    app: &AppState,
+    series_id: Uuid,
+    acl: &access::VisibleLibraries,
+) -> SeriesMetadataFacets {
     use sea_orm::Statement;
     let backend = app.db.get_database_backend();
+    // `$1` series id, `$2` facet cap, then the caller's issue-level cap
+    // binds (empty for an uncapped caller) — shared by all three queries.
+    let mut params: Vec<sea_orm::Value> = vec![series_id.into(), (FACET_RESULT_CAP as i64).into()];
+    let cap = acl.issue_cap_sql("i", &mut params);
 
     #[derive(Debug, FromQueryResult)]
     struct ValueRow {
@@ -4067,14 +4122,16 @@ async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMet
     // Genres + tags share a shape: `(value, count)` ordered by count desc.
     let genres = ValueRow::find_by_statement(Statement::from_sql_and_values(
         backend,
-        r"SELECT ig.genre AS value
+        format!(
+            "SELECT ig.genre AS value
             FROM issue_genres ig
             JOIN issues i ON i.id = ig.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL{cap}
             GROUP BY ig.genre
             ORDER BY COUNT(*) DESC, ig.genre ASC
-            LIMIT $2",
-        [series_id.into(), (FACET_RESULT_CAP as i64).into()],
+            LIMIT $2"
+        ),
+        params.clone(),
     ))
     .all(&app.db)
     .await
@@ -4085,14 +4142,16 @@ async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMet
 
     let tags = ValueRow::find_by_statement(Statement::from_sql_and_values(
         backend,
-        r"SELECT it.tag AS value
+        format!(
+            "SELECT it.tag AS value
             FROM issue_tags it
             JOIN issues i ON i.id = it.issue_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL{cap}
             GROUP BY it.tag
             ORDER BY COUNT(*) DESC, it.tag ASC
-            LIMIT $2",
-        [series_id.into(), (FACET_RESULT_CAP as i64).into()],
+            LIMIT $2"
+        ),
+        params,
     ))
     .all(&app.db)
     .await
@@ -4109,16 +4168,21 @@ async fn aggregate_series_metadata(app: &AppState, series_id: Uuid) -> SeriesMet
     // the series rollup right after each scan; the LEFT JOIN
     // gracefully degrades to a NULL slug for credits that haven't
     // been rolled up yet.
+    // No facet cap here, so the credits query binds its own params.
+    let mut credit_params: Vec<sea_orm::Value> = vec![series_id.into()];
+    let credit_cap = acl.issue_cap_sql("i", &mut credit_params);
     let credit_rows: Vec<CreditRow> = CreditRow::find_by_statement(Statement::from_sql_and_values(
         backend,
-        r"SELECT ic.role, ic.person, p.slug AS slug, COUNT(*)::bigint AS cnt
+        format!(
+            "SELECT ic.role, ic.person, p.slug AS slug, COUNT(*)::bigint AS cnt
             FROM issue_credits ic
             JOIN issues i ON i.id = ic.issue_id
             LEFT JOIN person p ON p.id = ic.person_id
-            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL
+            WHERE i.series_id = $1 AND i.state = 'active' AND i.removed_at IS NULL{credit_cap}
             GROUP BY ic.role, ic.person, p.slug
-            ORDER BY ic.role ASC, cnt DESC, ic.person ASC",
-        [series_id.into()],
+            ORDER BY ic.role ASC, cnt DESC, ic.person ASC"
+        ),
+        credit_params,
     ))
     .all(&app.db)
     .await
