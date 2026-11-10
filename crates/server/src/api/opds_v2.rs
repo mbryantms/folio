@@ -297,7 +297,7 @@ async fn series_list(
     };
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
@@ -384,7 +384,7 @@ async fn browse(
         Err(e) => return server_error(e.to_string()),
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
@@ -639,7 +639,7 @@ async fn series_one(
     // banner (cover + author byline + publisher + year + genre
     // chips) instead of just the title and the issue grid.
     let series_facets = opds::fetch_series_facets(&app.db, &[s.id]).await;
-    let cover_map = opds::fetch_cover_issues(&app.db, &[s.id]).await;
+    let cover_map = crate::api::series::series_cover_issue_ids(&app.db, &[s.id], &acl).await;
     let cover_id = cover_map.get(&s.id).map(String::as_str);
     let mut metadata = serde_json::Map::new();
     metadata.insert("title".into(), Value::from(s.name.clone()));
@@ -1023,7 +1023,7 @@ async fn by_creator(
         Err(e) => return server_error(e.to_string()),
     };
     let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &result_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &result_ids, &allowed).await;
     let facets = opds::fetch_series_facets(&app.db, &result_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
@@ -1095,7 +1095,7 @@ async fn search(
         Err(e) => return server_error(e.to_string()),
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
@@ -1469,7 +1469,7 @@ async fn view_acq(
         limit: view_limit,
         cursor: None,
         user_id: user.id,
-        visible_libraries: visible,
+        visible_libraries: visible.clone(),
     };
     let stmt = match compile::compile(&input) {
         Ok(s) => s,
@@ -1478,15 +1478,15 @@ async fn view_acq(
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let backend = app.db.get_database_backend();
     let raw = Statement::from_sql_and_values(backend, sql, values);
-    let mut rows = match series::Model::find_by_statement(raw).all(&app.db).await {
+    let mut rows = match opds::run_series_view_query(&app, id, raw).await {
         Ok(r) => r,
-        Err(e) => return server_error(e.to_string()),
+        Err(e) => return server_error(e),
     };
     if rows.len() as u64 > view_limit {
         rows.truncate(view_limit as usize);
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &visible).await;
     let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
     let navigation: Vec<Value> = rows
         .iter()
@@ -2119,7 +2119,8 @@ async fn render_collection_acq_v2(
     // dc:issued / author / subject lift series entries to the same
     // metadata richness as issue entries.
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
-    let series_covers = opds::fetch_cover_issues(&app.db, &collection_series_ids).await;
+    let series_covers =
+        crate::api::series::series_cover_issue_ids(&app.db, &collection_series_ids, &visible).await;
     let series_facets = opds::fetch_series_facets(&app.db, &collection_series_ids).await;
 
     // Walk rows in position order so series + issues retain the

@@ -169,6 +169,74 @@ docker compose -f compose.prod.yml up -d --no-deps app
   expire with the access cookie, which made the silent refresh fail once
   the access cookie had expired).
 
+### Unreleased — app passwords are looked up by digest
+
+- **App passwords gain a lookup digest** (migration
+  `m20271107_000001_app_password_lookup_digest`). Existing app
+  passwords keep working. Each gains its digest the next time a reader
+  app presents it successfully; until then they are matched most
+  recently used first, 20 per request. On a server with more than 20
+  old app passwords, one that has not been used recently may need to be
+  re-created. Revoke app passwords nobody uses; the gauge
+  `folio_auth_app_password_legacy_remaining` shows how many old ones
+  remain.
+- **Reader apps presenting a token the server no longer accepts are now
+  locked out** per client address after repeated attempts (10 in a
+  minute, for 15 minutes). This is the app-password lockout only: web
+  sign-in from that address is unaffected. Behind a reverse proxy, set
+  `COMIC_TRUSTED_PROXIES` so the address is the client's and not the
+  proxy's.
+
+### Unreleased — symbolic links in libraries are no longer followed
+
+- **The scanner never follows a symbolic link below a library root**,
+  to a folder or a file, wherever it points. A library organised with
+  symlinked series or publisher folders stops indexing them: after the
+  first scan on this version those series are reported missing and
+  soft-removed, and each link is listed under the library's health
+  findings as *Symbolic link skipped*.
+- **Those rows are then deleted on the normal schedule.** The removal
+  sweeps do not follow the link either, so they see the content as gone:
+  a soft-removed row is confirmed once the library's soft-delete window
+  has passed (`soft_delete_days`, 30 days by default) and permanently
+  deleted, reading progress, markers and collection entries included,
+  once the purge window has passed after that (the soft-delete window
+  times the `library.hard_purge_multiplier` server setting, 2 by default:
+  60 more days, about 90 in all). Setting the multiplier to `0` turns
+  the purge off and keeps the rows.
+- **What to do instead:** put the real folder, or a bind mount of it
+  (`mount --bind`, or a second volume in the compose file), at the
+  **same path** inside the library where the link was. The next scan
+  then restores the series with its reading history. Adding the link's
+  target as a separate library also works for reading, but it creates
+  new series there, without that history.
+- **The library root itself may still be a link** (`/data/comics ->
+  /mnt/x`); only links *below* the root are refused.
+- Serving follows the same rule: an issue whose file (or a folder above
+  it, below the root) is a link answers not-found. The OPDS download
+  also answers not-found for a soft-removed issue.
+
+### Unreleased — a single sign-on login linked to a local account makes it single-sign-on only
+
+Applies only if you turned on **Admin → Auth → Auto-link local accounts by
+verified email** (`auth.oidc.link_local_by_verified_email`).
+
+- A link now happens only when the identity provider sends
+  `email_verified: true`. An absent claim, even with the trust-unverified
+  setting on, no longer links.
+- A linked account loses its local password, refresh sessions and app
+  passwords (OPDS readers and other apps must be given a new app password),
+  whether or not the local address was verified. A disabled local account is
+  refused and left unchanged.
+- Accounts linked by an earlier release kept their local password. They lose
+  it, with their sessions and app passwords, at their next single sign-on;
+  the audit log records `auth.oidc.local_password_dropped`. To find them
+  beforehand: `SELECT id, email FROM users WHERE external_id LIKE 'oidc:%'
+  AND password_hash IS NOT NULL;` and the earlier `auth.oidc.auto_link`
+  audit rows.
+- Keep a separate local admin account with a different email, so you can
+  still sign in when the identity provider is down.
+
 ### Unreleased — age-rating caps enforced; library-access `role` removed
 
 - **`library_user_access.age_rating_max` is now enforced.** A user whose

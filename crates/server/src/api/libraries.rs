@@ -604,7 +604,8 @@ pub(crate) async fn find_by_slug_or_id(
 #[handler]
 pub async fn create(
     State(app): State<AppState>,
-    _admin: RequireAdmin,
+    RequireAdmin(actor): RequireAdmin,
+    Extension(ctx): Extension<RequestContext>,
     Validated(req): Validated<CreateLibraryReq>,
 ) -> impl IntoResponse {
     // `name` + `root_path` validated by garde; nothing further to check here.
@@ -659,6 +660,18 @@ pub async fn create(
     };
     match am.insert(&app.db).await {
         Ok(m) => {
+            crate::record_admin_action!(
+                db = &app.db,
+                ctx = &ctx,
+                actor = actor.id,
+                action = "admin.library.create",
+                target = ("library", m.id.to_string()),
+                payload = serde_json::json!({
+                    "name": m.name,
+                    "slug": m.slug,
+                    "root_path": m.root_path,
+                }),
+            );
             // File watcher (WP-3.1): start watching if the library opts in.
             app.watchers.nudge();
             if req.scan_now
@@ -705,6 +718,8 @@ pub async fn update_settings(
         Err(resp) => return resp,
     };
     let uuid = row.id;
+    // The serving check's root map re-reads this library on next use.
+    app.library_roots.invalidate(uuid);
 
     // `soft_delete_days >= 0` and the loose 5-field cron check are
     // enforced by garde. `validate_globs` still runs here because it
@@ -1426,6 +1441,7 @@ pub async fn delete_one(
         Err(resp) => return resp,
     };
     let uuid = lib.id;
+    app.library_roots.invalidate(uuid);
 
     // ── 1. Wipe on-disk thumbnails for every issue in the library ──
     // Includes both active and removed issues — the FK cascade is about to

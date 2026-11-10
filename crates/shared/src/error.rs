@@ -152,6 +152,8 @@ pub enum ApiErrorCode {
     // --- Pipeline-specific --------------------------------------------------
     ThumbBusy,
     PseMissingParams,
+    /// Every app-password verification permit stayed taken for the wait.
+    AuthBusy,
 }
 
 impl ApiErrorCode {
@@ -215,6 +217,7 @@ impl ApiErrorCode {
             // Pipeline-specific
             Self::ThumbBusy => "thumb.busy",
             Self::PseMissingParams => "pse_missing_params",
+            Self::AuthBusy => "auth.busy",
         }
     }
 }

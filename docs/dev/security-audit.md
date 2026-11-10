@@ -276,7 +276,7 @@ Confirmed across the audit:
 - **PII hashing.** OIDC subject + email logged as sha256 prefix;
   failed-auth logs hash the identifier.
 - **Security headers.** Strict CSP, HSTS, X-Frame-Options DENY,
-  Referrer-Policy `no-referrer` on auth pages, CORP/COEP.
+  Referrer-Policy `same-origin` on auth pages (no referrer to other sites), CORP/COEP.
 - **SQLx query logging disabled** (no bound parameters in logs).
 
 ---

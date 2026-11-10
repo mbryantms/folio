@@ -183,11 +183,13 @@ pub async fn overview(
     user: CurrentUser,
     Path(slug): Path<String>,
 ) -> Response {
-    let Some(s) = visible_series(&app, &user, &slug).await else {
+    let Some((s, acl)) = visible_series(&app, &user, &slug).await else {
         return not_found();
     };
     let series_ids = fetch_rows(&app, "series", &s.id.to_string()).await;
-    let scored = super::series::score_series_issues(&app, s.id).await;
+    // WP-2.7: every per-issue figure on the tab is taken over the issues
+    // the caller can see (`issue_cap_sql`), never one rated above the cap.
+    let scored = super::series::score_series_issues(&app, s.id, &acl).await;
     let issue_ids_list: Vec<String> = scored.iter().map(|(r, _)| r.id.clone()).collect();
     let ids = issue_ids_for(&app, &issue_ids_list).await;
 
@@ -229,16 +231,20 @@ pub async fn overview(
         with_comicinfo: i64,
         with_metroninfo: i64,
     }
+    let mut sf_params: Vec<sea_orm::Value> = vec![s.id.into()];
+    let sf_cap = acl.issue_cap_sql("issues", &mut sf_params);
     let sf = SyncFiles::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
-        "SELECT count(*) FILTER (WHERE last_metadata_sync_at IS NOT NULL)::bigint AS issues_synced, \
-                count(*) FILTER (WHERE last_sidecar_rewrite_at IS NOT NULL)::bigint AS sidecars_rewritten, \
-                max(last_sidecar_rewrite_at) AS last_rewrite_at, \
-                count(*)::bigint AS archives, \
-                count(*) FILTER (WHERE COALESCE(comicinfo_count, 0) > 0)::bigint AS with_comicinfo, \
-                count(*) FILTER (WHERE metroninfo_present)::bigint AS with_metroninfo \
-           FROM issues WHERE series_id = $1 AND removed_at IS NULL AND state = 'active'",
-        [s.id.into()],
+        format!(
+            "SELECT count(*) FILTER (WHERE last_metadata_sync_at IS NOT NULL)::bigint AS issues_synced, \
+                    count(*) FILTER (WHERE last_sidecar_rewrite_at IS NOT NULL)::bigint AS sidecars_rewritten, \
+                    max(last_sidecar_rewrite_at) AS last_rewrite_at, \
+                    count(*)::bigint AS archives, \
+                    count(*) FILTER (WHERE COALESCE(comicinfo_count, 0) > 0)::bigint AS with_comicinfo, \
+                    count(*) FILTER (WHERE metroninfo_present)::bigint AS with_metroninfo \
+               FROM issues WHERE series_id = $1 AND removed_at IS NULL AND state = 'active'{sf_cap}"
+        ),
+        sf_params,
     ))
     .one(&app.db)
     .await
@@ -250,12 +256,16 @@ pub async fn overview(
         extension: String,
         count: i64,
     }
+    let mut ext_params: Vec<sea_orm::Value> = vec![s.id.into()];
+    let ext_cap = acl.issue_cap_sql("issues", &mut ext_params);
     let by_extension = ExtRow::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
-        "SELECT lower(regexp_replace(file_path, '^.*\\.', '')) AS extension, count(*)::bigint AS count \
-           FROM issues WHERE series_id = $1 AND removed_at IS NULL AND state = 'active' \
-          GROUP BY 1 ORDER BY count DESC, extension ASC",
-        [s.id.into()],
+        format!(
+            "SELECT lower(regexp_replace(file_path, '^.*\\.', '')) AS extension, count(*)::bigint AS count \
+               FROM issues WHERE series_id = $1 AND removed_at IS NULL AND state = 'active'{ext_cap} \
+              GROUP BY 1 ORDER BY count DESC, extension ASC"
+        ),
+        ext_params,
     ))
     .all(&app.db)
     .await
@@ -272,6 +282,8 @@ pub async fn overview(
         tool: String,
         count: i64,
     }
+    let mut tool_params: Vec<sea_orm::Value> = vec![s.id.into()];
+    let tool_cap = acl.issue_cap_sql("issues", &mut tool_params);
     let tagged_by = ToolRow::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
         format!(
@@ -279,11 +291,11 @@ pub async fn overview(
                FROM (SELECT COALESCE(comic_info_raw->>'notes', '') AS n, \
                             COALESCE(comic_info_raw->>'genre', '') AS g, \
                             COALESCE(comic_info_raw->>'web', '') AS w \
-                       FROM issues WHERE series_id = $1 AND removed_at IS NULL AND state = 'active') t \
+                       FROM issues WHERE series_id = $1 AND removed_at IS NULL AND state = 'active'{tool_cap}) t \
               GROUP BY 1 ORDER BY count DESC, tool ASC",
             tool = tag_tool::sql_case("n", "g", "w"),
         ),
-        [s.id.into()],
+        tool_params,
     ))
     .all(&app.db)
     .await
@@ -375,16 +387,20 @@ pub async fn overview(
         issues: i64,
     }
     let mut issue_provenance = IssueProvenanceCounts::default();
+    let mut prov_params: Vec<sea_orm::Value> = vec![s.id.into()];
+    let prov_cap = acl.issue_cap_sql("i", &mut prov_params);
     if let Ok(rows) = ProvRow::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
-        "SELECT CASE WHEN fp.set_by = 'user' THEN 'user' \
-                     WHEN fp.set_by IN ('comicvine', 'metron', 'gcd') THEN 'provider' \
-                     ELSE 'file' END AS strength, \
-                count(DISTINCT fp.entity_id)::bigint AS issues \
-           FROM field_provenance fp JOIN issues i ON i.id = fp.entity_id \
-          WHERE fp.entity_type = 'issue' AND i.series_id = $1 AND i.removed_at IS NULL \
-          GROUP BY 1",
-        [s.id.into()],
+        format!(
+            "SELECT CASE WHEN fp.set_by = 'user' THEN 'user' \
+                         WHEN fp.set_by IN ('comicvine', 'metron', 'gcd') THEN 'provider' \
+                         ELSE 'file' END AS strength, \
+                    count(DISTINCT fp.entity_id)::bigint AS issues \
+               FROM field_provenance fp JOIN issues i ON i.id = fp.entity_id \
+              WHERE fp.entity_type = 'issue' AND i.series_id = $1 AND i.removed_at IS NULL{prov_cap} \
+              GROUP BY 1"
+        ),
+        prov_params,
     ))
     .all(&app.db)
     .await
@@ -556,11 +572,13 @@ pub async fn issues(
             );
         }
     };
-    let Some(s) = visible_series(&app, &user, &slug).await else {
+    let Some((s, acl)) = visible_series(&app, &user, &slug).await else {
         return not_found();
     };
 
-    let scored = super::series::score_series_issues(&app, s.id).await;
+    // WP-2.7: rows, `total` and `series_total` cover only the issues the
+    // caller can see.
+    let scored = super::series::score_series_issues(&app, s.id, &acl).await;
     let series_total = scored.len() as i64;
     let issue_ids_list: Vec<String> = scored.iter().map(|(r, _)| r.id.clone()).collect();
     let ids = issue_ids_for(&app, &issue_ids_list).await;
@@ -580,8 +598,11 @@ pub async fn issues(
         run_matched_high: Option<i32>,
         run_applied: Option<i32>,
     }
+    let mut extra_params: Vec<sea_orm::Value> = vec![s.id.into()];
+    let extra_cap = acl.issue_cap_sql("i", &mut extra_params);
     let extras: HashMap<String, Extra> = Extra::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
+        format!(
         "SELECT i.id, i.month, \
                 COALESCE(i.comic_info_raw->>'notes', '') AS notes, \
                 COALESCE(i.comic_info_raw->>'genre', '') AS genre, \
@@ -592,8 +613,9 @@ pub async fn issues(
            LEFT JOIN LATERAL (SELECT id, status, started_at, items_matched_high, items_applied \
                                 FROM metadata_run mr WHERE mr.scope = 'issue' AND mr.scope_entity_id = i.id \
                                ORDER BY mr.started_at DESC LIMIT 1) r ON true \
-          WHERE i.series_id = $1 AND i.removed_at IS NULL AND i.state = 'active'",
-        [s.id.into()],
+          WHERE i.series_id = $1 AND i.removed_at IS NULL AND i.state = 'active'{extra_cap}"
+        ),
+        extra_params,
     ))
     .all(&app.db)
     .await
@@ -730,7 +752,7 @@ pub async fn accept_issues(
             "issue_ids must not be empty",
         );
     }
-    let Some(s) = visible_series(&app, &user, &slug).await else {
+    let Some((s, _)) = visible_series(&app, &user, &slug).await else {
         return not_found();
     };
     // Only this series' issues, whatever the request named.
@@ -791,9 +813,17 @@ pub async fn accept_issues(
 
 // ───────── helpers ─────────
 
-async fn visible_series(app: &AppState, user: &CurrentUser, slug: &str) -> Option<series::Model> {
+/// The series by slug when the caller may see it, with the caller's ACL
+/// for the per-issue figures (one grant lookup, as before).
+async fn visible_series(
+    app: &AppState,
+    user: &CurrentUser,
+    slug: &str,
+) -> Option<(series::Model, access::VisibleLibraries)> {
     let s = super::series::find_by_slug(&app.db, slug).await.ok()?;
-    access::series_visible(app, user, &s).await.then_some(s)
+    let acl = access::for_library(app, user, s.library_id).await;
+    acl.series_ok(s.library_id, s.age_rating.as_deref())
+        .then_some((s, acl))
 }
 
 fn not_found() -> Response {

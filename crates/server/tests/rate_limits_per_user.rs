@@ -1,7 +1,8 @@
 //! E3 (audit 2026-11 N-A5) — per-user rate limits on free-text search,
 //! metadata PATCH, collection writes and collection reorder; E12 adds the
 //! saved-view PATCH / DELETE and the admin metadata writes (field
-//! provenance, cover pick, external ids).
+//! provenance, cover pick, external ids); the saved-view previews have
+//! their own bucket.
 //!
 //! For one representative route of each group: driving one user past the
 //! bucket gives a 429 in the canonical envelope, and a second user (same
@@ -376,6 +377,51 @@ async fn saved_view_write_bucket_is_per_user() {
         StatusCode::NOT_FOUND,
         "collection writes have their own bucket"
     );
+}
+
+/// The two saved-view previews share one per-user `saved_view_preview`
+/// bucket (2/s, burst 20): each runs an arbitrary filter, so a loop of
+/// them is throttled; other saved-view routes and other users are not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn saved_view_preview_bucket_is_per_user() {
+    let (app, a, b) = two_users().await;
+    let uri = "/api/me/saved-views/preview";
+    let preview = Some(json!({
+        "filter": {"match_mode": "all", "conditions": []},
+        "sort_field": "created_at",
+        "sort_order": "desc",
+        "result_limit": 1,
+    }));
+    let body = drain(&app, &a, Method::POST, uri, preview.clone(), 20).await;
+    assert_envelope(&body, "saved_view_preview");
+
+    assert!(
+        shares_drained_bucket(
+            &app,
+            &a,
+            Method::POST,
+            "/api/me/saved-views/preview-issues",
+            preview.clone()
+        )
+        .await,
+        "the issue preview shares the series preview's bucket"
+    );
+
+    let (s, _, _) = http(&app, Method::POST, uri, &b, preview).await;
+    assert_eq!(s, StatusCode::OK, "second user is not throttled");
+
+    // The results / list routes on the same router are outside the bucket.
+    let (s, _, _) = http(&app, Method::GET, "/api/me/saved-views", &a, None).await;
+    assert_eq!(s, StatusCode::OK, "saved-view reads are not bucketed");
+    let (s, _, _) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/saved-views/{}/results", Uuid::now_v7()),
+        &a,
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "results are not bucketed");
 }
 
 /// E12: the issue field-provenance lock shares the issue PATCH's

@@ -134,6 +134,18 @@ upsert users (external_id = "oidc:<iss>|<sub>")
 issue cookie session (same as local)
 ```
 
+A first OIDC login whose email belongs to a local (password) account is refused with 409 `auth.email_in_use` unless `auth.oidc.link_local_by_verified_email` is on. With it on, `auth/oidc.rs::callback` applies one rule:
+
+- The ID token's `email_verified` is not the JSON boolean `true` (absent, even when the trust-unverified opt-in admits the login, or `false`; a string `"true"` fails ID-token parsing): no link. A pending local row gets 403 "verify your email first", any other row 409.
+- A disabled local row is refused (403 `auth.disabled`) before anything is written.
+- Otherwise the identity is linked and the account becomes **single sign-on only**, whatever the local row's own `email_verified` says (self-registration without mail sets it with no proof): the local password is dropped, `token_version` is bumped, every refresh session and app password is revoked, `email_verified` is set, and a pending row becomes active. The row update is conditional on the external id and `token_version` that were read; the update, the revocations and the audit row commit in one transaction, and a concurrent change answers a retryable 409 `auth.conflict`. The new session is minted only after the commit.
+
+The `auth.oidc.auto_link` audit row records the account's `role`, `activated`, `password_dropped`, `sessions_revoked` and `app_passwords_revoked`, and the takeover is logged at WARN. A row an earlier build linked while keeping its local password loses that password the same way at its next single sign-on (`auth.oidc.local_password_dropped`); no supported path gives an OIDC-keyed account a password otherwise.
+
+Because a linked account can no longer sign in with a password, keep a separate local admin account with a different email as a fallback for when the identity provider is unavailable.
+
+Verified against the code at `59714b1f` on 2026-11-10.
+
 ### Refresh
 
 ```
@@ -175,6 +187,29 @@ Verified against the code at `5a1d2f64` on 2026-11-10.
 - Client reads cookie, includes value as `X-CSRF-Token` on POST/PUT/PATCH/DELETE.
 - Server compares cookie value to header; mismatch = 403.
 - Bearer-authenticated requests (mobile, API, OPDS-Bearer) skip CSRF entirely — there's no ambient credential to forge.
+- The sign-in POSTs that are exempt from the token check because no session exists yet (`/auth/local/login`, `/register`, `/request-password-reset`, `/reset-password`, `/resend-verification`) get the cross-site guard below instead.
+
+### Cross-site sign-in posts (login CSRF)
+
+Without a guard, another site could post the sign-in form with credentials it controls and sign the visitor into the attacker's account. For the five routes above, `auth::csrf` applies [`auth::origin::cross_site_reason`](../../crates/server/src/auth/origin.rs) before the handler runs:
+
+1. When the request carries `Sec-Fetch-Site`, that header alone decides: `same-origin` and `none` proceed without looking at `Origin`; `cross-site`, `same-site` and any other value are refused. It is a forbidden header name, set by the browser and never by a page, so it is trusted over `Origin`. `same-site` is refused deliberately: a sibling subdomain (another app on the same registrable domain) must not sign visitors in either, and nothing in Folio posts these forms from another subdomain.
+2. Only without `Sec-Fetch-Site` (older browsers) does `Origin` decide. It proceeds when it equals the configured public origin (`public_url`, scheme + host + port); or its host and port equal the request's own `Host` header (the HTTP/2 authority when there is no `Host`; a missing port means the `Origin` scheme's default), which keeps same-origin posts working over a LAN address or another host name; or, when the peer is a trusted proxy (`COMIC_TRUSTED_PROXIES`), its host and port equal the well-formed `X-Forwarded-Host` that proxy set. An untrusted peer's `X-Forwarded-Host` is never read. `Origin: null` is refused.
+3. A request with neither header (native clients) proceeds.
+
+A refused form navigation (a `application/x-www-form-urlencoded` or `multipart/form-data` body, or `Sec-Fetch-Mode: navigate`) gets a 303 back to the page the form lives on with `error=auth.csrf`: `/sign-in` for login, register and resend-verification, and `/forgot-password` for request-password-reset and reset-password (nothing from a refused request's body is echoed back, so the reset token is not carried over and the user asks for a fresh link). Those pages show "That request could not be verified. Reload the page and try again." Any other refused request gets the 403 `auth.csrf` envelope. The answer is the same whichever check failed (the reason is logged at INFO only), and a refused request never reaches the handler, so it is not counted by the failed-auth lockout. The OIDC callback is a `GET` (a cross-site redirect by design, gated by its state cookie) and is not affected, nor are the `GET` verify-email link and `/csp-report`. The `/api`-prefixed mounts of these routes are not exempt at all and need the CSRF token.
+
+**Referrer-Policy on the auth pages.** `/sign-in`, `/forgot-password` and `/reset-password` are served with `Referrer-Policy: same-origin` (every other response: `strict-origin-when-cross-origin`). No `Referer` goes to another site, so credentials that landed in the URL or a reset token cannot leak to the next site visited. It was `no-referrer` before; under that policy browsers send `Origin: null` on the pages' own form posts, which rule 2 refuses for browsers without `Sec-Fetch-Site`. The server does not log `Referer`.
+
+### Sign-in check order
+
+`POST /auth/local/login`: (1) refuse with 429 if the client IP or the submitted email is locked out; (2) verify the password, for every account: against the stored hash, or, for an unknown address or an account without a local password, against a dummy hash at the same cost, so all paths pay the same argon2 work; (3) a wrong password, unknown address or missing hash records a failure on both lockout axes and answers the generic 401 `auth.invalid`, whatever the account's state; (4) only after a correct password: a disabled account gets 403 `auth.disabled` and an unverified one 403 `auth.email_unverified`, and both still record a failure on both axes, as before; (5) otherwise the session is issued. The no-JavaScript form gets the same outcomes as a redirect to `/sign-in?error=<code>`.
+
+Registration still answers 409 for an address that has an account; that is an accepted trade-off of open registration (the email-change route reveals the same).
+
+Every argon2 hash and verify reached from an async handler (sign-in and its dummy verify, registration, password change, password reset, account deletion and the email/password re-checks through `failed_auth::verify_password_counted`, admin-created users) runs on tokio's blocking pool through `auth::password::{hash_blocking, verify_rotating_blocking, dummy_verify_blocking}`; app-password verification is handled in `auth::app_password` separately. A process-wide semaphore admits at most `password::hash_permits()` of these at once (the available parallelism, at least 2: the bound hashing had when it ran inline on the async workers); further callers wait in line, with no timeout. A failed hashing task (a panic or cancellation) answers 500 `internal` and is not counted as a wrong password; an unparsable stored hash counts as a non-match.
+
+Verified against the code at `9492ac1b` on 2026-11-10.
 
 ### WebSocket auth (one-shot ticket)
 

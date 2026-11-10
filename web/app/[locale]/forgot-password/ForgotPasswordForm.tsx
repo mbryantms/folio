@@ -26,6 +26,7 @@ import {
 } from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
 import { statusToneText } from "@/lib/ui/status-tone";
+import { authErrorText } from "@/lib/auth/error-text";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -35,6 +36,7 @@ type Values = z.infer<typeof schema>;
 export function ForgotPasswordForm({
   preSubmitted = false,
   recoveryEnabled = true,
+  errorCode = null,
 }: {
   /** True when the page arrived here via the no-JS form-fallback 303
    *  (`/forgot-password?sent=1`). Renders the "check your email" view
@@ -47,6 +49,8 @@ export function ForgotPasswordForm({
    *  of the form so the user doesn't fill in an email that goes
    *  nowhere. */
   recoveryEnabled?: boolean;
+  /** `?error=` from a refused no-JS form post; shown above the form. */
+  errorCode?: string | null;
 } = {}) {
   const form = useForm<Values>({
     resolver: zodResolver(schema),
@@ -160,6 +164,14 @@ export function ForgotPasswordForm({
             action="/auth/local/request-password-reset"
             className="space-y-4"
           >
+            {authErrorText(errorCode) ? (
+              <p
+                role="alert"
+                className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+              >
+                {authErrorText(errorCode)}
+              </p>
+            ) : null}
             <FormField
               control={form.control}
               name="email"

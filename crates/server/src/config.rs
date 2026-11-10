@@ -339,6 +339,14 @@ pub struct Config {
     #[serde(skip)]
     pub password_hash_cost: crate::auth::password::HashCost,
 
+    /// `statement_timeout` for queries compiled from a saved-view filter
+    /// (`views::timebox`). `#[serde(skip)]`: not an operator knob — every
+    /// real server gets [`crate::views::timebox::FILTER_STATEMENT_TIMEOUT`];
+    /// only the integration-test harness shortens it to exercise the
+    /// cancellation path without a slow query.
+    #[serde(skip, default = "default_filter_statement_timeout")]
+    pub filter_statement_timeout: std::time::Duration,
+
     // Metadata providers (metadata-providers-1.0 M1)
     /// ComicVine API key. Per-site key, account-bound. Always loaded
     /// from `app_setting` (`metadata.comicvine.api_key`) — the env var
@@ -643,10 +651,14 @@ impl std::fmt::Debug for Config {
             .field("comicvine_local_path", &self.comicvine_local_path)
             .field("comicvine_local_mode", &self.comicvine_local_mode)
             .field("password_hash_cost", &self.password_hash_cost)
+            .field("filter_statement_timeout", &self.filter_statement_timeout)
             .finish()
     }
 }
 
+fn default_filter_statement_timeout() -> std::time::Duration {
+    crate::views::timebox::FILTER_STATEMENT_TIMEOUT
+}
 fn default_bind() -> SocketAddr {
     "0.0.0.0:8080".parse().unwrap()
 }
@@ -2158,6 +2170,7 @@ mod tests {
             smtp_from: None,
             metrics_token: None,
             password_hash_cost: crate::auth::password::HashCost::PRODUCTION,
+            filter_statement_timeout: default_filter_statement_timeout(),
             metrics_open: false,
             opds_panels_mode: "off".into(),
             comicvine_api_key: None,

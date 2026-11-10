@@ -435,3 +435,22 @@ async fn empty_config_is_legal_for_every_kind() {
         assert_eq!(status, StatusCode::CREATED, "empty config rejected for {k}");
     }
 }
+
+#[tokio::test]
+async fn reorder_rejects_a_list_over_the_cap_with_field_details() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "reorder-cap@lw.test").await;
+    let max = server::api::log_widgets::MAX_REORDER_WIDGET_IDS;
+    let ids: Vec<String> = (0..=max).map(|i| format!("w{i}")).collect();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/log/widgets/reorder",
+        &auth,
+        Some(serde_json::json!({ "ids": ids })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "validation");
+    assert_eq!(body["error"]["details"][0]["field"], "ids");
+}

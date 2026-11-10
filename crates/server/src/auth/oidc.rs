@@ -16,7 +16,23 @@
 //! identities aren't silently merged. `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL=true`
 //! (DB key `auth.oidc.link_local_by_verified_email`) opts in to auto-linking
 //! the OIDC identity onto that local account instead, audited as
-//! `auth.oidc.auto_link`.
+//! `auth.oidc.auto_link`. The rule:
+//!   - the ID token's `email_verified` is not the JSON boolean `true` (absent,
+//!     even when the trust-unverified opt-in admits the login, or `false`): no
+//!     link; the login is refused as without the opt-in (403 "verify your
+//!     email first" for a pending local row, 409 `auth.email_in_use`
+//!     otherwise). openidconnect is built without `accept-string-booleans`,
+//!     so a string `"true"` fails ID-token parsing and never reaches the link;
+//!   - a disabled local row is refused before anything is written;
+//!   - otherwise the identity is linked and the account becomes single sign-on
+//!     only, whatever the local row's `email_verified` says: local password
+//!     dropped, `token_version` bumped, every refresh session and app password
+//!     revoked, `email_verified` set, a pending row activated, all in one
+//!     transaction with the audit row ([`drop_local_credentials`]).
+//!
+//! A row keyed to an OIDC identity that still holds a local password (linked
+//! by an earlier build) loses it the same way at its next sign-in, audited as
+//! `auth.oidc.local_password_dropped`.
 
 use axum::{
     Extension, Router,
@@ -102,20 +118,63 @@ pub(crate) struct DiscoveryEntry {
     fetched_at: Instant,
 }
 
+/// TCP/TLS connect budget for every request to the identity provider
+/// (discovery, JWKS, token exchange). Same value as the metadata providers'
+/// client (`metadata::http::CONNECT_TIMEOUT`): a black-holed provider fails
+/// fast instead of eating the whole request budget.
+const OIDC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Whole-request budget for one request to the identity provider, matching
+/// the metadata providers' 30 s request timeout. Without it a hung provider
+/// holds the sign-in request open indefinitely.
+const OIDC_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Error type of the OIDC HTTP client as openidconnect surfaces it.
+type OidcHttpError = openidconnect::HttpClientError<reqwest::Error>;
+
 /// Process-global HTTP client used for OIDC discovery + token exchange.
 /// Built once with `redirect::Policy::none()` per openidconnect 4's
-/// SSRF-prevention guidance.
+/// SSRF-prevention guidance, and with [`OIDC_CONNECT_TIMEOUT`] /
+/// [`OIDC_REQUEST_TIMEOUT`].
 static HTTP_CLIENT: OnceCell<reqwest::Client> = OnceCell::const_new();
 
 async fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT
-        .get_or_init(|| async {
-            reqwest::ClientBuilder::new()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("build oidc http client")
-        })
+        .get_or_init(|| async { build_http_client(OIDC_REQUEST_TIMEOUT, OIDC_CONNECT_TIMEOUT) })
         .await
+}
+
+fn build_http_client(request_timeout: Duration, connect_timeout: Duration) -> reqwest::Client {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(request_timeout)
+        .connect_timeout(connect_timeout)
+        .build()
+        .expect("build oidc http client")
+}
+
+/// True when a request to the provider timed out or could not connect: the
+/// provider is unavailable, which is neither a server fault (500) nor a
+/// failed sign-in attempt.
+fn provider_unreachable(err: &OidcHttpError) -> bool {
+    matches!(err, openidconnect::HttpClientError::Reqwest(re) if re.is_timeout() || re.is_connect())
+}
+
+/// [`provider_unreachable`] for the error [`discover_entry`] returns.
+fn discovery_unreachable(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<openidconnect::DiscoveryError<OidcHttpError>>(),
+        Some(openidconnect::DiscoveryError::Request(re)) if provider_unreachable(re)
+    )
+}
+
+/// 502 for a provider that timed out or refused the connection.
+fn provider_unavailable() -> Response {
+    error(
+        StatusCode::BAD_GATEWAY,
+        "oidc.provider_unreachable",
+        "the identity provider did not respond",
+    )
 }
 
 /// Process-global discovery cache. Keyed by issuer URL so a future
@@ -305,7 +364,7 @@ async fn fetch_end_session_endpoint(issuer: &str) -> Option<String> {
         "{}/.well-known/openid-configuration",
         issuer.trim_end_matches('/')
     );
-    let resp = match reqwest::get(&url).await {
+    let resp = match http_client().await.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, %url, "discovery doc fetch failed");
@@ -345,6 +404,10 @@ pub async fn start(
     }
     let client = match discover(&app).await {
         Ok(c) => c,
+        Err(e) if discovery_unreachable(&e) => {
+            tracing::warn!(error = %e, "oidc discovery failed: provider unreachable");
+            return provider_unavailable();
+        }
         Err(e) => {
             tracing::error!(error = %e, "oidc discovery failed");
             return error(
@@ -525,6 +588,13 @@ pub async fn callback(
 
     let client = match discover(&app).await {
         Ok(c) => c,
+        Err(e) if discovery_unreachable(&e) => {
+            tracing::warn!(
+                error = %e,
+                "oidc discovery failed during callback: provider unreachable"
+            );
+            return provider_unavailable();
+        }
         Err(e) => {
             tracing::error!(error = %e, "oidc discovery failed during callback");
             return error(
@@ -543,6 +613,15 @@ pub async fn callback(
         .await
     {
         Ok(t) => t,
+        // A timeout or refused connection is the provider being down, not a
+        // failed sign-in: no lockout strike.
+        Err(openidconnect::RequestTokenError::Request(ref re)) if provider_unreachable(re) => {
+            tracing::warn!(
+                error = %crate::observability::sanitize_error(re),
+                "oidc token exchange failed: provider unreachable"
+            );
+            return provider_unavailable();
+        }
         Err(e) => {
             // `RequestTokenError` from openidconnect may carry the full
             // upstream response body, which can include `access_token=...`
@@ -655,7 +734,51 @@ pub async fn callback(
     // opt-in lets a sign-in through but never verifies a pending account.
     let idp_proved_email = claim_email_verified == Some(true);
 
-    let user_row = if let Some(row) = existing {
+    let user_row = if let Some(row) = existing.as_ref()
+        && row.password_hash.is_some()
+        && row.state != UserState::Disabled
+    {
+        // A row keyed to this identity that still holds a local password was
+        // auto-linked by an earlier build, which kept the password. No path
+        // gives an OIDC-keyed account a password on purpose (the password
+        // change needs an existing hash, reset needs a `local:` row), so the
+        // invariant "a linked account is single-sign-on only" is enforced
+        // here, at its next sign-in.
+        let synced = SyncedIdentity {
+            external_id: &external_id,
+            email: email.clone(),
+            email_verified,
+            display_name: &display_name,
+            now,
+        };
+        let activate = row.state == UserState::PendingVerification && idp_proved_email;
+        match drop_local_credentials(
+            &app,
+            &ctx,
+            row,
+            &synced,
+            activate,
+            "auth.oidc.local_password_dropped",
+            serde_json::json!({
+                "issuer": issuer,
+                "subject_hash": sha256_hex(&subject)[..12].to_owned(),
+            }),
+        )
+        .await
+        {
+            Ok((m, facts)) => {
+                tracing::warn!(
+                    target: "auth.oidc",
+                    user_id = %m.id,
+                    role = m.role.as_str(),
+                    app_passwords_revoked = facts.app_passwords_revoked,
+                    "oidc-linked account still had a local password; dropped it"
+                );
+                m
+            }
+            Err(resp) => return resp,
+        }
+    } else if let Some(row) = existing {
         // Sync fields that may have changed at the issuer.
         let mut am: UserAM = row.clone().into();
         am.email = Set(email.clone());
@@ -697,11 +820,15 @@ pub async fn callback(
         // row. Two outcomes depending on policy:
         //   - default: refuse (`auth.email_in_use`); admin migrates manually.
         //   - opt-in `auth.oidc.link_local_by_verified_email`: auto-link the
-        //     OIDC identity onto the existing local account.
-        // Reaching here with `email = Some` guarantees `email_verified` is
-        // true — the gate above returns early when the email is present but
-        // unverified — so the verified-email precondition for linking is
-        // already structurally satisfied.
+        //     OIDC identity onto the existing local account, but only when
+        //     the provider itself asserted `email_verified: true`. A missing
+        //     claim admitted by the trust-unverified opt-in proves nothing,
+        //     so it refuses like the default. A link always takes the account
+        //     over ([`drop_local_credentials`]): its local password, refresh
+        //     sessions and app passwords are revoked, so whoever set that
+        //     address locally can no longer open the account the owner now
+        //     signs in to. The local row's `email_verified` is not consulted:
+        //     self-registration without mail marks it true with no proof.
         if let Some(ref e) = email
             && let Ok(Some(local)) = UserEntity::find()
                 .filter(user::Column::Email.eq(e.clone()))
@@ -722,50 +849,63 @@ pub async fn callback(
                     "verify your email first",
                 );
             }
-            if app.cfg().oidc_link_local_by_verified_email {
-                tracing::warn!(
+            let link_opt_in = app.cfg().oidc_link_local_by_verified_email;
+            let link_skipped = if !link_opt_in {
+                None
+            } else if !idp_proved_email {
+                Some("provider did not assert email_verified")
+            } else {
+                None
+            };
+            if let Some(reason) = link_skipped {
+                tracing::info!(
                     target: "auth.oidc",
                     local_user_id = %local.id,
                     email_hash = %sha256_hex(e)[..12].to_owned(),
-                    "oidc/local email collision — auto-linking per opt-in"
+                    reason,
+                    "oidc auto-link skipped"
                 );
-                let prior_external_id = local.external_id.clone();
-                let mut am: UserAM = local.clone().into();
-                am.external_id = Set(external_id.clone());
-                am.email = Set(email.clone());
-                am.email_verified = Set(email_verified);
-                let activated = activate_if_pending(&mut am, &local, idp_proved_email);
-                am.display_name = Set(display_name.clone());
-                am.last_login_at = Set(Some(now));
-                am.updated_at = Set(now);
-                let linked = match am.update(&app.db).await {
-                    Ok(m) => m,
-                    Err(err) => {
-                        tracing::error!(error = %err, "oidc auto-link update failed");
-                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-                    }
-                };
-                if activated {
-                    super::local::revoke_sessions_for_user(&app.db, linked.id, None).await;
+            }
+            if link_opt_in && link_skipped.is_none() {
+                // A disabled account stays disabled: refuse before writing.
+                if local.state == UserState::Disabled {
+                    return super::extractor::AuthRejection::UserDisabled.into_response();
                 }
-                let _ = crate::audit::record(
-                    &app.db,
-                    crate::audit::AuditEntry {
-                        actor_id: linked.id,
-                        action: "auth.oidc.auto_link",
-                        target_type: Some("user"),
-                        target_id: Some(linked.id.to_string()),
-                        payload: serde_json::json!({
-                            "issuer": issuer,
-                            "subject_hash": sha256_hex(&subject)[..12].to_owned(),
-                            "prior_external_id": prior_external_id,
-                            "activated": activated,
-                        }),
-                        ip: ctx.ip_string(),
-                        user_agent: ctx.user_agent.clone(),
-                    },
+                let synced = SyncedIdentity {
+                    external_id: &external_id,
+                    email: email.clone(),
+                    email_verified: true,
+                    display_name: &display_name,
+                    now,
+                };
+                let activate = local.state == UserState::PendingVerification;
+                let (linked, facts) = match drop_local_credentials(
+                    &app,
+                    &ctx,
+                    &local,
+                    &synced,
+                    activate,
+                    "auth.oidc.auto_link",
+                    serde_json::json!({
+                        "issuer": issuer,
+                        "subject_hash": sha256_hex(&subject)[..12].to_owned(),
+                        "prior_external_id": local.external_id,
+                    }),
                 )
-                .await;
+                .await
+                {
+                    Ok(v) => v,
+                    Err(resp) => return resp,
+                };
+                tracing::warn!(
+                    target: "auth.oidc",
+                    local_user_id = %linked.id,
+                    email_hash = %sha256_hex(e)[..12].to_owned(),
+                    role = linked.role.as_str(),
+                    password_dropped = facts.password_dropped,
+                    app_passwords_revoked = facts.app_passwords_revoked,
+                    "oidc/local email collision — auto-linked per opt-in; local credentials revoked"
+                );
                 linked
             } else {
                 tracing::warn!(
@@ -973,13 +1113,11 @@ pub async fn callback(
 
 /// `pending_verification` means "email not proven". When the IdP's own
 /// `email_verified = true` claim proves it (`idp_proved_email`), the row
-/// becomes `active` — the proof the verify-email link asks for. Whoever
-/// registered a pending local row never proved the address, so the local
-/// password they chose is dropped and every token they could hold is revoked
-/// (`token_version` bump here, refresh sessions by the caller once the row is
-/// written): activating must not hand the registrant the owner's account.
-/// Returns whether it activated. Other states are left alone (a disabled row
-/// stays disabled and `admit_state` refuses it).
+/// becomes `active` — the proof the verify-email link asks for. The local
+/// password is dropped and every token is revoked (`token_version` bump
+/// here, refresh sessions by the caller once the row is written). Returns
+/// whether it activated. Other states are left alone (a disabled row stays
+/// disabled and `admit_state` refuses it).
 fn activate_if_pending(am: &mut UserAM, row: &user::Model, idp_proved_email: bool) -> bool {
     if row.state != UserState::PendingVerification || !idp_proved_email {
         return false;
@@ -988,6 +1126,170 @@ fn activate_if_pending(am: &mut UserAM, row: &user::Model, idp_proved_email: boo
     am.password_hash = Set(None);
     am.token_version = Set(row.token_version + 1);
     true
+}
+
+/// The identity fields a sign-in writes onto the account row.
+struct SyncedIdentity<'a> {
+    external_id: &'a str,
+    email: Option<String>,
+    email_verified: bool,
+    display_name: &'a str,
+    now: chrono::DateTime<chrono::FixedOffset>,
+}
+
+/// What [`drop_local_credentials`] revoked.
+#[derive(Debug, Clone, Copy)]
+struct DroppedCredentials {
+    activated: bool,
+    password_dropped: bool,
+    sessions_revoked: u64,
+    app_passwords_revoked: u64,
+}
+
+/// The row update of [`drop_local_credentials`]: keys the row to the OIDC
+/// identity, clears the local password and bumps `token_version` relative to
+/// the stored value, but only while the row still has the external id and
+/// `token_version` that were read. Zero affected rows means someone else
+/// changed the account in between.
+fn drop_credentials_update(
+    id: Uuid,
+    prior_external_id: &str,
+    read_token_version: i64,
+    synced: &SyncedIdentity<'_>,
+    activate: bool,
+) -> sea_orm::UpdateMany<UserEntity> {
+    use sea_orm::sea_query::{Expr, ExprTrait};
+    let mut q = UserEntity::update_many()
+        .col_expr(user::Column::ExternalId, Expr::value(synced.external_id))
+        .col_expr(user::Column::Email, Expr::value(synced.email.clone()))
+        .col_expr(
+            user::Column::EmailVerified,
+            Expr::value(synced.email_verified),
+        )
+        .col_expr(user::Column::DisplayName, Expr::value(synced.display_name))
+        .col_expr(
+            user::Column::PasswordHash,
+            Expr::value(Option::<String>::None),
+        )
+        .col_expr(
+            user::Column::TokenVersion,
+            Expr::col(user::Column::TokenVersion).add(1),
+        )
+        .col_expr(user::Column::LastLoginAt, Expr::value(synced.now))
+        .col_expr(user::Column::UpdatedAt, Expr::value(synced.now));
+    if activate {
+        q = q.col_expr(user::Column::State, Expr::value(UserState::Active.as_str()));
+    }
+    q.filter(user::Column::Id.eq(id))
+        .filter(user::Column::ExternalId.eq(prior_external_id))
+        .filter(user::Column::TokenVersion.eq(read_token_version))
+}
+
+/// Make `row` a single-sign-on-only account keyed to the OIDC identity, in
+/// one transaction: the conditional row update ([`drop_credentials_update`]),
+/// every refresh session and app password of the user revoked, and the
+/// `action` audit row (`payload` plus the account's role and what was
+/// revoked). Nothing is committed on any error; a concurrent change to the
+/// row answers a retryable 409. The caller mints the new session only after
+/// this returns.
+#[allow(clippy::too_many_arguments)]
+async fn drop_local_credentials(
+    app: &AppState,
+    ctx: &RequestContext,
+    row: &user::Model,
+    synced: &SyncedIdentity<'_>,
+    activate: bool,
+    action: &'static str,
+    payload: serde_json::Value,
+) -> Result<(user::Model, DroppedCredentials), Response> {
+    use sea_orm::sea_query::Expr;
+    let internal = |what: &str, e: &dyn std::fmt::Display| {
+        tracing::error!(error = %e, user_id = %row.id, "oidc {what} failed");
+        error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    };
+    let txn = app
+        .db
+        .begin()
+        .await
+        .map_err(|e| internal("credential-drop transaction begin", &e))?;
+    let updated = drop_credentials_update(
+        row.id,
+        &row.external_id,
+        row.token_version,
+        synced,
+        activate,
+    )
+    .exec(&txn)
+    .await
+    .map_err(|e| internal("credential-drop update", &e))?;
+    if updated.rows_affected != 1 {
+        // Dropping `txn` rolls back.
+        tracing::info!(user_id = %row.id, "oidc credential drop lost a race; refused");
+        return Err(error(
+            StatusCode::CONFLICT,
+            "auth.conflict",
+            "sign-in conflicted with another change; try again",
+        ));
+    }
+    let now = synced.now;
+    let sessions_revoked = entity::auth_session::Entity::update_many()
+        .col_expr(entity::auth_session::Column::RevokedAt, Expr::value(now))
+        .filter(entity::auth_session::Column::UserId.eq(row.id))
+        .filter(entity::auth_session::Column::RevokedAt.is_null())
+        .exec(&txn)
+        .await
+        .map_err(|e| internal("session revoke", &e))?
+        .rows_affected;
+    // `app_password::verify` re-reads the row on a cache hit and honours
+    // `revoked_at`, so setting it is enough (as the delete handler does).
+    let app_passwords_revoked = entity::app_password::Entity::update_many()
+        .col_expr(entity::app_password::Column::RevokedAt, Expr::value(now))
+        .filter(entity::app_password::Column::UserId.eq(row.id))
+        .filter(entity::app_password::Column::RevokedAt.is_null())
+        .exec(&txn)
+        .await
+        .map_err(|e| internal("app-password revoke", &e))?
+        .rows_affected;
+    let facts = DroppedCredentials {
+        activated: activate,
+        password_dropped: row.password_hash.is_some(),
+        sessions_revoked,
+        app_passwords_revoked,
+    };
+    let mut payload = payload;
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("role".into(), row.role.as_str().into());
+        obj.insert("activated".into(), facts.activated.into());
+        obj.insert("password_dropped".into(), facts.password_dropped.into());
+        obj.insert("sessions_revoked".into(), facts.sessions_revoked.into());
+        obj.insert(
+            "app_passwords_revoked".into(),
+            facts.app_passwords_revoked.into(),
+        );
+    }
+    crate::audit::record_in(
+        &txn,
+        crate::audit::AuditEntry {
+            actor_id: row.id,
+            action,
+            target_type: Some("user"),
+            target_id: Some(row.id.to_string()),
+            payload,
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await
+    .map_err(|e| internal("credential-drop audit", &e))?;
+    let linked = UserEntity::find_by_id(row.id)
+        .one(&txn)
+        .await
+        .map_err(|e| internal("credential-drop reload", &e))?
+        .ok_or_else(|| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
+    txn.commit()
+        .await
+        .map_err(|e| internal("credential-drop commit", &e))?;
+    Ok((linked, facts))
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -1111,5 +1413,122 @@ mod redirect_tests {
         assert!(!is_safe_redirect_target("relative/path"));
         assert!(!is_safe_redirect_target(""));
         assert!(!is_safe_redirect_target("javascript:alert(1)"));
+    }
+}
+
+#[cfg(test)]
+mod client_timeout_tests {
+    use super::{build_http_client, discovery_unreachable};
+    use openidconnect::{IssuerUrl, core::CoreProviderMetadata};
+    use std::time::Duration;
+
+    async fn discover(issuer: String, client: &reqwest::Client) -> anyhow::Error {
+        CoreProviderMetadata::discover_async(IssuerUrl::new(issuer).unwrap(), client)
+            .await
+            .map(|_| ())
+            .map_err(anyhow::Error::from)
+            .expect_err("discovery must fail")
+    }
+
+    /// A provider that accepts the connection and never answers is cut off
+    /// by the total request timeout and classed as unreachable.
+    #[tokio::test]
+    async fn hung_provider_times_out_as_unreachable() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hold = tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let (sock, _) = listener.accept().await.unwrap();
+                held.push(sock);
+            }
+        });
+        let client = build_http_client(Duration::from_millis(300), Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        let err = discover(format!("http://{addr}"), &client).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "timeout applied"
+        );
+        assert!(discovery_unreachable(&err), "{err:?}");
+        hold.abort();
+    }
+
+    /// A refused connection is unreachable too.
+    #[tokio::test]
+    async fn refused_connection_is_unreachable() {
+        let addr = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap()
+        };
+        let client = build_http_client(Duration::from_secs(5), Duration::from_secs(5));
+        let err = discover(format!("http://{addr}"), &client).await;
+        assert!(discovery_unreachable(&err), "{err:?}");
+    }
+
+    /// A provider that answers with garbage is a provider fault, not an
+    /// unreachable one.
+    #[tokio::test]
+    async fn malformed_discovery_is_not_unreachable() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let serve = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            let _ = sock
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                .await;
+        });
+        let client = build_http_client(Duration::from_secs(5), Duration::from_secs(5));
+        let err = discover(format!("http://{addr}"), &client).await;
+        assert!(!discovery_unreachable(&err), "{err:?}");
+        serve.abort();
+    }
+}
+
+#[cfg(test)]
+mod credential_drop_tests {
+    use super::{SyncedIdentity, drop_credentials_update};
+    use sea_orm::{DbBackend, QueryTrait};
+
+    fn sql(activate: bool) -> String {
+        let synced = SyncedIdentity {
+            external_id: "oidc:https://idp|sub",
+            email: Some("a@example.com".into()),
+            email_verified: true,
+            display_name: "A",
+            now: chrono::Utc::now().fixed_offset(),
+        };
+        drop_credentials_update(uuid::Uuid::nil(), "local:abc", 7, &synced, activate)
+            .build(DbBackend::Postgres)
+            .to_string()
+    }
+
+    /// The update is relative and conditional: it bumps the stored
+    /// `token_version` and only matches the row as it was read, so a
+    /// concurrent change leaves zero rows and the caller answers 409.
+    #[test]
+    fn update_is_conditional_on_what_was_read() {
+        let q = sql(false);
+        assert!(
+            q.contains(r#""token_version" = "token_version" + 1"#),
+            "{q}"
+        );
+        assert!(q.contains(r#""password_hash" = NULL"#), "{q}");
+        assert!(q.contains(r#""external_id" = 'local:abc'"#), "{q}");
+        assert!(q.contains(r#""token_version" = 7"#), "{q}");
+        assert!(
+            q.contains(r#""id" = '00000000-0000-0000-0000-000000000000'"#),
+            "{q}"
+        );
+        assert!(!q.contains(r#""state" ="#), "{q}");
+    }
+
+    #[test]
+    fn activation_sets_the_state() {
+        let q = sql(true);
+        assert!(q.contains(r#""state" = 'active'"#), "{q}");
     }
 }

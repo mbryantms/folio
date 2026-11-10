@@ -1,7 +1,8 @@
 //! Failed-auth IP lockout (§17.7 — auth.failed bucket).
 //!
 //! Counts failed `/auth/local/login` and `/auth/oidc/callback` attempts per
-//! client IP in Redis. Once an IP crosses 10 failures in any 60-second
+//! client IP in Redis (app-password misses on the reader routes count on a
+//! separate per-IP counter, [`IpCounter::AppPassword`]). Once an IP crosses 10 failures in any 60-second
 //! sliding window, set a sentinel `auth_lockout:{ip}` key with 15-minute
 //! TTL — the login/callback handlers consult that key on entry and refuse
 //! to proceed while it's set.
@@ -35,12 +36,42 @@ pub const FAIL_WINDOW: Duration = Duration::from_secs(60);
 /// Lockout duration once the threshold is crossed.
 pub const LOCKOUT: Duration = Duration::from_secs(15 * 60);
 
-fn counter_key(ip: IpAddr) -> String {
-    format!("auth_fail:{ip}")
+/// Which per-IP counter a failure lands on. Sign-in (`/auth/local/login`,
+/// the OIDC callback and the signed-in password re-checks) and app-password
+/// verification on the reader routes count separately, so a reader app
+/// presenting a stale token never locks web sign-in from its address, and a
+/// sign-in lockout never refuses a reader app. Same thresholds and window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpCounter {
+    /// `auth_fail:{ip}` / `auth_lockout:{ip}`.
+    SignIn,
+    /// `auth_fail_app:{ip}` / `auth_lockout_app:{ip}`.
+    AppPassword,
 }
 
-fn lockout_key(ip: IpAddr) -> String {
-    format!("auth_lockout:{ip}")
+impl IpCounter {
+    /// Redis key of the sliding-window failure counter for `ip`.
+    pub fn counter_key(self, ip: IpAddr) -> String {
+        match self {
+            Self::SignIn => format!("auth_fail:{ip}"),
+            Self::AppPassword => format!("auth_fail_app:{ip}"),
+        }
+    }
+
+    /// Redis key of the lockout sentinel for `ip`.
+    pub fn lockout_key(self, ip: IpAddr) -> String {
+        match self {
+            Self::SignIn => format!("auth_lockout:{ip}"),
+            Self::AppPassword => format!("auth_lockout_app:{ip}"),
+        }
+    }
+
+    fn lockout_metric(self) -> &'static str {
+        match self {
+            Self::SignIn => "folio_auth_lockout_total",
+            Self::AppPassword => "folio_auth_lockout_app_password_total",
+        }
+    }
 }
 
 /// Stable identifier for the email-keyed lockout bucket. SHA-256 of the
@@ -75,10 +106,19 @@ fn lockout_key_email(email: &str) -> String {
 /// the underlying Redis call return `Ok(None)` — see the module-doc
 /// fail-open rationale.
 pub async fn check_lockout(
-    mut redis: redis::aio::ConnectionManager,
+    redis: redis::aio::ConnectionManager,
     ip: IpAddr,
 ) -> Result<Option<u64>, redis::RedisError> {
-    let key = lockout_key(ip);
+    check_lockout_on(redis, IpCounter::SignIn, ip).await
+}
+
+/// [`check_lockout`] on a chosen [`IpCounter`].
+pub async fn check_lockout_on(
+    mut redis: redis::aio::ConnectionManager,
+    which: IpCounter,
+    ip: IpAddr,
+) -> Result<Option<u64>, redis::RedisError> {
+    let key = which.lockout_key(ip);
     let ttl: i64 = match redis.ttl(&key).await {
         Ok(t) => t,
         Err(e) => {
@@ -99,8 +139,17 @@ pub async fn check_lockout(
 /// Record an auth failure for `ip`. INCRs the counter, refreshes the window
 /// TTL, and sets the lockout sentinel once the threshold is crossed.
 /// Failures here are logged + swallowed.
-pub async fn record_failure(mut redis: redis::aio::ConnectionManager, ip: IpAddr) {
-    let counter = counter_key(ip);
+pub async fn record_failure(redis: redis::aio::ConnectionManager, ip: IpAddr) {
+    record_failure_on(redis, IpCounter::SignIn, ip).await;
+}
+
+/// [`record_failure`] on a chosen [`IpCounter`].
+pub async fn record_failure_on(
+    mut redis: redis::aio::ConnectionManager,
+    which: IpCounter,
+    ip: IpAddr,
+) {
+    let counter = which.counter_key(ip);
     // INCR + EXPIRE in two commands. We could use a pipeline but the redis
     // crate's INCR returns the new value and EXPIRE is fire-and-forget;
     // a slight race is fine — worst case the lockout fires one attempt
@@ -115,7 +164,7 @@ pub async fn record_failure(mut redis: redis::aio::ConnectionManager, ip: IpAddr
     let _: Result<(), _> = redis.expire(&counter, FAIL_WINDOW.as_secs() as i64).await;
 
     if count as u32 >= FAIL_THRESHOLD {
-        let lk = lockout_key(ip);
+        let lk = which.lockout_key(ip);
         let secs = LOCKOUT.as_secs() as i64;
         // SET with EX (atomic set + expiry). Tolerate failure.
         let set: Result<(), _> = redis.set_ex(&lk, "1", LOCKOUT.as_secs()).await;
@@ -127,9 +176,10 @@ pub async fn record_failure(mut redis: redis::aio::ConnectionManager, ip: IpAddr
             ip = %ip,
             count,
             ttl_secs = secs,
+            counter = ?which,
             "failed_auth: IP locked out after {} failures", count
         );
-        metrics::counter!("folio_auth_lockout_total").increment(1);
+        metrics::counter!(which.lockout_metric()).increment(1);
     }
 }
 
@@ -154,10 +204,29 @@ pub async fn check_lockout_for(
     app: &AppState,
     ip: IpAddr,
 ) -> Result<Option<u64>, redis::RedisError> {
+    check_ip_lockout_for(app, IpCounter::SignIn, ip).await
+}
+
+/// [`check_lockout_for`] on a chosen [`IpCounter`]; honours the same
+/// operator kill switch.
+pub async fn check_ip_lockout_for(
+    app: &AppState,
+    which: IpCounter,
+    ip: IpAddr,
+) -> Result<Option<u64>, redis::RedisError> {
     if !app.cfg().rate_limit_enabled {
         return Ok(None);
     }
-    check_lockout(app.jobs.redis.clone(), ip).await
+    check_lockout_on(app.jobs.redis.clone(), which, ip).await
+}
+
+/// Record a failure for `ip` on a chosen [`IpCounter`]; no-op when the
+/// operator has switched the counters off.
+pub async fn record_ip_failure_for(app: &AppState, which: IpCounter, ip: IpAddr) {
+    if !app.cfg().rate_limit_enabled {
+        return;
+    }
+    record_failure_on(app.jobs.redis.clone(), which, ip).await;
 }
 
 // ─────────────── email-keyed axis (Phase B B3) ──────────────────
@@ -258,6 +327,9 @@ pub enum PasswordCheck {
     Ok,
     /// Wrong password; the failure was counted on both axes.
     Wrong,
+    /// The hashing task failed; nothing was verified or counted. The
+    /// caller answers 500.
+    Internal,
     /// The IP or the account is locked out; nothing was verified. Carries
     /// the remaining lockout in seconds (for [`lockout_response`]).
     LockedOut(u64),
@@ -292,9 +364,19 @@ pub async fn verify_password_counted(
         return PasswordCheck::LockedOut(retry);
     }
     let stored = row.password_hash.as_deref().unwrap_or_default();
-    let ok = !stored.is_empty()
-        && crate::auth::password::verify_rotating(stored, given, app.secrets.peppers())
-            .is_ok_and(|v| v.ok());
+    use crate::auth::password::{PasswordError, verify_rotating_blocking};
+    let ok = if stored.is_empty() {
+        false
+    } else {
+        match verify_rotating_blocking(stored, given, app.secrets.peppers()).await {
+            Ok(v) => v.ok(),
+            Err(PasswordError::InvalidHash) => false,
+            Err(e) => {
+                tracing::error!(error = %e, "password re-check failed");
+                return PasswordCheck::Internal;
+            }
+        }
+    };
     if ok {
         return PasswordCheck::Ok;
     }

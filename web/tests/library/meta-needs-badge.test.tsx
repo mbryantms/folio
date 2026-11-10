@@ -9,6 +9,7 @@
  *    to the series page with `?match=1` and stops the parent <Link> firing.
  */
 import { describe, expect, it, vi } from "vitest";
+import type * as Queries from "@/lib/api/queries";
 import type * as React from "react";
 import type { SeriesView } from "@/lib/api/types";
 
@@ -25,6 +26,13 @@ vi.mock("@/components/library/use-cover-collection-dot", () => ({
     enabled: dotState.enabled,
     setEnabled: () => {},
   }),
+}));
+
+// The chip is an admin hint; these checks run as an admin (the reader
+// path is covered in tests/dom/reader-provider-hints.test.tsx).
+vi.mock("@/lib/api/queries", async (orig) => ({
+  ...(await orig<typeof Queries>()),
+  useMe: () => ({ data: { id: "a1", role: "admin" } }),
 }));
 
 import { MetaNeedsBadge } from "@/components/library/SeriesCard";

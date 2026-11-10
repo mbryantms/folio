@@ -167,6 +167,44 @@ async fn open_is_read_only() {
     );
 }
 
+/// The configured path is a file name, never a URL: `?`, `#` and `%` in
+/// it name the file and cannot reach the connection options (here a
+/// `?mode=rwc&immutable=false` in the name would otherwise reopen the
+/// file writable).
+#[tokio::test]
+async fn open_treats_query_and_fragment_characters_as_part_of_the_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let built = comicvine_fixture(dir.path()).await;
+    let odd = dir
+        .path()
+        .join("local cv?mode=rwc&immutable=false#frag%41.db");
+    std::fs::rename(&built, &odd).unwrap();
+    assert!(!built.exists());
+
+    let db = local_db::open(&odd).await.unwrap();
+    let names = local_db::table_names(&db).await.unwrap();
+    assert!(names.iter().any(|n| n == "cv_issue"), "{names:?}");
+    let err = db
+        .execute_raw(Statement::from_string(
+            db.get_database_backend(),
+            "DELETE FROM cv_issue",
+        ))
+        .await
+        .unwrap_err();
+    let msg = err.to_string().to_lowercase();
+    assert!(
+        msg.contains("readonly") || msg.contains("read-only"),
+        "{err}"
+    );
+    db.close().await.unwrap();
+
+    let probe = local_db::probe(LocalDbKind::ComicVine, &odd).await.unwrap();
+    assert_eq!(probe.counts.get("issues"), Some(&5), "{:?}", probe.counts);
+    // Nothing was created beside it from a URL-parsed path.
+    let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+    assert_eq!(entries.len(), 1);
+}
+
 // ───────── admin surface ─────────
 
 struct Authed {

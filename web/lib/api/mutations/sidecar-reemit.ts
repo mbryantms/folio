@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../queries";
 import type { SidecarReemitRunView } from "../types";
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 /**
  * `POST /libraries/{slug}/sidecar-reemit`. Starts a background run that
@@ -18,7 +19,7 @@ export function useStartSidecarReemit(librarySlug: string) {
   const qc = useQueryClient();
   return useApiMutation<SidecarReemitRunView, void>(
     () => ({
-      path: `/libraries/${librarySlug}/sidecar-reemit`,
+      path: apiPath`/libraries/${librarySlug}/sidecar-reemit`,
       method: "POST",
     }),
     {

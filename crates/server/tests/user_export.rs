@@ -380,7 +380,7 @@ async fn export_contains_every_section_the_user_owns() {
         .to_owned();
     assert!(
         disposition.starts_with("attachment; filename=\"folio-export-")
-            && disposition.ends_with(".json\""),
+            && disposition.ends_with(".json"),
         "unexpected Content-Disposition: {disposition}"
     );
     let ct = resp
