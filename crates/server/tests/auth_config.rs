@@ -4,7 +4,7 @@ mod common;
 
 use axum::{
     body::{Body, to_bytes},
-    http::{Method, Request, StatusCode, header},
+    http::{Method, Request, Response, StatusCode, header},
 };
 use common::TestApp;
 use tower::ServiceExt;
@@ -118,4 +118,62 @@ async fn returns_local_mode_with_open_registration() {
     assert!(body["oidc"]["client_id"].is_null());
     assert_eq!(body["oidc"]["trust_unverified_email"], false);
     assert_eq!(body["oidc"]["link_local_by_verified_email"], false);
+}
+
+async fn send_anon(app: &TestApp, method: Method, uri: &str, body: Option<&str>) -> Response<Body> {
+    let mut b = Request::builder().method(method).uri(uri);
+    if body.is_some() {
+        b = b.header(header::CONTENT_TYPE, "application/json");
+    }
+    app.router
+        .clone()
+        .oneshot(
+            b.body(body.map_or_else(Body::empty, |s| Body::from(s.to_owned())))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// A fresh install that chooses no sign-in mode and configures no single
+/// sign-on boots in `local`: the sign-in page offers the password form and
+/// registration, never an SSO button, and the OIDC routes stay off.
+#[tokio::test]
+async fn default_install_without_sso_uses_local_sign_in() {
+    let app = TestApp::spawn_with_default_auth_mode().await;
+    assert!(
+        app.state().cfg().auth_mode_choice.is_none(),
+        "harness must leave the mode unchosen for this test"
+    );
+
+    let resp = send_anon(&app, Method::GET, "/api/auth/config", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["auth_mode"], "local");
+    assert_eq!(body["oidc_enabled"], false);
+    assert_eq!(body["oidc_auto_redirect"], false);
+    assert_eq!(body["registration_open"], true);
+
+    // The first account registers through open registration (and becomes
+    // the admin), then signs in with its password.
+    let admin = register(&app, "first@example.com").await;
+    let resp = send_anon(
+        &app,
+        Method::POST,
+        "/auth/local/login",
+        Some(r#"{"email":"first@example.com","password":"correctly-horse-battery"}"#),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // The admin view reports the same effective mode.
+    let (s, body) = get(&app, &admin, "/api/admin/auth/config").await;
+    assert_eq!(s, StatusCode::OK, "body={body}");
+    assert_eq!(body["auth_mode"], "local");
+    assert_eq!(body["local"]["enabled"], true);
+    assert_eq!(body["oidc"]["configured"], false);
+
+    // Single sign-on is not advertised and its routes answer 404.
+    let resp = send_anon(&app, Method::GET, "/auth/oidc/start", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

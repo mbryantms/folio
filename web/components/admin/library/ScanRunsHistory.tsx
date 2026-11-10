@@ -12,7 +12,9 @@ import {
 } from "lucide-react";
 
 import { FilterRow, LibraryFilter } from "@/components/admin/AdminFilters";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { scanRunStateTone } from "@/components/admin/status-tones";
+import { ScanRunFindingsLink } from "@/components/admin/library/ScanRunFindings";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
@@ -134,10 +136,12 @@ function ScanRunsRail({
                 <TableHead>Library</TableHead>
                 <TableHead>Kind</TableHead>
                 <TableHead>Started</TableHead>
-                <TableHead>Ended</TableHead>
+                {/* Column priority below `lg`: Started + state say
+                    enough; Ended is the low-value column. */}
+                <TableHead className="max-lg:hidden">Ended</TableHead>
                 <TableHead>Error</TableHead>
                 <TableHead>
-                  <span className="sr-only">Logs</span>
+                  <span className="sr-only">Links</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -166,7 +170,7 @@ function ScanRunsRail({
                   <TableCell className="text-muted-foreground text-xs">
                     {new Date(row.started_at).toLocaleString()}
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
+                  <TableCell className="text-muted-foreground text-xs max-lg:hidden">
                     {row.ended_at
                       ? new Date(row.ended_at).toLocaleString()
                       : "—"}
@@ -175,15 +179,23 @@ function ScanRunsRail({
                     {row.error ?? ""}
                   </TableCell>
                   <TableCell className="text-xs">
-                    {/* Cross-link into the runtime log tail scoped to
+                    <div className="flex flex-col items-start gap-1">
+                      {/* Cross-link into the runtime log tail scoped to
                       this scan's library (Server activity → Log). */}
-                    <Link
-                      href={`/admin/activity?view=log&library_id=${encodeURIComponent(row.library_id)}`}
-                      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
-                    >
-                      <ScrollText className="size-3.5" aria-hidden="true" />
-                      Logs
-                    </Link>
+                      <Link
+                        href={`/admin/activity?view=log&library_id=${encodeURIComponent(row.library_id)}`}
+                        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                      >
+                        <ScrollText className="size-3.5" aria-hidden="true" />
+                        Logs
+                      </Link>
+                      {/* Findings the run flagged, into the open health
+                        issues of its library. */}
+                      <ScanRunFindingsLink
+                        stats={row.stats}
+                        href={`/admin/findings?tab=health&library_id=${encodeURIComponent(row.library_id)}`}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -196,38 +208,36 @@ function ScanRunsRail({
   );
 }
 
-function StateBadge({ state }: { state: string }) {
-  if (state === "running") {
-    return (
-      <Badge variant="secondary" className="gap-1">
-        <Loader2 className="size-3 animate-spin" />
-        Running
-      </Badge>
-    );
-  }
-  if (state === "complete") {
-    return (
-      <Badge variant="outline" className="text-primary border-primary/40 gap-1">
-        <CheckCircle2 className="size-3" />
-        Complete
-      </Badge>
-    );
-  }
-  if (state === "failed") {
-    return (
-      <Badge variant="destructive" className="gap-1">
-        <XCircle className="size-3" />
-        Failed
-      </Badge>
-    );
-  }
-  if (state === "cancelled") {
-    return (
-      <Badge variant="secondary" className="gap-1">
-        <AlertCircle className="size-3" />
-        Cancelled
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">{state}</Badge>;
+const STATE_LABEL: Record<string, string> = {
+  queued: "Queued",
+  running: "Running",
+  complete: "Complete",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+/** Run state badge. Tones come from `scanRunStateTone`: a finished run is
+ *  neutral, a running one info, only a failed one draws attention. */
+export function StateBadge({ state }: { state: string }) {
+  const Icon =
+    state === "running"
+      ? Loader2
+      : state === "failed"
+        ? XCircle
+        : state === "cancelled"
+          ? AlertCircle
+          : state === "complete"
+            ? CheckCircle2
+            : null;
+  return (
+    <StatusBadge tone={scanRunStateTone(state)} className="gap-1">
+      {Icon ? (
+        <Icon
+          className={state === "running" ? "size-3 animate-spin" : "size-3"}
+          aria-hidden="true"
+        />
+      ) : null}
+      {STATE_LABEL[state] ?? state}
+    </StatusBadge>
+  );
 }

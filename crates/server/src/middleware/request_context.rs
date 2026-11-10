@@ -17,6 +17,11 @@ pub struct RequestContext {
     /// Best-effort client IP. `None` only if `ConnectInfo` extraction failed,
     /// which shouldn't happen given how we configured the listener.
     pub client_ip: Option<IpAddr>,
+    /// True when the immediate TCP peer is inside `COMIC_TRUSTED_PROXIES`
+    /// ([`xff::peer_is_trusted`], the same test [`xff::client_ip`] applies).
+    /// The fallback proxy keeps a trusted proxy's `X-Forwarded-Host` /
+    /// `X-Forwarded-Proto` only when this is set.
+    pub peer_trusted: bool,
     /// Verbatim `User-Agent` header. `None` if the client didn't send one.
     pub user_agent: Option<String>,
 }
@@ -65,6 +70,7 @@ pub async fn set_context(
         .map(|ci| ci.0.ip())
         .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
     let ip = xff::client_ip(req.headers(), peer_ip, trusted.as_slice());
+    let peer_trusted = xff::peer_is_trusted(peer_ip, trusted.as_slice());
     let ua = req
         .headers()
         .get(axum::http::header::USER_AGENT)
@@ -73,6 +79,7 @@ pub async fn set_context(
 
     let ctx = RequestContext {
         client_ip: Some(ip),
+        peer_trusted,
         user_agent: ua,
     };
     req.extensions_mut().insert(ctx);

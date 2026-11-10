@@ -20,7 +20,12 @@ import type { OidcDiscoverResp } from "@/lib/api/types";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 
 export type AuthConfigInitial = {
+  /** The effective mode: the saved `auth.mode` row, or what the server
+   *  derived when none is saved. */
   mode: "local" | "oidc" | "both";
+  /** True when an `auth.mode` row exists. False means no mode was chosen,
+   *  so the server picks Local without single sign-on and Both with it. */
+  mode_saved: boolean;
   registration_open: boolean;
   oidc_issuer: string;
   oidc_client_id: string;
@@ -158,6 +163,10 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
               <strong>Local</strong> uses email+password. <strong>OIDC</strong>{" "}
               uses an external IdP only. <strong>Both</strong> shows both
               sign-in CTAs.
+            </p>
+            <p className="text-muted-foreground text-xs">
+              In effect: <strong>{MODE_LABEL[initial.mode]}</strong>
+              {modeReason(initial)}
             </p>
           </CardContent>
         </Card>
@@ -420,6 +429,24 @@ export function AuthConfigForm({ initial }: { initial: AuthConfigInitial }) {
       </div>
     </div>
   );
+}
+
+const MODE_LABEL: Record<AuthConfigInitial["mode"], string> = {
+  local: "Local",
+  oidc: "OIDC",
+  both: "Both",
+};
+
+/** Why the effective mode is what it is (one clause after the label). */
+function modeReason(initial: AuthConfigInitial): string {
+  if (initial.mode_saved) return ", saved on this page.";
+  if (initial.mode === "local") {
+    return ", the default while no mode is saved and single sign-on is not configured.";
+  }
+  if (initial.mode === "both") {
+    return ", the default while no mode is saved and single sign-on is configured.";
+  }
+  return ", set by the server environment.";
 }
 
 function FieldHint({

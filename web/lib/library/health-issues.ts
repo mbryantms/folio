@@ -58,8 +58,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Re-tag the archive.",
   },
   MalformedArchive: {
-    label: "Corrupt or unrecognized archive",
-    hint: "The file isn't a readable ZIP, TAR, RAR or 7z. Replace it from a good copy.",
+    // The API calls this kind "malformed", not "corrupt": the row also
+    // covers files the reader refused, so the copy does not claim damage.
+    label: "Malformed or unrecognized archive",
+    hint: "Folio could not open the file as a ZIP, TAR, RAR or 7z; the error says why. Replace a damaged file from a good copy.",
   },
   EncryptedArchive: {
     label: "Password-protected archive",

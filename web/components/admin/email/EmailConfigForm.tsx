@@ -60,7 +60,7 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
       from: initial.from,
     },
   });
-  useUnsavedChangesGuard(form.formState.isDirty);
+  const leaveGuard = useUnsavedChangesGuard(form.formState.isDirty);
 
   async function onSubmit(values: FormValues) {
     // The submit button binds to `formState.isDirty` so the no-op path
@@ -247,6 +247,7 @@ export function EmailConfigForm({ initial }: { initial: SmtpInitial }) {
           </Button>
         </div>
       </form>
+      {leaveGuard}
     </Form>
   );
 }

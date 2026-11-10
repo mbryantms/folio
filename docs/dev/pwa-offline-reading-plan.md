@@ -215,7 +215,9 @@ Code: `downloadList` in `downloads.ts`, the pure helpers in
 
 - `/downloads` renders nothing from the server: it reads IndexedDB and
   opens a complete download in the regular `Reader` (`?issue=<id>`), with
-  `exitUrl` back to the list. The download manager stores a copy fetched
+  `exitUrl` back to the list (the exit goes back in history to the list
+  it was opened from, else replaces the reader with it; see
+  `reader-shortcuts.md` "Leaving the reader"). The download manager stores a copy fetched
   with `credentials: "omit"` — an anonymous render, so it carries no user
   data — after the first completed download, crawling the HTML, its flight
   data and each chunk/stylesheet for `static/(chunks|css|media)` references
