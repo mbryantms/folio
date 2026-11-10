@@ -1264,6 +1264,20 @@ body {
   transition: box-shadow 260ms ease-out;
 }
 
+/* ── Cover long press (components/CoverLongPressActions.tsx) ──
+ * On touch devices a long press on a cover opens Folio's quick-actions
+ * sheet, so the browser's own long-press callout (iOS link preview /
+ * "Save image", text selection) must not open on
+ * top of it. The attribute is only set on hover-incapable touch devices,
+ * and none of these properties affect a normal tap on the link. Android's
+ * link menu comes from the `contextmenu` event, which the hook cancels
+ * for touch-originated events only. */
+[data-cover-long-press] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* ── Springy drag and drop (folio-flair) ──
  * The item being dragged gets `.drag-lift` (lib/ui/springy-drag.ts).
  * `scale` / `rotate` are separate from the inline `transform` dnd-kit

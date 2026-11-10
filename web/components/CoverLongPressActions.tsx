@@ -54,6 +54,14 @@ export function useCoverLongPressActions({
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const fired = React.useRef(false);
   const startPos = React.useRef<{ x: number; y: number } | null>(null);
+  // Opening-gesture guard. When the long press opens the sheet the finger
+  // is still down, and the click the browser synthesizes on lift lands on
+  // whichever sheet item now sits under it (the sheet is a portal, so the
+  // cover wrapper never sees that click). `blocked` swallows clicks inside
+  // the sheet until the opening touch has ended AND a new pointer / touch
+  // has gone down on the sheet; `openingEnded` records the first half.
+  const guard = React.useRef({ blocked: false, openingEnded: true });
+  const detachEndListener = React.useRef<(() => void) | null>(null);
 
   const clearTimer = React.useCallback(() => {
     if (timer.current !== null) {
@@ -62,9 +70,25 @@ export function useCoverLongPressActions({
     }
   }, []);
 
+  const endOpeningGesture = React.useCallback(() => {
+    guard.current.openingEnded = true;
+    detachEndListener.current?.();
+    detachEndListener.current = null;
+  }, []);
+
+  // Drop the document listener if the card unmounts mid-gesture.
+  React.useEffect(
+    () => () => {
+      detachEndListener.current?.();
+      detachEndListener.current = null;
+    },
+    [],
+  );
+
   const handlers = React.useMemo<TouchHandlerProps>(() => {
     if (!isTouch) return EMPTY_HANDLERS;
     return {
+      "data-cover-long-press": "",
       onTouchStart: (e) => {
         const t = e.touches[0];
         if (!t) return;
@@ -72,7 +96,23 @@ export function useCoverLongPressActions({
         fired.current = false;
         clearTimer();
         timer.current = setTimeout(() => {
+          timer.current = null;
           fired.current = true;
+          guard.current = { blocked: true, openingEnded: false };
+          // The touchend of the opening finger is dispatched to the cover
+          // it started on (and bubbles to the document) even though the
+          // sheet now covers it; listen at the document as well as on the
+          // wrapper so a parent that stops propagation can't strand the
+          // guard in its blocked state.
+          detachEndListener.current?.();
+          const onEnd = () => endOpeningGesture();
+          const opts = { capture: true } as const;
+          document.addEventListener("touchend", onEnd, opts);
+          document.addEventListener("touchcancel", onEnd, opts);
+          detachEndListener.current = () => {
+            document.removeEventListener("touchend", onEnd, opts);
+            document.removeEventListener("touchcancel", onEnd, opts);
+          };
           setOpen(true);
         }, LONG_PRESS_MS);
       },
@@ -89,8 +129,29 @@ export function useCoverLongPressActions({
           clearTimer();
         }
       },
-      onTouchEnd: () => clearTimer(),
-      onTouchCancel: () => clearTimer(),
+      onTouchEnd: () => {
+        clearTimer();
+        if (fired.current) endOpeningGesture();
+      },
+      onTouchCancel: () => {
+        clearTimer();
+        if (fired.current) endOpeningGesture();
+      },
+      onContextMenu: (e) => {
+        // Android opens its own link / image menu on a long press via
+        // `contextmenu`, on top of the sheet. Cancel it only when the
+        // event comes from touch (Chrome sends a PointerEvent carrying
+        // `pointerType`; older engines don't, and then only while our own
+        // touch gesture is in flight). A mouse right-click keeps the
+        // browser menu.
+        const pointerType = (e.nativeEvent as Partial<PointerEvent>)
+          .pointerType;
+        const fromTouch =
+          pointerType === "touch" ||
+          pointerType === "pen" ||
+          (!pointerType && (timer.current !== null || fired.current));
+        if (fromTouch) e.preventDefault();
+      },
       onClick: (e) => {
         // If the long-press fired the sheet, the synthesized click that
         // follows the touchend would still navigate the parent <Link>.
@@ -103,13 +164,46 @@ export function useCoverLongPressActions({
         }
       },
     };
-  }, [isTouch, clearTimer]);
+  }, [isTouch, clearTimer, endOpeningGesture]);
+
+  const onOpenChange = React.useCallback(
+    (next: boolean) => {
+      if (!next) {
+        guard.current.blocked = false;
+        endOpeningGesture();
+      }
+      setOpen(next);
+    },
+    [endOpeningGesture],
+  );
+
+  // A fresh pointer / touch on the sheet, once the opening finger is up,
+  // is a deliberate press: unblock. Keyboard input is always deliberate.
+  const arm = () => {
+    if (guard.current.openingEnded) guard.current.blocked = false;
+  };
+  const sheetGuardProps = {
+    onPointerDownCapture: arm,
+    onTouchStartCapture: arm,
+    onKeyDownCapture: () => {
+      guard.current.blocked = false;
+    },
+    onClickCapture: (e: React.MouseEvent) => {
+      // `detail === 0` is a click with no pointer behind it (keyboard,
+      // assistive tech); the tap synthesized on lift always has detail 1.
+      if (guard.current.blocked && e.detail !== 0) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+  };
 
   const sheet = isTouch ? (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
         className="max-h-[80vh] gap-0 overflow-y-auto p-0"
+        {...sheetGuardProps}
       >
         <SheetHeader className="px-4 pt-6">
           <SheetTitle className="text-base">{label}</SheetTitle>
@@ -123,7 +217,7 @@ export function useCoverLongPressActions({
                 className="bg-primary text-primary-foreground hover:bg-primary/90 flex w-full items-center justify-center rounded-md px-4 py-3 text-base font-medium"
                 onClick={() => {
                   primary.onSelect();
-                  setOpen(false);
+                  onOpenChange(false);
                 }}
               >
                 {primary.label}
@@ -144,7 +238,7 @@ export function useCoverLongPressActions({
                 onClick={() => {
                   if (a.disabled) return;
                   a.onSelect();
-                  setOpen(false);
+                  onOpenChange(false);
                 }}
               >
                 {a.label}
@@ -170,10 +264,14 @@ const LONG_PRESS_MS = 400;
 const MOVE_TOLERANCE_PX = 8;
 
 type TouchHandlerProps = {
+  /** Hooks the `[data-cover-long-press]` rule in globals.css that turns
+   *  off the native long-press callout on the cover. */
+  "data-cover-long-press"?: string;
   onTouchStart?: React.TouchEventHandler<HTMLElement>;
   onTouchMove?: React.TouchEventHandler<HTMLElement>;
   onTouchEnd?: React.TouchEventHandler<HTMLElement>;
   onTouchCancel?: React.TouchEventHandler<HTMLElement>;
+  onContextMenu?: React.MouseEventHandler<HTMLElement>;
   onClick?: React.MouseEventHandler<HTMLElement>;
 };
 
