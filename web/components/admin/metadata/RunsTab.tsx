@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { useAdminMetadataRun, useAdminMetadataRuns } from "@/lib/api/queries";
 import type { RunRow } from "@/lib/api/types";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 export function RunsTab() {
   const [scope, setScope] = useState<string>("");
@@ -28,10 +29,15 @@ export function RunsTab() {
   // Auto-fetch the next page when the sentinel nears the viewport. Depend
   // on the three fields, not the result object (fresh identity per render).
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = runs;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = runs;
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -44,7 +50,7 @@ export function RunsTab() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_28rem]">
@@ -118,6 +124,7 @@ export function RunsTab() {
           data-testid="runs-sentinel"
           className={hasNextPage ? "h-12" : "hidden"}
         />
+        <LoadMoreError query={runs} />
         {isFetchingNextPage && (
           <p
             role="status"

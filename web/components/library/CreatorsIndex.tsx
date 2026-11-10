@@ -12,6 +12,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useCreatorsInfinite, usePeopleSearch } from "@/lib/api/queries";
 import type { CreatorListItem } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 
 const SEARCH_DEBOUNCE_MS = 250;
 /** Min query length before switching from browse to search — matches the
@@ -72,7 +74,12 @@ export function CreatorsIndex({
     { enabled: !searching },
   );
   const search = usePeopleSearch(searching ? { q: debouncedQ, limit: 60 } : {});
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
 
   // Keep `?starts_with=` on the URL so a chosen letter is shareable and
   // survives reload (the server page re-seeds `initialStartsWith`).
@@ -90,7 +97,7 @@ export function CreatorsIndex({
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -103,7 +110,7 @@ export function CreatorsIndex({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const items = React.useMemo(
     () => query.data?.pages.flatMap((p) => p.items) ?? [],
@@ -191,10 +198,11 @@ export function CreatorsIndex({
 
           {query.isLoading ? (
             <CreatorGridSkeleton />
-          ) : query.isError ? (
-            <p className="text-muted-foreground text-sm">
-              Couldn&apos;t load creators. Try refreshing.
-            </p>
+          ) : query.isError && !query.data ? (
+            <RailError
+              message="Couldn't load creators."
+              onRetry={() => void query.refetch()}
+            />
           ) : items.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               {startsWith
@@ -210,6 +218,7 @@ export function CreatorsIndex({
             aria-hidden="true"
             className={hasNextPage ? "h-12" : "hidden"}
           />
+          <LoadMoreError query={query} />
           {isFetchingNextPage ? (
             <p className="text-muted-foreground text-center text-xs">
               Loading more…

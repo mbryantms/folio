@@ -72,6 +72,8 @@ import {
   PopoverTrigger,
 } from "@/components/folio/popover";
 import { SuggestionCardsSkeleton } from "@/components/skeletons/AdminShapes";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 import {
   useAcceptRelationshipSuggestion,
   useBulkAcceptRelationshipSuggestions,
@@ -173,13 +175,20 @@ export function RelationshipSuggestionsPanel() {
     bucket,
     libraryId,
   });
-  const { data, isLoading, error, hasNextPage, isFetchingNextPage } = query;
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+  } = query;
   const fetchNextPage = query.fetchNextPage;
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -190,7 +199,7 @@ export function RelationshipSuggestionsPanel() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const items = React.useMemo(
     () => data?.pages.flatMap((p) => p.items) ?? [],
@@ -379,8 +388,11 @@ export function RelationshipSuggestionsPanel() {
 
       {isLoading ? (
         <SuggestionCardsSkeleton />
-      ) : error ? (
-        <p className="text-destructive text-sm">{error.message}</p>
+      ) : error && !data ? (
+        <RailError
+          message="Couldn't load suggestions."
+          onRetry={() => void query.refetch()}
+        />
       ) : items.length === 0 ? (
         <p className="border-border bg-card/40 text-muted-foreground rounded-md border border-dashed px-4 py-12 text-center text-sm">
           {status === "pending"
@@ -414,6 +426,7 @@ export function RelationshipSuggestionsPanel() {
         aria-hidden
         className={hasNextPage ? "h-12" : "hidden"}
       />
+      <LoadMoreError query={query} />
       {isFetchingNextPage ? (
         <div className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
           <Loader2 className="size-3.5 animate-spin" /> Loading more…

@@ -42,6 +42,7 @@ import { ISSUE_GRID_CELL_RADIUS, ISSUE_GRID_COLS } from "@/lib/issue-grid";
 import { cn } from "@/lib/utils";
 import { statusTone, statusToneDot } from "@/lib/ui/status-tone";
 import { issueUrl } from "@/lib/urls";
+import { RailError } from "@/components/saved-views/RailError";
 
 /** One colour per question: owned and complete, owned but incomplete, not
  *  owned, not owned but every provider lists it. The partial / needs-metadata
@@ -92,7 +93,7 @@ type Selection =
   | null;
 
 export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
-  const { data, isLoading, isError } = useSeriesCollection(seriesSlug);
+  const { data, isLoading, isError, refetch } = useSeriesCollection(seriesSlug);
   const [selected, setSelected] = React.useState<Selection>(null);
 
   if (isLoading) {
@@ -128,9 +129,11 @@ export function CollectionTab({ seriesSlug }: { seriesSlug: string }) {
   }
   if (isError || !data) {
     return (
-      <p className="text-muted-foreground py-8 text-sm">
-        Couldn&rsquo;t load collection details.
-      </p>
+      <RailError
+        message="Couldn't load collection details."
+        onRetry={() => void refetch()}
+        className="py-8"
+      />
     );
   }
 

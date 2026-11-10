@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RailDismissalListView, RailDismissalView } from "@/lib/api/types";
 
+const failFirst = vi.hoisted(() => ({ on: false }));
 const net = vi.hoisted(() => ({
   urls: [] as string[],
   pages: new Map<string, RailDismissalListView>(),
@@ -26,7 +27,10 @@ vi.mock("@/lib/api/auth-refresh", () => ({
   apiFetch: vi.fn(async (path: string) => {
     net.urls.push(path);
     const url = new URL(path, "http://test");
-    if (url.searchParams.get("cursor") === "broken") {
+    if (
+      url.searchParams.get("cursor") === "broken" ||
+      (failFirst.on && !url.searchParams.get("cursor"))
+    ) {
       return new Response(
         JSON.stringify({ error: { code: "internal", message: "internal" } }),
         { status: 500, headers: { "Content-Type": "application/json" } },
@@ -148,6 +152,7 @@ describe("<HiddenRailItems>", () => {
   beforeEach(() => {
     net.urls.length = 0;
     net.pages.clear();
+    failFirst.on = false;
     io.live.clear();
     restore.mutate.mockReset();
   });
@@ -255,9 +260,37 @@ describe("<HiddenRailItems>", () => {
     await act(async () => {
       intersect();
     });
-    expect(await screen.findByText("Couldn’t load more.")).toBeTruthy();
+    expect(await screen.findByText("Couldn't load more.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Saga #1" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    const brokenCalls = () =>
+      net.urls.filter((u) => u.includes("cursor=broken")).length;
+    expect(brokenCalls()).toBe(1);
+
+    // The failure parks the observer: scrolling the sentinel again does
+    // not refetch (it used to loop against the failing page).
+    await act(async () => {
+      intersect();
+    });
+    expect(brokenCalls()).toBe(1);
+
+    // Retry asks for the failed page again.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(brokenCalls()).toBe(2));
+  });
+
+  it("offers Retry when the first page fails", async () => {
+    net.pages.set("", {
+      items: [issueRow],
+      next_cursor: null,
+      total: 1,
+      unavailable: 0,
+    });
+    failFirst.on = true;
+    renderSection();
+    expect(await screen.findByText("Couldn't load hidden items.")).toBeTruthy();
+    failFirst.on = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("link", { name: "Saga #1" })).toBeTruthy();
   });
 
   it("labels every rail", () => {

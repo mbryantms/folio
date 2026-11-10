@@ -6,6 +6,7 @@ import { EyeOff, ListOrdered } from "lucide-react";
 import { Cover } from "@/components/Cover";
 import { EmptyState } from "@/components/folio/empty-state";
 import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 import { Button } from "@/components/ui/button";
 import { useRestoreRailItem } from "@/lib/api/mutations";
 import { useRailDismissals } from "@/lib/api/queries";
@@ -72,7 +73,10 @@ export function HiddenRailItems() {
   if (!query.data) {
     return (
       <SettingsSection title={TITLE} description={DESCRIPTION}>
-        <p className="text-destructive text-sm">Failed to load hidden items.</p>
+        <RailError
+          message="Couldn't load hidden items."
+          onRetry={() => void query.refetch()}
+        />
       </SettingsSection>
     );
   }
@@ -112,18 +116,6 @@ export function HiddenRailItems() {
         </ul>
       )}
       <InfiniteSentinel query={query} />
-      {query.isFetchNextPageError ? (
-        <div className="mt-2 flex items-center justify-center gap-2">
-          <p className="text-destructive text-xs">Couldn’t load more.</p>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void query.fetchNextPage()}
-          >
-            Retry
-          </Button>
-        </div>
-      ) : null}
       {unavailable > 0 ? (
         <p className="text-muted-foreground mt-3 text-xs">
           {unavailable === 1

@@ -9,6 +9,7 @@ import {
 } from "@/components/library/SeriesCard";
 import { useSameUniverseInfinite } from "@/lib/api/queries";
 import type { SharedUniverse } from "@/lib/api/types";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 /** "Universe: Mignolaverse · Group: B.P.R.D." */
 export function sharedCaption(shared: SharedUniverse[]): string {
@@ -38,11 +39,16 @@ export function SameUniverseSection({
 }) {
   const query = useSameUniverseInfinite(seriesSlug);
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
 
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -53,7 +59,7 @@ export function SameUniverseSection({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   const total = query.data?.pages[0]?.total ?? null;
@@ -111,6 +117,10 @@ export function SameUniverseSection({
             <SeriesCardSkeleton />
           </div>
         ) : null}
+        <LoadMoreError
+          query={query}
+          className="mt-0 shrink-0 flex-nowrap self-center px-2"
+        />
         <div ref={sentinelRef} aria-hidden className="h-px w-px shrink-0" />
       </HorizontalScrollRail>
     </section>

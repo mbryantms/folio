@@ -77,6 +77,8 @@ import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
 import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 
 import { ViewActionsMenu } from "./ViewActionsMenu";
 import { ViewHeader } from "./ViewHeader";
@@ -210,11 +212,12 @@ function CblViewDetailInner({
   const {
     hasNextPage: entriesHasNext,
     isFetchingNextPage: entriesFetchingNext,
+    isFetchNextPageError: entriesNextError,
     fetchNextPage: entriesFetchNext,
   } = entriesQuery;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || entriesNextError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -227,7 +230,7 @@ function CblViewDetailInner({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [entriesHasNext, entriesFetchingNext, entriesFetchNext]);
+  }, [entriesHasNext, entriesFetchingNext, entriesNextError, entriesFetchNext]);
 
   // Hooks must run unconditionally — keep them above the early
   // returns and use empty arrays for selection-relevant state while
@@ -359,9 +362,11 @@ function CblViewDetailInner({
   }
   if (detail.isError || !detail.data) {
     return (
-      <div className="text-destructive rounded-md border p-4 text-sm">
-        Failed to load view.
-      </div>
+      <RailError
+        message="Couldn't load this view."
+        onRetry={() => void detail.refetch()}
+        className="rounded-md border p-4"
+      />
     );
   }
 
@@ -829,6 +834,7 @@ function CblViewDetailInner({
             aria-hidden
             className={entriesQuery.hasNextPage ? "h-12" : "hidden"}
           />
+          <LoadMoreError query={entriesQuery} />
           {entriesQuery.isFetchingNextPage ? (
             <p className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
               <Loader2 className="size-3 animate-spin" /> Loading more (

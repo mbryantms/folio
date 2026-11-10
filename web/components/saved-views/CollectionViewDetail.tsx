@@ -71,6 +71,8 @@ import {
   useCollectionNextUp,
   useMe,
 } from "@/lib/api/queries";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 import {
   useBulkMarkProgress,
   useBulkRemoveFromCollection,
@@ -152,9 +154,14 @@ export function CollectionViewDetail({
   // entry ids — sending a half-loaded view to `useReorderCollectionEntries`
   // would wipe everything past the load window. The fetch runs in 200-entry
   // pages; for typical user-curated collections this is one round-trip.
+  // A failed page parks the walk (no request loop) until its Retry.
   const entriesQ = useCollectionEntriesInfinite(savedView.id);
   React.useEffect(() => {
-    if (entriesQ.hasNextPage && !entriesQ.isFetchingNextPage) {
+    if (
+      entriesQ.hasNextPage &&
+      !entriesQ.isFetchingNextPage &&
+      !entriesQ.isFetchNextPageError
+    ) {
       void entriesQ.fetchNextPage();
     }
   }, [entriesQ]);
@@ -589,10 +596,11 @@ export function CollectionViewDetail({
           style={gridStyle}
           label="Loading collection…"
         />
-      ) : entriesQ.isError ? (
-        <div className="text-destructive rounded-md border p-4 text-sm">
-          Failed to load collection entries.
-        </div>
+      ) : entriesQ.isError && !entriesQ.data ? (
+        <RailError
+          message="Couldn't load this collection."
+          onRetry={() => void entriesQ.refetch()}
+        />
       ) : orderedEntries.length === 0 ? (
         <EmptyState isWantToRead={isWantToRead} />
       ) : (
@@ -639,6 +647,7 @@ export function CollectionViewDetail({
               Loading more ({orderedEntries.length} of {total})…
             </p>
           ) : null}
+          <LoadMoreError query={entriesQ} />
         </>
       )}
 
