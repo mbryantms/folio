@@ -38,7 +38,6 @@ jobs:
     timeout-minutes: 20
     env:
       BRANCH: shadcn/refresh
-      GH_TOKEN: ${{ secrets.FOLIO_RELEASE_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -78,6 +77,11 @@ jobs:
 
       - name: Open or refresh the pull request
         if: steps.pull.outputs.changed == 'true'
+        # Only this step calls `gh`, so only it gets GH_TOKEN; the install and
+        # registry-pull steps run third-party code. (checkout still persists
+        # the token in .git/config for the `git push` below.)
+        env:
+          GH_TOKEN: ${{ secrets.FOLIO_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"

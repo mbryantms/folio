@@ -9,6 +9,11 @@ on:
   # result. Without this, queued PRs would hang forever (checks never report).
   merge_group:
 
+# Least privilege for every job; docker-build adds `packages: write` for the
+# GHCR layer cache in its own block.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
