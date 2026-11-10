@@ -18,7 +18,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { healthSeverityTone } from "@/components/admin/status-tones";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/folio/data-table";
 import { FilterPill } from "@/components/folio/filter-pill";
@@ -46,10 +47,6 @@ const STATUSES: StatusFilter[] = ["open", "resolved", "dismissed", "all"];
  *  have no dismiss/resolve verbs — the server rejects mutations against them. */
 function isSynthetic(id: string): boolean {
   return id.startsWith("synth:");
-}
-
-function severityVariant(s: string): "secondary" | "destructive" {
-  return s === "error" ? "destructive" : "secondary";
 }
 
 export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
@@ -90,12 +87,12 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         accessorKey: "severity",
         header: "Severity",
         cell: ({ row }) => (
-          <Badge
-            variant={severityVariant(row.original.severity)}
+          <StatusBadge
+            tone={healthSeverityTone(row.original.severity)}
             className="uppercase"
           >
             {row.original.severity}
-          </Badge>
+          </StatusBadge>
         ),
       },
       {
@@ -251,6 +248,8 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
       </div>
       <DataTable
         columns={columns}
+        // Column priority below `lg`: "Last seen" stays, "First seen" goes.
+        columnClassNames={{ first_seen_at: "max-lg:hidden" }}
         data={items}
         emptyMessage="No matching issues."
       />

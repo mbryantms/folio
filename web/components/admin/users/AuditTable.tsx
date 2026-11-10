@@ -10,12 +10,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuditLog, type AuditFilters } from "@/lib/api/queries";
 import type { AuditEntryView } from "@/lib/api/types";
 
+/** Column priority below `lg`: the IP is the lowest-value column. */
+const AUDIT_COLUMN_CLASSES = { ip: "max-lg:hidden" };
+
+/** Admin actions are ordinary audit rows: outlined, not the brand-accent
+ *  fill that reads as an alert; only disables and deletes stand out. */
 function actionVariant(
   action: string,
-): "default" | "secondary" | "destructive" {
+): "outline" | "secondary" | "destructive" {
   if (action.endsWith(".disable") || action.endsWith(".delete"))
     return "destructive";
-  if (action.startsWith("admin.")) return "default";
+  if (action.startsWith("admin.")) return "outline";
   return "secondary";
 }
 
@@ -214,6 +219,7 @@ export function AuditTable({ pinnedActorId }: AuditTableProps) {
       ) : (
         <DataTable
           columns={columns}
+          columnClassNames={AUDIT_COLUMN_CLASSES}
           data={data?.items ?? []}
           emptyMessage="No audit entries match these filters."
           renderExpanded={(row) => (

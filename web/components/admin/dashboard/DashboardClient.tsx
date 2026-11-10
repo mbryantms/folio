@@ -19,7 +19,8 @@ import {
 import Link from "next/link";
 
 import { StatCard } from "@/components/admin/StatCard";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { serviceCheckTone } from "@/components/admin/status-tones";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -34,7 +35,7 @@ import {
 import { LoadingRegion } from "@/components/skeletons/LoadingShapes";
 import { BumpNumber } from "@/components/admin/BumpNumber";
 import { fillDayBuckets, lastUtcDays, sparklinePoints } from "@/lib/activity";
-import { statusTone, statusToneText } from "@/lib/ui/status-tone";
+import { statusToneText } from "@/lib/ui/status-tone";
 import { useHydrated } from "@/lib/ui/use-hydrated";
 import { libraryScanHref } from "@/lib/admin/routes";
 import { cn } from "@/lib/utils";
@@ -675,12 +676,9 @@ function Pill({
         {icon}
         {label}
       </span>
-      <Badge
-        variant="outline"
-        className={ok ? statusTone("success") : statusTone("error")}
-      >
+      <StatusBadge tone={serviceCheckTone(ok)}>
         {ok ? "OK" : "Down"}
-      </Badge>
+      </StatusBadge>
     </li>
   );
 }
