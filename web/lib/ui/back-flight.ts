@@ -33,6 +33,8 @@ import { useSyncExternalStore } from "react";
 
 const stack: string[] = [];
 let popPending = false;
+/** Pathname of a `router.replace` announced by `noteReplace`. */
+let replaceTo: string | null = null;
 const subs = new Set<() => void>();
 const emit = () => subs.forEach((f) => f());
 
@@ -46,15 +48,74 @@ if (typeof window !== "undefined") {
  *  so every route is seen and this stack matches the real history) on every
  *  pathname change. */
 export function noteRoute(pathname: string): void {
+  const replacing = replaceTo !== null && samePath(replaceTo, pathname);
+  replaceTo = null;
   const top = stack[stack.length - 1];
   if (top === pathname) {
     popPending = false;
     return;
   }
-  if (popPending && stack[stack.length - 2] === pathname) stack.pop();
+  if (replacing && stack.length > 0) stack[stack.length - 1] = pathname;
+  else if (popPending && stack[stack.length - 2] === pathname) stack.pop();
   else stack.push(pathname);
   popPending = false;
   emit();
+}
+
+/** Announce a `router.replace` (or `<Link replace>`) to `href` just before
+ *  it runs, so the stack swaps its top entry instead of growing like the
+ *  real history does not. Only the next pathname change can consume it. */
+export function noteReplace(href: string): void {
+  replaceTo = href.split(/[?#]/)[0] ?? href;
+}
+
+function samePath(a: string, b: string): boolean {
+  const decode = (p: string) => {
+    try {
+      return decodeURI(p);
+    } catch {
+      return p;
+    }
+  };
+  return decode(a) === decode(b);
+}
+
+const isReaderPath = (pathname: string) => pathname.startsWith("/read/");
+
+/** The reader's exit target (audit U-02): the page this tab was on before
+ *  the run of reader entries at the top of its history, and how many
+ *  entries back it is. Next / previous issue replace the reader entry, so
+ *  this is usually one step; a reader opened from inside the reader stacks
+ *  more. `null` on a cold load (the reader opened from a link or a
+ *  refresh, nothing tracked before it) or when the page before is not a
+ *  Back target. */
+export function readerExitOrigin(): { pathname: string; steps: number } | null {
+  let i = stack.length - 1;
+  if (i < 0 || !isReaderPath(stack[i]!)) return null;
+  while (i >= 0 && isReaderPath(stack[i]!)) i--;
+  const origin = stack[i];
+  if (origin === undefined || !isBackTarget(origin)) return null;
+  return { pathname: origin, steps: stack.length - 1 - i };
+}
+
+/** Leave the reader: back through the history to `readerExitOrigin`, so
+ *  the page comes back with its scroll position and the reader entries
+ *  end up forward of it (Back from there does not reopen the reader). On a
+ *  cold load, replace the reader with `fallback` (the issue page) for the
+ *  same reason. */
+export function exitReader(
+  router: { back(): void; replace(href: string): void },
+  fallback: string,
+): void {
+  const origin = readerExitOrigin();
+  if (!origin) {
+    noteReplace(fallback);
+    router.replace(fallback);
+  } else if (origin.steps === 1) {
+    router.back();
+  } else {
+    window.history.go(-origin.steps);
+  }
 }
 
 function subscribe(cb: () => void) {
@@ -63,9 +124,9 @@ function subscribe(cb: () => void) {
 }
 
 /** Two pages Back doesn't offer, though they are in the history:
- *  - The reader. Its exit pushes the issue page, so the entry behind that page
- *    is the reader itself: Back would go there, and exiting again would land
- *    on the same page with the same Back, with no way past it.
+ *  - The reader. Its exit goes back or replaces (`exitReader`), but a page
+ *    reached by a link out of the reader still has the reader behind it:
+ *    Back would reopen it.
  *  - Sign-in, which pushes the page you were after once you're signed in. */
 function isBackTarget(pathname: string): boolean {
   return !pathname.startsWith("/read/") && pathname !== "/sign-in";

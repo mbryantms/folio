@@ -30,7 +30,7 @@ Default bindings — reader scope:
 | `-`     | Zoom out             | Walks the same ladder down                    |
 | `0`     | Reset zoom           | Back to 1×                                    |
 | `m`     | Toggle page strip    | Show/hide the minimap at the bottom           |
-| `Esc`   | Exit reader          | Returns to issue detail                       |
+| `Esc`   | Exit reader          | Returns to where reading started (see [Leaving the reader](#leaving-the-reader)) |
 | `b`     | Bookmark this page   | Toggles a page-0 marker on the current page   |
 | `n`     | Add note             | Opens the marker editor for a page note       |
 | `h`     | Start highlight      | Begins region selection                       |
@@ -519,6 +519,29 @@ Two Prometheus metrics exposed at `/metrics`:
 | `folio_reader_next_up_latency_seconds` | histogram | none | End-to-end handler latency on every return path (Drop-on-exit timer in [`next_up.rs`](../../crates/server/src/api/next_up.rs)). Default Prometheus buckets cover 5 ms → 10 s — the series-walk worst case (large libraries) lives at the upper end. |
 | `folio_reader_prev_up_resolved_total` | counter | `source` ∈ {`cbl`, `series`, `none`} | Sibling of the next-up counter; lets you compare nav direction usage. |
 | `folio_reader_prev_up_latency_seconds` | histogram | none | Same shape as the next-up histogram; same `LatencyTimer` instrumentation pattern. |
+
+## Leaving the reader
+
+Every exit (the chrome's back arrow, `Esc`, the end-of-issue card's and
+the webtoon footer's Exit reader) goes through `exitReader` in
+[`lib/ui/back-flight.ts`](../../web/lib/ui/back-flight.ts) (audit U-02).
+The in-app history tracker there knows the page the tab was on before the
+reader (a home rail, a series grid, a reading list, search), and the exit
+goes back through the history to it, so it returns with its scroll
+position and the reader sits forward of it: Back from there does not
+reopen the reader. On a cold load (the reader opened from a link or a
+refresh, nothing tracked) the exit replaces the reader with the issue
+page instead.
+
+Next and previous issue (`Shift+N` / `Shift+P`, the end card, the webtoon
+footer, the end card's suggestion tile) replace the reader's history
+entry rather than push one, and tell the tracker (`noteReplace`), so
+however many issues are read in a row the reader is one entry and the
+exit target stays the original page. The end card's "Go to issue page"
+links replace the reader entry too. The offline shell (`/downloads`)
+does the same within its own document: the next issue replaces the URL,
+and the exit goes back to the list when the reader was opened from it,
+else replaces the reader with the list.
 
 ## See also
 
