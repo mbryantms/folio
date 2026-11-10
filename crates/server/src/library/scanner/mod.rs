@@ -241,6 +241,9 @@ struct PlannedFolder {
     /// non-empty the folder's walk is *incomplete*: it is processed, its
     /// files are seen, but it never authorises removal of the unseen ones.
     unreadable: Vec<enumerate::UnreadableFolder>,
+    /// Symbolic links the walk met and did not follow; each is reported as
+    /// `SymlinkSkipped`.
+    symlinks: Vec<PathBuf>,
     known_series_id: Option<Uuid>,
     skipped_unchanged: bool,
     /// Set when the series was discovered beneath a publisher container
@@ -467,23 +470,35 @@ pub async fn scan_series_folder(
     }
     let root_path = lib.root_path.clone();
     let folder_pb = folder.to_path_buf();
-    let canonicalized: anyhow::Result<(std::path::PathBuf, std::path::PathBuf)> =
-        tokio::task::spawn_blocking(move || {
-            let root_canon = std::fs::canonicalize(&root_path)
-                .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
-            let folder_canon = std::fs::canonicalize(&folder_pb)
-                .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
-            Ok((root_canon, folder_canon))
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("canonicalize task failed: {e}"))?;
-    let (root_canon, folder_canon) = canonicalized?;
-    if !folder_canon.starts_with(&root_canon) {
-        anyhow::bail!(
-            "series folder is not inside the library root: {}",
-            folder_canon.display()
-        );
-    }
+    let checked: anyhow::Result<()> = tokio::task::spawn_blocking(move || {
+        let root_canon = std::fs::canonicalize(&root_path)
+            .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
+        let folder_canon = std::fs::canonicalize(&folder_pb)
+            .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
+        // Links below the root are never followed: the folder must be
+        // the root (its own links resolved) plus the same names, so no
+        // folder between the root and it, nor it, is a link.
+        let rel = folder_pb
+            .strip_prefix(&root_path)
+            .or_else(|_| folder_pb.strip_prefix(&root_canon))
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "series folder is not inside the library root: {}",
+                    folder_pb.display()
+                )
+            })?;
+        if !folder_canon.starts_with(&root_canon) || folder_canon != root_canon.join(rel) {
+            anyhow::bail!(
+                "series folder is not inside the library root, or is reached through \
+                     a symbolic link: {}",
+                folder_pb.display()
+            );
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("canonicalize task failed: {e}"))?;
+    checked?;
 
     let (scan_id, batch_id) = open_scan_run(
         state,
@@ -521,7 +536,10 @@ pub async fn scan_series_folder(
         &lib,
         scan_id,
         series_id,
-        &folder_canon,
+        // The stored spelling: with no link below the root it names the same
+        // folder as its canonical path, and it is the spelling the issue
+        // rows were written with (a root that is itself a link differs).
+        folder,
         &mut stats,
         &mut health,
         &mut events,
@@ -1263,6 +1281,17 @@ async fn known_series_by_folder(
         .collect())
 }
 
+/// One INFO line and one `SymlinkSkipped` finding per symbolic link the
+/// scan met and did not follow.
+fn report_skipped_symlink(library_id: Uuid, path: PathBuf, health: &mut HealthCollector) {
+    tracing::info!(
+        %library_id,
+        path = %path.display(),
+        "scanner: symbolic link skipped (links are never followed)"
+    );
+    health.emit(crate::library::health::IssueKind::SymlinkSkipped { path });
+}
+
 async fn list_archives_for_plan(
     folder: &std::path::Path,
     ignore: &crate::library::ignore::IgnoreRules,
@@ -1385,6 +1414,7 @@ async fn build_library_scan_plan(
                     path: folder,
                     archives: walk.archives,
                     unreadable: walk.unreadable,
+                    symlinks: walk.symlinks,
                     known_series_id,
                     skipped_unchanged,
                     publisher_hint,
@@ -1417,6 +1447,7 @@ async fn build_series_scan_plan(
             path: folder.to_path_buf(),
             archives: walk.archives,
             unreadable: walk.unreadable,
+            symlinks: walk.symlinks,
             known_series_id: Some(series_id),
             skipped_unchanged: false,
             publisher_hint: None,
@@ -1957,6 +1988,11 @@ async fn run_phases(
             skipped_archive_count: ambiguous.skipped_archive_count,
         });
     }
+    // Links are never followed: a series reached only through one is not in
+    // `present_folders`, so the reconcile below reports it missing.
+    for link in &layout.symlinks {
+        report_skipped_symlink(lib.id, link.clone(), health);
+    }
     // Post-audit T1.1: an unreadable scope is unknown, not absent. Raise a
     // health row per folder and keep every series at or under it out of
     // the "folder missing" sweep below.
@@ -2454,6 +2490,9 @@ async fn process_planned_folder(
             path: u.path,
             error: u.error,
         });
+    }
+    for link in planned.symlinks {
+        report_skipped_symlink(lib.id, link, health);
     }
 
     // Read series.json up-front so the early-skip branches can still

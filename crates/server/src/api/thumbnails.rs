@@ -253,6 +253,11 @@ pub async fn thumb(
         }
     }
 
+    // Same rules as the page routes (`library::no_follow`): no symbolic
+    // link below the root, a regular file, or no thumbnail.
+    if !crate::library::no_follow::issue_path_ok(&app.db, &row).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable");
+    }
     let arc = match app
         .zip_lru
         .get_or_open(&row.id, std::path::Path::new(&row.file_path))

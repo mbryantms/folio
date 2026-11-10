@@ -146,6 +146,25 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — symbolic links in libraries are no longer followed
+
+- **The scanner never follows a symbolic link below a library root**,
+  to a folder or a file, wherever it points. A library organised with
+  symlinked series or publisher folders stops indexing them: after the
+  first scan on this version those series are reported missing and
+  soft-removed (they go through the normal removal lifecycle, so nothing
+  is deleted for weeks), and each link is listed under the library's
+  health findings as *Symbolic link skipped*.
+- **What to do instead:** move the real folder into the library,
+  bind-mount it there (`mount --bind`, or a second volume in the compose
+  file), or add its location as its own library. Once the real folder is
+  in place, the next scan restores the series and its reading history.
+- **The library root itself may still be a link** (`/data/comics ->
+  /mnt/x`); only links *below* the root are refused.
+- Serving follows the same rule: an issue whose file (or a folder above
+  it, below the root) is a link answers not-found. The OPDS download
+  also answers not-found for a soft-removed issue.
+
 ### Unreleased — age-rating caps enforced; library-access `role` removed
 
 - **`library_user_access.age_rating_max` is now enforced.** A user whose

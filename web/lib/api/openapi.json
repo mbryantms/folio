@@ -24663,6 +24663,7 @@
           "NoPages",
           "AmbiguousFolder",
           "DuplicateExternalId",
+          "SymlinkSkipped",
           "MetadataDriftFromXml"
         ]
       },

@@ -142,6 +142,35 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
   - dot-prefixed entries (`.git`, `.DS_Store`, …) are silently skipped
   - built-in skips: `__MACOSX`, `Thumbs.db`, `desktop.ini`, `@eaDir`
   - user-glob ignores apply before classification
+  - **symbolic links are never followed**, wherever they point (out of
+    the root or inside it) and whether they name a folder or a file.
+    Every entry is classified from link-not-following metadata
+    (`symlink_metadata` / `DirEntry::file_type`) and every walk runs with
+    `follow_links(false)` and `follow_root_links(false)`, so a linked
+    publisher folder, series folder or archive is never indexed. Each
+    link met (library top level, directly inside a publisher folder, at
+    the top of an empty / ambiguous folder, anywhere inside a series
+    folder) is logged at INFO with its path and reported as a
+    `SymlinkSkipped` health finding. A series that was indexed through a
+    link is reported missing and soft-removed like any other (§4.5); it
+    returns when the real folder is placed in the library. A
+    single-series rescan refuses a folder that is, or sits under, a link.
+    A `series.json` that is a link is not read. The file watcher does not
+    follow links either (`notify::Config::with_follow_symlinks(false)`),
+    and a link appearing triggers a scoped scan so the finding is
+    recorded.
+  - **The library root is the one link resolved.** The configured root
+    path may itself be (or pass through) a link (`/data/comics ->
+    /mnt/x`, a bind-mount path): `validate_library` canonicalizes it, the
+    walk opens it as configured, and stored paths keep the configured
+    spelling. Nothing below it is followed.
+  - **Serving** goes through the same rule: the routes that hand an
+    issue's file to a reader (OPDS download, page bytes, OPDS page
+    stream, inline thumbnails, OCR) open it through
+    [`library::no_follow`](../../crates/server/src/library/no_follow.rs),
+    which walks from the root one name at a time with `O_NOFOLLOW` and
+    accepts only a regular file; anything else answers not-found with a
+    WARN naming the issue and the reason.
 
 #### Two supported on-disk layouts
 
@@ -782,6 +811,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `FileAtRoot` | warning | Archive sits at the library root, not inside a series folder. | [enumerate Phase 2 → mod.rs:1138](../../crates/server/src/library/scanner/mod.rs#L1138) | `{ path }` | Move into a series folder. |
 | `EmptyFolder` | warning | Direct child of root has no entries. | [enumerate Phase 2 → mod.rs:1141](../../crates/server/src/library/scanner/mod.rs#L1141) | `{ path }` | Add files or remove the folder. |
 | `AmbiguousFolder` | warning | Folder violates the two-layouts contract: archives at depth-1 *and* non-allowlist archive-bearing subdirs; or no archives at depth-1 with only allowlist subdirs; or 3-deep nesting; or a stray archive directly inside a publisher folder. The subtree is skipped — better than guessing. | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, reason, skipped_archives, skipped_archive_count }` — `reason` carries an actionable hint that adapts to the violation shape; `skipped_archives` is a sorted preview (≤ `enumerate::AMBIGUOUS_PREVIEW_LIMIT` = 20) of the skipped archives relative to `path`, `skipped_archive_count` the exact total (WP-3.4). Rows written before WP-3.4 lack both until the next full scan. | Fix the on-disk layout per §4.2 "Two supported on-disk layouts". |
+| `SymlinkSkipped` | warning | A symbolic link below the library root (folder or file, wherever it points). Links are never followed, so nothing behind it is indexed; a series indexed through one before is reported missing and soft-removed. One INFO log line per link. Resolves on the next full scan after the link is removed or replaced by the real folder / file. | [enumerate.rs](../../crates/server/src/library/scanner/enumerate.rs) (`EnumerationResult::symlinks`, `ArchiveWalk::symlinks`) → Phase 2 / `process_planned_folder` in [mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path }` | Put the real folder or file in the library (or bind-mount it there), or add its location as its own library. |
 | `OrphanedSeriesJson` | warning | A folder with no archives still holds a `series.json` — the sidecar outlived its archives. Reported *instead of* `EmptyFolder` for that folder (root children and folders under a publisher container). | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ folder }` | Restore the archives, or delete the folder. |
 | `FolderNameMismatch` | warning | The series folder's name disagrees with the dominant ComicInfo `<Series>` of its non-special archives (spec §7.1 — ComicInfo still wins for the series name). See "Folder consistency checks" below for the normalization that keeps this quiet on healthy libraries. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs), called from `process_planned_folder` after ingest | `{ folder, series_id, comic_info_series, files }` | Rename the folder, or re-tag the archives if the folder is right. |
 | `MixedSeriesInFolder` | warning | Non-special archives in one series folder carry more than one distinct `<Series>` (spec §7.2). All files stay attributed to the folder's series. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs) | `{ folder, series_id, series_values: [{ series, files, example }], distinct_values }` — values sorted most-files-first, capped at `MIXED_SERIES_VALUES_LIMIT` = 10; `example` is one file (relative to the folder) carrying the value. | Move the stray archives into their own series folder. |
@@ -1136,13 +1166,15 @@ deletion:
   point, the batch fails (`RootVanished`) and the library is aborted for
   the run, nothing from that batch confirmed or deleted. The purge also
   re-runs `validate_library` before every DELETE chunk.
-- **Symlinked folders pointing out of the root get no protection.** A
-  series or publisher folder that is a symlink to somewhere outside the
-  library root is indexed by today's scanner (depth-1 / depth-2 folders
-  are classified through `metadata`, which follows links), but these
-  guards never follow a link out of the root, so its rows read as absent
-  and are confirmed and purged on schedule. The planned "never follow
-  symlinks" scanner change makes the two agree.
+- **Symbolic links.** The scanner never follows a link below the root
+  (§4.2), and the guards agree: a path through a linked folder that
+  points out of the root reads absent, and a linked series folder reads
+  absent to `folder_presence` (its walk does not follow the walked
+  folder's own link). The one remaining difference fails safe: a stored
+  archive path through a linked folder that points *inside* the root
+  reads present to `archive_presence` (its canonical path is in the
+  root), so that row stays removed but unconfirmed, like a folder whose
+  archives never ingest.
 - **Confirm sweep.** Candidates (soft-removed past the window,
   unconfirmed) are read oldest first in keyset pages of 500, at most
   20 000 issue rows and 20 000 series rows per library per run

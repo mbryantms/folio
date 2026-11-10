@@ -206,6 +206,16 @@ pub enum IssueKind {
     /// scanner skips that one ID rather than aborting. Base-only
     /// barcodes (a UPC/EAN without its 5-digit add-on names the series,
     /// not the issue) never raise this — `writers::is_base_only_barcode`.
+    /// A symbolic link below the library root. Folio never follows links
+    /// (not to folders, not to files, wherever they point), so nothing
+    /// behind it is indexed; a series that was indexed through it is
+    /// reported missing and soft-removed like any other. Resolves on the
+    /// next full scan after the link is replaced by the real folder or file
+    /// (or removed). Emitted from enumeration (library top level, publisher
+    /// folders) and from the archive walk inside series folders.
+    SymlinkSkipped {
+        path: PathBuf,
+    },
     DuplicateExternalId {
         path: PathBuf,
         source: String,
@@ -253,6 +263,7 @@ impl IssueKind {
             Self::NoPages { .. } => HealthIssueKind::NoPages,
             Self::AmbiguousFolder { .. } => HealthIssueKind::AmbiguousFolder,
             Self::DuplicateExternalId { .. } => HealthIssueKind::DuplicateExternalId,
+            Self::SymlinkSkipped { .. } => HealthIssueKind::SymlinkSkipped,
         }
     }
 
@@ -276,6 +287,7 @@ impl IssueKind {
             | Self::UnreadablePage { .. }
             | Self::NoPages { .. }
             | Self::AmbiguousFolder { .. }
+            | Self::SymlinkSkipped { .. }
             | Self::DuplicateExternalId { .. } => Severity::Warning,
 
             Self::MissingComicInfo { .. } | Self::RecoveredArchive { .. } => Severity::Info,
@@ -333,6 +345,7 @@ impl IssueKind {
                 format!("SkippedArchiveEntries:{}:{reason}", path.display())
             }
             Self::NoPages { path } => format!("NoPages:{}", path.display()),
+            Self::SymlinkSkipped { path } => format!("SymlinkSkipped:{}", path.display()),
             Self::UnreadablePage {
                 path, page_index, ..
             } => {
@@ -393,6 +406,7 @@ impl IssueKind {
             | Self::UnreadablePage { path, .. }
             | Self::NoPages { path }
             | Self::AmbiguousFolder { path, .. }
+            | Self::SymlinkSkipped { path }
             | Self::DuplicateExternalId { path, .. } => Some(path.to_string_lossy().into_owned()),
             Self::FolderNameMismatch { folder, .. } => Some(folder.clone()),
             Self::MixedSeriesInFolder { folder, .. } | Self::OrphanedSeriesJson { folder } => {
@@ -698,7 +712,15 @@ impl HealthCollector {
         //   - bump last_seen_at + scan_id + payload + severity (latest wins)
         //   - re-open: clear resolved_at if the issue had been auto-resolved
         // We deliberately do NOT clear dismissed_at — admin choice is sticky.
-        for chunk in self.issues.chunks(500) {
+        // One row per fingerprint: Postgres refuses an `ON CONFLICT DO
+        // UPDATE` that touches the same row twice in one statement.
+        let mut seen = HashSet::new();
+        let unique: Vec<&IssueKind> = self
+            .issues
+            .iter()
+            .filter(|i| seen.insert(i.fingerprint()))
+            .collect();
+        for chunk in unique.chunks(500) {
             let rows = chunk.iter().map(|issue| library_health_issue::ActiveModel {
                 id: Set(Uuid::now_v7()),
                 library_id: Set(self.library_id),
