@@ -164,9 +164,10 @@ pub struct EntityDetailView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EnrichmentStatus {
-    /// No provider is configured, or this kind has no provider records.
+    /// No provider is configured, this kind has no provider records, or
+    /// nothing is cached and the caller may not queue a fetch.
     Unavailable,
-    /// Queued (by this page view or earlier) and not fetched yet.
+    /// Queued (by an admin's page view or Refresh) and not fetched yet.
     Pending,
     Done,
     Failed,
@@ -1146,7 +1147,10 @@ pub(crate) async fn detail_handler(
                 .collect()
         })
         .unwrap_or_default();
-    let (profile, enrichment, enrichment_error) = profile_state(app, kind, row.id).await;
+    // Only an admin's view may queue a provider fetch: it spends the
+    // admin's provider budget. A reader is served whatever is cached.
+    let may_fetch = user.role == entity::user::UserRole::Admin;
+    let (profile, enrichment, enrichment_error) = profile_state(app, kind, row.id, may_fetch).await;
     let links = entity_links(app, kind, row.id).await;
     Json(EntityDetailView {
         kind: kind.path().to_owned(),
@@ -1179,14 +1183,19 @@ fn profile_kind(kind: EntityKind) -> Option<ProfileKind> {
     }
 }
 
-/// Read the profile row and queue a fetch when the page is seen for the
-/// first time (or an earlier request never completed). The queueing is
-/// best effort: a Redis hiccup leaves the page reporting "pending" and
-/// the next view tries again.
+/// Read the profile row and, when `may_fetch` (an admin's view), queue a
+/// fetch when the page is seen for the first time (or an earlier request
+/// never completed). The queueing is best effort: a Redis hiccup leaves
+/// the page reporting "pending" and the next view tries again.
+///
+/// A reader's view (`may_fetch = false`) never queues provider traffic:
+/// it gets the cached profile, "pending" while a fetch an admin queued is
+/// still in flight, and "unavailable" when nothing is cached or coming.
 async fn profile_state(
     app: &AppState,
     kind: EntityKind,
     entity_id: Uuid,
+    may_fetch: bool,
 ) -> (Option<EntityProfileView>, EnrichmentStatus, Option<String>) {
     let Some(pk) = profile_kind(kind) else {
         return (None, EnrichmentStatus::Unavailable, None);
@@ -1209,6 +1218,9 @@ async fn profile_state(
         })
     });
     if !fetched && stale_request {
+        if !may_fetch {
+            return (None, EnrichmentStatus::Unavailable, None);
+        }
         if let Err(e) = crate::jobs::entity_enrich::enqueue(app, pk, entity_id, false).await {
             tracing::warn!(entity_id = %entity_id, error = %e, "entity profile: enqueue failed");
         }
