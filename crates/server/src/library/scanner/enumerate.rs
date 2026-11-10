@@ -24,6 +24,20 @@
 //! [`EnumerationResult::ambiguous_folders`].
 //!
 //! Hidden folders (dot-prefixed) and ignore-globs are skipped silently.
+//!
+//! **Symbolic links are never followed**, wherever they point (outside the
+//! root or inside it), and whether they name a folder or a file: every
+//! entry is classified from link-not-following metadata
+//! (`symlink_metadata` / `DirEntry::file_type`) and every walk runs with
+//! `follow_links(false)` *and* `follow_root_links(false)`. A link is
+//! neither a series, a publisher nor an archive; it is collected into
+//! [`EnumerationResult::symlinks`] / [`ArchiveWalk::symlinks`] and the
+//! scanner reports each one as
+//! [`crate::library::health::IssueKind::SymlinkSkipped`]. The library root
+//! is the one exception: the configured root path may itself be (or pass
+//! through) a link, a deployment choice such as `/data/comics -> /mnt/x`.
+//! It is resolved by the kernel when the root is opened, the same way
+//! `validate_library` canonicalizes it, and nothing below it is followed.
 
 use crate::library::ignore::IgnoreRules;
 use std::path::{Path, PathBuf};
@@ -80,6 +94,12 @@ pub struct EnumerationResult {
     /// [`crate::library::health::IssueKind::OrphanedSeriesJson`] *instead
     /// of* `EmptyFolder` (the folder isn't empty; it's orphaned).
     pub orphaned_series_json: Vec<PathBuf>,
+    /// Symbolic links met at the library top level, directly inside a
+    /// publisher folder, or at the top of a folder that is not a series
+    /// (empty, ambiguous, unreadable). Never followed; reported as
+    /// [`crate::library::health::IssueKind::SymlinkSkipped`]. Links inside a
+    /// series folder come from that folder's walk ([`ArchiveWalk::symlinks`]).
+    pub symlinks: Vec<PathBuf>,
 }
 
 /// Upper bound on how many skipped archive paths an
@@ -118,7 +138,7 @@ impl AmbiguousFolder {
 /// keeping the first [`AMBIGUOUS_PREVIEW_LIMIT`] (by sorted relative
 /// path). A stray archive file previews as itself.
 fn preview_skipped_archives(path: &Path, ignore: &IgnoreRules) -> (Vec<String>, u32) {
-    if path.is_file() {
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file()) {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -143,7 +163,7 @@ fn preview_skipped_archives(path: &Path, ignore: &IgnoreRules) -> (Vec<String>, 
 /// An archive-less folder that still holds a `series.json` is an orphaned
 /// sidecar, not an empty folder.
 fn has_series_json(folder: &Path) -> bool {
-    folder.join("series.json").is_file()
+    std::fs::symlink_metadata(folder.join("series.json")).is_ok_and(|m| m.is_file())
 }
 
 #[derive(Debug, Default)]
@@ -155,6 +175,10 @@ pub struct ArchiveWalk {
     /// directories were not seen, so the folder must not authorise their
     /// removal (post-audit T1.1).
     pub unreadable: Vec<UnreadableFolder>,
+    /// Symbolic links met in the walk (the walked folder itself included,
+    /// when it is one). Never followed; reported as
+    /// [`crate::library::health::IssueKind::SymlinkSkipped`].
+    pub symlinks: Vec<PathBuf>,
 }
 
 impl ArchiveWalk {
@@ -293,6 +317,8 @@ pub fn enumerate_with(root: &Path, ignore: &IgnoreRules) -> std::io::Result<Enum
     for child in read_dir_filtered(root, ignore)? {
         classify_root_child(child, ignore, &mut result);
     }
+    result.symlinks.sort();
+    result.symlinks.dedup();
 
     Ok(result)
 }
@@ -302,7 +328,8 @@ pub fn enumerate_with(root: &Path, ignore: &IgnoreRules) -> std::io::Result<Enum
 /// watcher-scoped [`enumerate_scoped`] walk so both produce identical
 /// series candidates for the same on-disk shape.
 fn classify_root_child(child: PathBuf, ignore: &IgnoreRules, result: &mut EnumerationResult) {
-    let ft = match std::fs::metadata(&child) {
+    // `symlink_metadata`: a link is never classified as what it points to.
+    let ft = match std::fs::symlink_metadata(&child) {
         Ok(m) => m.file_type(),
         Err(e) => {
             if is_unreadable(&e) {
@@ -311,6 +338,10 @@ fn classify_root_child(child: PathBuf, ignore: &IgnoreRules, result: &mut Enumer
             return;
         }
     };
+    if ft.is_symlink() {
+        result.symlinks.push(child);
+        return;
+    }
     if ft.is_file() {
         // Spec §2.2: no archive files at the library root.
         result.files_at_root.push(child);
@@ -320,7 +351,10 @@ fn classify_root_child(child: PathBuf, ignore: &IgnoreRules, result: &mut Enumer
         return;
     }
 
-    match classify_folder(&child, ignore) {
+    let mut links = Vec::new();
+    let shape = classify_folder(&child, ignore, &mut links);
+    keep_links_of_non_series(&shape, links, result);
+    match shape {
         FolderShape::SeriesFolder => result.series_folders.push(SeriesCandidate {
             path: child,
             publisher_hint: None,
@@ -406,7 +440,7 @@ pub fn enumerate_scoped(
             .filter_map(|s| top_of(s).flatten())
             .collect();
         for child in read_dir_filtered(root, ignore)? {
-            let meta = match std::fs::metadata(&child) {
+            let meta = match std::fs::symlink_metadata(&child) {
                 Ok(m) => m,
                 Err(e) => {
                     if is_unreadable(&e) {
@@ -415,14 +449,21 @@ pub fn enumerate_scoped(
                     continue;
                 }
             };
-            if meta.is_file() {
+            if meta.is_symlink() {
+                result.symlinks.push(child);
+            } else if meta.is_file() {
                 result.files_at_root.push(child);
             } else if meta.is_dir() && !known_tops.contains(&child) {
                 tops.insert(child);
             }
         }
         for known_top in known_tops {
-            match std::fs::metadata(&known_top) {
+            match std::fs::symlink_metadata(&known_top) {
+                // Replaced by a link: in scope, so its series reconcile away
+                // (the classification below reports the link).
+                Ok(m) if m.is_symlink() => {
+                    tops.insert(known_top);
+                }
                 Ok(_) => {}
                 // Gone for real: in scope, so its series reconcile away.
                 Err(e) if !is_unreadable(&e) => {
@@ -435,10 +476,13 @@ pub fn enumerate_scoped(
     }
 
     for top in &tops {
-        if top.is_dir() && !ignore.should_skip_user(top) {
+        let classify = std::fs::symlink_metadata(top).is_ok_and(|m| m.is_dir() || m.is_symlink());
+        if classify && !ignore.should_skip_user(top) {
             classify_root_child(top.clone(), ignore, &mut result);
         }
     }
+    result.symlinks.sort();
+    result.symlinks.dedup();
 
     let present_series = result
         .series_folders
@@ -473,7 +517,7 @@ fn classify_publisher_children(
         }
     };
     for sub in children {
-        let ft = match std::fs::metadata(&sub) {
+        let ft = match std::fs::symlink_metadata(&sub) {
             Ok(m) => m.file_type(),
             Err(e) => {
                 if is_unreadable(&e) {
@@ -482,6 +526,10 @@ fn classify_publisher_children(
                 continue;
             }
         };
+        if ft.is_symlink() {
+            result.symlinks.push(sub);
+            continue;
+        }
         if !ft.is_dir() {
             // Stray files inside a publisher folder violate the contract.
             if ft.is_file() {
@@ -506,7 +554,10 @@ fn classify_publisher_children(
             continue;
         }
 
-        match classify_folder(&sub, ignore) {
+        let mut links = Vec::new();
+        let shape = classify_folder(&sub, ignore, &mut links);
+        keep_links_of_non_series(&shape, links, result);
+        match shape {
             FolderShape::SeriesFolder => result.series_folders.push(SeriesCandidate {
                 path: sub,
                 publisher_hint: publisher_name.clone(),
@@ -550,7 +601,26 @@ enum FolderShape {
     Unreadable(String),
 }
 
-/// Classify a directory per the two-layouts contract.
+/// Links at the top of a folder the scanner will not walk as a series (empty,
+/// ambiguous, unreadable) are reported from here; a series folder's own walk
+/// reports its links, and a publisher container's children are classified
+/// (links included) by [`classify_publisher_children`].
+fn keep_links_of_non_series(
+    shape: &FolderShape,
+    links: Vec<PathBuf>,
+    result: &mut EnumerationResult,
+) {
+    if !matches!(
+        shape,
+        FolderShape::SeriesFolder | FolderShape::PublisherContainer
+    ) {
+        result.symlinks.extend(links);
+    }
+}
+
+/// Classify a directory per the two-layouts contract. Depth-1 symbolic
+/// links are never followed (`DirEntry::file_type` does not follow them);
+/// they are pushed onto `links` for the caller.
 ///
 /// - Has archives at depth-1 → series folder (Layout A). Subfolders
 ///   are walked recursively by the existing archive walker; their
@@ -560,7 +630,7 @@ enum FolderShape {
 /// - Has no archives at depth-1, all archive-bearing subdirs are
 ///   allowlist-named → contract violation (series with only specials).
 /// - Has nothing → empty.
-fn classify_folder(folder: &Path, ignore: &IgnoreRules) -> FolderShape {
+fn classify_folder(folder: &Path, ignore: &IgnoreRules, links: &mut Vec<PathBuf>) -> FolderShape {
     use crate::library::ignore::is_recognized_archive_ext;
 
     let mut has_archive_at_d1 = false;
@@ -595,6 +665,11 @@ fn classify_folder(folder: &Path, ignore: &IgnoreRules) -> FolderShape {
             Ok(t) => t,
             Err(_) => continue,
         };
+
+        if ft.is_symlink() {
+            links.push(path);
+            continue;
+        }
 
         if ft.is_file() {
             let ext = path
@@ -678,6 +753,7 @@ fn subdir_has_archive(folder: &Path, ignore: &IgnoreRules) -> Result<bool, walkd
     let mut first_error = None;
     for entry in WalkDir::new(folder)
         .follow_links(false)
+        .follow_root_links(false)
         .into_iter()
         .filter_entry(|e| !ignore.should_skip(e.path()))
     {
@@ -757,6 +833,7 @@ pub fn walk_archives_with(folder: &Path, ignore: &IgnoreRules) -> ArchiveWalk {
     let mut out = ArchiveWalk::default();
     for entry in WalkDir::new(folder)
         .follow_links(false)
+        .follow_root_links(false)
         .into_iter()
         .filter_entry(|e| !ignore.should_skip(e.path()))
     {
@@ -767,6 +844,10 @@ pub fn walk_archives_with(folder: &Path, ignore: &IgnoreRules) -> ArchiveWalk {
                 continue;
             }
         };
+        if entry.file_type().is_symlink() {
+            out.symlinks.push(entry.into_path());
+            continue;
+        }
         if !entry.file_type().is_file() {
             continue;
         }
@@ -824,6 +905,13 @@ impl Presence {
 /// - its canonical path stays inside the canonical root, so a symlinked
 ///   folder that points out of the library never makes a file "present".
 ///
+/// The scanner never follows a symbolic link below the root (module docs),
+/// so a path through a linked folder pointing *out* of the root is absent
+/// to both. A path through a linked folder pointing *inside* the root reads
+/// present here (its canonical path is in the root) although no scan indexes
+/// it at that path: the one difference, and it fails safe (the row is kept,
+/// neither confirmed nor purged).
+///
 /// A stat that fails with anything but the not-found class is
 /// [`Presence::Unknown`], never absent. `root_canon` is
 /// `canonicalize(root)`, computed once by the caller. Blocking: run it on
@@ -877,7 +965,8 @@ pub fn archive_presence(
 /// Does the series `folder` (inside `root`) hold an archive a scan would
 /// index, other than those `exclude` rejects? Same rules as
 /// [`archive_presence`]: the folder must resolve inside the canonical root,
-/// and the walk is [`walk_archives_with`] itself. `Present` as soon as one
+/// and the walk is [`walk_archives_with`] itself (which, like the scan,
+/// never follows a link, the walked folder included). `Present` as soon as one
 /// archive is; otherwise `Unknown` when the walk met an unreadable folder or
 /// an archive it could not stat, else `Absent`. Blocking.
 pub fn folder_presence(
@@ -947,6 +1036,7 @@ pub fn list_archives_changed_since(
     let mut out = ArchiveWalk::default();
     for entry in WalkDir::new(folder)
         .follow_links(false)
+        .follow_root_links(false)
         .into_iter()
         .filter_entry(|e| !ignore.should_skip(e.path()))
     {
@@ -970,6 +1060,10 @@ pub fn list_archives_changed_since(
             }
         }
 
+        if entry.file_type().is_symlink() {
+            out.symlinks.push(entry.into_path());
+            continue;
+        }
         if !entry.file_type().is_file() {
             continue;
         }
@@ -993,6 +1087,7 @@ pub fn folder_changed_since(folder: &Path, since: chrono::DateTime<chrono::Utc>)
     use walkdir::WalkDir;
     for entry in WalkDir::new(folder)
         .follow_links(false)
+        .follow_root_links(false)
         .into_iter()
         .filter_map(Result::ok)
     {
@@ -1382,6 +1477,84 @@ mod tests {
             enumerate_scoped(root, &IgnoreRules::default(), &[root.to_path_buf()], &known).unwrap();
         assert!(scoped.tops.is_empty(), "{:?}", scoped.tops);
         assert_eq!(scoped.result.files_at_root.len(), 1);
+    }
+
+    /// Links are never classified as what they point to: at the top level,
+    /// inside a publisher folder and inside a series walk, each is reported.
+    #[test]
+    fn links_are_reported_not_followed() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("lib");
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        write_empty(&outside.join("x.cbz"));
+        let real = root.join("Real");
+        fs::create_dir_all(&real).unwrap();
+        write_empty(&real.join("001.cbz"));
+        let marvel = root.join("Marvel");
+        fs::create_dir_all(marvel.join("Thor")).unwrap();
+        write_empty(&marvel.join("Thor").join("001.cbz"));
+        symlink(&outside, root.join("Out")).unwrap();
+        symlink(&real, root.join("In")).unwrap();
+        symlink(&outside, marvel.join("Linked")).unwrap();
+        symlink(outside.join("x.cbz"), real.join("002.cbz")).unwrap();
+
+        let result = enumerate(&root).unwrap();
+        let mut series: Vec<_> = result
+            .series_folders
+            .iter()
+            .map(|c| c.path.clone())
+            .collect();
+        series.sort();
+        assert_eq!(series, vec![marvel.join("Thor"), real.clone()]);
+        assert_eq!(
+            result.symlinks,
+            vec![root.join("In"), marvel.join("Linked"), root.join("Out")]
+        );
+        let walk = walk_archives_with(&real, &IgnoreRules::default());
+        assert_eq!(walk.archives, vec![real.join("001.cbz")]);
+        assert_eq!(walk.symlinks, vec![real.join("002.cbz")]);
+        // A walk rooted at a link does not descend into it.
+        let walk = walk_archives_with(&root.join("In"), &IgnoreRules::default());
+        assert!(walk.archives.is_empty());
+        assert_eq!(walk.symlinks, vec![root.join("In")]);
+    }
+
+    /// Scoped (watcher) enumeration: a known top-level series folder that
+    /// was replaced by a link is in scope (its series reconcile away), is
+    /// not present, and the link is reported.
+    #[test]
+    fn scoped_enumeration_treats_a_known_top_replaced_by_a_link_as_gone() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("lib");
+        let saga = root.join("Saga");
+        let other = root.join("Other");
+        for d in [&saga, &other] {
+            fs::create_dir_all(d).unwrap();
+            write_empty(&d.join("001.cbz"));
+        }
+        let known: std::collections::HashSet<PathBuf> =
+            [saga.clone(), other.clone()].into_iter().collect();
+        let moved = tmp.path().join("moved");
+        fs::rename(&saga, &moved).unwrap();
+        symlink(&moved, &saga).unwrap();
+
+        let scoped = enumerate_scoped(
+            &root,
+            &IgnoreRules::default(),
+            std::slice::from_ref(&root),
+            &known,
+        )
+        .unwrap();
+        assert_eq!(scoped.tops, vec![saga.clone()]);
+        assert!(
+            scoped.present_series.is_empty(),
+            "{:?}",
+            scoped.present_series
+        );
+        assert_eq!(scoped.result.symlinks, vec![saga.clone()]);
     }
 }
 

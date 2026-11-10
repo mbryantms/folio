@@ -131,6 +131,11 @@ pub async fn backfill_issue(
     if pages.is_empty() {
         return Ok(outcome);
     }
+    // The reader this opens is cached in `zip_lru` for the page routes:
+    // same no-symlink rule as they apply (`library::no_follow`).
+    if !crate::library::no_follow::issue_path_ok(state, row).await {
+        return Ok(outcome);
+    }
     let Ok(arc) = state
         .zip_lru
         .get_or_open(&row.id, Path::new(&row.file_path))
