@@ -298,7 +298,7 @@ async fn series_list(
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -385,7 +385,7 @@ async fn browse(
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -638,7 +638,7 @@ async fn series_one(
     // exposes in the `<feed>` element so clients render a series
     // banner (cover + author byline + publisher + year + genre
     // chips) instead of just the title and the issue grid.
-    let series_facets = opds::fetch_series_facets(&app.db, &[s.id]).await;
+    let series_facets = opds::fetch_series_facets(&app.db, &[s.id], &acl).await;
     let cover_map = crate::api::series::series_cover_issue_ids(&app.db, &[s.id], &acl).await;
     let cover_id = cover_map.get(&s.id).map(String::as_str);
     let mut metadata = serde_json::Map::new();
@@ -961,7 +961,6 @@ async fn by_creator(
     AxPath(writer): AxPath<String>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    use entity::series_credit;
     let writer = urlencoding::decode(&writer)
         .map(|s| s.into_owned())
         .unwrap_or(writer);
@@ -972,16 +971,10 @@ async fn by_creator(
         Err(e) => return server_error(e),
     };
 
-    let credit_rows = match series_credit::Entity::find()
-        .filter(series_credit::Column::Role.eq("writer"))
-        .filter(series_credit::Column::Person.eq(writer.clone()))
-        .all(&app.db)
-        .await
-    {
-        Ok(r) => r,
+    let series_ids = match opds::writer_series_ids(&app.db, &writer, &allowed).await {
+        Ok(ids) => ids,
         Err(e) => return server_error(e.to_string()),
     };
-    let series_ids: Vec<Uuid> = credit_rows.iter().map(|c| c.series_id).collect();
 
     let self_href = if page > 1 {
         format!(
@@ -1024,7 +1017,7 @@ async fn by_creator(
     };
     let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &result_ids, &allowed).await;
-    let facets = opds::fetch_series_facets(&app.db, &result_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &result_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -1096,7 +1089,7 @@ async fn search(
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -1487,7 +1480,7 @@ async fn view_acq(
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &visible).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &visible).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -2121,7 +2114,7 @@ async fn render_collection_acq_v2(
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
     let series_covers =
         crate::api::series::series_cover_issue_ids(&app.db, &collection_series_ids, &visible).await;
-    let series_facets = opds::fetch_series_facets(&app.db, &collection_series_ids).await;
+    let series_facets = opds::fetch_series_facets(&app.db, &collection_series_ids, &visible).await;
 
     // Walk rows in position order so series + issues retain the
     // collection's logical sequence.

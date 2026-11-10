@@ -249,6 +249,9 @@ pub async fn update(
                     locked_msg,
                 );
             }
+            PasswordCheck::Internal => {
+                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
             PasswordCheck::Wrong => {
                 tracing::info!(reason = "bad_password", "email change rejected");
                 return fail_password(StatusCode::FORBIDDEN, ApiErrorCode::AuthInvalid, wrong_msg);
@@ -313,6 +316,9 @@ pub async fn update(
                         locked_msg,
                     );
                 }
+                PasswordCheck::Internal => {
+                    return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
                 PasswordCheck::Wrong => {
                     tracing::info!(reason = "bad_password", "password change rejected");
                     return fail_password(
@@ -339,11 +345,13 @@ pub async fn update(
     // Hash outside the transaction (argon2 is slow; the row lock is not
     // held for it).
     let new_hash = match new_pw.filter(|_| password_change) {
-        Some(new_pw) => match password::hash(
+        Some(new_pw) => match password::hash_blocking(
             new_pw,
             app.secrets.pepper.as_ref(),
             app.cfg().password_hash_cost,
-        ) {
+        )
+        .await
+        {
             Ok(h) => Some(h),
             Err(e) => {
                 tracing::error!(error = %e, "argon2 rehash failed");

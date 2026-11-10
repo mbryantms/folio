@@ -34,6 +34,7 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import { statusTone } from "@/lib/ui/status-tone";
+import { authErrorText } from "@/lib/auth/error-text";
 import type { PublicAuthConfigView } from "@/lib/api/types";
 
 const loginSchema = z.object({
@@ -276,7 +277,9 @@ function BannerStrip({
   if (banner === "error") {
     return (
       <Banner tone="error">
-        {errorMessage ?? "Sign-in failed. Please try again."}
+        {authErrorText(errorMessage) ??
+          errorMessage ??
+          "Sign-in failed. Please try again."}
       </Banner>
     );
   }

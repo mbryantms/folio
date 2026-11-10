@@ -164,14 +164,18 @@ pub fn build_csp(template: &CspTemplate, nonce: Option<&str>) -> HeaderValue {
     HeaderValue::from_str(&csp).expect("valid csp")
 }
 
-/// Page paths (locale-aware) that must use a stricter Referrer-Policy: never
-/// emit a `Referer` header on outbound navigations. Credentials accidentally
-/// landed in the URL must not leak to the next site the user visits.
+/// Page paths (locale-aware) that use the stricter `same-origin`
+/// Referrer-Policy: no `Referer` ever goes to another site, so credentials
+/// that accidentally landed in the URL, or a reset token, cannot leak to the
+/// next site the user visits. Not `no-referrer`: under it a browser sends
+/// `Origin: null` on the page's own same-origin form posts, which the
+/// cross-site guard on the sign-in POSTs (`auth::origin`) refuses when the
+/// browser sends no `Sec-Fetch-Site`. The server logs no `Referer`.
 ///
 /// Match is a suffix check on the path (so `/en/sign-in` and `/sign-in` both
 /// hit). next-intl drops the prefix when only one locale is active, so both
 /// shapes occur in practice.
-fn path_needs_no_referrer(path: &str) -> bool {
+fn path_needs_strict_referrer(path: &str) -> bool {
     const SUFFIXES: &[&str] = &["/sign-in", "/forgot-password", "/reset-password"];
     SUFFIXES.iter().any(|s| path == *s || path.ends_with(s))
 }
@@ -191,7 +195,7 @@ pub async fn set_headers(
     mut req: Request,
     next: Next,
 ) -> Response {
-    let needs_no_referrer = path_needs_no_referrer(req.uri().path());
+    let needs_strict_referrer = path_needs_strict_referrer(req.uri().path());
     let nonce = req.extensions().get::<Nonce>().map(|n| n.0.clone());
     let csp = build_csp(&template, nonce.as_deref());
 
@@ -222,13 +226,15 @@ pub async fn set_headers(
         "max-age=63072000; includeSubDomains"
     );
     set!("x-content-type-options", "nosniff");
-    if needs_no_referrer {
-        // Auth pages: zero referrer leakage. If the user's URL ever
+    if needs_strict_referrer {
+        // Auth pages: no referrer to any other site. If the user's URL ever
         // contained credentials (today's progressive-enhancement guard
         // makes this impossible for new submits, but old browser
-        // history entries may still hold one), the next page they
-        // navigate to won't receive it.
-        set!("referrer-policy", "no-referrer");
+        // history entries may still hold one) or a reset token, the next
+        // site they navigate to won't receive it. Same-origin requests
+        // keep their `Referer` and a real `Origin` (see
+        // `path_needs_strict_referrer`).
+        set!("referrer-policy", "same-origin");
     } else {
         set!("referrer-policy", "strict-origin-when-cross-origin");
     }

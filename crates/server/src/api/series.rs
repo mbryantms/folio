@@ -1826,26 +1826,65 @@ fn apply_series_direct_column_filters(
     select
 }
 
+/// `EXISTS` over one `series_*` rollup junction, or — for a caller whose
+/// cap hides anything (`acl.hides_any()`) — over its `issue_*` twin on the
+/// issues that caller can see. The rollup is the union of every issue in
+/// the series, so a value carried only by an issue above the cap must not
+/// select the series (WP-2.7, same rule as the cast filters below).
+/// `cond` is the value condition over alias `j` (same columns in both
+/// tables); `values` bind as `$1..`.
+fn rollup_exists(
+    acl: &access::VisibleLibraries,
+    rollup: &str,
+    twin: &str,
+    cond: &str,
+    values: Vec<Value>,
+) -> sea_orm::sea_query::SimpleExpr {
+    if !acl.hides_any() {
+        return Expr::cust_with_values(
+            format!("EXISTS (SELECT 1 FROM {rollup} j WHERE j.series_id = series.id AND {cond})"),
+            values,
+        );
+    }
+    let mut params = values;
+    let cap = acl.issue_cap_sql("i", &mut params);
+    Expr::cust_with_values(
+        format!(
+            "EXISTS (SELECT 1 FROM {twin} j JOIN issues i ON i.id = j.issue_id \
+               WHERE i.series_id = series.id AND i.removed_at IS NULL \
+                 AND i.state = 'active'{cap} AND {cond})"
+        ),
+        params,
+    )
+}
+
 /// Genres + tags via the per-series junction tables.
 fn apply_series_junction_facet_filters(
     mut select: sea_orm::Select<series::Entity>,
     q: &ListSeriesQuery,
+    acl: &access::VisibleLibraries,
 ) -> sea_orm::Select<series::Entity> {
     if let Some(raw) = q.genres.as_deref() {
         let values = split_csv(raw);
         if !values.is_empty() {
-            select = select.filter(Expr::cust_with_values(
-                "EXISTS (SELECT 1 FROM series_genres sg WHERE sg.series_id = series.id AND sg.genre = ANY($1))",
-                [values],
+            select = select.filter(rollup_exists(
+                acl,
+                "series_genres",
+                "issue_genres",
+                "j.genre = ANY($1)",
+                vec![Value::from(values)],
             ));
         }
     }
     if let Some(raw) = q.tags.as_deref() {
         let values = split_csv(raw);
         if !values.is_empty() {
-            select = select.filter(Expr::cust_with_values(
-                "EXISTS (SELECT 1 FROM series_tags st WHERE st.series_id = series.id AND st.tag = ANY($1))",
-                [values],
+            select = select.filter(rollup_exists(
+                acl,
+                "series_tags",
+                "issue_tags",
+                "j.tag = ANY($1)",
+                vec![Value::from(values)],
             ));
         }
     }
@@ -1856,6 +1895,7 @@ fn apply_series_junction_facet_filters(
 fn apply_series_credit_role_filters(
     mut select: sea_orm::Select<series::Entity>,
     q: &ListSeriesQuery,
+    acl: &access::VisibleLibraries,
 ) -> sea_orm::Select<series::Entity> {
     let credit_facets: [(Option<&str>, &'static str); 8] = [
         (q.writers.as_deref(), "writer"),
@@ -1873,9 +1913,12 @@ fn apply_series_credit_role_filters(
         if values.is_empty() {
             continue;
         }
-        select = select.filter(Expr::cust_with_values(
-            "EXISTS (SELECT 1 FROM series_credits sc WHERE sc.series_id = series.id AND sc.role = $1 AND sc.person = ANY($2))",
-            [Value::from(role), Value::from(values)],
+        select = select.filter(rollup_exists(
+            acl,
+            "series_credits",
+            "issue_credits",
+            "j.role = $1 AND j.person = ANY($2)",
+            vec![Value::from(role), Value::from(values)],
         ));
     }
     // Any-role credits filter (the `credits` query param). Matches
@@ -1885,9 +1928,12 @@ fn apply_series_credit_role_filters(
     if let Some(raw) = q.credits.as_deref() {
         let values = split_csv(raw);
         if !values.is_empty() {
-            select = select.filter(Expr::cust_with_values(
-                "EXISTS (SELECT 1 FROM series_credits sc WHERE sc.series_id = series.id AND sc.person = ANY($1))",
-                [Value::from(values)],
+            select = select.filter(rollup_exists(
+                acl,
+                "series_credits",
+                "issue_credits",
+                "j.person = ANY($1)",
+                vec![Value::from(values)],
             ));
         }
     }
@@ -2288,8 +2334,8 @@ pub async fn list(
         return empty();
     };
     select = apply_series_direct_column_filters(select, &q);
-    select = apply_series_junction_facet_filters(select, &q);
-    select = apply_series_credit_role_filters(select, &q);
+    select = apply_series_junction_facet_filters(select, &q, &visible_libs);
+    select = apply_series_credit_role_filters(select, &q, &visible_libs);
     select = apply_series_cast_setting_filters(select, &q, &visible_libs);
     select = apply_series_user_rating_filter(select, &q, user.id);
     select = apply_series_read_status_filter(select, &q, user.id);

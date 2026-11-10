@@ -635,12 +635,24 @@ pub struct SpawnOpts {
     /// pool. Off by default (noise); `perf_regressions.rs` turns it on —
     /// its ≤N-queries guards count those events.
     pub sqlx_logging: bool,
+    /// `COMIC_TRUSTED_PROXIES` (CIDR list). Default: none trusted.
+    pub trusted_proxies: Option<String>,
     /// Override `Config::filter_statement_timeout` (default 5 s) so a test
     /// can drive a saved-view filter query into the time box quickly.
     pub filter_statement_timeout: Option<std::time::Duration>,
 }
 
 impl TestApp {
+    /// Spawn with `cidrs` as the trusted reverse proxies, so a request whose
+    /// peer (`ConnectInfo`) is in the list has its forwarding headers read.
+    pub async fn spawn_with_trusted_proxies(cidrs: &str) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            trusted_proxies: Some(cidrs.to_owned()),
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Spawn mid-pepper-rotation: `previous` is loaded as
     /// `secrets/pepper.previous` alongside a freshly generated current pepper.
     pub async fn spawn_with_previous_pepper(previous: [u8; 32]) -> Self {
@@ -1002,7 +1014,7 @@ impl TestApp {
             public_url: "http://localhost:8080".into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "warn".into(),
-            trusted_proxies: String::new(),
+            trusted_proxies: opts.trusted_proxies.clone().unwrap_or_default(),
             auth_mode_choice: if opts.auth_mode_unset {
                 None
             } else if opts.oidc_issuer.is_some() {
