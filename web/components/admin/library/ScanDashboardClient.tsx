@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { BatchListSkeleton } from "@/components/skeletons/AdminShapes";
@@ -16,6 +15,8 @@ import { LibraryEventsList } from "@/components/admin/library/LibraryEventsList"
 import { LiveScanPanel } from "@/components/admin/library/LiveScanPanel";
 import { ScanRunsHistory } from "@/components/admin/library/ScanRunsHistory";
 import { UrlViewTabs } from "@/components/admin/UrlViewTabs";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { scanBatchStateTone } from "@/components/admin/status-tones";
 import { WatchersCard } from "@/components/admin/library/WatchersCard";
 import { useScanBatch, useScanBatches } from "@/lib/api/queries";
 import { useScanEvents } from "@/lib/api/scan-events";
@@ -402,37 +403,39 @@ function Stat({
 }
 
 function RowIcon({ state }: { state: string }) {
+  // Tones from `scanRunStateTone`: done and admin-cancelled are ordinary,
+  // running is info, only a failure is red.
   if (state === "complete")
     return (
       <CheckCircle2
-        className={cn("size-4 shrink-0", statusToneText("success"))}
+        className={cn("size-4 shrink-0", statusToneText("neutral"))}
       />
     );
-  if (state === "failed" || state === "cancelled")
-    return <XCircle className="text-destructive size-4 shrink-0" />;
+  if (state === "failed")
+    return (
+      <XCircle className={cn("size-4 shrink-0", statusToneText("error"))} />
+    );
+  if (state === "cancelled")
+    return (
+      <XCircle className={cn("size-4 shrink-0", statusToneText("neutral"))} />
+    );
   if (state === "running")
-    return <Loader2 className="text-primary size-4 shrink-0 animate-spin" />;
+    return (
+      <Loader2
+        className={cn("size-4 shrink-0 animate-spin", statusToneText("info"))}
+      />
+    );
   return <Clock className="text-muted-foreground size-4 shrink-0" />;
 }
 
-// State tones mirror the LogsClient level-chip convention
-// (`border-{c}-500/40 text-{c}-400`) and the green completion checks in the
-// per-library rows — so a finished batch reads as "done", not as the amber
-// brand-accent (which signals attention).
-const BATCH_TONE: Record<string, string> = {
-  complete: statusTone("success"),
-  running: statusTone("info"),
-  partial_failed: statusTone("warning"),
-  failed: statusTone("error"),
-};
-
+/** Batch state badge; tones from `scanBatchStateTone` (a finished batch
+ *  is neutral, only a partial or failed one draws attention). */
 function BatchStateBadge({ state }: { state: ScanBatchView["state"] }) {
-  const tone = BATCH_TONE[state] ?? "border-border text-muted-foreground";
   const label = state === "partial_failed" ? "partial" : state;
   return (
-    <Badge variant="outline" className={cn("capitalize", tone)}>
+    <StatusBadge tone={scanBatchStateTone(state)} className="capitalize">
       {label}
-    </Badge>
+    </StatusBadge>
   );
 }
 

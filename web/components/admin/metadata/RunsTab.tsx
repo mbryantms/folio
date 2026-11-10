@@ -10,6 +10,8 @@ import { ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge as AdminStatusBadge } from "@/components/admin/StatusBadge";
+import { jobStateTone } from "@/components/admin/status-tones";
 import { Card, CardContent } from "@/components/ui/card";
 import { FilterPill } from "@/components/folio/filter-pill";
 import { useAdminMetadataRun, useAdminMetadataRuns } from "@/lib/api/queries";
@@ -194,20 +196,8 @@ function RunListRow({
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const variant =
-    status === "completed"
-      ? "default"
-      : status === "failed"
-        ? "destructive"
-        : status === "awaiting_quota"
-          ? "secondary"
-          : "outline";
   return (
-    <Badge
-      variant={variant as "default" | "secondary" | "outline" | "destructive"}
-    >
-      {status}
-    </Badge>
+    <AdminStatusBadge tone={jobStateTone(status)}>{status}</AdminStatusBadge>
   );
 }
 

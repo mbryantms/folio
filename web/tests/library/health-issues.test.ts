@@ -33,8 +33,11 @@ describe("archive-container kinds", () => {
     );
   });
 
-  it("distinguishes a corrupt archive from a malformed ComicInfo", () => {
+  it("distinguishes a malformed archive from a malformed ComicInfo", () => {
     expect(healthKindLabel("MalformedArchive")).toMatch(/archive/i);
+    // The API names the kind "malformed"; the row also covers refused
+    // files, so the copy never claims corruption.
+    expect(healthKindLabel("MalformedArchive")).not.toMatch(/corrupt/i);
     expect(healthKindLabel("MalformedArchive")).not.toMatch(/ComicInfo/);
     expect(healthKindHint("MalformedArchive")).toMatch(/Replace/);
     expect(

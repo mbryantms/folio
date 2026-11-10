@@ -51,6 +51,7 @@ export default async function AdminLayout({
       showScanBeacon
       showRestartBanner
       defaultSidebarOpen={defaultSidebarOpen}
+      tabletSheet
     >
       {children}
     </AdminShell>
