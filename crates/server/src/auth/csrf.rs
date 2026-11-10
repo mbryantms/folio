@@ -10,8 +10,12 @@
 //!   - An app password (`Bearer app_…`, or `Basic` whose password is
 //!     `app_…`) — exempt **only on the reader-client routes**
 //!     ([`crate::auth::extractor::is_reader_route`]), the one surface where
-//!     an app password authenticates. Elsewhere the request gets the full
-//!     cookie check like any browser request.
+//!     an app password authenticates. Elsewhere a request that also carries
+//!     a session or refresh cookie gets the full cookie check like any
+//!     browser request; one with no such cookie has no ambient credential
+//!     to forge and passes through, so the extractor can refuse the app
+//!     password with its own message ("app passwords only work with reader
+//!     apps") instead of a misleading CSRF error.
 //!   - App password via `Basic` on a reader route — exempt only when the
 //!     request does not look like it came from a browser page on another
 //!     site: no `Origin` header and no `Sec-Fetch-Site: cross-site` /
@@ -48,7 +52,7 @@ use axum::{
 use axum_extra::extract::CookieJar;
 use constant_time_eq::constant_time_eq;
 
-use super::cookies::CSRF_COOKIE;
+use super::cookies::{CSRF_COOKIE, LEGACY_REFRESH_COOKIE, REFRESH_COOKIE, SESSION_COOKIE};
 use super::extractor::is_reader_route;
 
 const CSRF_HEADER: &str = "x-csrf-token";
@@ -207,11 +211,27 @@ fn token_exemption(req: &Request) -> bool {
     };
     match cred {
         TokenCredential::BearerJwt => true,
-        TokenCredential::AppPasswordBearer => on_reader_route(),
+        TokenCredential::AppPasswordBearer => {
+            on_reader_route() || !has_session_cookie(req.headers())
+        }
         TokenCredential::AppPasswordBasic => {
-            on_reader_route() && !looks_like_browser_cross_site(req.headers())
+            if on_reader_route() {
+                !looks_like_browser_cross_site(req.headers())
+            } else {
+                !has_session_cookie(req.headers())
+            }
         }
     }
+}
+
+/// True when the request carries a cookie that could authenticate it: the
+/// session cookie or a refresh cookie. Without one there is nothing ambient
+/// for a cross-site page to ride on.
+fn has_session_cookie(h: &HeaderMap) -> bool {
+    let jar = CookieJar::from_headers(h);
+    [SESSION_COOKIE, REFRESH_COOKIE, LEGACY_REFRESH_COOKIE]
+        .iter()
+        .any(|name| jar.get(name).is_some_and(|c| !c.value().is_empty()))
 }
 
 /// True when the headers show a browser page made this request on its own

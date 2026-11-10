@@ -414,8 +414,10 @@ async fn active_password_count(app: &TestApp) -> usize {
 }
 
 /// Off the reader surface an app password is refused with 403, as Bearer
-/// and as Basic (reads by the extractor, writes already by the CSRF
-/// check), and the refused writes leave nothing behind.
+/// and as Basic, and the refused writes leave nothing behind. These
+/// requests carry no session cookie, so the CSRF check lets them through
+/// to the extractor, which answers with the message that says what an app
+/// password is for.
 #[tokio::test]
 async fn app_password_refused_off_reader_surface() {
     let app = TestApp::spawn().await;
@@ -439,9 +441,7 @@ async fn app_password_refused_off_reader_surface() {
             Some(r#"{"label":"minted-by-token"}"#),
         )
         .await;
-        // Off the reader routes an app password gets no CSRF exemption,
-        // so the write stops at the CSRF check before the extractor.
-        assert_csrf_refused(s, &b, "POST /api/me/app-passwords");
+        assert_refused(s, &b, "POST /api/me/app-passwords");
         assert_eq!(active_password_count(&app).await, before, "no new row");
 
         let (s, b) = send(
@@ -452,12 +452,12 @@ async fn app_password_refused_off_reader_surface() {
             Some(r#"{"email":"hijacked@example.com"}"#),
         )
         .await;
-        assert_csrf_refused(s, &b, "PATCH /api/me/account");
+        assert_refused(s, &b, "PATCH /api/me/account");
         let (_, me) = send(&app, Method::GET, "/api/auth/me", Cred::Cookie(&auth), None).await;
         assert_eq!(me["email"], "scoped@example.com", "email unchanged");
 
         let (s, b) = send(&app, Method::POST, "/auth/ws-ticket", cred, None).await;
-        assert_csrf_refused(s, &b, "POST /auth/ws-ticket");
+        assert_refused(s, &b, "POST /auth/ws-ticket");
     }
 }
 
@@ -789,6 +789,12 @@ fn module_source(module: &str) -> String {
 /// `reader_surface(...)` wrapping in `app.rs`. Keep the two in step: every
 /// route of a wrapped router is covered by a prefix, and no other `bare`
 /// route or JSON route is.
+///
+/// Limits of this check: it reads source text, so it only sees routes
+/// written as a string literal in a `.route("…")` call of the module's own
+/// file, and JSON routes that carry a `#[utoipa::path]`. A reader route
+/// registered another way (a path constant, a sub-router merged from a
+/// different file) is not seen; add its path here by hand when adding one.
 #[test]
 fn reader_route_prefixes_match_reader_surface() {
     use server::auth::extractor::is_reader_route;
