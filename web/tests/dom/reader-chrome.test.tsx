@@ -220,6 +220,7 @@ describe("ReaderChrome (jsdom)", () => {
       }
       // The incognito word is still announced, just not painted.
       expect(screen.getByText("Incognito").className).toContain("sr-only");
+      expect(more.classList.contains("folio-tap")).toBe(true);
       // The More menu carries the marker tools: Add note still seeds a note.
       await act(async () => {
         more.focus();
@@ -245,5 +246,37 @@ describe("ReaderChrome (jsdom)", () => {
     renderChrome();
     await screen.findByRole("button", { name: "Exit reader" });
     expect(screen.queryByText("Incognito")).toBeNull();
+  });
+
+  it("every header control carries the shared touch tap area (folio-tap)", async () => {
+    // jsdom cannot evaluate `(pointer: coarse)` or measure the 44px
+    // `::after`; this guards the hook (docs/dev/phone-layout.md rule 9).
+    const { container } = renderChrome();
+    const bookmark = await screen.findByRole("button", {
+      name: "Bookmark this page",
+    });
+    const buttons = [...container.querySelectorAll("header button")];
+    const names = buttons.map((b) => b.getAttribute("aria-label"));
+    for (const name of [
+      "Exit reader",
+      "Page 1 / 20; click to jump",
+      "Bookmark this page",
+      "Favorite this page",
+      "Marker tools",
+      "Show page text",
+      "Show markers in this issue",
+      "Reader settings",
+    ]) {
+      expect(names).toContain(name);
+    }
+    for (const b of buttons) {
+      expect(b.classList.contains("folio-tap")).toBe(true);
+      // The visible 36px box is unchanged: no touch-only size floor.
+      expect(b.className).not.toMatch(/pointer-coarse:(?:h|w|size|min)-/);
+    }
+    // The icon row's gap is 4px: each tap area reaches 2px into it so
+    // neighbours meet in the middle instead of overlapping.
+    expect(bookmark.parentElement?.className).toContain("[--folio-tap-x:2px]");
+    expect(bookmark.parentElement?.className).toMatch(/\bgap-1\b/);
   });
 });
