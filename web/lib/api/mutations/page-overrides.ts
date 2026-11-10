@@ -16,6 +16,7 @@ import type { SpreadOverrides } from "@/lib/reader/spreads";
 import { queryKeys } from "../queries";
 import type { PageOverridesView } from "../types";
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 type Snapshot = { previous?: PageOverridesView };
 
@@ -62,7 +63,7 @@ export function useSetIssuePageOverrides(issueId: string) {
   const cache = useOptimisticWrite(issueId);
   return useApiMutation<PageOverridesView, SpreadOverrides>(
     (body) => ({
-      path: `/me/issues/${issueId}/page-overrides`,
+      path: apiPath`/me/issues/${issueId}/page-overrides`,
       method: "PUT",
       body: {
         shift_pairing: body.shift_pairing,
@@ -85,7 +86,7 @@ export function useResetIssuePageOverrides(issueId: string) {
   const cache = useOptimisticWrite(issueId);
   return useApiMutation<null, void>(
     () => ({
-      path: `/me/issues/${issueId}/page-overrides`,
+      path: apiPath`/me/issues/${issueId}/page-overrides`,
       method: "DELETE",
     }),
     {

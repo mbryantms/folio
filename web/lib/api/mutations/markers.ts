@@ -22,6 +22,7 @@ import type {
 } from "../types";
 import { queryKeys } from "../query-keys";
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 /** Create a marker — bookmark / note / favorite / highlight. The
  *  reader cover-menu and `b` / `n` / `h` keybinds chain here. On
@@ -56,7 +57,7 @@ export function useCreateMarker() {
 export function useUpdateMarker(id: string, issueId: string) {
   const qc = useQueryClient();
   return useApiMutation<MarkerView, UpdateMarkerReq>(
-    (body) => ({ path: `/me/markers/${id}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/me/markers/${id}`, method: "PATCH", body }),
     {
       // Tailor the toast for the most common single-field toggles so
       // the action is unambiguous. Falls back to "Saved" for editor
@@ -94,7 +95,7 @@ export function useDeleteMarker(
 ) {
   const qc = useQueryClient();
   return useApiMutation<unknown, void>(
-    () => ({ path: `/me/markers/${id}`, method: "DELETE" }),
+    () => ({ path: apiPath`/me/markers/${id}`, method: "DELETE" }),
     {
       ...(opts?.silent ? {} : { successMessage: "Removed" }),
       onSuccess: () => {
@@ -118,7 +119,7 @@ export function useDeleteMarkerById(
 ) {
   const qc = useQueryClient();
   return useApiMutation<unknown, string>(
-    (id) => ({ path: `/me/markers/${id}`, method: "DELETE" }),
+    (id) => ({ path: apiPath`/me/markers/${id}`, method: "DELETE" }),
     {
       ...(opts?.silent ? {} : { successMessage: "Removed" }),
       onSuccess: () => {
