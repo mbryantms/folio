@@ -146,6 +146,24 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — app passwords are looked up by digest
+
+- **App passwords gain a lookup digest** (migration
+  `m20271107_000001_app_password_lookup_digest`). Existing app
+  passwords keep working. Each gains its digest the next time a reader
+  app presents it successfully; until then they are matched most
+  recently used first, 20 per request. On a server with more than 20
+  old app passwords, one that has not been used recently may need to be
+  re-created. Revoke app passwords nobody uses; the gauge
+  `folio_auth_app_password_legacy_remaining` shows how many old ones
+  remain.
+- **Reader apps presenting a token the server no longer accepts are now
+  locked out** per client address after repeated attempts (10 in a
+  minute, for 15 minutes). This is the app-password lockout only: web
+  sign-in from that address is unaffected. Behind a reverse proxy, set
+  `COMIC_TRUSTED_PROXIES` so the address is the client's and not the
+  proxy's.
+
 ### Unreleased — symbolic links in libraries are no longer followed
 
 - **The scanner never follows a symbolic link below a library root**,
