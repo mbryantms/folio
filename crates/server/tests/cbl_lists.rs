@@ -2651,3 +2651,100 @@ async fn window_total_matched_excludes_a_removed_match_for_admins() {
     .unwrap();
     assert_eq!(totals().await, [2, 2]);
 }
+
+/// A reading list whose source grows past the import cap after it was
+/// imported is refused on refresh and on check, with the import's error,
+/// and the stored entries are left as they were (no truncation, no
+/// refresh-log row).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_and_check_refuse_a_list_grown_past_the_entry_cap() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cap-grower@example.com").await;
+    let (status, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view}");
+    let list_id = Uuid::parse_str(view["id"].as_str().unwrap()).unwrap();
+    let db = Database::connect(&app.db_url).await.unwrap();
+
+    let entries_before: Vec<(i32, String, String)> = cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.eq(list_id))
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.position, e.series_name, e.issue_number))
+        .collect();
+    assert_eq!(entries_before.len(), 269);
+    let logs_before = cbl_refresh_log::Entity::find()
+        .filter(cbl_refresh_log::Column::CblListId.eq(list_id))
+        .count(&db)
+        .await
+        .unwrap();
+
+    // The source now carries one entry more than the cap.
+    let over = server::cbl::MAX_BOOKS_PER_LIST + 1;
+    let mut xml = String::from("<?xml version=\"1.0\"?>\n<ReadingList><Name>Grown</Name><Books>\n");
+    for i in 0..over {
+        xml.push_str(&format!(
+            "<Book Series=\"Grown\" Number=\"{i}\" Volume=\"2020\" Year=\"2020\" />\n"
+        ));
+    }
+    xml.push_str("</Books></ReadingList>\n");
+    let row = cbl_list::Entity::find_by_id(list_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.raw_xml = Set(xml);
+    am.update(&db).await.unwrap();
+
+    let expected = format!("exceeds {} entries", server::cbl::MAX_BOOKS_PER_LIST);
+    for path in ["refresh", "check"] {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            &format!("/api/me/cbl-lists/{list_id}/{path}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{path}: {body}");
+        assert_eq!(body["error"]["code"], "too_many_entries", "{path}");
+        assert_eq!(body["error"]["message"], expected.as_str(), "{path}");
+    }
+    // The bulk dashboards report it per list, the way other failures are.
+    for path in ["check-all", "refresh-all"] {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            &format!("/api/me/cbl-lists/{path}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        assert_eq!(body["failed_count"], 1, "{path}: {body}");
+        assert_eq!(body["items"][0]["ok"], false);
+        assert_eq!(body["items"][0]["error"], expected.as_str());
+    }
+
+    let entries_after: Vec<(i32, String, String)> = cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.eq(list_id))
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.position, e.series_name, e.issue_number))
+        .collect();
+    let mut a = entries_before.clone();
+    let mut b = entries_after;
+    a.sort();
+    b.sort();
+    assert_eq!(a, b, "stored entries must be untouched");
+    let logs_after = cbl_refresh_log::Entity::find()
+        .filter(cbl_refresh_log::Column::CblListId.eq(list_id))
+        .count(&db)
+        .await
+        .unwrap();
+    assert_eq!(logs_before, logs_after, "no refresh-log row for a refusal");
+}

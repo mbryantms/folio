@@ -1,33 +1,44 @@
-//! Defence-in-depth against server-side request forgery on user-supplied
-//! URLs. The current attack surface is `POST /me/cbl-lists` (and the
-//! subsequent refresh worker that re-fetches the stored URL): authenticated
-//! callers can otherwise have the server probe internal network ranges,
-//! cloud metadata endpoints (`169.254.169.254`), and the loopback interface.
+//! Defence-in-depth against server-side request forgery on user- or
+//! provider-supplied URLs: CBL reading lists imported from a URL (and the
+//! refreshes that re-fetch them), and provider cover images. Without it an
+//! authenticated caller could have the server reach internal network
+//! ranges, cloud metadata endpoints and the loopback interface.
 //!
-//! The strategy is two-layer:
+//! Layers:
 //!
-//! 1. **Pre-flight** — parse the URL, require `https://`, resolve the
-//!    hostname (via `tokio::net::lookup_host`), and refuse if *any*
-//!    resolved address is loopback / private / link-local / multicast /
-//!    other internal-only range. A single A/AAAA record pointing into
-//!    private space taints the request.
+//! 1. **Pre-flight** — parse the URL, require `https://` where the caller
+//!    asks, resolve the hostname (via `tokio::net::lookup_host`), and refuse
+//!    if *any* resolved address is in a range [`is_internal_ip`] lists. A
+//!    single A/AAAA record pointing into private space taints the request.
 //!
-//! 2. **Redirect policy** — outbound `reqwest::Client` rejects redirects
-//!    whose host is a private-range IP *literal*. The pre-flight already
-//!    covers DNS-resolved hosts, but a CDN-style redirect could otherwise
-//!    push the connection to an internal IP literal between hops; this
-//!    catches that edge.
+//! 2. **Redirects** — [`fetch_public`] follows redirects itself, one hop at
+//!    a time, re-running the pre-flight on every target, up to a bounded
+//!    hop count. The pooled client ([`shared_public_client`]) uses
+//!    [`outbound_redirect_policy`] plus a vetting resolver instead.
 //!
 //! 3. **Address pinning (SEC-3)** — the DNS-rebind window (host resolves
 //!    public on the pre-flight lookup, private on the connect lookup) is
-//!    closed by pinning: [`fetch_public_bytes`] builds the per-hop client with
+//!    closed by pinning: [`fetch_public`] builds the per-hop client with
 //!    `reqwest::ClientBuilder::resolve(host, vetted_ip)`, so reqwest connects
 //!    to the exact address we vetted instead of re-resolving the hostname.
+//!
+//! 4. **Bounds** — a body cap enforced while streaming (and up front from
+//!    `Content-Length`), a per-step timeout, and an optional overall
+//!    deadline for the whole fetch.
+//!
+//! Refusal messages are generic: they never name the resolved address or
+//! the range it matched. The detail is logged at DEBUG.
+//!
+//! Admin-configured endpoints that are documented to allow private hosts
+//! (the OIDC issuer and its discovery probe, metadata-provider base URLs)
+//! do not go through this module.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use futures::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, LOCATION, USER_AGENT};
+use reqwest::header::{
+    HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH, LOCATION, USER_AGENT,
+};
 use reqwest::redirect::Policy;
 
 pub const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
@@ -42,7 +53,10 @@ pub enum SsrfError {
     MissingHost,
     #[error("hostname did not resolve: {0}")]
     Unresolvable(String),
-    #[error("host resolves to a private or otherwise internal address ({0})")]
+    /// The URL's host is, or resolves to, an address outside the public
+    /// internet. The message is deliberately generic: it names neither the
+    /// address nor the range it fell in (both are logged at DEBUG).
+    #[error("URL points to an address that is not allowed")]
     PrivateAddress(IpAddr),
 }
 
@@ -85,14 +99,18 @@ pub struct FetchedBytes {
 /// Parse + syntactic validation. Does not touch the network. Returns the
 /// parsed URL on success so callers can pass the canonical form to reqwest.
 pub fn validate_outbound_url(url: &str) -> Result<url::Url, SsrfError> {
-    validate_public_url(url, true)
+    validate_public_url_with(url, true, is_internal_ip)
 }
 
 pub fn validate_public_http_url(url: &str) -> Result<url::Url, SsrfError> {
-    validate_public_url(url, false)
+    validate_public_url_with(url, false, is_internal_ip)
 }
 
-fn validate_public_url(url: &str, require_https: bool) -> Result<url::Url, SsrfError> {
+fn validate_public_url_with(
+    url: &str,
+    require_https: bool,
+    refuse: RefusePolicy,
+) -> Result<url::Url, SsrfError> {
     let parsed = url::Url::parse(url).map_err(|e| SsrfError::InvalidUrl(e.to_string()))?;
     if require_https && parsed.scheme() != "https" {
         return Err(SsrfError::SchemeNotHttps);
@@ -110,9 +128,9 @@ fn validate_public_url(url: &str, require_https: bool) -> Result<url::Url, SsrfE
         url::Host::Domain(_) => None,
     };
     if let Some(ip) = maybe_ip
-        && is_internal_ip(&ip)
+        && refuse(&ip)
     {
-        return Err(SsrfError::PrivateAddress(ip));
+        return Err(refused(ip));
     }
     Ok(parsed)
 }
@@ -149,6 +167,8 @@ fn status_error(
 /// redirect target, then stream the body into memory with `max_bytes` enforced.
 /// `require_https` preserves stricter HTTPS-only call sites such as CBL URL
 /// imports while allowing provider-owned cover URLs that still use plain HTTP.
+/// `timeout` bounds each step (sending a request, waiting for the next body
+/// chunk); callers that need one overall deadline use [`fetch_public`].
 pub async fn fetch_public_bytes(
     url: &str,
     max_bytes: usize,
@@ -157,15 +177,99 @@ pub async fn fetch_public_bytes(
     max_redirects: usize,
     require_https: bool,
 ) -> Result<FetchedBytes, FetchBytesError> {
-    let mut current = if require_https {
-        validate_outbound_url(url)?
-    } else {
-        validate_public_http_url(url)?
+    let opts = FetchOptions {
+        max_bytes,
+        idle_timeout: timeout,
+        deadline: None,
+        user_agent,
+        max_redirects,
+        require_https,
     };
+    match fetch_public(url, &opts, Conditional::default()).await? {
+        FetchOutcome::Fetched(fetched) => Ok(*fetched),
+        // No validators were sent, so a 304 is not an answer to anything
+        // this caller asked; treat it like any other non-success status.
+        FetchOutcome::NotModified => Err(FetchBytesError::HttpStatus(
+            reqwest::StatusCode::NOT_MODIFIED,
+        )),
+    }
+}
 
-    for hop in 0..=max_redirects {
+/// Limits for one [`fetch_public`] call.
+#[derive(Debug, Clone, Copy)]
+pub struct FetchOptions {
+    /// Body cap; a larger `Content-Length` is refused before reading.
+    pub max_bytes: usize,
+    /// Bound on each step: one request/response exchange, one body chunk.
+    pub idle_timeout: std::time::Duration,
+    /// One deadline for the whole fetch (every hop's connect, headers and
+    /// body). `None` leaves only the per-step bound.
+    pub deadline: Option<std::time::Duration>,
+    pub user_agent: &'static str,
+    pub max_redirects: usize,
+    pub require_https: bool,
+}
+
+/// Cache validators for a conditional GET. Sent on every hop.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Conditional<'a> {
+    pub etag: Option<&'a str>,
+    pub last_modified: Option<&'a str>,
+}
+
+#[derive(Debug)]
+pub enum FetchOutcome {
+    Fetched(Box<FetchedBytes>),
+    /// The server answered `304 Not Modified` to the [`Conditional`]
+    /// validators.
+    NotModified,
+}
+
+/// The one fetch path for user- or provider-supplied URLs: syntactic
+/// validation, DNS vetting of every hop with the connection pinned to the
+/// vetted address, redirects followed by hand (each target re-vetted, at
+/// most `max_redirects` hops), optional conditional validators, a streamed
+/// body cap and an optional overall deadline.
+pub async fn fetch_public(
+    url: &str,
+    opts: &FetchOptions,
+    conditional: Conditional<'_>,
+) -> Result<FetchOutcome, FetchBytesError> {
+    fetch_public_with_policy(url, opts, conditional, is_internal_ip).await
+}
+
+/// Which addresses a fetch refuses. Production always passes
+/// [`is_internal_ip`]; the parameter exists so this module's own tests can
+/// reach a loopback test server while still refusing every other internal
+/// address. It is private: no caller outside this module can relax it.
+type RefusePolicy = fn(&IpAddr) -> bool;
+
+async fn fetch_public_with_policy(
+    url: &str,
+    opts: &FetchOptions,
+    conditional: Conditional<'_>,
+    refuse: RefusePolicy,
+) -> Result<FetchOutcome, FetchBytesError> {
+    let fut = fetch_hops(url, opts, conditional, refuse);
+    match opts.deadline {
+        Some(deadline) => tokio::time::timeout(deadline, fut)
+            .await
+            .map_err(|_| FetchBytesError::Timeout)?,
+        None => fut.await,
+    }
+}
+
+async fn fetch_hops(
+    url: &str,
+    opts: &FetchOptions,
+    conditional: Conditional<'_>,
+    refuse: RefusePolicy,
+) -> Result<FetchOutcome, FetchBytesError> {
+    let mut current = validate_public_url_with(url, opts.require_https, refuse)?;
+
+    for hop in 0..=opts.max_redirects {
         // Vet the host and capture the exact address we approved.
-        let pinned = validate_and_resolve(&current, require_https).await?;
+        let pinned = validate_and_resolve(&current, opts.require_https, refuse).await?;
         let host = current
             .host_str()
             .ok_or(FetchBytesError::Ssrf(SsrfError::MissingHost))?;
@@ -180,20 +284,29 @@ pub async fn fetch_public_bytes(
             .resolve(host, pinned)
             .build()
             .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
-        let resp = tokio::time::timeout(
-            timeout,
-            client
-                .get(current.clone())
-                .header(USER_AGENT, HeaderValue::from_static(user_agent))
-                .send(),
-        )
-        .await
-        .map_err(|_| FetchBytesError::Timeout)?
-        .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+        let mut req = client
+            .get(current.clone())
+            .header(USER_AGENT, HeaderValue::from_static(opts.user_agent));
+        if let Some(etag) = conditional.etag {
+            req = req.header(IF_NONE_MATCH, etag);
+        }
+        if let Some(lm) = conditional.last_modified {
+            req = req.header(IF_MODIFIED_SINCE, lm);
+        }
+        let resp = tokio::time::timeout(opts.idle_timeout, req.send())
+            .await
+            .map_err(|_| FetchBytesError::Timeout)?
+            .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+
+        if resp.status() == reqwest::StatusCode::NOT_MODIFIED
+            && (conditional.etag.is_some() || conditional.last_modified.is_some())
+        {
+            return Ok(FetchOutcome::NotModified);
+        }
 
         if resp.status().is_redirection() {
-            if hop == max_redirects {
-                return Err(FetchBytesError::TooManyRedirects(max_redirects));
+            if hop == opts.max_redirects {
+                return Err(FetchBytesError::TooManyRedirects(opts.max_redirects));
             }
             let location = resp
                 .headers()
@@ -203,77 +316,95 @@ pub async fn fetch_public_bytes(
             let next = current
                 .join(location)
                 .map_err(|_| FetchBytesError::InvalidRedirect)?;
-            current = if require_https {
-                validate_outbound_url(next.as_str())?
-            } else {
-                validate_public_http_url(next.as_str())?
-            };
+            current = validate_public_url_with(next.as_str(), opts.require_https, refuse)?;
             continue;
         }
 
         if !resp.status().is_success() {
             return Err(status_error(&current, resp.status(), resp.headers()));
         }
-        if resp
-            .content_length()
-            .is_some_and(|len| len > max_bytes as u64)
-        {
-            return Err(FetchBytesError::TooLarge { max_bytes });
-        }
-
         let headers = resp.headers().clone();
-        let mut stream = resp.bytes_stream();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = tokio::time::timeout(timeout, stream.next())
-            .await
-            .map_err(|_| FetchBytesError::Timeout)?
-        {
-            let chunk = chunk.map_err(|e| FetchBytesError::Transport(e.to_string()))?;
-            if bytes.len().saturating_add(chunk.len()) > max_bytes {
-                return Err(FetchBytesError::TooLarge { max_bytes });
-            }
-            bytes.extend_from_slice(&chunk);
-        }
+        let bytes = read_body_capped(resp, opts.max_bytes, Some(opts.idle_timeout)).await?;
 
-        return Ok(FetchedBytes {
+        return Ok(FetchOutcome::Fetched(Box::new(FetchedBytes {
             final_url: current,
             headers,
             bytes,
-        });
+        })));
     }
 
-    Err(FetchBytesError::TooManyRedirects(max_redirects))
+    Err(FetchBytesError::TooManyRedirects(opts.max_redirects))
+}
+
+/// Read a response body into memory, refusing it as soon as it is known to
+/// exceed `max_bytes`: up front when `Content-Length` says so, otherwise
+/// while streaming (never buffering more than `max_bytes` plus one chunk).
+/// `idle_timeout` bounds the wait for each chunk.
+pub async fn read_body_capped(
+    resp: reqwest::Response,
+    max_bytes: usize,
+    idle_timeout: Option<std::time::Duration>,
+) -> Result<Vec<u8>, FetchBytesError> {
+    if resp
+        .content_length()
+        .is_some_and(|len| len > max_bytes as u64)
+    {
+        return Err(FetchBytesError::TooLarge { max_bytes });
+    }
+    let mut stream = resp.bytes_stream();
+    let mut bytes = Vec::new();
+    loop {
+        let next = match idle_timeout {
+            Some(t) => tokio::time::timeout(t, stream.next())
+                .await
+                .map_err(|_| FetchBytesError::Timeout)?,
+            None => stream.next().await,
+        };
+        let Some(chunk) = next else { break };
+        let chunk = chunk.map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(FetchBytesError::TooLarge { max_bytes });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 /// Syntactically validate `url`, resolve its host, and return the exact
 /// address the caller should pin the connection to. Fails if *any* resolved
-/// address is internal (a single tainted A/AAAA record rejects the request).
+/// address is refused (a single tainted A/AAAA record rejects the request).
 async fn validate_and_resolve(
     url: &url::Url,
     require_https: bool,
+    refuse: RefusePolicy,
 ) -> Result<SocketAddr, SsrfError> {
-    if require_https {
-        validate_outbound_url(url.as_str())?;
-    } else {
-        validate_public_http_url(url.as_str())?;
-    }
+    validate_public_url_with(url.as_str(), require_https, refuse)?;
     let host = url.host_str().ok_or(SsrfError::MissingHost)?;
     let port = url.port_or_known_default().unwrap_or(match url.scheme() {
         "http" => 80,
         _ => 443,
     });
-    let ip = resolve_pinned_addr(host, port).await?;
+    let ip = resolve_pinned_addr(host, port, refuse).await?;
     Ok(SocketAddr::new(ip, port))
 }
 
 /// Resolve `host`:`port` and return the first address, failing if *any*
-/// resolved address is internal. The returned IP is the one the fetch pins the
+/// resolved address is refused. The returned IP is the one the fetch pins the
 /// connection to, so the request connects to exactly the vetted address rather
-/// than re-resolving (SEC-3). IP-literal hosts short-circuit (no DNS).
-async fn resolve_pinned_addr(host: &str, port: u16) -> Result<IpAddr, SsrfError> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return if is_internal_ip(&ip) {
-            Err(SsrfError::PrivateAddress(ip))
+/// than re-resolving (SEC-3). IP-literal hosts short-circuit (no DNS); a
+/// bracketed IPv6 literal (`[::1]`, as `host_str` returns it) counts as one.
+async fn resolve_pinned_addr(
+    host: &str,
+    port: u16,
+    refuse: RefusePolicy,
+) -> Result<IpAddr, SsrfError> {
+    let literal = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    if let Ok(ip) = literal.parse::<IpAddr>() {
+        return if refuse(&ip) {
+            Err(refused(ip))
         } else {
             Ok(ip)
         };
@@ -286,20 +417,19 @@ async fn resolve_pinned_addr(host: &str, port: u16) -> Result<IpAddr, SsrfError>
         return Err(SsrfError::Unresolvable(format!("no addresses for {host}")));
     }
     for addr in &addrs {
-        if is_internal_ip(&addr.ip()) {
-            return Err(SsrfError::PrivateAddress(addr.ip()));
+        if refuse(&addr.ip()) {
+            return Err(refused(addr.ip()));
         }
     }
     Ok(addrs[0].ip())
 }
 
-/// Resolve `host` (with the URL's port, defaulting to 443 for https) and
-/// fail if *any* resolved address is in an internal range. A standalone guard
-/// for callers that fetch with their own client (e.g. the admin OIDC-discovery
-/// probe); the bytes-fetch path uses [`resolve_pinned_addr`] directly so it can
-/// pin the vetted address.
-pub async fn check_host_resolves_public(host: &str, port: u16) -> Result<(), SsrfError> {
-    resolve_pinned_addr(host, port).await.map(|_| ())
+/// Build the refusal for a disallowed address. The user-facing text is
+/// generic (see [`SsrfError::PrivateAddress`]); the address itself is only
+/// logged, at DEBUG, for an operator diagnosing a refused URL.
+fn refused(ip: IpAddr) -> SsrfError {
+    tracing::debug!(addr = %ip, "outbound URL refused: address is not publicly routable");
+    SsrfError::PrivateAddress(ip)
 }
 
 // ───────── pooled client (WP-2.9) ─────────
@@ -329,7 +459,7 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
             }
             for addr in &addrs {
                 if is_internal_ip(&addr.ip()) {
-                    return Err(Box::new(SsrfError::PrivateAddress(addr.ip())) as BoxError);
+                    return Err(Box::new(refused(addr.ip())) as BoxError);
                 }
             }
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
@@ -387,23 +517,9 @@ pub async fn fetch_public_bytes_pooled(
         if !resp.status().is_success() {
             return Err(status_error(resp.url(), resp.status(), resp.headers()));
         }
-        if resp
-            .content_length()
-            .is_some_and(|len| len > max_bytes as u64)
-        {
-            return Err(FetchBytesError::TooLarge { max_bytes });
-        }
         let final_url = resp.url().clone();
         let headers = resp.headers().clone();
-        let mut stream = resp.bytes_stream();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| FetchBytesError::Transport(e.to_string()))?;
-            if bytes.len().saturating_add(chunk.len()) > max_bytes {
-                return Err(FetchBytesError::TooLarge { max_bytes });
-            }
-            bytes.extend_from_slice(&chunk);
-        }
+        let bytes = read_body_capped(resp, max_bytes, None).await?;
         Ok(FetchedBytes {
             final_url,
             headers,
@@ -431,70 +547,100 @@ pub fn outbound_redirect_policy(max_hops: usize) -> Policy {
             && let Ok(ip) = host.parse::<IpAddr>()
             && is_internal_ip(&ip)
         {
-            return attempt.error(SsrfError::PrivateAddress(ip));
+            return attempt.error(refused(ip));
         }
         attempt.follow()
     })
 }
 
 /// `true` if `ip` is in any range the server should refuse to talk to
-/// from a user-supplied URL. Covers loopback, RFC-1918 private, link-local,
-/// CGN (RFC-6598), multicast, broadcast, documentation, unspecified,
-/// ULA (IPv6 fc00::/7), v4-mapped (and recurse on the inner v4).
+/// from a user- or provider-supplied URL: every IANA special-purpose block
+/// that is not globally reachable, plus multicast and the reserved space.
+/// IPv6 forms that carry an IPv4 address (mapped, compatible, NAT64, 6to4)
+/// are unwrapped and the embedded address is checked by the IPv4 rules.
+///
+/// IPv4: 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16,
+/// 172.16.0.0/12, 192.0.0.0/24, 192.0.2.0/24, 192.88.99.0/24,
+/// 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24,
+/// 224.0.0.0/4, 240.0.0.0/4 (includes 255.255.255.255).
+///
+/// IPv6: ::, ::1, ::ffff:0:0/96 and ::/96 (embedded IPv4), 64:ff9b::/96 and
+/// the /96 form of 64:ff9b:1::/48 (embedded IPv4; the rest of that /48 is
+/// refused), 100::/64, 2001::/32 (Teredo), 2001:2::/48, 2001:db8::/32,
+/// 2002::/16 (embedded IPv4), 3fff::/20, 5f00::/16, fc00::/7, fe80::/10,
+/// fec0::/10, ff00::/8.
 pub fn is_internal_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_internal_v4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_internal_v4(&v4);
-            }
-            is_internal_v6(v6)
-        }
+        IpAddr::V6(v6) => is_internal_v6(v6),
     }
 }
 
 fn is_internal_v4(ip: &Ipv4Addr) -> bool {
-    if ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_multicast()
-        || ip.is_broadcast()
-        || ip.is_documentation()
-        || ip.is_unspecified()
-    {
-        return true;
-    }
-    // RFC-6598 carrier-grade NAT 100.64.0.0/10 — std doesn't expose
-    // a stable `is_shared` predicate.
-    let octets = ip.octets();
-    if octets[0] == 100 && (octets[1] & 0b1100_0000) == 0b0100_0000 {
-        return true;
-    }
-    // 240.0.0.0/4 reserved (minus the broadcast already caught above).
-    if octets[0] >= 240 {
-        return true;
-    }
-    false
+    let o = ip.octets();
+    let in_net = |net: [u8; 4], prefix: u32| -> bool {
+        let mask = if prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - prefix)
+        };
+        (u32::from(*ip) & mask) == (u32::from_be_bytes(net) & mask)
+    };
+    o[0] == 0 // 0.0.0.0/8 "this network"
+        || ip.is_private() // 10/8, 172.16/12, 192.168/16
+        || ip.is_loopback() // 127/8
+        || ip.is_link_local() // 169.254/16
+        || in_net([100, 64, 0, 0], 10) // carrier-grade NAT
+        || in_net([192, 0, 0, 0], 24) // IETF protocol assignments
+        || in_net([192, 0, 2, 0], 24) // TEST-NET-1
+        || in_net([192, 88, 99, 0], 24) // deprecated 6to4 relay anycast
+        || in_net([198, 18, 0, 0], 15) // benchmarking
+        || in_net([198, 51, 100, 0], 24) // TEST-NET-2
+        || in_net([203, 0, 113, 0], 24) // TEST-NET-3
+        || ip.is_multicast() // 224/4
+        || o[0] >= 240 // 240/4 reserved, incl. 255.255.255.255
 }
 
 fn is_internal_v6(ip: &Ipv6Addr) -> bool {
-    if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
+    let seg = ip.segments();
+    if ip.is_unspecified() || ip.is_loopback() {
         return true;
     }
-    let segments = ip.segments();
-    // fc00::/7 — unique local addresses.
-    if (segments[0] & 0xfe00) == 0xfc00 {
-        return true;
+    // ::ffff:0:0/96 (mapped) and ::/96 (deprecated compatible) carry an
+    // IPv4 address in the low 32 bits.
+    if seg[..5] == [0; 5] && (seg[5] == 0xffff || seg[5] == 0) {
+        return is_internal_v4(&low_v4(ip));
     }
-    // fe80::/10 — link-local.
-    if (segments[0] & 0xffc0) == 0xfe80 {
-        return true;
+    // 64:ff9b::/96 well-known NAT64 prefix.
+    if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        return is_internal_v4(&low_v4(ip));
     }
-    // 2001:db8::/32 — documentation.
-    if segments[0] == 0x2001 && segments[1] == 0x0db8 {
-        return true;
+    // 64:ff9b:1::/48 local-use NAT64: only the /96 form has a known
+    // embedded address; anything else in the block is refused.
+    if seg[..3] == [0x64, 0xff9b, 1] {
+        return seg[3..6] != [0, 0, 0] || is_internal_v4(&low_v4(ip));
     }
-    false
+    // 2002::/16 6to4: the IPv4 address is the next 32 bits.
+    if seg[0] == 0x2002 {
+        let v4 = Ipv4Addr::from((u32::from(seg[1]) << 16) | u32::from(seg[2]));
+        return is_internal_v4(&v4);
+    }
+    (seg[..4] == [0x100, 0, 0, 0]) // 100::/64 discard-only
+        || (seg[0] == 0x2001 && seg[1] == 0) // 2001::/32 Teredo
+        || (seg[0] == 0x2001 && seg[1] == 2 && seg[2] == 0) // 2001:2::/48 benchmarking
+        || (seg[0] == 0x2001 && seg[1] == 0x0db8) // documentation
+        || (seg[0] == 0x3fff && (seg[1] & 0xf000) == 0) // 3fff::/20 documentation
+        || seg[0] == 0x5f00 // 5f00::/16 segment routing SIDs
+        || (seg[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+        || (seg[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+        || (seg[0] & 0xffc0) == 0xfec0 // fec0::/10 deprecated site-local
+        || ip.is_multicast() // ff00::/8
+}
+
+/// The low 32 bits of an IPv6 address as IPv4.
+fn low_v4(ip: &Ipv6Addr) -> Ipv4Addr {
+    let o = ip.octets();
+    Ipv4Addr::new(o[12], o[13], o[14], o[15])
 }
 
 #[cfg(test)]
@@ -647,7 +793,9 @@ mod tests {
     #[tokio::test]
     async fn resolve_pinned_returns_public_literal() {
         // IP-literal hosts short-circuit DNS and return the literal for pinning.
-        let ip = resolve_pinned_addr("8.8.8.8", 443).await.unwrap();
+        let ip = resolve_pinned_addr("8.8.8.8", 443, is_internal_ip)
+            .await
+            .unwrap();
         assert_eq!(ip, "8.8.8.8".parse::<IpAddr>().unwrap());
     }
 
@@ -656,7 +804,9 @@ mod tests {
         // `localhost` resolves to loopback via the local resolver — the
         // resolved address (not just an IP literal) must be gated before it can
         // be pinned, which is the SEC-3 rebinding defense.
-        let err = resolve_pinned_addr("localhost", 443).await.unwrap_err();
+        let err = resolve_pinned_addr("localhost", 443, is_internal_ip)
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, SsrfError::PrivateAddress(_)),
             "expected PrivateAddress, got {err:?}"
@@ -678,6 +828,302 @@ mod tests {
                 "expected PrivateAddress for {url}, got {err:?}"
             );
         }
+    }
+
+    #[test]
+    fn added_v4_ranges_are_internal() {
+        for raw in [
+            "0.1.2.3",         // 0.0.0.0/8
+            "0.255.255.255",   // 0.0.0.0/8 upper
+            "192.0.0.1",       // 192.0.0.0/24
+            "192.0.0.255",     // 192.0.0.0/24 upper
+            "192.88.99.1",     // deprecated 6to4 relay anycast
+            "198.18.0.1",      // benchmarking 198.18.0.0/15
+            "198.19.255.255",  // benchmarking upper
+            "239.255.255.255", // multicast upper
+            "254.1.2.3",       // reserved 240.0.0.0/4
+        ] {
+            let ip: IpAddr = raw.parse().unwrap();
+            assert!(is_internal_ip(&ip), "expected {raw} to be internal");
+        }
+        // Neighbours of the added blocks stay public.
+        for raw in [
+            "1.0.0.1",
+            "192.0.1.1",
+            "192.88.98.1",
+            "198.17.255.255",
+            "198.20.0.1",
+            "223.255.255.255",
+        ] {
+            let ip: IpAddr = raw.parse().unwrap();
+            assert!(!is_internal_ip(&ip), "expected {raw} to be public");
+        }
+    }
+
+    #[test]
+    fn added_v6_ranges_are_internal() {
+        for raw in [
+            "100::1",         // discard-only 100::/64
+            "2001::1",        // Teredo 2001::/32
+            "2001:0:ffff::1", // Teredo
+            "2001:2::1",      // benchmarking 2001:2::/48
+            "3fff::1",        // documentation 3fff::/20
+            "3fff:fff::1",    // documentation upper
+            "5f00::1",        // segment routing SIDs
+            "fec0::1",        // deprecated site-local
+            "64:ff9b:1:1::1", // local-use NAT64 outside its /96 form
+        ] {
+            let ip: IpAddr = raw.parse().unwrap();
+            assert!(is_internal_ip(&ip), "expected {raw} to be internal");
+        }
+        for raw in [
+            "100:0:0:1::1",
+            "2001:4860::8888",
+            "3fff:1000::1",
+            "2620:fe::fe",
+        ] {
+            let ip: IpAddr = raw.parse().unwrap();
+            assert!(!is_internal_ip(&ip), "expected {raw} to be public");
+        }
+    }
+
+    #[test]
+    fn ipv4_embedded_v6_forms_are_checked_by_the_embedded_address() {
+        // (address, internal?) — each form wraps one internal and one
+        // public IPv4 address.
+        for (raw, internal) in [
+            ("::ffff:10.0.0.1", true),     // mapped
+            ("::ffff:8.8.8.8", false),     // mapped, public
+            ("::127.0.0.1", true),         // compatible
+            ("::169.254.169.254", true),   // compatible
+            ("::8.8.8.8", false),          // compatible, public
+            ("64:ff9b::7f00:1", true),     // NAT64 of 127.0.0.1
+            ("64:ff9b::a9fe:a9fe", true),  // NAT64 of 169.254.169.254
+            ("64:ff9b::808:808", false),   // NAT64 of 8.8.8.8
+            ("64:ff9b:1::c0a8:101", true), // local-use NAT64 of 192.168.1.1
+            ("64:ff9b:1::808:808", false), // local-use NAT64 of 8.8.8.8
+            ("2002:7f00:1::1", true),      // 6to4 of 127.0.0.1
+            ("2002:a00:1::1", true),       // 6to4 of 10.0.0.1
+            ("2002:c612:1::1", true),      // 6to4 of 198.18.0.1
+            ("2002:808:808::1", false),    // 6to4 of 8.8.8.8
+        ] {
+            let ip: IpAddr = raw.parse().unwrap();
+            assert_eq!(is_internal_ip(&ip), internal, "{raw}");
+        }
+    }
+
+    #[test]
+    fn refusal_message_names_no_address() {
+        let err = validate_outbound_url("https://169.254.169.254/latest").unwrap_err();
+        let msg = err.to_string();
+        assert!(matches!(err, SsrfError::PrivateAddress(_)));
+        assert!(!msg.contains("169.254"), "{msg}");
+        let fetch = FetchBytesError::from(err).to_string();
+        assert!(!fetch.contains("169.254"), "{fetch}");
+        let v6 = validate_outbound_url("https://[fd12::1]/list.cbl")
+            .unwrap_err()
+            .to_string();
+        assert!(!v6.contains("fd12"), "{v6}");
+    }
+
+    // ───── real-HTTP tests of the shared fetch path ─────
+    //
+    // The test server listens on 127.0.0.1, which production refuses. These
+    // tests use the module-private policy seam with a policy that admits
+    // exactly 127.0.0.1 and refuses everything production refuses besides.
+
+    fn admit_test_loopback(ip: &IpAddr) -> bool {
+        *ip != IpAddr::V4(Ipv4Addr::LOCALHOST) && is_internal_ip(ip)
+    }
+
+    fn opts(deadline: Option<std::time::Duration>) -> FetchOptions {
+        FetchOptions {
+            max_bytes: 64 * 1024,
+            idle_timeout: std::time::Duration::from_secs(5),
+            deadline,
+            user_agent: "folio-test",
+            max_redirects: 2,
+            require_https: false,
+        }
+    }
+
+    const CONDITIONAL: Conditional<'static> = Conditional {
+        etag: Some("\"v1\""),
+        last_modified: Some("Mon, 02 Nov 2026 00:00:00 GMT"),
+    };
+
+    async fn fetch_test(
+        url: &str,
+        o: &FetchOptions,
+        conditional: Conditional<'_>,
+    ) -> Result<FetchOutcome, FetchBytesError> {
+        fetch_public_with_policy(url, o, conditional, admit_test_loopback).await
+    }
+
+    #[tokio::test]
+    async fn conditional_fetch_returns_not_modified_and_sends_validators() {
+        use wiremock::matchers::{header, header_exists, method};
+        let mock = wiremock::MockServer::start().await;
+        // (wiremock splits header values on commas, so the date is only
+        // checked for presence.)
+        wiremock::Mock::given(method("GET"))
+            .and(header("if-none-match", "\"v1\""))
+            .and(header_exists("if-modified-since"))
+            .respond_with(wiremock::ResponseTemplate::new(304))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let url = format!("http://127.0.0.1:{}/list.cbl", mock.address().port());
+        let out = fetch_test(&url, &opts(None), CONDITIONAL).await.unwrap();
+        assert!(matches!(out, FetchOutcome::NotModified));
+    }
+
+    #[tokio::test]
+    async fn redirect_to_an_internal_address_is_refused_on_both_paths() {
+        use wiremock::matchers::method;
+        for target in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.1/list.cbl",
+            "http://[::1]/list.cbl",
+            "http://[::ffff:127.0.0.2]/list.cbl",
+            "http://[64:ff9b::a00:1]/list.cbl",
+        ] {
+            for conditional in [Conditional::default(), CONDITIONAL] {
+                let mock = wiremock::MockServer::start().await;
+                wiremock::Mock::given(method("GET"))
+                    .respond_with(
+                        wiremock::ResponseTemplate::new(302).insert_header("location", target),
+                    )
+                    .expect(1)
+                    .mount(&mock)
+                    .await;
+                let url = format!("http://127.0.0.1:{}/list.cbl", mock.address().port());
+                let err = fetch_test(&url, &opts(None), conditional)
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, FetchBytesError::Ssrf(SsrfError::PrivateAddress(_))),
+                    "{target} conditional={conditional:?}: {err:?}"
+                );
+                assert!(!err.to_string().contains("169.254"), "{err}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn redirect_hops_are_bounded_on_both_paths() {
+        use wiremock::matchers::method;
+        let mock = wiremock::MockServer::start().await;
+        let self_url = format!("http://127.0.0.1:{}/loop", mock.address().port());
+        wiremock::Mock::given(method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(302).insert_header("location", self_url.as_str()),
+            )
+            .mount(&mock)
+            .await;
+        for conditional in [Conditional::default(), CONDITIONAL] {
+            let err = fetch_test(&self_url, &opts(None), conditional)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, FetchBytesError::TooManyRedirects(2)),
+                "{err:?}"
+            );
+        }
+    }
+
+    /// A raw server that sends `head`, then `body_chunk` every `every`
+    /// forever (or until the client goes away).
+    async fn trickle_server(
+        head: &'static str,
+        body_chunk: Vec<u8>,
+        every: std::time::Duration,
+    ) -> u16 {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let body_chunk = body_chunk.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                    if sock.write_all(head.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    loop {
+                        if sock.write_all(&body_chunk).await.is_err() {
+                            return;
+                        }
+                        tokio::time::sleep(every).await;
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_trickling_body_hits_the_overall_deadline() {
+        // One byte every 100 ms never trips the 5 s per-step timeout; only
+        // the overall deadline ends the fetch.
+        let port = trickle_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 60000\r\n\r\n",
+            b"x".to_vec(),
+            std::time::Duration::from_millis(100),
+        )
+        .await;
+        let url = format!("http://127.0.0.1:{port}/list.cbl");
+        for conditional in [Conditional::default(), CONDITIONAL] {
+            let started = std::time::Instant::now();
+            let err = fetch_test(
+                &url,
+                &opts(Some(std::time::Duration::from_millis(800))),
+                conditional,
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(err, FetchBytesError::Timeout), "{err:?}");
+            assert!(started.elapsed() < std::time::Duration::from_secs(4));
+        }
+    }
+
+    #[tokio::test]
+    async fn oversize_bodies_are_refused_while_streaming() {
+        // Declared too large: refused from the header, before any body.
+        let port = trickle_server(
+            "HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n",
+            Vec::new(),
+            std::time::Duration::from_secs(60),
+        )
+        .await;
+        let url = format!("http://127.0.0.1:{port}/a");
+        let err = fetch_test(
+            &url,
+            &opts(Some(std::time::Duration::from_secs(5))),
+            Conditional::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, FetchBytesError::TooLarge { .. }), "{err:?}");
+
+        // No length, endless chunked body: refused once the running total
+        // passes the cap (it could never finish if it were buffered first).
+        let port = trickle_server(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            format!("400\r\n{}\r\n", "x".repeat(1024)).into_bytes(),
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        let url = format!("http://127.0.0.1:{port}/b");
+        let err = fetch_test(
+            &url,
+            &opts(Some(std::time::Duration::from_secs(10))),
+            Conditional::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, FetchBytesError::TooLarge { .. }), "{err:?}");
     }
 
     #[test]

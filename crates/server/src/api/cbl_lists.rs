@@ -50,7 +50,6 @@ use server_macros::handler;
 const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
 /// Request-body limit on `POST /me/cbl-lists/upload` (see [`routes`]).
 const UPLOAD_BODY_LIMIT: usize = MAX_UPLOAD_BYTES + 64 * 1024;
-const MAX_BOOKS_PER_FILE: usize = 5_000;
 const CBL_XML_TYPES: &[&str] = &[
     "application/xml",
     "text/xml",
@@ -1471,11 +1470,11 @@ pub async fn upload(
         Ok(p) => p,
         Err(e) => return error(StatusCode::BAD_REQUEST, "parse_failed", &e.to_string()),
     };
-    if parsed.books.len() > MAX_BOOKS_PER_FILE {
+    if parsed.books.len() > crate::cbl::MAX_BOOKS_PER_LIST {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
-            "file exceeds 5000 entries",
+            &format!("file {}", crate::cbl::too_many_entries_message()),
         );
     }
     create_list_from_parsed(
@@ -1552,25 +1551,27 @@ async fn create_from_url(
     description: Option<String>,
     refresh_schedule: Option<String>,
 ) -> axum::response::Response {
-    let fetched = match crate::util::ssrf::fetch_public_bytes(
-        &url,
-        MAX_UPLOAD_BYTES,
-        std::time::Duration::from_secs(30),
-        crate::build_info::USER_AGENT,
-        2,
-        true,
-    )
-    .await
-    {
-        Ok(fetched) => fetched,
-        Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
-            return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
-        }
-        Err(crate::util::ssrf::FetchBytesError::TooLarge { .. }) => {
-            return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "exceeds 4 MiB");
-        }
-        Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
-    };
+    let fetched =
+        match crate::cbl::fetch::fetch_cbl_url(&url, crate::util::ssrf::Conditional::default())
+            .await
+        {
+            Ok(crate::util::ssrf::FetchOutcome::Fetched(fetched)) => fetched,
+            // No validators were sent, so a 304 answers nothing we asked.
+            Ok(crate::util::ssrf::FetchOutcome::NotModified) => {
+                return error(
+                    StatusCode::BAD_GATEWAY,
+                    "fetch_failed",
+                    "upstream returned status 304 Not Modified",
+                );
+            }
+            Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
+                return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
+            }
+            Err(crate::util::ssrf::FetchBytesError::TooLarge { .. }) => {
+                return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "exceeds 4 MiB");
+            }
+            Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
+        };
     if !is_allowed_cbl_response_type(
         fetched
             .headers
@@ -1599,11 +1600,11 @@ async fn create_from_url(
         Ok(p) => p,
         Err(e) => return error(StatusCode::BAD_REQUEST, "parse_failed", &e.to_string()),
     };
-    if parsed.books.len() > MAX_BOOKS_PER_FILE {
+    if parsed.books.len() > crate::cbl::MAX_BOOKS_PER_LIST {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
-            "exceeds 5000 entries",
+            &crate::cbl::too_many_entries_message(),
         );
     }
     create_list_from_parsed(
@@ -1651,11 +1652,11 @@ async fn create_from_catalog(
                 "GitHub rate-limited the catalog index fetch",
             );
         }
-        Err(catalog::CatalogError::TooLarge { actual, limit }) => {
+        Err(catalog::CatalogError::TooLarge { limit }) => {
             return error(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "too_large",
-                &format!("blob {actual} bytes > limit {limit}"),
+                &format!("blob exceeds limit {limit} bytes"),
             );
         }
         Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
@@ -1665,11 +1666,11 @@ async fn create_from_catalog(
         Ok(p) => p,
         Err(e) => return error(StatusCode::BAD_REQUEST, "parse_failed", &e.to_string()),
     };
-    if parsed.books.len() > MAX_BOOKS_PER_FILE {
+    if parsed.books.len() > crate::cbl::MAX_BOOKS_PER_LIST {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
-            "exceeds 5000 entries",
+            &crate::cbl::too_many_entries_message(),
         );
     }
     create_list_from_parsed(
@@ -1954,6 +1955,11 @@ pub async fn refresh_one(
             }
             Json(summary).into_response()
         }
+        Err(refresh::RefreshError::TooManyEntries) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_many_entries",
+            &crate::cbl::too_many_entries_message(),
+        ),
         Err(e) => {
             tracing::warn!(error = %e, "cbl_lists: refresh failed");
             error(StatusCode::BAD_GATEWAY, "refresh_failed", &e.to_string())
@@ -2099,6 +2105,11 @@ pub async fn check_one(
     let caller_view = check_caller_view(&app, acl).await;
     match crate::cbl::refresh::check(&app.db, id, caller_view.as_ref()).await {
         Ok(outcome) => Json(item_from_check(&row, &outcome)).into_response(),
+        Err(crate::cbl::refresh::RefreshError::TooManyEntries) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_many_entries",
+            &crate::cbl::too_many_entries_message(),
+        ),
         Err(e) => {
             tracing::warn!(error = %e, "cbl_lists: check failed");
             error(StatusCode::BAD_GATEWAY, "check_failed", &e.to_string())

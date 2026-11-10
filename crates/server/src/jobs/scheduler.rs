@@ -82,7 +82,9 @@ async fn register_prune_auth_sessions(scheduler: &JobScheduler, state: &AppState
 /// supports a small set of canonical schedules (`@hourly`, `@daily`,
 /// `@weekly`, `@monthly`) plus the literal `manual` (which refuses to
 /// auto-fire). Real cron parsing is deferred — the API caps the schedule
-/// to these tokens.
+/// to these tokens. Each list's remote fetch has its own budget and the
+/// whole run is bounded (`cbl::fetch::CBL_SWEEP_BUDGET`); see
+/// [`crate::cbl::refresh::run_sweep`].
 async fn register_cbl_refresh_sweep(
     scheduler: &tokio_cron_scheduler::JobScheduler,
     state: &AppState,
@@ -98,31 +100,7 @@ async fn register_cbl_refresh_sweep(
                     return;
                 }
             };
-            for list_id in due {
-                match crate::cbl::refresh::refresh(
-                    &state.db,
-                    list_id,
-                    crate::cbl::import::RefreshTrigger::Scheduled,
-                    false,
-                )
-                .await
-                {
-                    Ok(s) => {
-                        if s.upstream_changed {
-                            tracing::info!(
-                                list_id = %list_id,
-                                added = s.added,
-                                removed = s.removed,
-                                rematched = s.rematched,
-                                "cbl_refresh applied diff",
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(list_id = %list_id, error = %e, "cbl_refresh failed");
-                    }
-                }
-            }
+            crate::cbl::refresh::run_sweep(&state.db, due).await;
         })
     });
     match job_result {

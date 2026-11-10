@@ -390,6 +390,39 @@ found changes and spins while anything runs, so the panel can stay
 hidden. State lives in `CblUpdatesProvider`, so hiding the panel keeps
 the results.
 
+### Fetching reading lists
+
+A URL list is fetched by `cbl::fetch::fetch_cbl_url` at import, on
+refresh and on "Check for updates". Refreshes send the stored ETag and
+Last-Modified as `If-None-Match` / `If-Modified-Since`; the conditional
+request goes through the same code as the first fetch
+(`util::ssrf::fetch_public`). That code accepts only `https://`, resolves
+the host once and refuses the URL when any address is internal (the
+ranges are listed on `util::ssrf::is_internal_ip`), connects to the
+address it vetted, follows at most 2 redirects by hand with each target
+vetted again, caps the body at 4 MiB while streaming and gives the whole
+fetch one 60 s deadline (`CBL_FETCH_DEADLINE`) on top of the 30 s
+per-step timeout. A refused URL gets a generic message that names
+neither the address nor the range; the address is logged at DEBUG.
+
+Catalog lists use the vetted pooled client
+(`util::ssrf::shared_public_client`): DNS answers checked, 2 redirect
+hops, a 30 s bound per request including the body, and the tree listing
+(16 MiB) and blob (4 MiB) read with a running cap that also refuses an
+oversize `Content-Length` before reading.
+
+The remote part of one refresh or check has a 120 s budget
+(`CBL_LIST_FETCH_BUDGET`). The hourly sweep visits due lists in random
+order and starts no new list after 30 minutes (`CBL_SWEEP_BUDGET`);
+lists it did not reach stay due for the next run.
+
+A list may have at most 5000 entries (`cbl::MAX_BOOKS_PER_LIST`). The
+cap applies at import and again on refresh and check: a source that has
+grown past it is refused with the import's `413 too_many_entries`
+("exceeds 5000 entries") before anything is written, so the stored
+entries and the refresh log stay as they were. The bulk check and
+refresh report it as that list's error, and the scheduled sweep logs it.
+
 ## OPDS
 
 Pinned or sidebar-visible filter views appear in the OPDS personal feeds

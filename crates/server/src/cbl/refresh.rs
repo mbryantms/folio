@@ -5,20 +5,27 @@
 //!
 //!   - `'upload'` — no remote source. Refresh is a re-match against the
 //!     stored `raw_xml` (calls [`super::import::rematch_existing`]).
-//!   - `'url'` — HTTP GET with conditional `If-None-Match`. 304 → skip
-//!     re-parse; otherwise persist the new bytes.
+//!   - `'url'` — HTTP GET with conditional `If-None-Match` /
+//!     `If-Modified-Since`, through the same vetted fetch as the import
+//!     ([`super::fetch::fetch_cbl_url`]). 304 → skip re-parse; otherwise
+//!     persist the new bytes.
 //!   - `'catalog'` — fetch the path from the configured catalog source;
 //!     compare blob SHAs to skip when unchanged.
+//!
+//! Every path refuses a file with more than [`super::MAX_BOOKS_PER_LIST`]
+//! entries ([`RefreshError::TooManyEntries`]) before anything is written,
+//! so the stored list stays as it was. The remote part of one refresh is
+//! bounded by [`super::fetch::CBL_LIST_FETCH_BUDGET`].
 
 use entity::{catalog_source, cbl_list};
-use futures::StreamExt;
 use sea_orm::{ConnectionTrait, EntityTrait, TransactionTrait};
 use uuid::Uuid;
 
 use super::catalog;
+use super::fetch::{CBL_LIST_FETCH_BUDGET, CBL_SWEEP_BUDGET, fetch_cbl_url};
 use super::import::{self, ImportSummary, RefreshTrigger};
+use crate::util::ssrf::{Conditional, FetchOutcome};
 
-const MAX_URL_CBL_BYTES: usize = 4 * 1024 * 1024;
 const CBL_XML_TYPES: &[&str] = &[
     "application/xml",
     "text/xml",
@@ -36,6 +43,12 @@ pub enum RefreshError {
     Http(String),
     #[error("parse: {0}")]
     Parse(String),
+    /// The fetched file has more entries than an import accepts. Same
+    /// message as the import refusal.
+    #[error("{}", super::too_many_entries_message())]
+    TooManyEntries,
+    #[error("timed out fetching the list")]
+    Timeout,
     #[error("DB: {0}")]
     Db(#[from] sea_orm::DbErr),
 }
@@ -56,8 +69,7 @@ pub async fn refresh(
             // No remote — re-parse the stored XML and re-match. Useful
             // after a library scan adds new issues that previously
             // missed entries can now match against.
-            let parsed = parsers::cbl::parse(list.raw_xml.as_bytes())
-                .map_err(|e| RefreshError::Parse(e.to_string()))?;
+            let parsed = parse_within_cap(&list.raw_xml)?;
             let summary =
                 import::apply_parsed(db, list.id, &parsed, &list.raw_xml, None, trigger).await?;
             Ok(summary)
@@ -124,7 +136,7 @@ pub async fn check(
                 .source_url
                 .as_deref()
                 .ok_or_else(|| RefreshError::Http("url source missing source_url".into()))?;
-            match fetch_url_source(url, &list, false).await? {
+            match within_budget(fetch_url_source(url, &list, false)).await? {
                 UrlFetch::NotModified => None,
                 UrlFetch::Fetched(fetched) => {
                     if !is_allowed_cbl_response_type(
@@ -155,7 +167,10 @@ pub async fn check(
                 .one(db)
                 .await?
                 .ok_or(RefreshError::NotFound)?;
-            let blob = catalog::fetch_blob(db, &source, path, false).await?;
+            let blob = within_budget(async {
+                Ok::<_, RefreshError>(catalog::fetch_blob(db, &source, path, false).await?)
+            })
+            .await?;
             if list.github_blob_sha.as_deref() == Some(blob.blob_sha.as_str()) {
                 None
             } else {
@@ -169,13 +184,11 @@ pub async fn check(
     let Some((xml, blob_sha)) = fetched else {
         // Upstream unchanged. A real refresh would still re-match in case the
         // library gained issues; reflect that as the rematch delta only.
-        let parsed = parsers::cbl::parse(list.raw_xml.as_bytes())
-            .map_err(|e| RefreshError::Parse(e.to_string()))?;
+        let parsed = parse_within_cap(&list.raw_xml)?;
         return dry_run_apply(db, list.id, &parsed, &list.raw_xml, None, caller_view).await;
     };
 
-    let parsed =
-        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
+    let parsed = parse_within_cap(&xml)?;
     dry_run_apply(db, list.id, &parsed, &xml, blob_sha.as_deref(), caller_view).await
 }
 
@@ -231,7 +244,7 @@ async fn fetch_url_and_apply(
         .as_deref()
         .ok_or_else(|| RefreshError::Http("url source missing source_url".into()))?;
 
-    let fetched = match fetch_url_source(url, list, force).await? {
+    let fetched = match within_budget(fetch_url_source(url, list, force)).await? {
         UrlFetch::NotModified => {
             // Bytes unchanged — re-match only.
             let rematched = import::rematch_existing(db, list.id, trigger).await?;
@@ -268,8 +281,7 @@ async fn fetch_url_and_apply(
         ));
     }
     let xml = String::from_utf8_lossy(&fetched.bytes).into_owned();
-    let parsed =
-        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
+    let parsed = parse_within_cap(&xml)?;
     let summary = import::apply_parsed(db, list.id, &parsed, &xml, None, trigger).await?;
     update_url_metadata(db, list.id, etag, last_modified).await?;
     Ok(summary)
@@ -280,94 +292,87 @@ enum UrlFetch {
     Fetched(Box<crate::util::ssrf::FetchedBytes>),
 }
 
+/// Fetch a URL list's source. Unless `force`, the stored ETag /
+/// Last-Modified go along as validators. Conditional or not, the request is
+/// the import's ([`fetch_cbl_url`]): vetted, pinned, re-vetted on every
+/// redirect, capped and under one deadline.
 async fn fetch_url_source(
     url: &str,
     list: &cbl_list::Model,
     force: bool,
 ) -> Result<UrlFetch, RefreshError> {
-    if force || (list.source_etag.is_none() && list.source_last_modified.is_none()) {
-        return crate::util::ssrf::fetch_public_bytes(
-            url,
-            MAX_URL_CBL_BYTES,
-            std::time::Duration::from_secs(30),
-            crate::build_info::USER_AGENT,
-            2,
-            true,
-        )
-        .await
-        .map(|fetched| UrlFetch::Fetched(Box::new(fetched)))
-        .map_err(|e| RefreshError::Http(e.to_string()));
-    }
-
-    // Conditional refresh needs request headers; keep it local but use the
-    // same public-URL validation, redirect refusal, and byte cap.
-    let parsed_url = crate::util::ssrf::validate_outbound_url(url)
-        .map_err(|e| RefreshError::Http(e.to_string()))?;
-    if let Some(host) = parsed_url.host_str() {
-        let port = parsed_url.port_or_known_default().unwrap_or(443);
-        crate::util::ssrf::check_host_resolves_public(host, port)
-            .await
-            .map_err(|e| RefreshError::Http(e.to_string()))?;
-    }
-    let client = reqwest::Client::builder()
-        .user_agent(crate::build_info::USER_AGENT)
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| RefreshError::Http(e.to_string()))?;
-    let mut req = client.get(parsed_url.clone());
-    if let Some(etag) = list.source_etag.as_deref() {
-        req = req.header(reqwest::header::IF_NONE_MATCH, etag);
-    }
-    if let Some(lm) = list.source_last_modified.as_deref() {
-        req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm);
-    }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| RefreshError::Http(e.to_string()))?;
-    if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
-        return Ok(UrlFetch::NotModified);
-    }
-    if resp.status().is_redirection() {
-        return crate::util::ssrf::fetch_public_bytes(
-            url,
-            MAX_URL_CBL_BYTES,
-            std::time::Duration::from_secs(30),
-            crate::build_info::USER_AGENT,
-            2,
-            true,
-        )
-        .await
-        .map(|fetched| UrlFetch::Fetched(Box::new(fetched)))
-        .map_err(|e| RefreshError::Http(e.to_string()));
-    }
-    if !resp.status().is_success() {
-        return Err(RefreshError::Http(format!("status {}", resp.status())));
-    }
-    if resp
-        .content_length()
-        .is_some_and(|len| len > MAX_URL_CBL_BYTES as u64)
-    {
-        return Err(RefreshError::Http("exceeds 4 MiB".into()));
-    }
-    let headers = resp.headers().clone();
-    let mut stream = resp.bytes_stream();
-    let mut bytes = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| RefreshError::Http(e.to_string()))?;
-        if bytes.len().saturating_add(chunk.len()) > MAX_URL_CBL_BYTES {
-            return Err(RefreshError::Http("exceeds 4 MiB".into()));
+    let conditional = if force {
+        Conditional::default()
+    } else {
+        Conditional {
+            etag: list.source_etag.as_deref(),
+            last_modified: list.source_last_modified.as_deref(),
         }
-        bytes.extend_from_slice(&chunk);
+    };
+    match fetch_cbl_url(url, conditional).await {
+        Ok(FetchOutcome::NotModified) => Ok(UrlFetch::NotModified),
+        Ok(FetchOutcome::Fetched(fetched)) => Ok(UrlFetch::Fetched(fetched)),
+        Err(e) => Err(RefreshError::Http(e.to_string())),
     }
-    Ok(UrlFetch::Fetched(Box::new(
-        crate::util::ssrf::FetchedBytes {
-            final_url: parsed_url,
-            headers,
-            bytes,
-        },
-    )))
+}
+
+/// Run the remote part of one refresh / check under
+/// [`CBL_LIST_FETCH_BUDGET`]. Only network work goes in here: nothing it
+/// wraps writes list entries, so running out of budget leaves the list as
+/// it was.
+async fn within_budget<T>(
+    fut: impl std::future::Future<Output = Result<T, RefreshError>>,
+) -> Result<T, RefreshError> {
+    tokio::time::timeout(CBL_LIST_FETCH_BUDGET, fut)
+        .await
+        .map_err(|_| RefreshError::Timeout)?
+}
+
+/// Parse a fetched (or stored) file and refuse it when it has more entries
+/// than an import accepts, before anything is written.
+fn parse_within_cap(xml: &str) -> Result<parsers::cbl::ParsedCbl, RefreshError> {
+    let parsed =
+        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
+    if parsed.books.len() > super::MAX_BOOKS_PER_LIST {
+        return Err(RefreshError::TooManyEntries);
+    }
+    Ok(parsed)
+}
+
+/// One run of the scheduled refresh sweep over the lists that are due.
+/// The order is shuffled so lists whose hosts keep failing cannot starve
+/// the rest, and once [`CBL_SWEEP_BUDGET`] is spent no further list is
+/// started (the skipped ones stay due for the next run).
+pub async fn run_sweep(db: &sea_orm::DatabaseConnection, mut due: Vec<Uuid>) {
+    use rand::seq::SliceRandom;
+    due.shuffle(&mut rand::rng());
+    let started = tokio::time::Instant::now();
+    let total = due.len();
+    for (done, list_id) in due.into_iter().enumerate() {
+        if started.elapsed() >= CBL_SWEEP_BUDGET {
+            tracing::warn!(
+                skipped = total - done,
+                "cbl_refresh sweep: time budget spent; remaining lists run next sweep",
+            );
+            break;
+        }
+        match refresh(db, list_id, RefreshTrigger::Scheduled, false).await {
+            Ok(s) => {
+                if s.upstream_changed {
+                    tracing::info!(
+                        list_id = %list_id,
+                        added = s.added,
+                        removed = s.removed,
+                        rematched = s.rematched,
+                        "cbl_refresh applied diff",
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(list_id = %list_id, error = %e, "cbl_refresh failed");
+            }
+        }
+    }
 }
 
 fn is_allowed_cbl_response_type(content_type: Option<&str>, url: &str) -> bool {
@@ -411,7 +416,10 @@ async fn fetch_catalog_and_apply(
         .await?
         .ok_or(RefreshError::NotFound)?;
 
-    let blob = catalog::fetch_blob(db, &source, path, force).await?;
+    let blob = within_budget(async {
+        Ok::<_, RefreshError>(catalog::fetch_blob(db, &source, path, force).await?)
+    })
+    .await?;
     if !force
         && let Some(prev_sha) = list.github_blob_sha.as_deref()
         && prev_sha == blob.blob_sha
@@ -428,8 +436,7 @@ async fn fetch_catalog_and_apply(
         return Ok(summary);
     }
     let xml = String::from_utf8_lossy(&blob.bytes).into_owned();
-    let parsed =
-        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
+    let parsed = parse_within_cap(&xml)?;
     let summary =
         import::apply_parsed(db, list.id, &parsed, &xml, Some(&blob.blob_sha), trigger).await?;
     Ok(summary)

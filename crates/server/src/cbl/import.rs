@@ -127,35 +127,26 @@ pub async fn apply_parsed(
         ..Default::default()
     };
 
-    let prev_keyset: std::collections::HashSet<EntryKey> =
-        prev_keys_in_order.iter().cloned().collect();
-    let new_keyset: std::collections::HashSet<EntryKey> =
-        new_keys_in_order.iter().cloned().collect();
-    let mut added_diffs = Vec::new();
-    let mut removed_diffs = Vec::new();
-    let mut reordered_diffs = Vec::new();
-
-    for (i, book) in parsed.books.iter().enumerate() {
-        let key = key_of_book(book);
-        if !prev_keyset.contains(&key) {
-            summary.added += 1;
-            added_diffs.push(diff_row(i as i32, book));
-        } else if let Some(prev_pos) = prev_keys_in_order.iter().position(|k| k == &key)
-            && prev_pos != i
-        {
-            summary.reordered += 1;
-            reordered_diffs.push(serde_json::json!({
-                "position": i,
-                "previous_position": prev_pos,
-                "series": book.series,
-                "number": book.number,
-            }));
-        }
+    let diff = structural_diff(&prev_keys_in_order, &new_keys_in_order);
+    let mut added_diffs = Vec::with_capacity(diff.added.len());
+    let mut removed_diffs = Vec::with_capacity(diff.removed.len());
+    let mut reordered_diffs = Vec::with_capacity(diff.reordered.len());
+    for &i in &diff.added {
+        summary.added += 1;
+        added_diffs.push(diff_row(i as i32, &parsed.books[i]));
     }
-    for (i, prev_key) in prev_keys_in_order.iter().enumerate() {
-        if !new_keyset.contains(prev_key)
-            && let Some(prev) = prev_by_key.get(prev_key)
-        {
+    for &(i, prev_pos) in &diff.reordered {
+        let book = &parsed.books[i];
+        summary.reordered += 1;
+        reordered_diffs.push(serde_json::json!({
+            "position": i,
+            "previous_position": prev_pos,
+            "series": book.series,
+            "number": book.number,
+        }));
+    }
+    for &i in &diff.removed {
+        if let Some(prev) = prev_by_key.get(&prev_keys_in_order[i]) {
             summary.removed += 1;
             removed_diffs.push(serde_json::json!({
                 "position": i,
@@ -410,6 +401,44 @@ struct EntryKey {
     year: Option<String>,
 }
 
+/// Positions that changed between the stored entry keys (`prev`) and the
+/// fetched ones (`new`), each list in ascending position order.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct StructuralDiff {
+    /// New positions whose key is not among the stored entries.
+    added: Vec<usize>,
+    /// `(new position, previous position)` for keys that were stored but
+    /// now sit elsewhere. The previous position is the key's first stored
+    /// occurrence, so a duplicated key compares against its first copy.
+    reordered: Vec<(usize, usize)>,
+    /// Stored positions whose key is gone from the new file.
+    removed: Vec<usize>,
+}
+
+/// O(n) diff: one index of each key's first stored position, one set of
+/// the new keys.
+fn structural_diff(prev: &[EntryKey], new: &[EntryKey]) -> StructuralDiff {
+    let mut first_prev_pos: HashMap<&EntryKey, usize> = HashMap::with_capacity(prev.len());
+    for (i, k) in prev.iter().enumerate() {
+        first_prev_pos.entry(k).or_insert(i);
+    }
+    let new_keyset: std::collections::HashSet<&EntryKey> = new.iter().collect();
+    let mut diff = StructuralDiff::default();
+    for (i, key) in new.iter().enumerate() {
+        match first_prev_pos.get(key) {
+            None => diff.added.push(i),
+            Some(&prev_pos) if prev_pos != i => diff.reordered.push((i, prev_pos)),
+            Some(_) => {}
+        }
+    }
+    for (i, key) in prev.iter().enumerate() {
+        if !new_keyset.contains(key) {
+            diff.removed.push(i);
+        }
+    }
+    diff
+}
+
 fn key_of_book(b: &parsers::cbl::ParsedCblBook) -> EntryKey {
     EntryKey {
         series: b.series.clone(),
@@ -441,4 +470,116 @@ pub fn sha256_of(bytes: &[u8]) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher.finalize().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn k(series: &str, number: &str) -> EntryKey {
+        EntryKey {
+            series: series.to_owned(),
+            number: number.to_owned(),
+            volume: None,
+            year: None,
+        }
+    }
+
+    /// The previous algorithm, kept verbatim as the reference: a linear
+    /// `position` search per new entry.
+    fn reference_diff(prev: &[EntryKey], new: &[EntryKey]) -> StructuralDiff {
+        let prev_keyset: std::collections::HashSet<EntryKey> = prev.iter().cloned().collect();
+        let new_keyset: std::collections::HashSet<EntryKey> = new.iter().cloned().collect();
+        let mut diff = StructuralDiff::default();
+        for (i, key) in new.iter().enumerate() {
+            if !prev_keyset.contains(key) {
+                diff.added.push(i);
+            } else if let Some(prev_pos) = prev.iter().position(|p| p == key)
+                && prev_pos != i
+            {
+                diff.reordered.push((i, prev_pos));
+            }
+        }
+        for (i, prev_key) in prev.iter().enumerate() {
+            if !new_keyset.contains(prev_key) {
+                diff.removed.push(i);
+            }
+        }
+        diff
+    }
+
+    #[test]
+    fn structural_diff_matches_the_linear_search_with_duplicates_and_reorders() {
+        let a = k("A", "1");
+        let b = k("B", "1");
+        let c = k("C", "2");
+        let d = k("D", "3");
+        let e = k("E", "4");
+        let cases: Vec<(Vec<EntryKey>, Vec<EntryKey>)> = vec![
+            (vec![], vec![a.clone(), b.clone()]),
+            (vec![a.clone(), b.clone()], vec![]),
+            (
+                vec![a.clone(), b.clone(), c.clone()],
+                vec![a.clone(), b.clone(), c.clone()],
+            ),
+            (
+                vec![a.clone(), b.clone(), c.clone()],
+                vec![c.clone(), a.clone(), b.clone()],
+            ),
+            // Duplicates in the stored list, the new list, and both.
+            (
+                vec![a.clone(), a.clone(), b.clone()],
+                vec![b.clone(), a.clone(), a.clone()],
+            ),
+            (
+                vec![a.clone(), b.clone()],
+                vec![a.clone(), b.clone(), a.clone(), d.clone(), d.clone()],
+            ),
+            (
+                vec![c.clone(), a.clone(), c.clone(), b.clone(), c.clone()],
+                vec![b.clone(), c.clone(), e.clone(), c.clone(), a.clone()],
+            ),
+            (
+                vec![a.clone(), b.clone(), b.clone(), d.clone()],
+                vec![d.clone(), e.clone(), b.clone()],
+            ),
+        ];
+        for (prev, new) in &cases {
+            assert_eq!(
+                structural_diff(prev, new),
+                reference_diff(prev, new),
+                "prev={prev:?} new={new:?}"
+            );
+        }
+
+        // A larger pseudo-random list with many duplicates.
+        let pool = [a, b, c, d, e];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..50 {
+            let prev: Vec<EntryKey> = (0..(next() % 40))
+                .map(|_| pool[(next() % 5) as usize].clone())
+                .collect();
+            let new: Vec<EntryKey> = (0..(next() % 40))
+                .map(|_| pool[(next() % 5) as usize].clone())
+                .collect();
+            assert_eq!(structural_diff(&prev, &new), reference_diff(&prev, &new));
+        }
+    }
+
+    #[test]
+    fn structural_diff_reports_the_first_stored_copy_of_a_duplicate() {
+        let a = k("A", "1");
+        let b = k("B", "1");
+        let diff = structural_diff(&[b.clone(), a.clone(), a.clone()], &[a.clone(), b, a]);
+        assert_eq!(diff.added, Vec::<usize>::new());
+        assert_eq!(diff.removed, Vec::<usize>::new());
+        // New #0 (A) was first stored at 1, new #1 (B) at 0, new #2 (A) at 1.
+        assert_eq!(diff.reordered, vec![(0, 1), (1, 0), (2, 1)]);
+    }
 }
