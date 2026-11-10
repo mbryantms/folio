@@ -16,19 +16,23 @@
 //! identities aren't silently merged. `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL=true`
 //! (DB key `auth.oidc.link_local_by_verified_email`) opts in to auto-linking
 //! the OIDC identity onto that local account instead, audited as
-//! `auth.oidc.auto_link`. Three cases:
+//! `auth.oidc.auto_link`. The rule:
 //!   - the ID token's `email_verified` is not the JSON boolean `true` (absent,
 //!     even when the trust-unverified opt-in admits the login, or `false`): no
 //!     link; the login is refused as without the opt-in (403 "verify your
 //!     email first" for a pending local row, 409 `auth.email_in_use`
 //!     otherwise). openidconnect is built without `accept-string-booleans`,
 //!     so a string `"true"` fails ID-token parsing and never reaches the link;
-//!   - the claim is `true` and the local row's address is verified: link and
-//!     keep the local password;
-//!   - the claim is `true` and the local row's address is unverified (pending
-//!     or active): link and take the account over — password dropped,
-//!     `token_version` bumped, refresh sessions revoked, `email_verified` set,
-//!     a pending row activated ([`take_over_if_unproven`]).
+//!   - a disabled local row is refused before anything is written;
+//!   - otherwise the identity is linked and the account becomes single sign-on
+//!     only, whatever the local row's `email_verified` says: local password
+//!     dropped, `token_version` bumped, every refresh session and app password
+//!     revoked, `email_verified` set, a pending row activated, all in one
+//!     transaction with the audit row ([`drop_local_credentials`]).
+//!
+//! A row keyed to an OIDC identity that still holds a local password (linked
+//! by an earlier build) loses it the same way at its next sign-in, audited as
+//! `auth.oidc.local_password_dropped`.
 
 use axum::{
     Extension, Router,
@@ -730,7 +734,51 @@ pub async fn callback(
     // opt-in lets a sign-in through but never verifies a pending account.
     let idp_proved_email = claim_email_verified == Some(true);
 
-    let user_row = if let Some(row) = existing {
+    let user_row = if let Some(row) = existing.as_ref()
+        && row.password_hash.is_some()
+        && row.state != UserState::Disabled
+    {
+        // A row keyed to this identity that still holds a local password was
+        // auto-linked by an earlier build, which kept the password. No path
+        // gives an OIDC-keyed account a password on purpose (the password
+        // change needs an existing hash, reset needs a `local:` row), so the
+        // invariant "a linked account is single-sign-on only" is enforced
+        // here, at its next sign-in.
+        let synced = SyncedIdentity {
+            external_id: &external_id,
+            email: email.clone(),
+            email_verified,
+            display_name: &display_name,
+            now,
+        };
+        let activate = row.state == UserState::PendingVerification && idp_proved_email;
+        match drop_local_credentials(
+            &app,
+            &ctx,
+            row,
+            &synced,
+            activate,
+            "auth.oidc.local_password_dropped",
+            serde_json::json!({
+                "issuer": issuer,
+                "subject_hash": sha256_hex(&subject)[..12].to_owned(),
+            }),
+        )
+        .await
+        {
+            Ok((m, facts)) => {
+                tracing::warn!(
+                    target: "auth.oidc",
+                    user_id = %m.id,
+                    role = m.role.as_str(),
+                    app_passwords_revoked = facts.app_passwords_revoked,
+                    "oidc-linked account still had a local password; dropped it"
+                );
+                m
+            }
+            Err(resp) => return resp,
+        }
+    } else if let Some(row) = existing {
         // Sync fields that may have changed at the issuer.
         let mut am: UserAM = row.clone().into();
         am.email = Set(email.clone());
@@ -738,11 +786,7 @@ pub async fn callback(
         am.display_name = Set(display_name.clone());
         am.last_login_at = Set(Some(now));
         am.updated_at = Set(now);
-        // A row already keyed to this identity is "unproven" only while it
-        // is pending: its `email_verified` mirrors the last login's claim,
-        // not a local address someone else may have set.
-        let unproven = row.state == UserState::PendingVerification;
-        let takeover = take_over_if_unproven(&mut am, &row, idp_proved_email, unproven);
+        let activated = activate_if_pending(&mut am, &row, idp_proved_email);
         let synced = match am.update(&app.db).await {
             Ok(m) => m,
             Err(e) => {
@@ -750,10 +794,8 @@ pub async fn callback(
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };
-        if takeover.taken_over {
+        if activated {
             super::local::revoke_sessions_for_user(&app.db, synced.id, None).await;
-        }
-        if takeover.activated {
             let _ = crate::audit::record(
                 &app.db,
                 crate::audit::AuditEntry {
@@ -781,11 +823,12 @@ pub async fn callback(
         //     OIDC identity onto the existing local account, but only when
         //     the provider itself asserted `email_verified: true`. A missing
         //     claim admitted by the trust-unverified opt-in proves nothing,
-        //     so it refuses like the default. When the local row's own
-        //     address was never verified, the link takes the account over
-        //     ([`take_over_if_unproven`]): whoever set that address loses
-        //     their password and every session, so the owner's sign-in never
-        //     lands in an account someone else can still open.
+        //     so it refuses like the default. A link always takes the account
+        //     over ([`drop_local_credentials`]): its local password, refresh
+        //     sessions and app passwords are revoked, so whoever set that
+        //     address locally can no longer open the account the owner now
+        //     signs in to. The local row's `email_verified` is not consulted:
+        //     self-registration without mail marks it true with no proof.
         if let Some(ref e) = email
             && let Ok(Some(local)) = UserEntity::find()
                 .filter(user::Column::Email.eq(e.clone()))
@@ -824,52 +867,45 @@ pub async fn callback(
                 );
             }
             if link_opt_in && link_skipped.is_none() {
+                // A disabled account stays disabled: refuse before writing.
+                if local.state == UserState::Disabled {
+                    return super::extractor::AuthRejection::UserDisabled.into_response();
+                }
+                let synced = SyncedIdentity {
+                    external_id: &external_id,
+                    email: email.clone(),
+                    email_verified: true,
+                    display_name: &display_name,
+                    now,
+                };
+                let activate = local.state == UserState::PendingVerification;
+                let (linked, facts) = match drop_local_credentials(
+                    &app,
+                    &ctx,
+                    &local,
+                    &synced,
+                    activate,
+                    "auth.oidc.auto_link",
+                    serde_json::json!({
+                        "issuer": issuer,
+                        "subject_hash": sha256_hex(&subject)[..12].to_owned(),
+                        "prior_external_id": local.external_id,
+                    }),
+                )
+                .await
+                {
+                    Ok(v) => v,
+                    Err(resp) => return resp,
+                };
                 tracing::warn!(
                     target: "auth.oidc",
-                    local_user_id = %local.id,
+                    local_user_id = %linked.id,
                     email_hash = %sha256_hex(e)[..12].to_owned(),
-                    "oidc/local email collision — auto-linking per opt-in"
+                    role = linked.role.as_str(),
+                    password_dropped = facts.password_dropped,
+                    app_passwords_revoked = facts.app_passwords_revoked,
+                    "oidc/local email collision — auto-linked per opt-in; local credentials revoked"
                 );
-                let prior_external_id = local.external_id.clone();
-                let mut am: UserAM = local.clone().into();
-                am.external_id = Set(external_id.clone());
-                am.email = Set(email.clone());
-                am.email_verified = Set(email_verified);
-                let unproven =
-                    !local.email_verified || local.state == UserState::PendingVerification;
-                let takeover = take_over_if_unproven(&mut am, &local, idp_proved_email, unproven);
-                am.display_name = Set(display_name.clone());
-                am.last_login_at = Set(Some(now));
-                am.updated_at = Set(now);
-                let linked = match am.update(&app.db).await {
-                    Ok(m) => m,
-                    Err(err) => {
-                        tracing::error!(error = %err, "oidc auto-link update failed");
-                        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-                    }
-                };
-                if takeover.taken_over {
-                    super::local::revoke_sessions_for_user(&app.db, linked.id, None).await;
-                }
-                let _ = crate::audit::record(
-                    &app.db,
-                    crate::audit::AuditEntry {
-                        actor_id: linked.id,
-                        action: "auth.oidc.auto_link",
-                        target_type: Some("user"),
-                        target_id: Some(linked.id.to_string()),
-                        payload: serde_json::json!({
-                            "issuer": issuer,
-                            "subject_hash": sha256_hex(&subject)[..12].to_owned(),
-                            "prior_external_id": prior_external_id,
-                            "activated": takeover.activated,
-                            "password_dropped": takeover.password_dropped,
-                        }),
-                        ip: ctx.ip_string(),
-                        user_agent: ctx.user_agent.clone(),
-                    },
-                )
-                .await;
                 linked
             } else {
                 tracing::warn!(
@@ -1061,50 +1097,185 @@ pub async fn callback(
     (jar, Redirect::to(&target)).into_response()
 }
 
-/// What [`take_over_if_unproven`] did to a row.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct Takeover {
-    /// The row's address was unproven and the IdP proved it: password
-    /// dropped (if any), `token_version` bumped, `email_verified` set. The
-    /// caller revokes the user's refresh sessions once the row is written.
-    taken_over: bool,
-    /// `pending_verification` → `active`.
-    activated: bool,
-    /// A local password existed and was dropped.
-    password_dropped: bool,
-}
-
-/// `unproven` means nobody has proven the row's address: a pending row, or
-/// (when linking onto a local account) a local row whose `email_verified` is
-/// false. When the IdP's own `email_verified = true` claim proves it
-/// (`idp_proved_email`), the account is handed to the address's owner:
-/// whoever set the address never proved it, so the local password they chose
-/// is dropped and every token they could hold is revoked (`token_version`
-/// bump here, refresh sessions by the caller once the row is written), the
-/// address is marked verified, and a pending row becomes `active`. Other
-/// states are left alone (a disabled row stays disabled and `admit_state`
-/// refuses it).
-fn take_over_if_unproven(
-    am: &mut UserAM,
-    row: &user::Model,
-    idp_proved_email: bool,
-    unproven: bool,
-) -> Takeover {
-    if !unproven || !idp_proved_email {
-        return Takeover::default();
+/// `pending_verification` means "email not proven". When the IdP's own
+/// `email_verified = true` claim proves it (`idp_proved_email`), the row
+/// becomes `active` — the proof the verify-email link asks for. The local
+/// password is dropped and every token is revoked (`token_version` bump
+/// here, refresh sessions by the caller once the row is written). Returns
+/// whether it activated. Other states are left alone (a disabled row stays
+/// disabled and `admit_state` refuses it).
+fn activate_if_pending(am: &mut UserAM, row: &user::Model, idp_proved_email: bool) -> bool {
+    if row.state != UserState::PendingVerification || !idp_proved_email {
+        return false;
     }
-    let activated = row.state == UserState::PendingVerification;
-    if activated {
-        am.state = Set(UserState::Active);
-    }
+    am.state = Set(UserState::Active);
     am.password_hash = Set(None);
     am.token_version = Set(row.token_version + 1);
-    am.email_verified = Set(true);
-    Takeover {
-        taken_over: true,
-        activated,
-        password_dropped: row.password_hash.is_some(),
+    true
+}
+
+/// The identity fields a sign-in writes onto the account row.
+struct SyncedIdentity<'a> {
+    external_id: &'a str,
+    email: Option<String>,
+    email_verified: bool,
+    display_name: &'a str,
+    now: chrono::DateTime<chrono::FixedOffset>,
+}
+
+/// What [`drop_local_credentials`] revoked.
+#[derive(Debug, Clone, Copy)]
+struct DroppedCredentials {
+    activated: bool,
+    password_dropped: bool,
+    sessions_revoked: u64,
+    app_passwords_revoked: u64,
+}
+
+/// The row update of [`drop_local_credentials`]: keys the row to the OIDC
+/// identity, clears the local password and bumps `token_version` relative to
+/// the stored value, but only while the row still has the external id and
+/// `token_version` that were read. Zero affected rows means someone else
+/// changed the account in between.
+fn drop_credentials_update(
+    id: Uuid,
+    prior_external_id: &str,
+    read_token_version: i64,
+    synced: &SyncedIdentity<'_>,
+    activate: bool,
+) -> sea_orm::UpdateMany<UserEntity> {
+    use sea_orm::sea_query::{Expr, ExprTrait};
+    let mut q = UserEntity::update_many()
+        .col_expr(user::Column::ExternalId, Expr::value(synced.external_id))
+        .col_expr(user::Column::Email, Expr::value(synced.email.clone()))
+        .col_expr(
+            user::Column::EmailVerified,
+            Expr::value(synced.email_verified),
+        )
+        .col_expr(user::Column::DisplayName, Expr::value(synced.display_name))
+        .col_expr(
+            user::Column::PasswordHash,
+            Expr::value(Option::<String>::None),
+        )
+        .col_expr(
+            user::Column::TokenVersion,
+            Expr::col(user::Column::TokenVersion).add(1),
+        )
+        .col_expr(user::Column::LastLoginAt, Expr::value(synced.now))
+        .col_expr(user::Column::UpdatedAt, Expr::value(synced.now));
+    if activate {
+        q = q.col_expr(user::Column::State, Expr::value(UserState::Active.as_str()));
     }
+    q.filter(user::Column::Id.eq(id))
+        .filter(user::Column::ExternalId.eq(prior_external_id))
+        .filter(user::Column::TokenVersion.eq(read_token_version))
+}
+
+/// Make `row` a single-sign-on-only account keyed to the OIDC identity, in
+/// one transaction: the conditional row update ([`drop_credentials_update`]),
+/// every refresh session and app password of the user revoked, and the
+/// `action` audit row (`payload` plus the account's role and what was
+/// revoked). Nothing is committed on any error; a concurrent change to the
+/// row answers a retryable 409. The caller mints the new session only after
+/// this returns.
+#[allow(clippy::too_many_arguments)]
+async fn drop_local_credentials(
+    app: &AppState,
+    ctx: &RequestContext,
+    row: &user::Model,
+    synced: &SyncedIdentity<'_>,
+    activate: bool,
+    action: &'static str,
+    payload: serde_json::Value,
+) -> Result<(user::Model, DroppedCredentials), Response> {
+    use sea_orm::sea_query::Expr;
+    let internal = |what: &str, e: &dyn std::fmt::Display| {
+        tracing::error!(error = %e, user_id = %row.id, "oidc {what} failed");
+        error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+    };
+    let txn = app
+        .db
+        .begin()
+        .await
+        .map_err(|e| internal("credential-drop transaction begin", &e))?;
+    let updated = drop_credentials_update(
+        row.id,
+        &row.external_id,
+        row.token_version,
+        synced,
+        activate,
+    )
+    .exec(&txn)
+    .await
+    .map_err(|e| internal("credential-drop update", &e))?;
+    if updated.rows_affected != 1 {
+        // Dropping `txn` rolls back.
+        tracing::info!(user_id = %row.id, "oidc credential drop lost a race; refused");
+        return Err(error(
+            StatusCode::CONFLICT,
+            "auth.conflict",
+            "sign-in conflicted with another change; try again",
+        ));
+    }
+    let now = synced.now;
+    let sessions_revoked = entity::auth_session::Entity::update_many()
+        .col_expr(entity::auth_session::Column::RevokedAt, Expr::value(now))
+        .filter(entity::auth_session::Column::UserId.eq(row.id))
+        .filter(entity::auth_session::Column::RevokedAt.is_null())
+        .exec(&txn)
+        .await
+        .map_err(|e| internal("session revoke", &e))?
+        .rows_affected;
+    // `app_password::verify` re-reads the row on a cache hit and honours
+    // `revoked_at`, so setting it is enough (as the delete handler does).
+    let app_passwords_revoked = entity::app_password::Entity::update_many()
+        .col_expr(entity::app_password::Column::RevokedAt, Expr::value(now))
+        .filter(entity::app_password::Column::UserId.eq(row.id))
+        .filter(entity::app_password::Column::RevokedAt.is_null())
+        .exec(&txn)
+        .await
+        .map_err(|e| internal("app-password revoke", &e))?
+        .rows_affected;
+    let facts = DroppedCredentials {
+        activated: activate,
+        password_dropped: row.password_hash.is_some(),
+        sessions_revoked,
+        app_passwords_revoked,
+    };
+    let mut payload = payload;
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("role".into(), row.role.as_str().into());
+        obj.insert("activated".into(), facts.activated.into());
+        obj.insert("password_dropped".into(), facts.password_dropped.into());
+        obj.insert("sessions_revoked".into(), facts.sessions_revoked.into());
+        obj.insert(
+            "app_passwords_revoked".into(),
+            facts.app_passwords_revoked.into(),
+        );
+    }
+    crate::audit::record_in(
+        &txn,
+        crate::audit::AuditEntry {
+            actor_id: row.id,
+            action,
+            target_type: Some("user"),
+            target_id: Some(row.id.to_string()),
+            payload,
+            ip: ctx.ip_string(),
+            user_agent: ctx.user_agent.clone(),
+        },
+    )
+    .await
+    .map_err(|e| internal("credential-drop audit", &e))?;
+    let linked = UserEntity::find_by_id(row.id)
+        .one(&txn)
+        .await
+        .map_err(|e| internal("credential-drop reload", &e))?
+        .ok_or_else(|| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
+    txn.commit()
+        .await
+        .map_err(|e| internal("credential-drop commit", &e))?;
+    Ok((linked, facts))
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> Response {
@@ -1300,5 +1471,50 @@ mod client_timeout_tests {
         let err = discover(format!("http://{addr}"), &client).await;
         assert!(!discovery_unreachable(&err), "{err:?}");
         serve.abort();
+    }
+}
+
+#[cfg(test)]
+mod credential_drop_tests {
+    use super::{SyncedIdentity, drop_credentials_update};
+    use sea_orm::{DbBackend, QueryTrait};
+
+    fn sql(activate: bool) -> String {
+        let synced = SyncedIdentity {
+            external_id: "oidc:https://idp|sub",
+            email: Some("a@example.com".into()),
+            email_verified: true,
+            display_name: "A",
+            now: chrono::Utc::now().fixed_offset(),
+        };
+        drop_credentials_update(uuid::Uuid::nil(), "local:abc", 7, &synced, activate)
+            .build(DbBackend::Postgres)
+            .to_string()
+    }
+
+    /// The update is relative and conditional: it bumps the stored
+    /// `token_version` and only matches the row as it was read, so a
+    /// concurrent change leaves zero rows and the caller answers 409.
+    #[test]
+    fn update_is_conditional_on_what_was_read() {
+        let q = sql(false);
+        assert!(
+            q.contains(r#""token_version" = "token_version" + 1"#),
+            "{q}"
+        );
+        assert!(q.contains(r#""password_hash" = NULL"#), "{q}");
+        assert!(q.contains(r#""external_id" = 'local:abc'"#), "{q}");
+        assert!(q.contains(r#""token_version" = 7"#), "{q}");
+        assert!(
+            q.contains(r#""id" = '00000000-0000-0000-0000-000000000000'"#),
+            "{q}"
+        );
+        assert!(!q.contains(r#""state" ="#), "{q}");
+    }
+
+    #[test]
+    fn activation_sets_the_state() {
+        let q = sql(true);
+        assert!(q.contains(r#""state" = 'active'"#), "{q}");
     }
 }

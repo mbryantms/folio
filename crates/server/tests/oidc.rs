@@ -1623,8 +1623,15 @@ async fn auto_link_refuses_a_string_claim() {
     assert_not_linked(&app, &before).await;
 }
 
-/// Local password sign-in: `(status, refresh cookie, csrf cookie)`.
-async fn local_login(app: &TestApp, email: &str, password: &str) -> (StatusCode, String, String) {
+/// A local password sign-in's status and cookies (empty when refused).
+struct LocalSession {
+    status: StatusCode,
+    session: String,
+    refresh: String,
+    csrf: String,
+}
+
+async fn local_login(app: &TestApp, email: &str, password: &str) -> LocalSession {
     let resp = app
         .router
         .clone()
@@ -1641,16 +1648,22 @@ async fn local_login(app: &TestApp, email: &str, password: &str) -> (StatusCode,
         .await
         .unwrap();
     let status = resp.status();
+    let session = extract_set_cookie(&resp, "__Host-comic_session").unwrap_or_default();
     let refresh = extract_set_cookie(&resp, "__Host-comic_refresh").unwrap_or_default();
     let csrf = extract_set_cookie(&resp, "__Host-comic_csrf").unwrap_or_default();
     if status != StatusCode::OK {
         let body = body_json(resp.into_body()).await;
         assert_eq!(body["error"]["code"], "auth.invalid", "{body}");
     }
-    (status, refresh, csrf)
+    LocalSession {
+        status,
+        session,
+        refresh,
+        csrf,
+    }
 }
 
-async fn refresh_status(app: &TestApp, refresh: &str, csrf: &str) -> StatusCode {
+async fn refresh_status(app: &TestApp, s: &LocalSession) -> StatusCode {
     app.router
         .clone()
         .oneshot(
@@ -1659,9 +1672,12 @@ async fn refresh_status(app: &TestApp, refresh: &str, csrf: &str) -> StatusCode 
                 .uri("/auth/refresh")
                 .header(
                     header::COOKIE,
-                    format!("__Host-comic_refresh={refresh}; __Host-comic_csrf={csrf}"),
+                    format!(
+                        "__Host-comic_refresh={}; __Host-comic_csrf={}",
+                        s.refresh, s.csrf
+                    ),
                 )
-                .header("x-csrf-token", csrf)
+                .header("x-csrf-token", &s.csrf)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1670,10 +1686,56 @@ async fn refresh_status(app: &TestApp, refresh: &str, csrf: &str) -> StatusCode 
         .status()
 }
 
-/// Set a row's `email_verified` (and optionally its state) in the DB.
-async fn force_unverified(
+/// Mint an app password with a local session.
+async fn mint_app_password(app: &TestApp, s: &LocalSession) -> String {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/me/app-passwords")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        s.session, s.csrf
+                    ),
+                )
+                .header("x-csrf-token", &s.csrf)
+                .body(Body::from(r#"{"label":"reader"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    body_json(resp.into_body()).await["plaintext"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn opds_status(app: &TestApp, bearer: &str) -> StatusCode {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/opds/v1")
+                .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// Write a row's `email_verified` and optionally its state in the DB.
+async fn force_flags(
     app: &TestApp,
     id: uuid::Uuid,
+    email_verified: bool,
     state: Option<entity::user::UserState>,
 ) -> entity::user::Model {
     use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
@@ -1683,75 +1745,109 @@ async fn force_unverified(
         .unwrap()
         .unwrap();
     let mut am = row.into_active_model();
-    am.email_verified = Set(false);
+    am.email_verified = Set(email_verified);
     if let Some(s) = state {
         am.state = Set(s);
     }
     am.update(&app.state().db).await.unwrap()
 }
 
-async fn auto_link_payload(app: &TestApp) -> serde_json::Value {
+async fn audit_payload(app: &TestApp, action: &str) -> Option<serde_json::Value> {
     use sea_orm::EntityTrait;
     entity::audit_log::Entity::find()
         .all(&app.state().db)
         .await
         .unwrap()
         .into_iter()
-        .find(|a| a.action == "auth.oidc.auto_link")
-        .expect("auto-link audit row")
-        .payload
+        .find(|a| a.action == action)
+        .map(|a| a.payload)
 }
 
-/// An active local row whose address was never verified (e.g. changed
-/// without a verification step) is linked and taken over when the IdP
-/// proves the address: the old password and sessions stop working.
+const LOCAL_PW: &str = "correctly-horse-battery";
+
+/// Shared assertions for a takeover: linked to the OIDC identity, single
+/// sign-on only, every earlier credential refused, audited.
+async fn assert_taken_over(
+    app: &TestApp,
+    email: &str,
+    before: &entity::user::Model,
+    old: &LocalSession,
+    activated: bool,
+) -> serde_json::Value {
+    let after = user_row(app, before.id).await;
+    assert!(after.external_id.starts_with("oidc:"), "linked");
+    assert!(after.email_verified);
+    assert!(after.password_hash.is_none(), "local password dropped");
+    assert_eq!(after.token_version, before.token_version + 1);
+    assert_eq!(after.state, entity::user::UserState::Active);
+    assert_eq!(
+        local_login(app, email, LOCAL_PW).await.status,
+        StatusCode::UNAUTHORIZED,
+        "old password refused"
+    );
+    assert_eq!(
+        refresh_status(app, old).await,
+        StatusCode::UNAUTHORIZED,
+        "pre-link refresh session revoked"
+    );
+    let payload = audit_payload(app, "auth.oidc.auto_link")
+        .await
+        .expect("auto-link audit row");
+    assert_eq!(payload["password_dropped"], true, "{payload}");
+    assert_eq!(payload["activated"], activated, "{payload}");
+    payload
+}
+
+/// A local row whose flag says verified is still taken over: the flag is
+/// set without proof by self-registration on an install without mail.
+#[tokio::test]
+async fn auto_link_takes_over_a_verified_local_row() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "verified-local@example.com";
+    let before = active_local_user(&app, email).await;
+    let old = local_login(&app, email, LOCAL_PW).await;
+    assert_eq!(old.status, StatusCode::OK);
+
+    let resp = oidc_sign_in(&app, &op, "subject-verified", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
+    assert_eq!(me_status(&app, &session).await, StatusCode::OK);
+    let payload = assert_taken_over(&app, email, &before, &old, false).await;
+    // The first registered user is the admin: the audit row says so.
+    assert_eq!(payload["role"], "admin", "{payload}");
+}
+
+/// An active local row whose flag is false is taken over the same way.
 #[tokio::test]
 async fn auto_link_takes_over_an_active_local_row_with_an_unverified_email() {
     let op = MockOp::start().await;
     let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
     let email = "unverified-local@example.com";
     let row = active_local_user(&app, email).await;
-    let (status, refresh, csrf) = local_login(&app, email, "correctly-horse-battery").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(!refresh.is_empty());
-    let before = force_unverified(&app, row.id, None).await;
+    let old = local_login(&app, email, LOCAL_PW).await;
+    assert_eq!(old.status, StatusCode::OK);
+    let before = force_flags(&app, row.id, false, None).await;
 
     let resp = oidc_sign_in(&app, &op, "subject-owner", email, Some(true), "c1").await;
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
-    assert_eq!(me_status(&app, &session).await, StatusCode::OK);
-
-    let after = user_row(&app, row.id).await;
-    assert!(after.external_id.starts_with("oidc:"), "linked");
-    assert!(after.email_verified);
-    assert!(after.password_hash.is_none());
-    assert_eq!(after.token_version, before.token_version + 1);
-    assert_eq!(after.state, entity::user::UserState::Active);
-    let (status, _, _) = local_login(&app, email, "correctly-horse-battery").await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "old password refused");
-    assert_eq!(
-        refresh_status(&app, &refresh, &csrf).await,
-        StatusCode::UNAUTHORIZED,
-        "pre-link refresh session revoked"
-    );
-    let payload = auto_link_payload(&app).await;
-    assert_eq!(payload["password_dropped"], true, "{payload}");
-    assert_eq!(payload["activated"], false, "{payload}");
+    assert_taken_over(&app, email, &before, &old, false).await;
 }
 
 /// A realistic pending local row (`email_verified = false`) is linked,
-/// activated and taken over when the IdP proves the address.
+/// activated and taken over.
 #[tokio::test]
 async fn auto_link_takes_over_a_pending_local_row_with_an_unverified_email() {
     let op = MockOp::start().await;
     let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
     let email = "pending-unverified@example.com";
     let row = active_local_user(&app, email).await;
-    let (status, refresh, csrf) = local_login(&app, email, "correctly-horse-battery").await;
-    assert_eq!(status, StatusCode::OK);
-    let before = force_unverified(
+    let old = local_login(&app, email, LOCAL_PW).await;
+    assert_eq!(old.status, StatusCode::OK);
+    let before = force_flags(
         &app,
         row.id,
+        false,
         Some(entity::user::UserState::PendingVerification),
     )
     .await;
@@ -1760,44 +1856,92 @@ async fn auto_link_takes_over_a_pending_local_row_with_an_unverified_email() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
     assert_eq!(me_status(&app, &session).await, StatusCode::OK);
-
-    let after = user_row(&app, row.id).await;
-    assert!(after.external_id.starts_with("oidc:"), "linked");
-    assert_eq!(after.state, entity::user::UserState::Active);
-    assert!(after.email_verified);
-    assert!(after.password_hash.is_none());
-    assert_eq!(after.token_version, before.token_version + 1);
-    assert_eq!(
-        refresh_status(&app, &refresh, &csrf).await,
-        StatusCode::UNAUTHORIZED,
-        "pre-link refresh session revoked"
-    );
-    let (status, _, _) = local_login(&app, email, "correctly-horse-battery").await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let payload = auto_link_payload(&app).await;
-    assert_eq!(payload["activated"], true, "{payload}");
-    assert_eq!(payload["password_dropped"], true, "{payload}");
+    assert_taken_over(&app, email, &before, &old, true).await;
 }
 
-/// A verified local row is linked and keeps its password.
+/// An app password minted by the previous holder stops working on OPDS.
 #[tokio::test]
-async fn auto_link_keeps_the_password_of_a_verified_local_row() {
+async fn auto_link_revokes_app_passwords() {
     let op = MockOp::start().await;
     let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
-    let email = "verified-local@example.com";
-    let row = active_local_user(&app, email).await;
+    let email = "app-password-local@example.com";
+    active_local_user(&app, email).await;
+    let old = local_login(&app, email, LOCAL_PW).await;
+    let token = mint_app_password(&app, &old).await;
+    assert_eq!(opds_status(&app, &token).await, StatusCode::OK);
+    // Twice, so the second use comes from the verified-token cache.
+    assert_eq!(opds_status(&app, &token).await, StatusCode::OK);
 
-    let resp = oidc_sign_in(&app, &op, "subject-verified", email, Some(true), "c1").await;
+    let resp = oidc_sign_in(&app, &op, "subject-app-pw", email, Some(true), "c1").await;
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        opds_status(&app, &token).await,
+        StatusCode::UNAUTHORIZED,
+        "app password revoked by the takeover"
+    );
+    let payload = audit_payload(&app, "auth.oidc.auto_link").await.unwrap();
+    assert_eq!(payload["app_passwords_revoked"], 1, "{payload}");
+}
+
+/// A disabled local row is refused before anything is written.
+#[tokio::test]
+async fn auto_link_refuses_a_disabled_local_row_without_writing() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "disabled-local@example.com";
+    let row = active_local_user(&app, email).await;
+    force_state(&app, row.id, entity::user::UserState::Disabled).await;
+    let before = user_row(&app, row.id).await;
+
+    let resp = oidc_sign_in(&app, &op, "subject-disabled", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_none());
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "auth.disabled", "{body}");
     let after = user_row(&app, row.id).await;
-    assert!(after.external_id.starts_with("oidc:"), "linked");
-    assert_eq!(after.password_hash, row.password_hash);
-    assert_eq!(after.token_version, row.token_version);
-    let (status, _, _) = local_login(&app, email, "correctly-horse-battery").await;
-    assert_eq!(status, StatusCode::OK, "local password still signs in");
-    let payload = auto_link_payload(&app).await;
-    assert_eq!(payload["password_dropped"], false, "{payload}");
-    assert_eq!(payload["activated"], false, "{payload}");
+    assert_eq!(after, before, "row unchanged");
+    assert!(audit_payload(&app, "auth.oidc.auto_link").await.is_none());
+}
+
+/// A row an earlier build linked while keeping its local password loses
+/// the password at its next single sign-on.
+#[tokio::test]
+async fn previously_linked_row_loses_its_local_password_at_next_sign_in() {
+    use sea_orm::{ActiveModelTrait, IntoActiveModel, Set};
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc(op.issuer(), false).await;
+    let email = "legacy-link@example.com";
+    let row = active_local_user(&app, email).await;
+    let old = local_login(&app, email, LOCAL_PW).await;
+    let token = mint_app_password(&app, &old).await;
+    let mut am = row.into_active_model();
+    am.external_id = Set(format!("oidc:{}|subject-legacy", op.issuer()));
+    let before = am.update(&app.state().db).await.unwrap();
+    assert_eq!(
+        local_login(&app, email, LOCAL_PW).await.status,
+        StatusCode::OK,
+        "the old build's link kept the password"
+    );
+
+    let resp = oidc_sign_in(&app, &op, "subject-legacy", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
+    assert_eq!(me_status(&app, &session).await, StatusCode::OK);
+    let after = user_row(&app, before.id).await;
+    assert!(after.password_hash.is_none());
+    assert_eq!(after.external_id, before.external_id);
+    assert_eq!(after.token_version, before.token_version + 1);
+    assert_eq!(
+        local_login(&app, email, LOCAL_PW).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(refresh_status(&app, &old).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(opds_status(&app, &token).await, StatusCode::UNAUTHORIZED);
+    let payload = audit_payload(&app, "auth.oidc.local_password_dropped")
+        .await
+        .expect("audit row");
+    assert_eq!(payload["password_dropped"], true, "{payload}");
+    assert_eq!(payload["app_passwords_revoked"], 1, "{payload}");
 }
 
 /// With the opt-in off a verified claim still refuses the collision.
