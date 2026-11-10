@@ -231,27 +231,13 @@ impl JobRuntime {
         batch_id: Option<Uuid>,
         scope: Option<Vec<String>>,
     ) -> anyhow::Result<CoalesceOutcome> {
-        let mut conn = self.redis.clone();
         // One script claims the key (`SET NX PX`) or, when another scan holds
         // it, records the queued follow-up; see `scan_lease`.
         let token = Uuid::now_v7();
-        let script = redis::Script::new(scan_lease::CLAIM_OR_QUEUE_LUA);
-        let mut invocation = script.prepare_invoke();
-        for key in coalesce_keys(library_id) {
-            invocation.key(key);
-        }
-        invocation
-            .arg(token.to_string())
-            .arg(scan_lease::ttl_ms(scan_lease::SCAN_QUEUED_TTL))
-            .arg(if force { "1" } else { "0" })
-            .arg(if scope.is_some() { "1" } else { "0" });
-        if let Some(dirs) = &scope {
-            for d in dirs {
-                invocation.arg(d);
-            }
-        }
-        let (claimed, current): (String, String) = invocation.invoke_async(&mut conn).await?;
-        if claimed != "1" {
+        let (claimed, current) = self
+            .claim_or_queue(library_id, token, force, scope.as_deref(), true)
+            .await?;
+        if !claimed {
             // A scan is queued or running: the trigger was folded into its
             // follow-up. Report the current id so the caller can advertise a
             // stable scan_id.
@@ -270,6 +256,53 @@ impl JobRuntime {
             return Err(e);
         }
         Ok(CoalesceOutcome::Enqueued { scan_id })
+    }
+
+    /// Run [`scan_lease::CLAIM_OR_QUEUE_LUA`]. With `may_claim` false the
+    /// request is only recorded as the queued follow-up. Returns whether
+    /// the key was claimed for `token`, and the current scan id.
+    async fn claim_or_queue(
+        &self,
+        library_id: Uuid,
+        token: Uuid,
+        force: bool,
+        scope: Option<&[String]>,
+        may_claim: bool,
+    ) -> anyhow::Result<(bool, String)> {
+        let mut conn = self.redis.clone();
+        let script = redis::Script::new(scan_lease::CLAIM_OR_QUEUE_LUA);
+        let mut invocation = script.prepare_invoke();
+        for key in coalesce_keys(library_id) {
+            invocation.key(key);
+        }
+        invocation
+            .arg(token.to_string())
+            .arg(scan_lease::ttl_ms(scan_lease::SCAN_QUEUED_TTL))
+            .arg(if force { "1" } else { "0" })
+            .arg(if scope.is_some() { "1" } else { "0" })
+            .arg(if may_claim { "claim" } else { "queue" });
+        if let Some(dirs) = scope {
+            for d in dirs {
+                invocation.arg(d);
+            }
+        }
+        let (claimed, current): (String, String) = invocation.invoke_async(&mut conn).await?;
+        Ok((claimed == "1", current))
+    }
+
+    /// Hand on the request of a scan run that was superseded (another run
+    /// holds the library's key): it becomes that holder's queued follow-up,
+    /// with force OR-ed and a full request widening a scoped one, or a new
+    /// run when the key has become free. The superseded run itself is
+    /// already closed; its id is never reused, so this happens once per run.
+    pub async fn requeue_superseded_request(
+        &self,
+        library_id: Uuid,
+        force: bool,
+        scope: Option<Vec<String>>,
+    ) -> anyhow::Result<CoalesceOutcome> {
+        self.coalesce_scan_inner(library_id, force, None, scope)
+            .await
     }
 
     /// Insert the `queued` run row and push the scan job for a claim.
@@ -364,10 +397,23 @@ impl JobRuntime {
                     None
                 };
                 if let Err(e) = self
-                    .queue_claimed_scan(library_id, new_id, force, None, scope)
+                    .queue_claimed_scan(library_id, new_id, force, None, scope.clone())
                     .await
                 {
+                    // Give the key back, and keep the follow-up recorded so
+                    // the next holder's release runs it.
                     self.undo_claim(library_id, new_id).await;
+                    if let Err(re) = self
+                        .claim_or_queue(library_id, new_id, force, scope.as_deref(), false)
+                        .await
+                    {
+                        tracing::error!(%library_id, error = %re, "release_scan: could not re-record the follow-up");
+                    }
+                    tracing::error!(
+                        %library_id,
+                        error = %e,
+                        "release_scan: follow-up could not be queued; kept for the next scan",
+                    );
                     return Err(e);
                 }
                 Ok(ReleaseOutcome::HandedOver { scan_id: new_id })

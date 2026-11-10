@@ -705,6 +705,9 @@ pub async fn cancel(
             &format!("scan run already in terminal state: {}", row.state.as_str()),
         );
     }
+    // A queued library scan holds its library's coalescing key with its
+    // run id; nothing would run to release it, so the cancel does.
+    let release_claim = row.state == ScanRunState::Queued && row.kind == ScanRunKind::Library;
     let now = chrono::Utc::now().fixed_offset();
     let cancel_msg = "Cancelled by admin".to_string();
     let mut am: scan_run::ActiveModel = row.into();
@@ -718,6 +721,14 @@ pub async fn cancel(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+
+    // Release the cancelled run's claim (compare-and-delete, or hand-over
+    // to a follow-up recorded meanwhile) so the library can scan again at
+    // once. The cancelled job skips itself when it is picked up. A running
+    // scan keeps its claim and releases it when it stops.
+    if release_claim && let Err(e) = app.jobs.release_scan(lib.id, scan_uuid).await {
+        tracing::warn!(error = %e, library_id = %lib.id, "scan cancel: claim release failed; it expires on its own");
+    }
 
     // Connected Live-scan clients listen for `scan.failed`; emit one
     // so the UI drops the run out of its "active" set and surfaces a

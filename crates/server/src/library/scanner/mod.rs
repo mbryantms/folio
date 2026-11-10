@@ -1087,22 +1087,40 @@ pub(crate) async fn fail_unstarted_run(
     let Some(scan_id) = requested_scan_id else {
         return;
     };
-    close_unstarted_run(state, library_id, scan_id, ScanRunState::Failed, error).await;
+    close_unstarted_run(
+        state,
+        library_id,
+        scan_id,
+        ScanRunState::Failed,
+        error,
+        false,
+    )
+    .await;
 }
 
-/// Close a pre-inserted `queued` run as `cancelled` without scanning: the
-/// scan job found that another run of the library holds the coalescing key
-/// (R-03). Recorded like a run cancelled from the queue
-/// ([`cancel_queued_runs`]): `state='cancelled'` with `reason`, a terminal
-/// `ScanEvent::Failed`, and its scan-all batch finalized. No-op when the run
-/// already left `queued`. Best-effort: failures are logged.
-pub(crate) async fn cancel_unstarted_run(
+/// Close a run as `cancelled` without scanning: the scan job found that
+/// another run of the library holds the coalescing key (R-03). Closes a
+/// `queued` row, and also a `running` one: a job re-delivered after a crash
+/// finds its row still `running`, and since this run's id does not hold the
+/// key, any live copy of it sees the same and stops. Recorded like a run
+/// cancelled from the queue ([`cancel_queued_runs`]): `state='cancelled'`
+/// with `reason`, a terminal `ScanEvent::Failed`, and its scan-all batch
+/// finalized. No-op on a terminal row. Best-effort: failures are logged.
+pub(crate) async fn cancel_superseded_run(
     state: &AppState,
     library_id: Uuid,
     scan_id: Uuid,
     reason: &str,
 ) {
-    close_unstarted_run(state, library_id, scan_id, ScanRunState::Cancelled, reason).await;
+    close_unstarted_run(
+        state,
+        library_id,
+        scan_id,
+        ScanRunState::Cancelled,
+        reason,
+        true,
+    )
+    .await;
 }
 
 async fn close_unstarted_run(
@@ -1111,9 +1129,15 @@ async fn close_unstarted_run(
     scan_id: Uuid,
     final_state: ScanRunState,
     error: &str,
+    include_running: bool,
 ) {
     let run = match ScanRunEntity::find_by_id(scan_id).one(&state.db).await {
-        Ok(Some(r)) if r.state == ScanRunState::Queued => r,
+        Ok(Some(r))
+            if r.state == ScanRunState::Queued
+                || (include_running && r.state == ScanRunState::Running) =>
+        {
+            r
+        }
         Ok(_) => return,
         Err(e) => {
             tracing::error!(error = %e, %scan_id, "scan: load unstarted run failed");
@@ -2580,7 +2604,10 @@ async fn run_phases(
         stats,
     )
     .await;
-    match crate::library::reconcile::reconcile_library_seen(
+    // The reconcile checks the lease between its units of work, so a run
+    // that learns mid-reconcile that another run holds the library stops
+    // removing rows at once (R-03).
+    match crate::library::reconcile::reconcile_library_seen_until(
         &state.db,
         lib.id,
         &scanned_series,
@@ -2591,6 +2618,7 @@ async fn run_phases(
         &unreadable_folders,
         stats,
         events,
+        Some(lease_lost),
     )
     .await
     {
@@ -2598,6 +2626,10 @@ async fn run_phases(
         Err(e) => {
             tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
         }
+    }
+    lease_check();
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(());
     }
     if let Err(e) =
         reconcile_status::reconcile_series_status_many(&state.db, &status_reconcile_entries).await

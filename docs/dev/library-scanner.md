@@ -133,19 +133,35 @@ Every change to it is a single atomic command or Lua script:
   back by its run.
 - **Lost key.** If a refresh finds another run's id on the key (the key
   lapsed and another trigger claimed it), the lease flags itself lost. The
-  scanner checks that flag at every phase boundary and on its phase-3
-  heartbeat and stops through the cooperative-cancel path: no new folders
-  start, the reconcile is skipped, and the run closes as `cancelled` with
+  scanner checks that flag at every phase boundary, on its phase-3
+  heartbeat and between the reconcile's units of work, and stops through
+  the cooperative-cancel path: no new folders start, the reconcile is
+  skipped or stops removing rows, and the run closes as `cancelled` with
   the error "Superseded: another scan of this library is running" and a
   terminal `ScanEvent::Failed`. A job that finds the key held by another
-  run before it starts closes its queued run the same way without
-  scanning.
+  run before it starts scans nothing and closes its run the same way,
+  whether the row is still `queued` or `running` (a job re-delivered after
+  a crash); its run id does not hold the key, so any live copy of it stops
+  too.
+- **Superseded request.** A superseded run hands its own request (force
+  flag and scope) to the coalescing script once: it becomes the holder's
+  queued follow-up, force OR-ed in and a full request widening a scoped
+  one, or a new run when the key has become free. The follow-up is a new
+  run with a new id, so this cannot repeat for the same run.
+- **Cancel while queued.** Cancelling a `queued` library run releases its
+  claim through `release_scan` (compare-and-delete, or hand-over to a
+  follow-up recorded meanwhile), so the library can be scanned again at
+  once; the cancelled job does nothing when a worker picks it up.
+  Cancelling a `running` scan leaves the key to the scan, which releases
+  it when it stops.
 - **Release.** `release_scan(library, run id)` is compare-and-delete in
   one script; when a follow-up was queued, the same script hands the key
   to a new run id and the follow-up is enqueued. A run that no longer
   holds the key changes nothing, so it can never delete a newer holder's
   key. The lease task is stopped and awaited before the release, so no
-  refresh lands after it.
+  refresh lands after it. If the follow-up's job cannot be queued, the key
+  is given back and the follow-up is recorded again without a holder, so
+  the next scan of the library runs it when it releases.
 - **Redis unavailable.** A trigger fails as before: `coalesce_scan`
   returns the Redis error and nothing is queued. A running scan whose
   refresh fails keeps scanning and retries on the next tick; it is only

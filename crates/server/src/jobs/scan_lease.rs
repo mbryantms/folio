@@ -77,11 +77,14 @@ impl ScanLeaseTiming {
 /// Claim the key or record a queued follow-up, atomically.
 ///
 /// KEYS: in_flight, scan_id, queued, queued:force, queued:scoped, queued:dirs.
-/// ARGV: token, ttl_ms, force ("1"/"0"), scoped ("1"/"0"), dirs...
+/// ARGV: token, ttl_ms, force ("1"/"0"), scoped ("1"/"0"), mode, dirs...
+/// `mode` is "claim" (claim when free, else queue) or "queue" (only record
+/// the follow-up, even when the key is free: a hand-over whose enqueue
+/// failed keeps its request for the next holder's release).
 /// Returns `{"1", token}` when claimed, `{"0", current scan id}` when queued.
 pub(crate) const CLAIM_OR_QUEUE_LUA: &str = r"
 local ttl = tonumber(ARGV[2])
-if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ttl) then
+if ARGV[5] == 'claim' and redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ttl) then
     redis.call('SET', KEYS[2], ARGV[1], 'PX', ttl)
     return {'1', ARGV[1]}
 end
@@ -90,7 +93,7 @@ if ARGV[4] == '1' then
     local scoped_marker = redis.call('EXISTS', KEYS[5]) == 1
     if (not already_queued) or scoped_marker then
         redis.call('SET', KEYS[5], '1', 'PX', ttl)
-        for i = 5, #ARGV do
+        for i = 6, #ARGV do
             redis.call('SADD', KEYS[6], ARGV[i])
         end
         redis.call('PEXPIRE', KEYS[6], ttl)

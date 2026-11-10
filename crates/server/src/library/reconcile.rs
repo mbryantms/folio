@@ -33,6 +33,7 @@ use sea_orm::{
 };
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
 use super::ignore::IgnoreRules;
@@ -373,6 +374,49 @@ pub async fn reconcile_library_seen(
     .await
 }
 
+/// [`reconcile_library_seen`] that stops between its units of work once
+/// `stop` is set: the scan's coalescing-key lease was lost (R-03), so
+/// another run owns the library and this one must stop removing rows.
+/// Returns an error when it stopped early.
+#[expect(clippy::too_many_arguments)]
+pub async fn reconcile_library_seen_until(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    scanned_series_ids: &HashSet<Uuid>,
+    seen_paths: &HashSet<String>,
+    scanned_folder_paths: &HashSet<String>,
+    present_folders: &HashSet<String>,
+    missing_scope: Option<&[std::path::PathBuf]>,
+    unreadable_folders: &HashSet<String>,
+    stats: &mut ScanStats,
+    events: &mut EventCollector,
+    stop: Option<&AtomicBool>,
+) -> anyhow::Result<u64> {
+    reconcile_library_seen_inner(
+        db,
+        library_id,
+        scanned_series_ids,
+        seen_paths,
+        scanned_folder_paths,
+        present_folders,
+        missing_scope,
+        unreadable_folders,
+        stats,
+        events,
+        RECONCILE_ID_CHUNK,
+        stop,
+    )
+    .await
+}
+
+/// Error out when `stop` is set; see [`reconcile_library_seen_until`].
+fn check_stop(stop: Option<&AtomicBool>) -> anyhow::Result<()> {
+    if stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
+        anyhow::bail!("reconcile stopped: another scan of this library took over");
+    }
+    Ok(())
+}
+
 /// [`reconcile_library_seen`] with an explicit id-list chunk size. Public so
 /// the integration suite can cross a chunk boundary with a handful of
 /// series; production always goes through [`reconcile_library_seen`].
@@ -407,8 +451,41 @@ pub async fn reconcile_library_seen_with_chunk(
     events: &mut EventCollector,
     chunk: usize,
 ) -> anyhow::Result<u64> {
+    reconcile_library_seen_inner(
+        db,
+        library_id,
+        scanned_series_ids,
+        seen_paths,
+        scanned_folder_paths,
+        present_folders,
+        missing_scope,
+        unreadable_folders,
+        stats,
+        events,
+        chunk,
+        None,
+    )
+    .await
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn reconcile_library_seen_inner(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    scanned_series_ids: &HashSet<Uuid>,
+    seen_paths: &HashSet<String>,
+    scanned_folder_paths: &HashSet<String>,
+    present_folders: &HashSet<String>,
+    missing_scope: Option<&[std::path::PathBuf]>,
+    unreadable_folders: &HashSet<String>,
+    stats: &mut ScanStats,
+    events: &mut EventCollector,
+    chunk: usize,
+    stop: Option<&AtomicBool>,
+) -> anyhow::Result<u64> {
     let now = Utc::now().fixed_offset();
     let chunk = chunk.max(1);
+    check_stop(stop)?;
 
     if !scanned_series_ids.is_empty() {
         let scanned: Vec<Uuid> = scanned_series_ids.iter().copied().collect();
@@ -432,6 +509,7 @@ pub async fn reconcile_library_seen_with_chunk(
                     .await?,
             );
         }
+        check_stop(stop)?;
         reconcile_issue_rows_seen(
             db,
             issues,
@@ -440,10 +518,13 @@ pub async fn reconcile_library_seen_with_chunk(
             now,
             stats,
             events,
+            stop,
         )
         .await?;
+        check_stop(stop)?;
         mark_empty_series_removed(db, scanned, now, stats, events, chunk).await?;
     }
+    check_stop(stop)?;
 
     let series_rows = series::Entity::find()
         .filter(series::Column::LibraryId.eq(library_id))
@@ -470,6 +551,7 @@ pub async fn reconcile_library_seen_with_chunk(
             );
             continue;
         }
+        check_stop(stop)?;
         let series_label = srow.name.clone();
         let series_id = srow.id;
         missing_series.push(series_id);
@@ -500,6 +582,7 @@ pub async fn reconcile_library_seen_with_chunk(
     }
     if !missing_series.is_empty() {
         for chunk in missing_series.chunks(500) {
+            check_stop(stop)?;
             let res = series::Entity::update_many()
                 .col_expr(series::Column::RemovedAt, Expr::value(now))
                 .col_expr(
@@ -521,6 +604,7 @@ pub async fn reconcile_library_seen_with_chunk(
     // older scanner, a forced or issue scan, or a failure between the issue
     // and series writes). A series the sweep removed has no live issue left,
     // so it stays removed: restoring it any earlier made it flap.
+    check_stop(stop)?;
     restore_library_series_with_live_issues(db, library_id, events, chunk).await
 }
 
@@ -670,6 +754,7 @@ pub async fn reconcile_series_seen(
         now,
         stats,
         events,
+        None,
     )
     .await?;
     mark_empty_series_removed(db, vec![series_id], now, stats, events, RECONCILE_ID_CHUNK).await?;
@@ -689,6 +774,7 @@ fn path_under_any(path: &str, folders: &HashSet<String>) -> bool {
     })
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn reconcile_issue_rows_seen(
     db: &DatabaseConnection,
     issues: Vec<ReconcileIssue>,
@@ -697,6 +783,7 @@ async fn reconcile_issue_rows_seen(
     now: chrono::DateTime<chrono::FixedOffset>,
     stats: &mut ScanStats,
     events: &mut EventCollector,
+    stop: Option<&AtomicBool>,
 ) -> anyhow::Result<()> {
     let mut remove_ids = Vec::new();
     let mut restore_ids = Vec::new();
@@ -743,6 +830,7 @@ async fn reconcile_issue_rows_seen(
     }
 
     for chunk in remove_ids.chunks(500) {
+        check_stop(stop)?;
         let res = IssueEntity::update_many()
             .col_expr(issue::Column::RemovedAt, Expr::value(now))
             .col_expr(
