@@ -24,6 +24,7 @@ Every limit that is attached to a route today. A route not listed here has no li
 | `POST /auth/local/request-password-reset` | `auth.password_reset_request` | IP | 5 / hour | 5 |
 | `POST /auth/local/resend-verification` + `GET /auth/local/verify-email` (shared) | `auth.resend_verification` | IP | 5 / hour | 5 |
 | `POST /auth/local/reset-password` | `auth.password_reset_redeem` | IP | 10 / hour | 10 |
+| `GET /auth/local/confirm-email-change` (own store) | `auth.password_reset_redeem` | IP | 10 / hour | 10 |
 | `POST /auth/ws-ticket` | `ws_ticket` | IP | 30 / s | 60 |
 | `POST /csp-report` | `csp_report` | IP | 100 / min | 200 |
 | OPDS catalog / navigation / search (`/opds/v1/*`, `/opds/v2/*` except the row below) | `opds_catalog` | IP | 30 / min | 60 |
@@ -49,6 +50,7 @@ Redis-backed ([`auth/failed_auth.rs`](../../crates/server/src/auth/failed_auth.r
 | `POST /auth/local/login` | client IP and the submitted email (hashed) |
 | `GET /auth/oidc/callback` | client IP |
 | `DELETE /me` (password re-check) | client IP and the account's email |
+| `PATCH /me/account` email change (password re-check) | client IP and the account's email |
 
 The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
 

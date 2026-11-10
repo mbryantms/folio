@@ -143,6 +143,37 @@ Verified against the code at `1c51a486` on 2026-11-10.
 
 Verified against the code at `1c51a486` on 2026-11-10.
 
+### Email change
+
+`PATCH /api/me/account { email, current_password }` (local accounts only;
+`email_editable` on `/auth/me` is false for identity-provider accounts, which
+get `403 auth.email_managed_by_issuer`).
+
+- **Re-auth.** An account with a password must send `current_password`
+  (missing → `422` with a `current_password` field error). A wrong one is
+  `403 auth.invalid` and counts against both failed-auth lockout axes (IP and
+  account email), as `DELETE /me` does; after the threshold the endpoint
+  answers `429 auth.locked_out`.
+- **Mail configured** (`smtp_host` set — the same signal registration and
+  `/auth/config` use): `users.email` is **not** changed. The handler replaces
+  the user's row in `email_change_requests` (one per user: a new request
+  voids the previous link), mails a confirmation link to the new address and a
+  notice to the old one, and returns the account with `pending_email` set
+  (`/auth/me` reports it too while the request is unconsumed and unexpired).
+  The link is `GET /auth/local/confirm-email-change?token=…`; the token is the
+  password-reset envelope with purpose `EmailChange` and the row's
+  `token_id`, valid 1 h (same as reset). Opening it checks the token and the
+  row (same user, token hash, unconsumed, unexpired) and that no other account
+  holds the address, then in one transaction sets `email`, marks it verified,
+  bumps `token_version`, consumes the row and revokes every refresh session
+  except the one of the browser opening the link. It redirects to
+  `/settings/account?email_change=confirmed|invalid|taken`.
+- **Mail not configured** (the server logs `COMIC_SMTP_HOST not set`): there
+  is no way to confirm, so after the password check the change applies at
+  once with `email_verified = false`, `token_version` is bumped, the other
+  sessions are revoked, and a WARN log line plus the `user.account.update`
+  audit row record it. Configure SMTP to get confirmed changes.
+
 ### Logout
 
 - `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`) and clears all three cookies; for an OIDC session it also redirects through the issuer's `end_session_endpoint` when one is published. It does not touch other sessions or `token_version`.

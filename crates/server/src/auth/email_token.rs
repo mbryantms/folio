@@ -19,9 +19,10 @@
 //! the key invalidates every outstanding token, which is exactly the
 //! invariant we want for credential reset material.
 //!
-//! Password-reset tokens use the same envelope plus a 16-byte token id before
-//! `expires_at`. Replay defense lives in the DB: a reset succeeds only when the
-//! matching row is still unconsumed.
+//! Password-reset and email-change tokens use the same envelope plus a 16-byte
+//! token id before `expires_at`. Replay defense lives in the DB: a reset (or
+//! an email change) succeeds only when the matching row
+//! (`password_reset_uses` / `email_change_requests`) is still unconsumed.
 
 use base64::Engine;
 use hmac::{Hmac, KeyInit, Mac};
@@ -44,6 +45,9 @@ const RESET_TOKEN_BYTES: usize = RESET_PAYLOAD_LEN + MAC_LEN;
 pub enum TokenPurpose {
     EmailVerification,
     PasswordReset,
+    /// Confirms a new address from `PATCH /me/account`. Carries the
+    /// `email_change_requests` token id, like a reset token.
+    EmailChange,
 }
 
 /// Clock-skew allowance on top of a purpose's TTL when the verifier
@@ -58,10 +62,12 @@ impl TokenPurpose {
     /// `expires_at` lies further out than `now + ttl + MAX_CLOCK_SKEW`:
     /// a genuine token can't, so it was minted with a longer TTL (or a
     /// leaked key) — previously anything up to 30 days passed (L-2).
+    /// Email change is 1 h like reset: the link rebinds the account's
+    /// recovery address, so it is a credential operation too.
     pub const fn ttl(self) -> Duration {
         match self {
             Self::EmailVerification => Duration::from_secs(24 * 60 * 60),
-            Self::PasswordReset => Duration::from_secs(60 * 60),
+            Self::PasswordReset | Self::EmailChange => Duration::from_secs(60 * 60),
         }
     }
 
@@ -69,7 +75,13 @@ impl TokenPurpose {
         match self {
             Self::EmailVerification => 1,
             Self::PasswordReset => 2,
+            Self::EmailChange => 3,
         }
+    }
+
+    /// Purposes whose tokens carry a DB row id (single-use rows).
+    const fn has_token_id(self) -> bool {
+        matches!(self, Self::PasswordReset | Self::EmailChange)
     }
 }
 
@@ -85,7 +97,7 @@ pub enum TokenError {
     BadMac,
     #[error("token issued in the future (clock skew?)")]
     FromFuture,
-    #[error("password reset token missing reset-use id")]
+    #[error("single-use token missing its row id")]
     MissingTokenId,
 }
 
@@ -99,10 +111,7 @@ pub struct VerifiedToken {
 /// Returns a URL-safe (base64url, no padding) string suitable for inclusion
 /// in a `?token=…` query parameter.
 pub fn issue(purpose: TokenPurpose, user_id: Uuid, ttl: Duration, key: &[u8]) -> String {
-    let token_id = match purpose {
-        TokenPurpose::EmailVerification => None,
-        TokenPurpose::PasswordReset => Some(Uuid::now_v7()),
-    };
+    let token_id = purpose.has_token_id().then(Uuid::now_v7);
     issue_inner(purpose, user_id, token_id, ttl, key)
 }
 
@@ -114,6 +123,12 @@ pub fn issue_password_reset(user_id: Uuid, token_id: Uuid, ttl: Duration, key: &
         ttl,
         key,
     )
+}
+
+/// Issue an email-change confirmation token bound to the
+/// `email_change_requests` row `token_id`.
+pub fn issue_email_change(user_id: Uuid, token_id: Uuid, ttl: Duration, key: &[u8]) -> String {
+    issue_inner(TokenPurpose::EmailChange, user_id, Some(token_id), ttl, key)
 }
 
 fn issue_inner(
@@ -182,10 +197,10 @@ pub fn verify_claims(
     if payload[0] != purpose.byte() {
         return Err(TokenError::WrongPurpose);
     }
-    if purpose == TokenPurpose::PasswordReset && payload_len != RESET_PAYLOAD_LEN {
+    if purpose.has_token_id() && payload_len != RESET_PAYLOAD_LEN {
         return Err(TokenError::MissingTokenId);
     }
-    if purpose == TokenPurpose::EmailVerification && payload_len != PAYLOAD_LEN {
+    if !purpose.has_token_id() && payload_len != PAYLOAD_LEN {
         return Err(TokenError::Malformed);
     }
 
@@ -338,7 +353,7 @@ mod tests {
     fn signed_with_expiry(purpose: TokenPurpose, uid: Uuid, expires_at: u64) -> String {
         let mut payload = vec![purpose.byte()];
         payload.extend_from_slice(uid.as_bytes());
-        if purpose == TokenPurpose::PasswordReset {
+        if purpose.has_token_id() {
             payload.extend_from_slice(Uuid::now_v7().as_bytes());
         }
         payload.extend_from_slice(&expires_at.to_be_bytes());
@@ -362,12 +377,37 @@ mod tests {
             Duration::from_secs(24 * 3600)
         );
         assert_eq!(TokenPurpose::PasswordReset.ttl(), Duration::from_secs(3600));
+        assert_eq!(TokenPurpose::EmailChange.ttl(), Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn round_trip_email_change_and_purpose_isolation() {
+        let uid = Uuid::now_v7();
+        let row = Uuid::now_v7();
+        let tok = issue_email_change(uid, row, TokenPurpose::EmailChange.ttl(), &key());
+        let got = verify_claims(TokenPurpose::EmailChange, &tok, &key()).unwrap();
+        assert_eq!(got.user_id, uid);
+        assert_eq!(got.token_id, Some(row));
+        // An email-change token is never a reset token, and vice versa.
+        assert!(matches!(
+            verify_claims(TokenPurpose::PasswordReset, &tok, &key()),
+            Err(TokenError::WrongPurpose)
+        ));
+        let reset = issue_password_reset(uid, row, Duration::from_secs(60), &key());
+        assert!(matches!(
+            verify_claims(TokenPurpose::EmailChange, &reset, &key()),
+            Err(TokenError::WrongPurpose)
+        ));
     }
 
     #[test]
     fn full_ttl_tokens_verify_for_each_purpose() {
         let uid = Uuid::now_v7();
-        for purpose in [TokenPurpose::EmailVerification, TokenPurpose::PasswordReset] {
+        for purpose in [
+            TokenPurpose::EmailVerification,
+            TokenPurpose::PasswordReset,
+            TokenPurpose::EmailChange,
+        ] {
             let tok = issue(purpose, uid, purpose.ttl(), &key());
             assert_eq!(verify(purpose, &tok, &key()).unwrap(), uid, "{purpose:?}");
             // An issuer clock a little ahead (within the skew) still passes.
@@ -382,7 +422,11 @@ mod tests {
     #[test]
     fn expiry_beyond_purpose_ttl_rejected() {
         let uid = Uuid::now_v7();
-        for purpose in [TokenPurpose::EmailVerification, TokenPurpose::PasswordReset] {
+        for purpose in [
+            TokenPurpose::EmailVerification,
+            TokenPurpose::PasswordReset,
+            TokenPurpose::EmailChange,
+        ] {
             let too_far = now_secs() + purpose.ttl().as_secs() + MAX_CLOCK_SKEW.as_secs() + 60;
             let tok = signed_with_expiry(purpose, uid, too_far);
             assert!(

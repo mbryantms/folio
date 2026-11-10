@@ -3,7 +3,15 @@
 //! Currently supports:
 //!   - `display_name` — any non-empty trimmed string
 //!   - `email` — local users only; OIDC users get a 403 because the
-//!     issuer owns their email
+//!     issuer owns their email. A change needs `current_password` (when the
+//!     account has one; wrong passwords count toward the failed-auth
+//!     lockout). With mail delivery configured the address does NOT change
+//!     here: an `email_change_requests` row is stored, a single-use link
+//!     goes to the new address and a notice to the old one, and the
+//!     response carries `pending_email`. The link
+//!     (`GET /auth/local/confirm-email-change`) applies it. Without mail
+//!     delivery there is no way to confirm, so the change applies at once
+//!     (unverified) and the other sessions are signed out.
 //!   - `current_password` + `new_password` — local users only; argon2id rehash
 //!
 //! The endpoint is CSRF-protected (cookie auth, unsafe verb). All mutations
@@ -16,23 +24,30 @@ use axum::{
     response::{IntoResponse, Redirect},
 };
 use axum_extra::extract::CookieJar;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
 use serde::Deserialize;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use entity::email_change_request::{
+    self, ActiveModel as EmailChangeAM, Entity as EmailChangeEntity,
+};
 use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 
-use super::error;
+use super::{error, respond_with_field_errors};
 use crate::api::form_or_json::{FormOrJson, ResponseFormat, redirect_with_error};
 use crate::audit::{self, AuditEntry};
-use crate::auth::CurrentUser;
-use crate::auth::cookies::{csrf_cookie, new_csrf_token};
-use crate::auth::local::{MeResp, me_resp_from_row};
-use crate::auth::password;
+use crate::auth::cookies::{csrf_cookie, new_csrf_token, sha256_hex};
+use crate::auth::email_token;
+use crate::auth::local::{
+    EMAIL_CHANGE_TTL, MeResp, has_local_password, me_resp_from_row, with_pending_email,
+};
+use crate::auth::{CurrentUser, failed_auth, password};
+use crate::email::templates;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
 use server_macros::handler;
+use shared::error::{ApiErrorCode, FieldError};
 
 // Access TTL flows from config; the CSRF cookie max-age must match the access
 // cookie's so JS doesn't think the form is signed-in after the access cookie
@@ -58,7 +73,8 @@ pub struct AccountReq {
     /// owns this field).
     #[serde(default)]
     pub email: Option<String>,
-    /// Required when changing the password. Verified before any write.
+    /// Required when changing the password, and when changing the email
+    /// of an account that has a password. Verified before any write.
     #[serde(default)]
     pub current_password: Option<String>,
     /// New password. Must be ≥ 12 chars per the local-auth policy.
@@ -77,11 +93,13 @@ pub struct AccountReq {
     path = "/me/account",
     request_body = AccountReq,
     responses(
-        (status = 200, body = MeResp),
+        (status = 200, body = MeResp, description = "updated. After an email change with mail delivery configured, `email` is unchanged and `pending_email` names the address the confirmation link went to"),
         (status = 400, description = "validation error"),
-        (status = 401, description = "current_password incorrect or session invalid"),
-        (status = 403, description = "OIDC users cannot edit email/password"),
+        (status = 401, description = "current_password incorrect (password change) or session invalid"),
+        (status = 403, description = "OIDC users cannot edit email/password, or current_password incorrect for an email change"),
         (status = 409, description = "email already in use"),
+        (status = 422, description = "validation error; a missing current_password for an email change carries a field error"),
+        (status = 429, description = "locked out after failed password attempts"),
     )
 )]
 #[handler]
@@ -103,6 +121,25 @@ pub async fn update(
             }
         }
     };
+    // Same, with the message bound to `current_password` for the form.
+    let fail_password = |status: StatusCode, code: ApiErrorCode, msg: &str| match format {
+        ResponseFormat::Json => respond_with_field_errors(
+            status,
+            code,
+            msg,
+            vec![FieldError {
+                field: "current_password".to_owned(),
+                message: msg.to_owned(),
+            }],
+        ),
+        ResponseFormat::Form => Redirect::to(&redirect_with_error(
+            settings_target,
+            code.as_str(),
+            msg,
+            None,
+        ))
+        .into_response(),
+    };
 
     let row = match UserEntity::find_by_id(user.id).one(&app.db).await {
         Ok(Some(r)) => r,
@@ -123,6 +160,8 @@ pub async fn update(
         );
     }
 
+    // The normalized new address when the request changes it.
+    let mut new_email: Option<String> = None;
     if let Some(email) = req.email.as_ref() {
         if !is_local {
             return fail(
@@ -148,9 +187,64 @@ pub async fn update(
         {
             return fail(StatusCode::CONFLICT, "conflict", "email already in use");
         }
+        if Some(&lower) != row.email.as_ref() {
+            new_email = Some(lower);
+        }
     }
 
-    let password_change = req.new_password.is_some() || req.current_password.is_some();
+    // An email change re-authenticates with the password when the account
+    // has one (an attacker holding a session for a moment must not be able
+    // to point the account at their own address and reset the password).
+    // Wrong passwords count against both failed-auth axes, as `DELETE /me`
+    // does, and answer 403 (401 reads as "session expired" to the web
+    // client).
+    let mut reauthed = false;
+    if new_email.is_some() && has_local_password(&row) {
+        let stored = row.password_hash.as_deref().unwrap_or_default();
+        let Some(given) = req.current_password.as_deref().filter(|p| !p.is_empty()) else {
+            return fail_password(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ApiErrorCode::Validation,
+                "enter your current password to change your email",
+            );
+        };
+        let email_key = row
+            .email
+            .as_deref()
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+            .map(str::to_lowercase);
+        if let Some(ip) = ctx.client_ip
+            && let Ok(Some(retry)) = failed_auth::check_lockout_for(&app, ip).await
+        {
+            return failed_auth::lockout_response(retry);
+        }
+        if let Some(key) = email_key.as_deref()
+            && let Ok(Some(retry)) = failed_auth::check_lockout_for_email(&app, key).await
+        {
+            return failed_auth::lockout_response(retry);
+        }
+        let ok =
+            password::verify_rotating(stored, given, app.secrets.peppers()).is_ok_and(|v| v.ok());
+        if !ok {
+            failed_auth::record_failure_for(&app, &ctx).await;
+            if let Some(key) = email_key.as_deref() {
+                failed_auth::record_failure_for_email(&app, key).await;
+            }
+            tracing::info!(reason = "bad_password", "email change rejected");
+            return fail_password(
+                StatusCode::FORBIDDEN,
+                ApiErrorCode::AuthInvalid,
+                "current password is incorrect",
+            );
+        }
+        reauthed = true;
+    }
+
+    // `current_password` alone (no email change) still means "change the
+    // password" so the missing-`new_password` error below keeps firing.
+    let password_change =
+        req.new_password.is_some() || (req.current_password.is_some() && new_email.is_none());
     if password_change {
         if !is_local {
             return fail(
@@ -200,8 +294,10 @@ pub async fn update(
         };
         // Rotation-aware (L-1): a hash still under the previous pepper must
         // verify here too; the password change below rewrites it anyway.
-        let ok = password::verify_rotating(stored, current_pw, app.secrets.peppers())
-            .is_ok_and(|v| v.ok());
+        // Already checked above when the same request changes the email.
+        let ok = reauthed
+            || password::verify_rotating(stored, current_pw, app.secrets.peppers())
+                .is_ok_and(|v| v.ok());
         if !ok {
             return fail(
                 StatusCode::UNAUTHORIZED,
@@ -222,15 +318,33 @@ pub async fn update(
             am.display_name = Set(trimmed);
         }
     }
-    if let Some(email) = req.email {
-        let lower = email.trim().to_lowercase();
-        if Some(&lower) != row.email.as_ref() {
+    // Mail delivery configured: same signal register and `/auth/config`
+    // use (`smtp_host` set; `email::build` installs the logging no-op
+    // sender exactly when it is not).
+    let mail_configured = app
+        .cfg()
+        .smtp_host
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty());
+    // The address a confirmation link goes to (mail configured).
+    let mut pending: Option<String> = None;
+    let mut immediate_email_change = false;
+    if let Some(lower) = new_email {
+        if mail_configured {
+            pending = Some(lower);
+        } else {
+            // No way to confirm: apply now, unverified, and sign the other
+            // sessions out as a password change does.
+            tracing::warn!(
+                user_id = %user.id,
+                "email changed without confirmation: mail delivery is not configured"
+            );
             changed.insert("email".into(), serde_json::json!(lower));
+            changed.insert("email_confirmed".into(), serde_json::json!(false));
             am.email = Set(Some(lower));
-            // Email change requires re-verification when SMTP is configured.
-            // For now we don't have the verification flow, so treat the new
-            // email as unverified to keep the door open for a follow-up.
             am.email_verified = Set(false);
+            bump_token_version = true;
+            immediate_email_change = true;
         }
     }
     if let Some(new_pw) = req.new_password {
@@ -250,9 +364,9 @@ pub async fn update(
         bump_token_version = true;
     }
 
-    if changed.is_empty() {
+    if changed.is_empty() && pending.is_none() {
         let csrf = new_csrf_token();
-        let body = me_resp_from_row(&row, csrf.clone());
+        let body = with_pending_email(&app.db, me_resp_from_row(&row, csrf.clone())).await;
         let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
         return match format {
             ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
@@ -260,17 +374,36 @@ pub async fn update(
         };
     }
 
-    am.updated_at = Set(chrono::Utc::now().fixed_offset());
-    if bump_token_version {
-        am.token_version = Set(row.token_version + 1);
-    }
-    let updated = match am.update(&app.db).await {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::error!(error = %e, "account update failed");
-            return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    let updated = if changed.is_empty() {
+        row.clone()
+    } else {
+        am.updated_at = Set(chrono::Utc::now().fixed_offset());
+        if bump_token_version {
+            am.token_version = Set(row.token_version + 1);
+        }
+        match am.update(&app.db).await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::error!(error = %e, "account update failed");
+                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
         }
     };
+
+    if immediate_email_change {
+        // A request left over from when mail was configured is moot now.
+        let _ = EmailChangeEntity::delete_many()
+            .filter(email_change_request::Column::UserId.eq(user.id))
+            .exec(&app.db)
+            .await;
+    }
+    if let Some(new_addr) = pending.as_deref() {
+        if let Err(e) = store_and_send_email_change(&app, &row, new_addr).await {
+            tracing::error!(error = %e, user_id = %user.id, "email-change request failed");
+            return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+        changed.insert("email_change".into(), serde_json::json!("requested"));
+    }
 
     // AUTH-1: a password change must not leave stolen refresh sessions alive.
     // Revoke every OTHER session for this user; keep the caller's current
@@ -299,10 +432,68 @@ pub async fn update(
     .await;
 
     let csrf = new_csrf_token();
-    let body = me_resp_from_row(&updated, csrf.clone());
+    let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
     let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
+    let form_target = if pending.is_some() {
+        "/settings/account?email_change=sent"
+    } else {
+        "/settings/account?ok=1"
+    };
     match format {
         ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
-        ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),
+        ResponseFormat::Form => (jar, Redirect::to(form_target)).into_response(),
     }
+}
+
+/// Replace the user's pending email change with one for `new_addr`, then
+/// mail the confirmation link to `new_addr` and a notice to the current
+/// address. Send failures are logged, not returned: the request is stored
+/// and a new PATCH replaces it.
+async fn store_and_send_email_change(
+    app: &AppState,
+    row: &user::Model,
+    new_addr: &str,
+) -> Result<(), sea_orm::DbErr> {
+    let token_id = uuid::Uuid::now_v7();
+    let tok = email_token::issue_email_change(
+        row.id,
+        token_id,
+        EMAIL_CHANGE_TTL,
+        app.secrets.email_token_key.as_ref(),
+    );
+    let now = chrono::Utc::now();
+    let expires_at = now + chrono::Duration::seconds(EMAIL_CHANGE_TTL.as_secs() as i64);
+    let txn = app.db.begin().await?;
+    // One pending request per user (unique `user_id`): the new one replaces
+    // the old, whose link stops working.
+    EmailChangeEntity::delete_many()
+        .filter(email_change_request::Column::UserId.eq(row.id))
+        .exec(&txn)
+        .await?;
+    EmailChangeAM {
+        token_id: Set(token_id),
+        user_id: Set(row.id),
+        new_email: Set(new_addr.to_owned()),
+        token_hash: Set(sha256_hex(&tok)),
+        expires_at: Set(expires_at.fixed_offset()),
+        consumed_at: Set(None),
+        created_at: Set(now.fixed_offset()),
+    }
+    .insert(&txn)
+    .await?;
+    txn.commit().await?;
+
+    let public_url = app.cfg().public_url.clone();
+    let confirm = templates::email_change_confirm(&public_url, new_addr, &tok);
+    if let Err(e) = app.send_email(confirm).await {
+        tracing::warn!(error = %e, user_id = %row.id, "email-change confirmation send failed");
+    }
+    if let Some(old) = row.email.as_deref().filter(|e| !e.trim().is_empty()) {
+        let notice = templates::email_change_requested(&public_url, old, new_addr);
+        if let Err(e) = app.send_email(notice).await {
+            tracing::warn!(error = %e, user_id = %row.id, "email-change notice send failed");
+        }
+    }
+    tracing::info!(user_id = %row.id, "email-change confirmation sent");
+    Ok(())
 }

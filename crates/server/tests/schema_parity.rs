@@ -60,6 +60,7 @@ fn all_entities() -> Vec<EntityCheck> {
         collect::<cbl_list::Entity, cbl_list::Column>(),
         collect::<cbl_refresh_log::Entity, cbl_refresh_log::Column>(),
         collect::<collection_entry::Entity, collection_entry::Column>(),
+        collect::<email_change_request::Entity, email_change_request::Column>(),
         collect::<issue::Entity, issue::Column>(),
         collect::<issue_character::Entity, issue_character::Column>(),
         collect::<issue_credit::Entity, issue_credit::Column>(),

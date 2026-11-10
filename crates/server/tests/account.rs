@@ -204,8 +204,14 @@ async fn email_change_round_trip_and_uniqueness() {
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "conflict");
 
-    // Successful change
-    let (status, body) = patch_account(&app, &auth, r#"{"email":"new-name@example.com"}"#).await;
+    // Successful change (no mail configured: applies at once once the
+    // current password checks out; see tests/account_email_change.rs).
+    let (status, body) = patch_account(
+        &app,
+        &auth,
+        r#"{"email":"new-name@example.com","current_password":"correctly-horse-battery"}"#,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["email"], "new-name@example.com");
 }
