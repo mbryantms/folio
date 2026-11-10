@@ -2177,15 +2177,14 @@ export function useClearMatchEntry(listId: string) {
 
 // ---------- Saved views (M6 needs create + delete + pin from import flow) ----------
 
-/** No toast on success — the create dialog closes and the user lands
- *  on the new view's detail route; the route change is the signal.
- *  AddViewButton additionally fires its own context-aware toast when
- *  it chains a pin after create. */
+/** Toasts "View created". AddViewButton adds a plan-limit notice when
+ *  the pin it chains after create hits the cap. */
 export function useCreateSavedView() {
   const qc = useQueryClient();
   return useApiMutation<SavedViewView, CreateSavedViewReq>(
     (body) => ({ path: "/me/saved-views", method: "POST", body }),
     {
+      successMessage: "View created",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: ["saved-views"] });
       },
@@ -3288,7 +3287,8 @@ export function useCreateSeriesSelectionBatch(seriesSlug: string) {
   }));
 }
 
-/** Fan out a metadata search over a saved view's targets → one batch. */
+/** Fan out a metadata search over a saved view's targets → one batch.
+ *  The success toast counts the batch and links to its Review tab. */
 export function useCreateSavedViewBatch() {
   return useApiMutation<BatchCreatedResp, { saved_view_id: string }>(
     (input) => ({
@@ -3296,7 +3296,19 @@ export function useCreateSavedViewBatch() {
       method: "POST",
       body: input,
     }),
-    { successMessage: "Queued metadata search" },
+    {
+      successMessage: (resp) =>
+        resp
+          ? `Searching ${resp.items_total} items for metadata`
+          : "Queued metadata search",
+      successAction: (resp) =>
+        resp
+          ? {
+              label: "Review",
+              href: `/admin/metadata?tab=review&batch=${resp.batch_id}`,
+            }
+          : undefined,
+    },
   );
 }
 
