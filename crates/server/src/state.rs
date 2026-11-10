@@ -156,6 +156,12 @@ pub struct Inner {
     /// burst of archive opens starts at most one task per issue. See
     /// [`crate::reading::page_hash_backfill`].
     pub page_hash_backfill_inflight: Arc<std::sync::Mutex<HashSet<String>>>,
+    /// What the last progress write left in each recently written
+    /// `progress_records` row, so a write that will not store a page hash
+    /// skips reading the page (audit 2026-11 P-08). A prediction only:
+    /// [`crate::api::progress`] corrects a wrong guess after the write. See
+    /// [`crate::reading::page_hash::ProgressHashHints`].
+    pub progress_hash_hints: Arc<crate::reading::page_hash::ProgressHashHints>,
     /// Per-library memo of the Duplicates page's groups (audit 2026-11,
     /// N-L3). Invalidated by catalogue-changing scans, duplicate decisions
     /// and Removed-tab restores. See [`crate::api::duplicates`].
@@ -266,6 +272,7 @@ impl AppState {
             watchers: Arc::new(crate::library::watcher::WatcherRegistry::new()),
             similarity: Arc::new(crate::similarity::SimilarityCache::new()),
             page_hash_backfill_inflight: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            progress_hash_hints: Arc::new(crate::reading::page_hash::ProgressHashHints::new()),
             duplicates: Arc::new(crate::api::duplicates::DuplicateGroupsCache::new()),
             library_roots: Arc::new(crate::library::no_follow::LibraryRoots::new()),
             job_activity: Arc::new(crate::jobs::activity::JobActivity::new()),

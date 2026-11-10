@@ -305,6 +305,19 @@ pub(crate) async fn upsert_for(
 /// stored page hash is kept when the resulting page is unchanged;
 /// otherwise the hash captured for `page` is stored when `page` is the
 /// resulting page, else NULL (ordinal fallback).
+///
+/// **The page is read only when its hash is stored (audit 2026-11 P-08).**
+/// A repeated write of the same page, an implicit write behind the
+/// furthest page and an ignored write keep or clear the stored hash
+/// without looking at it. [`hash_will_be_stored`] predicts which case a
+/// write is from what the previous write left in the row
+/// ([`ProgressHashHints`]); when it predicts "not stored" the statement
+/// runs with no hash. If the returned row shows the hash was due after all
+/// (the hint was stale: another writer changed the row), the page is read
+/// then and stored by a guarded `UPDATE` ([`store_missed_hash`]), so the
+/// stored row is the one the single statement would have written.
+///
+/// [`ProgressHashHints`]: crate::reading::page_hash::ProgressHashHints
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn upsert_for_run(
     app: &AppState,
@@ -319,9 +332,16 @@ pub(crate) async fn upsert_for_run(
     use sea_orm::{DbBackend, Statement};
 
     let now = Utc::now().fixed_offset();
-    // Captured up front so no archive I/O sits between the row read and
-    // the row write — the statement below is the only DB round-trip.
-    let page_hash = crate::reading::page_hash::capture(app, issue_row, page).await;
+    // Captured up front when the hint says the statement will store it, so
+    // no archive I/O sits between the row read and the row write and the
+    // statement below is the only DB round-trip.
+    let hint = app.progress_hash_hints.get(user_id, &issue_row.id);
+    let captured = if hash_will_be_stored(hint, page, finished, run, restart) {
+        Some(crate::reading::page_hash::capture(app, issue_row, page).await)
+    } else {
+        None
+    };
+    let page_hash = captured.clone().flatten();
     let page_count = issue_row.page_count.unwrap_or(0);
 
     let stmt = Statement::from_sql_and_values(
@@ -344,24 +364,107 @@ pub(crate) async fn upsert_for_run(
             Option::<f64>::None.into(),
         ],
     );
-    let row = ProgressEntity::find()
+    let mut row = ProgressEntity::find()
         .from_raw_sql(stmt)
         .one(&app.db)
         .await?
         .ok_or_else(|| {
             sea_orm::DbErr::RecordNotFound("progress upsert returned no row".to_owned())
         })?;
-    if let Some(r) = run
-        && row.run > r + i32::from(restart)
-    {
+    let ignored = run.is_some_and(|r| row.run > r + i32::from(restart));
+    // The statement stores the given hash exactly when the write was not
+    // ignored, the resulting page is `page`, and no stored hash was kept;
+    // with no hash given that leaves `page_hash` NULL on `page`.
+    if captured.is_none() && !ignored && row.last_page == page && row.page_hash.is_none() {
+        store_missed_hash(app, issue_row, &mut row).await?;
+    }
+    app.progress_hash_hints.put(
+        user_id,
+        &issue_row.id,
+        crate::reading::page_hash::ProgressHashHint {
+            run: row.run,
+            last_page: row.last_page,
+            has_hash: row.page_hash.is_some(),
+        },
+    );
+    if ignored {
         tracing::debug!(
             issue_id = %issue_row.id,
-            client_run = r,
+            client_run = ?run,
             server_run = row.run,
             "progress write ignored: client is on an older reading run"
         );
     }
     Ok(row)
+}
+
+/// Whether [`PROGRESS_UPSERT_SQL`] will store the hash passed for `page`,
+/// given the row the previous write left (`prev`, `None` when unknown or
+/// absent). Mirrors the statement's `page_hash` arm: an insert stores it;
+/// an ignored write keeps the row; otherwise the stored hash is kept when
+/// the resulting page is unchanged and hashed, and the given hash is
+/// stored when the resulting page is `page`. Unknown → `true` (read the
+/// page, as every write did before).
+pub(crate) fn hash_will_be_stored(
+    prev: Option<crate::reading::page_hash::ProgressHashHint>,
+    page: i32,
+    finished: Option<bool>,
+    run: Option<i32>,
+    restart: bool,
+) -> bool {
+    let Some(prev) = prev else {
+        return true;
+    };
+    if run.is_some_and(|r| prev.run > r + i32::from(restart)) {
+        return false;
+    }
+    let restarts = restart && run.is_none_or(|r| prev.run <= r);
+    let next_page = if restarts || finished.is_some() {
+        page
+    } else {
+        prev.last_page.max(page)
+    };
+    if next_page == prev.last_page && prev.has_hash {
+        return false;
+    }
+    next_page == page
+}
+
+/// The hint predicted no hash but the written row shows it was due: read
+/// the page now and store its hash, guarded on the row being exactly the
+/// one just written (same run, page, `updated_at`, still no hash), so a
+/// write that landed in between is never overwritten. `updated_at` is not
+/// bumped: the statement already set it for this write.
+async fn store_missed_hash(
+    app: &AppState,
+    issue_row: &issue::Model,
+    row: &mut progress_record::Model,
+) -> Result<(), sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let Some(hash) = crate::reading::page_hash::capture(app, issue_row, row.last_page).await else {
+        return Ok(());
+    };
+    let res = app
+        .db
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE progress_records SET page_hash = $1 \
+              WHERE user_id = $2 AND issue_id = $3 AND run = $4 AND last_page = $5 \
+                AND updated_at = $6 AND page_hash IS NULL",
+            [
+                hash.clone().into(),
+                row.user_id.into(),
+                row.issue_id.clone().into(),
+                row.run.into(),
+                row.last_page.into(),
+                row.updated_at.into(),
+            ],
+        ))
+        .await?;
+    if res.rows_affected() == 1 {
+        row.page_hash = Some(hash);
+    }
+    Ok(())
 }
 
 /// Explicit bulk write (mark read / unread) through the same atomic
