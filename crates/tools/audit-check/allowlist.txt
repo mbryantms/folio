@@ -1,176 +1,156 @@
 # audit-check allowlist
 #
-# Functions named here are RequireAdmin-gated but EXEMPT from the
+# Handlers named here are RequireAdmin-gated but EXEMPT from the
 # "must call record_admin_action!" rule. Use only for read-only
-# admin surfaces (GET, list, dashboard) — anything that mutates
-# state must record.
+# admin surfaces (GET, list, dashboard) and delegates whose callee
+# writes the audit row — anything that mutates state must record.
 #
-# Format: one bare function name per line. Comments start with `#`.
+# Format: `<file>::<fn>`, the file relative to `crates/server/src`,
+# one entry per line. Comments start with `#`. An entry that names no
+# RequireAdmin handler (moved, renamed, deleted) fails the check.
 # audit-remediation M10.2.
 
-# ── admin_users.rs ───────────────────────────────────────────
-list             # GET /admin/users — paginated user list
-get_one          # GET /admin/users/{id} — single user view
-disable          # POST /admin/users/{id}/disable — delegates to `set_state` which writes audit_log
-enable           # POST /admin/users/{id}/enable — delegates to `set_state` which writes audit_log
-
-# ── admin_stats.rs ──────────────────────────────────────────
-overview         # GET /admin/stats — dashboard summary numbers
-content          # GET /admin/stats/content — content metrics
-engagement       # GET /admin/stats/engagement — engagement metrics
-quality          # GET /admin/stats/quality — quality metrics
-users_list       # GET /admin/stats/users — per-user reading stats
-user_detail      # GET /admin/stats/users/{id} — single user activity
-
 # ── admin_activity.rs ───────────────────────────────────────
-list_activity    # GET /admin/audit — paginated audit-log feed (read-only)
+api/admin_activity.rs::list               # GET /admin/activity — read-only activity feed
 
 # ── admin_email.rs ──────────────────────────────────────────
-get_email        # GET /admin/email — current SMTP settings (read)
-status           # GET /admin/email/status — sender status snapshot
-get_settings     # GET /admin/thumbs/settings — read-only library defaults
-library_status   # GET /admin/thumbs/{slug} — read-only per-library thumb status
+api/admin_email.rs::status                # GET /admin/email/status — sender status snapshot
 
 # ── admin_fs.rs ─────────────────────────────────────────────
-list_directory   # GET /admin/fs — directory picker (read-only)
+api/admin_fs.rs::list                     # GET /admin/fs/list — directory picker (read-only)
 
 # ── admin_logs.rs ───────────────────────────────────────────
-list_logs        # GET /admin/logs — log ring buffer snapshot
-
-# ── admin_ocr.rs ────────────────────────────────────────────
-status_ocr       # GET /admin/ocr — OCR worker status
-
-# ── admin_queue.rs ──────────────────────────────────────────
-queue_status     # GET /admin/queue — apalis queue depth + status
-get_workers      # GET /admin/queue/workers — worker config (read)
-
-# ── admin_settings.rs ───────────────────────────────────────
-read_all         # GET /admin/settings — read every registered setting
-discover_oidc    # POST /admin/auth/oidc/discover — dry-run OIDC probe (no DB writes)
-get_all          # GET /admin/settings — same as read_all alias
-probe_discovery  # POST /admin/auth/oidc/discover — dry-run OIDC probe; alias
-
-# ── admin_queue.rs ──────────────────────────────────────────
-queue_depth      # GET /admin/queue/depth — read-only queue depth snapshot
-dead_letters     # GET /admin/queue/dead-letters — read-only dead-letter counts per queue (ZCARD)
-dead_jobs        # GET /admin/queue/dead-jobs — read-only paginated dead-job list (ZREVRANGE + HMGET)
-queue_jobs       # GET /admin/queue/jobs — read-only per-queue job lanes (LRANGE/ZRANGEBYSCORE/SMEMBERS + activity ring)
-
-# ── auth_config.rs ──────────────────────────────────────────
-get_config_alt   # (handled above) — keep allow-list consistent
-
-# ── cbl_lists.rs ────────────────────────────────────────────
-refresh_catalog_index  # POST — kicks off catalog refresh job; the worker writes audit_log on each catalog row update
-
-# ── libraries.rs (write paths that delegate or kick async work) ─
-create           # POST /libraries — admin-create; covered by audit ledger when the scan worker writes rows. v0.4 audit gap noted in [[audit_remediation_m10_done]]; add `record_admin_action!` once the create-flow audit-action name is decided.
-scan             # POST /libraries/{slug}/scan — kicks off the scanner; the scan_run is the audit ledger
-validate_deeply  # POST /libraries/{slug}/validate-deeply — kicks off a deep-validate (reads archives only); like `scan`, its scan_run (kind deep_validate) is the audit ledger
-scan_preview     # POST /libraries/{slug}/scan-preview — dry-run scan; no DB writes
-
-# ── series.rs ───────────────────────────────────────────────
-scan_series      # POST /series/{slug}/scan — kicks off per-series scan; scan_run is the audit ledger
-
-# ── server_releases.rs ──────────────────────────────────────
-latest_release   # GET /admin/server/releases/latest — alias of `check_releases` read path
-
-# ── admin_thumbs.rs ─────────────────────────────────────────
-status_thumbs    # GET /admin/thumbs — thumbnail pipeline status
-list_orphans     # GET /admin/thumbs/orphans — orphan-sweep report
-
-# ── auth_config.rs ──────────────────────────────────────────
-get_config       # GET /admin/auth — current auth-mode config
-test_smtp        # POST /admin/email/test — send a test email (no state mutation; emits audit via send path itself)
-
-# ── duplicates.rs ───────────────────────────────────────────
-# `list` (GET /libraries/{slug}/duplicates — read-only duplicate groups) is
-# already exempt via the admin_users.rs entry above (bare-name match).
-
-# ── health_issues.rs ────────────────────────────────────────
-list_issues      # GET /admin/health-issues — paginated health-issue feed
-get_issue        # GET /admin/health-issues/{id} — single row
-backup_storage   # GET /libraries/{slug}/backup-storage — read-only .bak rollup
-page_count       # GET /issues/{id}/archive/page-count — read-only live page count
-
-# ── library_hash_backfill.rs ────────────────────────────────
-hash_backfill_status  # GET /libraries/{slug}/hash-backfill — read-only progress counts
-
-# ── sidecar_reemit.rs ───────────────────────────────────────
-sidecar_reemit_status  # GET /libraries/{slug}/sidecar-reemit — read-only run counts
-
-# ── library_stats.rs ────────────────────────────────────────
-library_stats_all  # GET /admin/libraries/stats — read-only per-library counts + disk usage
-library_stats_one  # GET /admin/libraries/{slug}/stats — read-only, one library's figures
-
-# ── libraries.rs ────────────────────────────────────────────
-list_health      # GET /libraries/{slug}/health — health-issue rollup
-list_removed     # GET /libraries/{slug}/removed — soft-deleted issue list
-list_history     # GET /libraries/{slug}/history — scan-run history (admin-only)
-get_scan        # GET /libraries/{slug}/scans/{id} — single scan run
-
-# ── scan_runs.rs ────────────────────────────────────────────
-list_scan_runs   # GET /scan-runs — per-library scan-run summary
-get_run         # GET /scan-runs/{id} — single scan run detail
-admin_list                  # GET /admin/scan-runs — cross-library read
-admin_latest_per_library    # GET /admin/scan-runs/latest-per-library — dashboard snapshot
-
-# ── background_work.rs ───────────────────────────────────────
-background_work     # GET /admin/background-work — cross-library in-flight snapshot
-
-# ── scan_batches.rs (observability-split M7) ─────────────────
-scan_batches_list   # GET /admin/scan-batches — cross-batch read
-scan_batch_detail   # GET /admin/scan-batches/{id} — batch rollup read
-
-# ── library_events.rs (observability-split M10) ──────────────
-list_library_events   # GET /admin/library-events — durable manifest read
-
-# ── server_info.rs ──────────────────────────────────────────
-info            # GET /admin/server — build/version/SHA info
-restart_pending # GET /admin/server/restart-pending — boot-vs-current settings diff (read-only)
-releases        # GET /admin/server/releases — upstream-release availability check
-watchers        # GET /admin/server/watchers — per-library file-watcher mode + last trigger (read-only, WP-3.1)
-
-# ── server_releases.rs ──────────────────────────────────────
-check_releases   # GET /admin/server/releases — upstream-release poll
+api/admin_logs.rs::list                   # GET /admin/logs — log ring buffer snapshot
 
 # ── admin_metadata.rs ───────────────────────────────────────
-list_providers   # GET /admin/metadata/providers — read-only provider status + quota gauge
-
-
-# ── admin_metadata.rs (M6) ───────────────────────────────────
-dashboard           # GET /admin/metadata/dashboard — read-only counts + quota
-list_runs           # GET /admin/metadata/runs — paginated run history
-get_run             # GET /admin/metadata/runs/{id} — single run detail
-recent_applies      # GET /admin/metadata/recent-applies — read-only recent-apply summary (B14)
-
-# ── admin_metadata.rs (matching-accuracy-1.0 M0) ─────────────
-match_quality       # GET /admin/metadata/match-quality — read-only outcome distribution
-list_auto_synced    # GET /admin/metadata/auto-synced — read-only list of auto-sync-enabled series
-run_phash_backfill          # POST /admin/metadata/phash-backfill — delegates to enqueue_backfill which writes audit_log (B17)
-run_variant_cover_backfill  # POST /admin/metadata/variant-cover-backfill — delegates to enqueue_backfill which writes audit_log (B17)
-run_cover_variant_backfill  # POST /admin/metadata/cover-variant-backfill — delegates to enqueue_backfill which writes audit_log (G9)
-run_name_suffix_backfill    # POST /admin/metadata/name-suffix-backfill — delegates to enqueue_backfill which writes audit_log
-run_csv_cache_backfill      # POST /admin/metadata/csv-cache-backfill — delegates to enqueue_backfill which writes audit_log
-
-# ── archive_edit.rs (archive-rewrite-1.0 M2) ─────────────────
-edit                # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion
-backups             # GET /issues/{id}/archive/backups — read-only listing of .bak files
-upload              # POST /uploads — transient image staging (data_dir/uploads/<uuid>), not a mutation on domain data
-
-
-# ── relationship_suggestions.rs (WP-7.2) ────────────────────
-# `list` (GET /admin/relationship-suggestions) is already exempt via the
-# admin_users.rs entry above (bare-name match).
-list_for_series     # GET /series/{slug}/relationship-suggestions — read-only pending suggestions for one series
-
-# ── provider_coverage.rs (provider-independent coverage) ────
-coverage_analysis   # GET /series/{slug}/provider-coverage/analysis — read-only job status + coverage grid
-
-# ── series_refresh.rs (guided "Refresh this series…") ───────
-refresh_status      # GET /series/{slug}/metadata/refresh-status — read-only resume state + fetch estimate
+api/admin_metadata.rs::list_providers     # GET /admin/metadata/providers — read-only provider status + quota gauge
+api/admin_metadata.rs::dashboard          # GET /admin/metadata/dashboard — read-only counts + quota
+api/admin_metadata.rs::match_quality      # GET /admin/metadata/match-quality — read-only outcome distribution
+api/admin_metadata.rs::list_runs          # GET /admin/metadata/runs — paginated run history
+api/admin_metadata.rs::get_run            # GET /admin/metadata/runs/{id} — single run detail
+api/admin_metadata.rs::recent_applies     # GET /admin/metadata/recent-applies — read-only recent-apply summary (B14)
+api/admin_metadata.rs::list_auto_synced   # GET /admin/metadata/auto-synced — read-only list of auto-sync-enabled series
+api/admin_metadata.rs::run_phash_backfill          # POST /admin/metadata/phash-backfill — delegates to enqueue_backfill which writes audit_log (B17)
+api/admin_metadata.rs::run_variant_cover_backfill  # POST /admin/metadata/variant-cover-backfill — delegates to enqueue_backfill which writes audit_log (B17)
+api/admin_metadata.rs::run_cover_variant_backfill  # POST /admin/metadata/cover-variant-backfill — delegates to enqueue_backfill which writes audit_log (G9)
+api/admin_metadata.rs::run_name_suffix_backfill    # POST /admin/metadata/name-suffix-backfill — delegates to enqueue_backfill which writes audit_log
+api/admin_metadata.rs::run_csv_cache_backfill      # POST /admin/metadata/csv-cache-backfill — delegates to enqueue_backfill which writes audit_log
 
 # ── admin_metadata_coverage.rs ──────────────────────────────
-coverage         # GET /admin/metadata/coverage — read-only snapshot
+api/admin_metadata_coverage.rs::coverage  # GET /admin/metadata/coverage — read-only snapshot
+
+# ── admin_ocr.rs ────────────────────────────────────────────
+api/admin_ocr.rs::list                    # GET /admin/ocr/models — read-only OCR model list
+
+# ── admin_queue.rs ──────────────────────────────────────────
+api/admin_queue.rs::queue_depth           # GET /admin/queue-depth — read-only queue depth snapshot
+api/admin_queue.rs::dead_letters          # GET /admin/queue/dead-letters — read-only dead-letter counts per queue (ZCARD)
+api/admin_queue.rs::dead_jobs             # GET /admin/queue/dead-jobs — read-only paginated dead-job list (ZREVRANGE + HMGET)
+api/admin_queue.rs::queue_jobs            # GET /admin/queue/jobs — read-only per-queue job lanes (LRANGE/ZRANGEBYSCORE/SMEMBERS + activity ring)
+
+# ── admin_settings.rs ───────────────────────────────────────
+api/admin_settings.rs::get_all            # GET /admin/settings — read every registered setting
+
+# ── admin_stats.rs ──────────────────────────────────────────
+api/admin_stats.rs::overview              # GET /admin/stats/overview — dashboard summary numbers
+api/admin_stats.rs::content               # GET /admin/stats/content — content metrics
+api/admin_stats.rs::engagement            # GET /admin/stats/engagement — engagement metrics
+api/admin_stats.rs::quality               # GET /admin/stats/quality — quality metrics
+api/admin_stats.rs::users_list            # GET /admin/stats/users — per-user reading stats
+
+# ── admin_thumbs.rs ─────────────────────────────────────────
+api/admin_thumbs.rs::get_settings         # GET /admin/libraries/{slug}/thumbnails-settings — read-only library defaults
+api/admin_thumbs.rs::library_status       # GET /admin/libraries/{slug}/thumbnails-status — read-only per-library thumb status
+
+# ── admin_users.rs ──────────────────────────────────────────
+api/admin_users.rs::list                  # GET /admin/users — paginated user list
+api/admin_users.rs::get_one               # GET /admin/users/{id} — single user view
+api/admin_users.rs::disable               # POST /admin/users/{id}/disable — delegates to `set_state` which writes audit_log
+api/admin_users.rs::enable                # POST /admin/users/{id}/enable — delegates to `set_state` which writes audit_log
+
+# ── archive_edit.rs (archive-rewrite-1.0 M2) ─────────────────
+api/archive_edit.rs::page_count           # GET /issues/{id}/archive/page-count — read-only live page count
+api/archive_edit.rs::edit                 # POST /issues/{id}/archive/edit — enqueues ArchiveEditJob; the worker writes audit_log (admin.issue.archive_edit) on completion
+api/archive_edit.rs::backups              # GET /issues/{id}/archive/backups — read-only listing of .bak files
+api/archive_edit.rs::upload               # POST /uploads — transient image staging (data_dir/uploads/<uuid>), not a mutation on domain data
+
+# ── audit.rs ────────────────────────────────────────────────
+api/audit.rs::list                        # GET /admin/audit — paginated audit-log feed (read-only)
+
+# ── auth_config.rs ──────────────────────────────────────────
+api/auth_config.rs::get_config            # GET /admin/auth/config — current auth-mode config
+api/auth_config.rs::probe_discovery       # POST /admin/auth/oidc/discover — dry-run OIDC probe (no DB writes)
+
+# ── background_work.rs ───────────────────────────────────────
+api/background_work.rs::background_work   # GET /admin/background-work — cross-library in-flight snapshot
+
+# ── cbl_lists.rs ────────────────────────────────────────────
+api/cbl_lists.rs::refresh_catalog_index   # POST — kicks off catalog refresh job; the worker writes audit_log on each catalog row update
 
 # ── characters.rs / teams.rs / locations.rs / arcs.rs ───────
-refresh_profile  # POST /<kind>/{slug}/profile/refresh — delegate: entity_pages::refresh_profile_handler records admin.entity.refresh_profile
+api/characters.rs::refresh_profile        # POST /characters/{slug}/profile/refresh — delegate: entity_pages::refresh_profile_handler records admin.entity.refresh_profile
+api/teams.rs::refresh_profile             # POST /teams/{slug}/profile/refresh — same delegate
+api/locations.rs::refresh_profile         # POST /locations/{slug}/profile/refresh — same delegate
+api/arcs.rs::refresh_profile              # POST /arcs/{slug}/profile/refresh — same delegate
+
+# ── duplicates.rs ───────────────────────────────────────────
+api/duplicates.rs::list                   # GET /libraries/{slug}/duplicates — read-only duplicate groups
+
+# ── health_issues.rs ────────────────────────────────────────
+api/health_issues.rs::list                # GET /libraries/{slug}/health-issues — per-library health-issue feed
+api/health_issues.rs::admin_list          # GET /admin/health-issues — cross-library health-issue feed
+api/health_issues.rs::backup_storage      # GET /libraries/{slug}/backup-storage — read-only .bak rollup
+
+# ── libraries.rs (write paths that kick async work) ─────────
+api/libraries.rs::scan                    # POST /libraries/{slug}/scan — kicks off the scanner; the scan_run is the audit ledger
+api/libraries.rs::validate_deeply         # POST /libraries/{slug}/validate-deeply — kicks off a deep-validate (reads archives only); like `scan`, its scan_run (kind deep_validate) is the audit ledger
+api/libraries.rs::scan_preview            # GET /libraries/{slug}/scan-preview — dry-run scan; no DB writes
+
+# ── library_events.rs (observability-split M10) ──────────────
+api/library_events.rs::list_library_events  # GET /admin/library-events — durable manifest read
+
+# ── library_hash_backfill.rs ────────────────────────────────
+api/library_hash_backfill.rs::hash_backfill_status  # GET /libraries/{slug}/hash-backfill — read-only progress counts
+
+# ── library_stats.rs ────────────────────────────────────────
+api/library_stats.rs::library_stats_all   # GET /admin/libraries/stats — read-only per-library counts + disk usage
+api/library_stats.rs::library_stats_one   # GET /admin/libraries/{slug}/stats — read-only, one library's figures
+
+# ── provider_coverage.rs (provider-independent coverage) ────
+api/provider_coverage.rs::coverage_analysis  # GET /series/{slug}/provider-coverage/analysis — read-only job status + coverage grid
+
+# ── reconcile.rs ────────────────────────────────────────────
+api/reconcile.rs::list_removed            # GET /libraries/{slug}/removed — soft-deleted issue list
+
+# ── relationship_suggestions.rs (WP-7.2) ────────────────────
+api/relationship_suggestions.rs::list             # GET /admin/relationship-suggestions — read-only pending suggestions
+api/relationship_suggestions.rs::list_for_series  # GET /series/{slug}/relationship-suggestions — read-only pending suggestions for one series
+
+# ── scan_batches.rs (observability-split M7) ─────────────────
+api/scan_batches.rs::scan_batches_list    # GET /admin/scan-batches — cross-batch read
+api/scan_batches.rs::scan_batch_detail    # GET /admin/scan-batches/{id} — batch rollup read
+
+# ── scan_runs.rs ────────────────────────────────────────────
+api/scan_runs.rs::list                    # GET /libraries/{slug}/scan-runs — per-library scan-run history
+api/scan_runs.rs::admin_list              # GET /admin/scan-runs — cross-library read
+api/scan_runs.rs::admin_latest_per_library  # GET /admin/scan-runs/latest-per-library — dashboard snapshot
+
+# ── series.rs ───────────────────────────────────────────────
+api/series.rs::scan_series                # POST /series/{slug}/scan — kicks off per-series scan; scan_run is the audit ledger
+
+# ── series_refresh.rs (guided "Refresh this series…") ───────
+api/series_refresh.rs::refresh_status     # GET /series/{slug}/metadata/refresh-status — read-only resume state + fetch estimate
+
+# ── server_info.rs ──────────────────────────────────────────
+api/server_info.rs::info                  # GET /admin/server/info — build/version/SHA info
+api/server_info.rs::restart_pending       # GET /admin/server/restart-pending — boot-vs-current settings diff (read-only)
+api/server_info.rs::watchers              # GET /admin/server/watchers — per-library file-watcher mode + last trigger (read-only, WP-3.1)
+
+# ── server_releases.rs ──────────────────────────────────────
+api/server_releases.rs::latest_release    # GET /admin/server/latest-release — upstream-release availability check
+
+# ── sidecar_reemit.rs ───────────────────────────────────────
+api/sidecar_reemit.rs::sidecar_reemit_status  # GET /libraries/{slug}/sidecar-reemit — read-only run counts
+
+# ── starter_lists.rs ────────────────────────────────────────
+api/starter_lists.rs::admin_list          # GET /admin/starter-lists — read-only starter-list picks

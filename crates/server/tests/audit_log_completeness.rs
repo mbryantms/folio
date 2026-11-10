@@ -310,3 +310,56 @@ async fn reconcile_confirm_writes_audit_row() {
     assert_eq!(hit["action"], "admin.issue.confirm_removal");
     assert_eq!(hit["target_type"], "issue");
 }
+
+/// Creating a library writes exactly one `admin.library.create` row naming
+/// the acting admin, the new library and its name, slug and root path.
+#[tokio::test]
+async fn library_create_writes_audit_row() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(
+        &app,
+        "lib-create-admin@example.com",
+        "correctly-horse-battery",
+    )
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    let resp = admin_send(
+        &app,
+        &admin,
+        Method::POST,
+        "/api/libraries",
+        Some(serde_json::json!({
+            "name": "Audited Library",
+            "root_path": root.path().to_string_lossy(),
+        })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = body_json(resp.into_body()).await;
+    let library_id = created["id"].as_str().unwrap().to_owned();
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let admin_id = entity::user::Entity::find()
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|u| u.email.as_deref() == Some("lib-create-admin@example.com"))
+        .unwrap()
+        .id;
+    let rows: Vec<_> = entity::audit_log::Entity::find()
+        .all(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.action == "admin.library.create")
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row.actor_id, admin_id);
+    assert_eq!(row.target_type.as_deref(), Some("library"));
+    assert_eq!(row.target_id.as_deref(), Some(library_id.as_str()));
+    assert_eq!(row.payload["name"], "Audited Library");
+    assert_eq!(row.payload["slug"], created["slug"]);
+    assert_eq!(row.payload["root_path"], created["root_path"]);
+}
