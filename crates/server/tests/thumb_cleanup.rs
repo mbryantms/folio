@@ -452,6 +452,51 @@ async fn orphan_sweep_preserves_variant_covers_for_active_issue() {
     assert!(issues_root.exists(), "variant-cover container must remain");
 }
 
+/// The alive-set query runs in chunks (Postgres caps a statement at 65,535
+/// binds, so one `IN (...)` over every thumbnail dir failed past ~65k
+/// issues). With a chunk size of 2 and seven candidate ids, the live rows
+/// land in different chunks; exactly the orphans must go.
+#[tokio::test]
+async fn orphan_sweep_unions_alive_set_across_chunks() {
+    let app = TestApp::spawn().await;
+    let data_path = app.state().cfg().data_path.clone();
+    let mut alive = Vec::new();
+    for _ in 0..3 {
+        let id = seed(&app, IssueState::Active, Removal::Present).await;
+        put_fake_thumbs(&data_path, &id);
+        alive.push(id);
+    }
+    // A variant-cover-only live issue: its id is a candidate solely via
+    // the second tree.
+    let variant_only = seed(&app, IssueState::Active, Removal::Present).await;
+    let variant_only_cover = put_fake_variant_cover(&data_path, &variant_only);
+    let confirmed = seed(&app, IssueState::Active, Removal::Confirmed).await;
+    put_fake_thumbs(&data_path, &confirmed);
+    let strangers = ["a".repeat(64), "b".repeat(64)];
+    for s in &strangers {
+        put_fake_thumbs(&data_path, s);
+    }
+
+    let wiped = server::jobs::orphan_sweep::run_with_chunk(&app.state(), 2)
+        .await
+        .unwrap();
+    assert_eq!(wiped, 3, "confirmed-removed + two strangers");
+
+    let cover = |id: &str| thumbnails::cover_path(&data_path, id, thumbnails::ThumbFormat::Webp);
+    for id in &alive {
+        assert!(cover(id).exists(), "live issue {id} lost its cover");
+        assert!(thumbnails::issue_thumbs_dir(&data_path, id).exists());
+    }
+    assert!(variant_only_cover.exists(), "live variant cover reclaimed");
+    assert!(
+        !cover(&confirmed).exists(),
+        "confirmed removal kept its cover"
+    );
+    for s in &strangers {
+        assert!(!cover(s).exists(), "stranger {s} kept its cover");
+    }
+}
+
 // Suppress unused-import warning on IssueEntity for builds where the
 // downstream queries are inlined into the helper.
 #[allow(dead_code)]
