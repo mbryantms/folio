@@ -58,6 +58,114 @@ pub(crate) fn not_duplicate_removed() -> sea_orm::sea_query::SimpleExpr {
 use super::event_log::{Action, Category, EventCollector, Severity};
 use super::scanner::stats::ScanStats;
 
+/// Ids of the series in `library_id` that hold at least one soft-removed
+/// issue which is not a Duplicates-page removal — i.e. an issue a returning
+/// file would restore. One grouped query per library scan; the planner
+/// never takes the unchanged-folder skip for these series, because moving
+/// a folder away and back does not move its mtime.
+pub(crate) async fn series_with_restorable_issues(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+) -> anyhow::Result<HashSet<Uuid>> {
+    Ok(IssueEntity::find()
+        .select_only()
+        .column(issue::Column::SeriesId)
+        .filter(issue::Column::LibraryId.eq(library_id))
+        .filter(issue::Column::RemovedAt.is_not_null())
+        .filter(not_duplicate_removed())
+        .distinct()
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect())
+}
+
+/// Lift the removal off every soft-removed series among `series_ids` that
+/// holds at least one active issue again (Duplicates-page removals never
+/// count — they are sticky). Clears `removed_at` and `removal_confirmed_at`
+/// and queues one `series restored` event per series, the automatic twin of
+/// the admin `POST /series/{slug}/restore`. Called by every path that
+/// restores issues, after the issue rows are written, so a returning
+/// folder brings its series back without an admin action.
+///
+/// Cache invalidation stays with the caller: scans go through
+/// `scanner::finalize_run` (a restore counts as `ScanStats::mutated`), the
+/// admin handlers invalidate the Duplicates memo themselves.
+///
+/// Returns the number of series restored.
+pub(crate) async fn restore_series_with_live_issues(
+    db: &DatabaseConnection,
+    series_ids: impl IntoIterator<Item = Uuid>,
+    events: &mut EventCollector,
+) -> anyhow::Result<u64> {
+    let ids: Vec<Uuid> = series_ids
+        .into_iter()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let removed: Vec<(Uuid, String)> = series::Entity::find()
+        .select_only()
+        .column(series::Column::Id)
+        .column(series::Column::Name)
+        .filter(series::Column::Id.is_in(ids))
+        .filter(series::Column::RemovedAt.is_not_null())
+        .into_tuple()
+        .all(db)
+        .await?;
+    if removed.is_empty() {
+        return Ok(0);
+    }
+    let has_live: HashSet<Uuid> = IssueEntity::find()
+        .select_only()
+        .column(issue::Column::SeriesId)
+        .filter(issue::Column::SeriesId.is_in(removed.iter().map(|(id, _)| *id)))
+        .filter(issue::Column::RemovedAt.is_null())
+        .filter(not_duplicate_removed())
+        .distinct()
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
+    let to_restore: Vec<(Uuid, String)> = removed
+        .into_iter()
+        .filter(|(id, _)| has_live.contains(id))
+        .collect();
+    if to_restore.is_empty() {
+        return Ok(0);
+    }
+    let res = series::Entity::update_many()
+        .col_expr(
+            series::Column::RemovedAt,
+            Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+        )
+        .col_expr(
+            series::Column::RemovalConfirmedAt,
+            Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
+        )
+        .filter(series::Column::Id.is_in(to_restore.iter().map(|(id, _)| *id)))
+        .filter(series::Column::RemovedAt.is_not_null())
+        .exec(db)
+        .await?;
+    for (series_id, name) in to_restore {
+        tracing::info!(%series_id, series = %name, "reconcile: series restored (issues returned)");
+        let ev = events
+            .build(
+                Category::Series,
+                Action::Restored,
+                Severity::Info,
+                format!("Restored series {name}"),
+            )
+            .entity("series", series_id.to_string(), Some(name));
+        events.push(ev);
+    }
+    Ok(res.rows_affected)
+}
+
 /// Walk all non-removed issues for `library_id`. Soft-delete the ones whose
 /// file is missing; restore the ones whose file came back.
 pub async fn reconcile_library(
@@ -73,6 +181,7 @@ pub async fn reconcile_library(
         .all(db)
         .await?;
 
+    let mut restored_series = HashSet::new();
     for row in issues {
         let path = Path::new(&row.file_path);
         let exists = path.exists();
@@ -87,6 +196,7 @@ pub async fn reconcile_library(
             }
             // Restore: was soft-deleted, file is back.
             (true, true) => {
+                restored_series.insert(row.series_id);
                 let mut am: issue::ActiveModel = row.into();
                 am.removed_at = Set(None);
                 am.removal_confirmed_at = Set(None);
@@ -97,6 +207,10 @@ pub async fn reconcile_library(
             _ => {}
         }
     }
+    // Returning issues bring their soft-removed series back.
+    let mut events = EventCollector::new(library_id, None);
+    restore_series_with_live_issues(db, restored_series, &mut events).await?;
+    events.flush(db).await;
 
     // Series with all issues removed → soft-delete the series itself.
     let series_rows = series::Entity::find()
@@ -294,6 +408,7 @@ pub async fn reconcile_series(
         .all(db)
         .await?;
 
+    let mut any_restored = false;
     for row in issues {
         let path = Path::new(&row.file_path);
         let exists = path.exists();
@@ -319,9 +434,23 @@ pub async fn reconcile_series(
                 };
                 am.update(db).await?;
                 stats.issues_restored += 1;
+                any_restored = true;
             }
             _ => {}
         }
+    }
+    // Returning issues bring the series back if it was soft-removed.
+    if any_restored
+        && let Some(library_id) = series::Entity::find_by_id(series_id)
+            .select_only()
+            .column(series::Column::LibraryId)
+            .into_tuple::<Uuid>()
+            .one(db)
+            .await?
+    {
+        let mut events = EventCollector::new(library_id, None);
+        restore_series_with_live_issues(db, [series_id], &mut events).await?;
+        events.flush(db).await;
     }
 
     // Soft-delete the series itself if every issue is now removed.
@@ -421,6 +550,7 @@ async fn reconcile_issue_rows_seen(
 ) -> anyhow::Result<()> {
     let mut remove_ids = Vec::new();
     let mut restore_ids = Vec::new();
+    let mut restored_series = HashSet::new();
     for row in issues {
         let seen = seen_paths.contains(&row.file_path);
         match (row.removed_at.is_some(), seen) {
@@ -457,6 +587,7 @@ async fn reconcile_issue_rows_seen(
                     )
                     .entity("issue", row.id.clone(), Some(row.slug.clone()));
                 events.push(ev);
+                restored_series.insert(row.series_id);
                 restore_ids.push(row.id);
             }
             _ => {}
@@ -490,6 +621,10 @@ async fn reconcile_issue_rows_seen(
             .await?;
         stats.issues_restored += res.rows_affected;
     }
+    // A returning folder brings its series back too: without this the
+    // series kept `removed_at` and stayed hidden from every list until an
+    // admin restored it by hand.
+    restore_series_with_live_issues(db, restored_series, events).await?;
 
     Ok(())
 }

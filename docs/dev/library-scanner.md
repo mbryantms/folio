@@ -206,6 +206,14 @@ without per-library configuration.
   marked `skipped_unchanged=true` and its archives are still listed
   (the walker collects them while looking at mtimes) but the folder
   short-circuits during processing.
+- **Never skipped: removed or restorable series.** A known series whose
+  row is soft-removed, or which holds soft-removed issues that are not
+  Duplicates-page removals (one grouped
+  `reconcile::series_with_restorable_issues` query per plan), always
+  takes the full walk. Moving a folder away and back keeps its mtime, so
+  without this a returning folder was skipped forever and its issues never
+  restored. The watcher-scoped scan builds the same plan, so it inherits
+  the rule.
 - **Force branch**: keep the known-series cache active, but bypass the
   folder mtime skip and list archives in every folder.
 - **Concurrency**: planning is parallelized at `scan_worker_count`
@@ -410,6 +418,19 @@ Two reconciles run after all folders complete:
   - For every issue in scanned series: missing on disk →
     `removed_at = now()`; soft-deleted but back → clear
     `removed_at` (and `removal_confirmed_at`).
+  - A soft-removed series that has an active, non-duplicate-removed issue
+    again is restored with it:
+    [`restore_series_with_live_issues`](../../crates/server/src/library/reconcile.rs)
+    clears the series' `removed_at` and `removal_confirmed_at` (a
+    confirmed removal too) and records a `series` / `restored` library
+    event. Every path that restores issues calls it: both scan
+    reconciles, the single-issue scan, the admin per-issue restore and
+    the Duplicates-page "clear decision" undo. No scan counter is added
+    for it (`ScanStats` is part of the API schema); the event and an
+    `info` log line carry it. Guards:
+    `reconcile.rs::returning_folder_restores_*`,
+    `::returning_folder_clears_a_confirmed_series_removal`,
+    `::returning_duplicate_removed_issue_keeps_series_removed`.
   - Series whose `folder_path` no longer exists on disk: soft-delete
     every issue and the series row itself.
   - [`mark_empty_series_removed`](../../crates/server/src/library/reconcile.rs#L310-L338)
@@ -510,7 +531,8 @@ the DB:
   [`list_archives_changed_since`](../../crates/server/src/library/scanner/enumerate.rs#L123)
   short-circuits the folder if its recursive max mtime ≤
   `last_scanned_at`. The folder is marked `skipped_unchanged`
-  and `process_planned_folder` returns immediately.
+  and `process_planned_folder` returns immediately. A removed series,
+  or one with restorable soft-removed issues, is never skipped (§4.3).
 - **Per-file size+mtime fingerprint** — even on a folder that *did*
   change, individual archives whose size+mtime match the existing row
   bypass hash + parse and only count toward `files_unchanged`
@@ -557,7 +579,8 @@ the DB:
 - **Soft-delete + return lifecycle** — files missing on disk are
   `removed_at = now()`. The row stays so user progress, bookmarks, and
   reviews aren't lost. A returning file (same content hash, same path)
-  clears `removed_at` and `removal_confirmed_at` on the next scan
+  clears `removed_at` and `removal_confirmed_at` on the next scan, and a
+  returning folder brings its soft-removed series back with it
   ([reconcile.rs:99–164, 273–304](../../crates/server/src/library/reconcile.rs#L99-L164)).
   When every issue in a series is removed,
   [`mark_empty_series_removed`](../../crates/server/src/library/reconcile.rs#L310-L338)
@@ -603,7 +626,7 @@ the DB:
 
 | # | Mechanism | Where | Skip predicate | Bypass |
 |---|---|---|---|---|
-| 1 | Folder mtime fast-path | [build_library_scan_plan mod.rs:707–744](../../crates/server/src/library/scanner/mod.rs#L707-L744), [enumerate.rs:123–161](../../crates/server/src/library/scanner/enumerate.rs#L123-L161) | `force=false` ∧ recursive max mtime ≤ `series.last_scanned_at` → mark folder `skipped_unchanged`, call `health.touch_folder`, return `processed=false`. | `?force=true` on `POST /libraries/:slug/scan`. |
+| 1 | Folder mtime fast-path | [build_library_scan_plan mod.rs:707–744](../../crates/server/src/library/scanner/mod.rs#L707-L744), [enumerate.rs:123–161](../../crates/server/src/library/scanner/enumerate.rs#L123-L161) | `force=false` ∧ series not removed ∧ no restorable soft-removed issues ∧ recursive max mtime ≤ `series.last_scanned_at` → mark folder `skipped_unchanged`, call `health.touch_folder`, return `processed=false`. | `?force=true` on `POST /libraries/:slug/scan`. |
 | 2 | Per-file size+mtime fingerprint | [process.rs:164–175](../../crates/server/src/library/scanner/process.rs#L164-L175), [mod.rs:1543–1554](../../crates/server/src/library/scanner/mod.rs#L1543-L1554) | `force=false` ∧ existing row's `(file_size, file_mtime)` match disk ∧ no `comicinfo_count` backfill needed → `files_unchanged++`, `health.touch_file`, skip hash + parse. | Same `force=true` from any tier; default `true` for manual series/issue scans, `false` for scheduled library scans. |
 | 3 | `comicinfo_count` backfill override | [process.rs:540–556](../../crates/server/src/library/scanner/process.rs#L540-L556) | When a row lacks both `comicinfo_count` and a raw `count` in `comic_info_raw`, treat the row as stale and force a re-ingest *even when* size+mtime match. | Inverts (1) — there is no bypass; the override fires automatically. |
 | 4 | Thumbnail invalidation skip | [process.rs:339, 411–428](../../crates/server/src/library/scanner/process.rs#L339) | On the update path, when `row_matches_file(row, size, mtime)` is true, skip clearing `thumbnails_generated_at` and skip wiping the strip dir. | None — this is always desired. |
@@ -974,7 +997,8 @@ waiting for the scheduled refresh window.
   rows older than `library.soft_delete_days`
   ([scheduler.rs:357](../../crates/server/src/jobs/scheduler.rs#L357)).
 - A returning file (same content hash, same path, file back on disk) is
-  auto-restored by the next scan
+  auto-restored by the next scan, and so is its soft-removed (or
+  confirmed-removed) series once it holds a live issue again
   ([reconcile.rs:62–68, 198–204](../../crates/server/src/library/reconcile.rs#L62-L68)).
   **Exception:** a copy soft-removed from the Duplicates page stays
   removed although its file is on disk — its
@@ -1033,8 +1057,8 @@ picker). Backed by [`api/duplicates.rs`](../../crates/server/src/api/duplicates.
 | State | Columns | Reached by | Reversible? |
 |---|---|---|---|
 | Active | `removed_at IS NULL` | scan | — |
-| Soft-deleted | `removed_at` set, `removal_confirmed_at` NULL | reconcile: file missing | yes — file returns (auto) or admin restore |
-| Confirmed | both set | 04:00 auto-confirm after `soft_delete_days`, or admin `confirm-removal` | yes — a returning file still restores the row |
+| Soft-deleted | `removed_at` set, `removal_confirmed_at` NULL | reconcile: file missing | yes — file returns (auto) or admin restore; the series follows its first live issue |
+| Confirmed | both set | 04:00 auto-confirm after `soft_delete_days`, or admin `confirm-removal` | yes — a returning file still restores the row, and its series |
 | Purged | row gone | 04:15 hard-purge once confirmed for `soft_delete_days × library.hard_purge_multiplier` days | **no** |
 
 With the defaults (`soft_delete_days = 30`, multiplier `2`) a missing

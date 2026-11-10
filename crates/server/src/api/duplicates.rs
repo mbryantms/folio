@@ -1152,6 +1152,18 @@ pub async fn clear_decision(
             return internal(&e, "duplicates: undo soft-remove failed");
         }
         recompute_series_status(&app.db, series_id).await;
+        // The undone copy may be the series' only live issue again.
+        let mut events = crate::library::event_log::EventCollector::new(library_id, None);
+        if let Err(e) = crate::library::reconcile::restore_series_with_live_issues(
+            &app.db,
+            [series_id],
+            &mut events,
+        )
+        .await
+        {
+            tracing::error!(error = %e, %series_id, "duplicates: series restore failed");
+        }
+        events.flush(&app.db).await;
     }
     // After the last write (see `set_decision`).
     app.duplicates.invalidate(library_id);

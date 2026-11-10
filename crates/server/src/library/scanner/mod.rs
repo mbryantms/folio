@@ -1217,10 +1217,19 @@ async fn emit_progress(
     }
 }
 
+/// What the planner knows about an existing series row, keyed by folder.
+#[derive(Debug, Clone, Copy)]
+struct KnownSeries {
+    id: Uuid,
+    last_scanned_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    /// The series row itself is soft-removed (its folder went missing).
+    removed: bool,
+}
+
 async fn known_series_by_folder(
     state: &AppState,
     lib: &library::Model,
-) -> anyhow::Result<HashMap<String, (Uuid, Option<chrono::DateTime<chrono::FixedOffset>>)>> {
+) -> anyhow::Result<HashMap<String, KnownSeries>> {
     let rows = entity::series::Entity::find()
         .filter(series::Column::LibraryId.eq(lib.id))
         .all(&state.db)
@@ -1228,8 +1237,16 @@ async fn known_series_by_folder(
     Ok(rows
         .into_iter()
         .filter_map(|s| {
-            s.folder_path
-                .map(|folder| (folder, (s.id, s.last_scanned_at)))
+            s.folder_path.map(|folder| {
+                (
+                    folder,
+                    KnownSeries {
+                        id: s.id,
+                        last_scanned_at: s.last_scanned_at,
+                        removed: s.removed_at.is_some(),
+                    },
+                )
+            })
         })
         .collect())
 }
@@ -1261,6 +1278,12 @@ async fn build_library_scan_plan(
     };
 
     let known = known_series_by_folder(state, lib).await?;
+    // Series holding soft-removed issues a returning file would restore.
+    // Moving a folder away and back keeps its mtime, so the unchanged-folder
+    // skip below would leave those issues (and the series) removed forever;
+    // such a folder is always walked and processed instead.
+    let restorable =
+        crate::library::reconcile::series_with_restorable_issues(&state.db, lib.id).await?;
     // Post-audit T1.2: folders in flight per scan are their own knob —
     // queue concurrency (`scan_worker_count`) × per-scan fan-out used to
     // multiply into up to n² open transactions.
@@ -1276,11 +1299,19 @@ async fn build_library_scan_plan(
             let folder = candidate.path.clone();
             let publisher_hint = candidate.publisher_hint.clone();
             let known_entry = known.get(&folder.to_string_lossy().into_owned()).copied();
+            // A removed series, or one with restorable issues, never takes
+            // the unchanged-folder skip.
+            let may_skip = known_entry.is_some_and(|k| !k.removed && !restorable.contains(&k.id));
             async move {
-                let mut known_series_id = known_entry.map(|(id, _)| id);
+                let mut known_series_id = known_entry.map(|k| k.id);
                 let mut skipped_unchanged = false;
                 let walk = if !force {
-                    if let Some((_id, Some(last))) = known_entry {
+                    if let Some(KnownSeries {
+                        last_scanned_at: Some(last),
+                        ..
+                    }) = known_entry
+                        && may_skip
+                    {
                         let folder_for_walk = folder.clone();
                         let ignore_for_walk = Arc::clone(&ignore);
                         let last_utc = last.to_utc();
@@ -1297,8 +1328,8 @@ async fn build_library_scan_plan(
                         walk
                     } else {
                         let walk = list_archives_for_plan(&folder, &ignore).await?;
-                        if let Some((id, _)) = known_entry {
-                            known_series_id = Some(id);
+                        if let Some(k) = known_entry {
+                            known_series_id = Some(k.id);
                         }
                         walk
                     }
@@ -1723,6 +1754,12 @@ async fn run_issue_phase(
             am.removal_confirmed_at = Set(None);
             am.update(&state.db).await?;
             stats.issues_restored += 1;
+            crate::library::reconcile::restore_series_with_live_issues(
+                &state.db,
+                [updated.series_id],
+                events,
+            )
+            .await?;
         }
         let _ = crate::jobs::post_scan::enqueue_thumb_job(
             state,
