@@ -18,6 +18,7 @@ vi.mock("@/lib/api/queries", () => ({
   useRecentHistory: (...args: unknown[]) => mockUseRecentHistory(...args),
   useRandomPicks: (...args: unknown[]) => mockUseRandomPicks(...args),
   useOnThisDay: (...args: unknown[]) => mockUseOnThisDay(...args),
+  useNewInSeriesInfinite: () => ({ isLoading: false, data: undefined }),
 }));
 vi.mock("@/lib/api/mutations", () => ({
   useDismissRailItem: () => ({ mutate: vi.fn() }),

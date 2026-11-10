@@ -17,6 +17,7 @@ vi.mock("@/lib/api/queries", () => ({
   useRecentHistory: () => ({ isLoading: false, data: { items: [] } }),
   useRandomPicks: () => ({ isLoading: false, data: { items: [] } }),
   useOnThisDay: () => ({ isLoading: false, data: { items: [] } }),
+  useNewInSeriesInfinite: () => ({ isLoading: false, data: undefined }),
 }));
 
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
