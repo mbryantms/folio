@@ -70,6 +70,14 @@ pub async fn serve(
     if !crate::library::access::issue_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
+    // The stored file must be a regular file below the library root with no
+    // symbolic link on the way (`library::no_follow`); anything else is
+    // not-found. Checked on every request, before any cached reader or
+    // cached variant is used. The pread fast path below reads through this
+    // handle; the archive reader (`zip_lru`) still opens the path itself.
+    let Some(file) = crate::library::no_follow::open_issue(&app, &row).await else {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    };
 
     // Width-negotiated variant (audit FEP-1). Handled by its own path —
     // it carries a per-variant ETag, immutable caching, and no Range
@@ -238,9 +246,9 @@ pub async fn serve(
     // Deflated / recovery-backed entry, which isn't in the index) falls through
     // to the locked path below. The byte-for-byte equivalence with the locked
     // read is proven in `archive::cbz` tests.
+    let mut file = tokio::fs::File::from_std(file);
     if let Some(extent) = pread.extent(info.zip_ordinal)
         && extent.length == info.total
-        && let Ok(mut file) = tokio::fs::File::open(&row.file_path).await
         && file
             .seek(std::io::SeekFrom::Start(extent.data_start + start))
             .await

@@ -428,6 +428,14 @@ async fn load_page_image(
     row: &issue::Model,
     page: u32,
 ) -> Result<image::DynamicImage, Box<Response>> {
+    // Same rules as the page routes (`library::no_follow`).
+    if !crate::library::no_follow::issue_path_ok(app, row).await {
+        return Err(Box::new(error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "issue not found",
+        )));
+    }
     let arc = match app
         .zip_lru
         .get_or_open(&row.id, std::path::Path::new(&row.file_path))

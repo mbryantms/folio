@@ -1567,20 +1567,26 @@ pub(crate) async fn download(
     AxPath(id): AxPath<String>,
     headers: HeaderMap,
 ) -> Response {
-    let row = match issue::Entity::find_by_id(id).one(&app.db).await {
+    // Soft-removed issues (or issues of a soft-removed series) are not
+    // downloadable, for every role: OPDS is a list surface and its catalogs
+    // hide removed rows, so the download does too. (The page-bytes and
+    // page-stream routes check access through `issue_visible`, which does
+    // not look at `removed_at`; they are unchanged here.)
+    let acl = access::for_user(&app, &user).await;
+    let row = match access::visible_issues_select(&acl)
+        .filter(issue::Column::Id.eq(id))
+        .one(&app.db)
+        .await
+    {
         Ok(Some(r)) => r,
         _ => return not_found(),
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    // Never through a symbolic link, and only a regular file below the
+    // library root; the response streams from this handle.
+    let Some(f) = crate::library::no_follow::open_issue(&app, &row).await else {
         return not_found();
-    }
-    let mut f = match tokio::fs::File::open(&row.file_path).await {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!(error = %e, path = %row.file_path, "opds download open failed");
-            return not_found();
-        }
     };
+    let mut f = tokio::fs::File::from_std(f);
     let total = f.metadata().await.ok().map(|m| m.len()).unwrap_or(0);
     let leaf = std::path::Path::new(&row.file_path)
         .file_name()

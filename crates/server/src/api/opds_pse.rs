@@ -112,6 +112,12 @@ pub async fn stream(
             return error(StatusCode::FORBIDDEN, "library_access_denied");
         }
     }
+    // Regular file below the library root, no symbolic link on the way
+    // (`library::no_follow`), or not-found. The pread fast path reads
+    // through this handle.
+    let Some(file) = crate::library::no_follow::open_issue(&app, &issue_row).await else {
+        return error(StatusCode::NOT_FOUND, "not_found");
+    };
 
     let page_index = n as usize;
     // Content-derived ETag (PERF-4): fold in `content_hash` so a cached page is
@@ -275,9 +281,9 @@ pub async fn stream(
     // (200) and Range (206) via `take(len)`. Deflated / recovery-backed entries
     // (absent from the index) or any IO error fall through to the locked path.
     // Byte equivalence with the locked read is proven in `archive::cbz` tests.
+    let mut file = tokio::fs::File::from_std(file);
     if let Some(extent) = pread.extent(meta.zip_ordinal)
         && extent.length == meta.total
-        && let Ok(mut file) = tokio::fs::File::open(&issue_row.file_path).await
         && file
             .seek(std::io::SeekFrom::Start(extent.data_start + start))
             .await

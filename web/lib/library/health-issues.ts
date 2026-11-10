@@ -96,6 +96,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Two files claim the same provider id; only one can hold it. Remove the extra copy, or fix the id on the file that is tagged wrong, then rescan.",
   },
   MetadataDriftFromXml: { label: "Edits not written to XML" },
+  SymlinkSkipped: {
+    label: "Symbolic link skipped",
+    hint: "Folio never follows symbolic links, so nothing behind this one is imported. Put the real folder or file in the library (or bind-mount it there), or add its location as its own library.",
+  },
 } satisfies Record<HealthIssueKind, KindCopy>;
 
 /** Human title for a health kind (falls back to the raw kind). */
