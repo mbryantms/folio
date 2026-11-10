@@ -44,6 +44,16 @@
 #   TAG                       — image tag to pull (default: latest)
 #   COMIC_APP_BIND            — host interface for the API port (default: 127.0.0.1)
 
+# Bounded container logs for every service. Docker's default json-file
+# driver never rotates, so a long-running app container (or a chatty
+# Postgres) eventually fills the host disk. 5 files x 10 MB caps each
+# container at 50 MB; `docker compose logs` still reads them.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # One-shot: makes sure the `comic_data` volume is writable by the
   # distroless nonroot user (UID 65532). On a fresh deploy the named
@@ -53,6 +63,7 @@ services:
   app-init:
     image: alpine:3@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a
     restart: "no"
+    logging: *default-logging
     command:
       - sh
       - -c
@@ -61,8 +72,14 @@ services:
       - comic_data:/data
 
   app:
-    image: ghcr.io/${REPO_OWNER:?REPO_OWNER is required (see .env.example)}/folio:${TAG:-latest}
+    image: ghcr.io/${REPO_OWNER:?REPO_OWNER is required (see .env.prod.example)}/folio:${TAG:-latest}
     restart: unless-stopped
+    logging: *default-logging
+    # The job workers drain in-flight jobs for up to 25 s on SIGTERM
+    # (`JOB_SHUTDOWN_TIMEOUT_SECS` in crates/server/src/jobs/mod.rs).
+    # Docker's default grace period is 10 s, after which it SIGKILLs the
+    # process mid-drain; 35 s leaves the drain room to finish.
+    stop_grace_period: 35s
     depends_on:
       app-init:
         condition: service_completed_successfully
@@ -105,8 +122,9 @@ services:
       start_period: 30s
 
   web:
-    image: ghcr.io/${REPO_OWNER:?REPO_OWNER is required (see .env.example)}/folio-web:${TAG:-latest}
+    image: ghcr.io/${REPO_OWNER:?REPO_OWNER is required (see .env.prod.example)}/folio-web:${TAG:-latest}
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       app:
         condition: service_healthy
@@ -145,6 +163,12 @@ services:
   postgres:
     image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
     restart: unless-stopped
+    logging: *default-logging
+    # Postgres parallel query allocates its shared memory under /dev/shm,
+    # and Docker's default is 64 MB. Under concurrent entity-list requests
+    # at 50,000 issues Postgres returned "could not resize shared memory
+    # segment ... No space left on device" with the default.
+    shm_size: 256mb
     environment:
       POSTGRES_USER: comic
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
@@ -167,6 +191,7 @@ services:
   redis:
     image: redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     restart: unless-stopped
+    logging: *default-logging
     command: ["redis-server", "--save", "60", "1000", "--appendonly", "yes"]
     volumes:
       - comic_redis:/data

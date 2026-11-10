@@ -44,6 +44,14 @@ docker compose -f compose.prod.yml logs -f app
 - Tail `app` logs until you see `comic-reader starting` — that's the cue
   that migrations finished and the listener is bound.
 
+`pull` refreshes the images, not your copy of `compose.prod.yml`. The
+current file gives Postgres a 256 MB `/dev/shm` (`shm_size`) so parallel
+queries on large libraries don't fail with "could not resize shared
+memory segment", gives `app` a 35 s `stop_grace_period` so job workers
+can finish their 25 s drain, and rotates every container's logs at
+10 MB × 5 files. If your copy predates these, download the new
+`compose.prod.yml` (re-apply any local edits) before `up -d`.
+
 ## Postgres version requirement
 
 Folio requires **Postgres 17 or newer**. The search migration depends on
