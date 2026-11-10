@@ -655,10 +655,18 @@ function Actions({
           ) : (
             "No metadata runs yet · "
           )}
-          <Link href="/admin/metadata?tab=runs" className="hover:underline">
-            {overview.runs_total} run{overview.runs_total === 1 ? "" : "s"} on
-            this series →
-          </Link>
+          {isAdmin ? (
+            <Link href="/admin/metadata?tab=runs" className="hover:underline">
+              {overview.runs_total} run{overview.runs_total === 1 ? "" : "s"} on
+              this series →
+            </Link>
+          ) : (
+            // The runs log is an admin page; a reader gets the count only.
+            <>
+              {overview.runs_total} run{overview.runs_total === 1 ? "" : "s"} on
+              this series
+            </>
+          )}
         </span>
       ) : null}
       {isAdmin && refreshMounted && (
