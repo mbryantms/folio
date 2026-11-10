@@ -1110,40 +1110,72 @@ deletion:
   `library_events` row (`category = issue`, `action = skipped`, `detail`
   names the sweep and the error). Nothing in it is confirmed or purged
   until its root validates again.
-- **Per-row stat.** Candidate paths are stat-ed on the blocking pool,
-  500 per `spawn_blocking` call. "Present" means exactly what a scan
-  would index, one shared helper
-  ([`enumerate::is_indexable_archive`](../../crates/server/src/library/scanner/enumerate.rs)):
-  the stored `issue.file_path` lies in a folder below the library root,
-  has a recognised archive extension, neither it nor a folder between the
-  root and it is ignored (built-in junk names and the library's
-  `ignore_globs`), it is a **regular file** (not a symlink, FIFO, socket,
-  device or directory: the scan walk runs with `follow_links(false)` and
-  keeps only regular files), and its canonical path stays inside the
-  canonical root (a symlinked folder pointing out of the library never
-  makes a file present).
+- **Per-row stat, three answers.** Candidate paths are stat-ed on the
+  blocking pool, 500 per `spawn_blocking` call. "Present" means exactly
+  what a scan would index, one shared helper
+  ([`enumerate::archive_presence`](../../crates/server/src/library/scanner/enumerate.rs),
+  and `folder_presence` for series folders): the stored `issue.file_path`
+  lies in a folder below the library root, has a recognised archive
+  extension, neither it nor a folder between the root and it is ignored
+  (built-in junk names and the library's `ignore_globs`), it is a
+  **regular file** (not a symlink, FIFO, socket, device or directory: the
+  scan walk runs with `follow_links(false)` and keeps only regular files),
+  and its canonical path stays inside the canonical root. **Absent** is
+  only a not-found class of error (`NotFound`, `NotADirectory`) on the
+  file or a path component, or a path a scan would never index. Every
+  other error (permission denied, I/O error, stale or disconnected mount)
+  and, for a folder, any unreadable directory in the walk is **Unknown**:
+  as in the scan reconcile's `unreadable_folders`, unknown is never gone.
+  Unknown is treated like present for the decision (not confirmed, not
+  deleted, and the purge leaves its confirmation alone) but gets no
+  rescan; it is counted separately (`kept_unknown`, one WARN per library,
+  and in the summary event).
+- **Root emptied mid-run.** `validate_library` runs once per library, so
+  after every stat batch the canonical root must still resolve and hold at
+  least one entry; if a share unmounted mid-run and left an empty mount
+  point, the batch fails (`RootVanished`) and the library is aborted for
+  the run, nothing from that batch confirmed or deleted. The purge also
+  re-runs `validate_library` before every DELETE chunk.
+- **Symlinked folders pointing out of the root get no protection.** A
+  series or publisher folder that is a symlink to somewhere outside the
+  library root is indexed by today's scanner (depth-1 / depth-2 folders
+  are classified through `metadata`, which follows links), but these
+  guards never follow a link out of the root, so its rows read as absent
+  and are confirmed and purged on schedule. The planned "never follow
+  symlinks" scanner change makes the two agree.
 - **Confirm sweep.** Candidates (soft-removed past the window,
-  unconfirmed) are read oldest first in pages of 500, at most 5 000 issue
-  rows and 5 000 series rows per library per run
-  (`CONFIRM_MAX_ROWS_PER_LIBRARY_PER_RUN`); the rest wait for the next
-  run. An issue whose file is present is **not** confirmed and its
-  series gets one scoped rescan; an absent file is confirmed as before. A
-  removed series is not confirmed while one of its issues was just found
-  present, or while its folder holds an indexable archive (its
-  Duplicates-page removals excepted); it gets the same rescan.
+  unconfirmed) are read oldest first in keyset pages of 500, at most
+  20 000 issue rows and 20 000 series rows per library per run
+  (`CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN`,
+  `CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN`). Rows kept as present or
+  unknown are re-examined every run; past the bound the sweep simply makes
+  no further progress that run (the safe direction) and continues the next
+  day. A present file is **not** confirmed and its series is rescanned;
+  an absent file is confirmed as before. A removed series is not
+  confirmed while one of its issues was just kept, or while its folder
+  holds (or may hold) an indexable archive, its Duplicates-page removals
+  excepted.
 - **Purge.** A candidate issue whose file is present is **not** deleted:
   its `removal_confirmed_at` is cleared (the confirm sweep re-evaluates
-  it) and its series is rescanned. A candidate series (no issue rows
-  left) whose folder holds an indexable archive again is kept,
-  unconfirmed and rescanned the same way, so a returning folder is never
-  purged out from under the scan that will re-ingest it. An empty or
-  missing folder is purged as before.
+  it) and its series is rescanned. An unknown one is kept as it is. A
+  candidate series (no issue rows left) whose folder holds an indexable
+  archive again is kept, unconfirmed and rescanned the same way, so a
+  returning folder is never purged out from under the scan that will
+  re-ingest it. An empty or missing folder is purged as before. The purge
+  reads at most 5 000 candidate issues per library per run, oldest
+  confirmation first; unknown rows stay confirmed, so a backlog of them
+  holds newer rows back (again the safe direction).
 - **Rescans** go through `JobRuntime::coalesce_scoped_scan` (the admin
   "Scan series" path, not forced): one queued `scan_runs` row per series,
-  and a series that already has a scoped scan in flight is coalesced into
-  it. The normal restore path (a seen file restores its row and its
-  series) does the rest. Kept rows are summarised per library and sweep
-  in one `issue` / `skipped` event (counts plus up to 50 ids).
+  coalesced into a scoped scan already in flight. A series scanned within
+  `RESCAN_THROTTLE_DAYS` (6) is not rescanned again, since a scan that
+  recent did not restore it, but its row is still kept. Above
+  `MAX_SERIES_RESCANS_PER_RUN` (50) series in one library and run, one
+  library scan is queued through `JobRuntime::coalesce_scan` instead (a
+  normal library scan processes every folder that holds a restorable
+  file). The normal restore path does the rest. Kept rows are summarised
+  per library and sweep in one `issue` / `skipped` event (present and
+  unknown counts, rescans, up to 50 ids each).
 - **Duplicates-page removals** (`issue_duplicate_decision`, `remove`) are
   deliberate and their files are on disk by definition, so both sweeps
   confirm / purge them without the stat, as before.
@@ -1153,9 +1185,17 @@ deletion:
   admin-confirmed row whose file turns out to be present.
 - A folder that keeps an indexable archive the scanner never ingests
   (only malformed or encrypted archives, say) keeps its series removed
-  but unconfirmed, with one coalesced rescan a day: the guards fail safe.
-  Guards: `tests/reconcile.rs::auto_confirm_*`, `tests/hard_purge.rs::purge_keeps_rows_whose_files_are_back`
-  and `::purge_skips_a_library_whose_root_is_missing`.
+  but unconfirmed, with at most one rescan every six days: the guards fail
+  safe.
+  Guards: `tests/reconcile.rs::auto_confirm_*`,
+  `::probe_batch_refuses_an_empty_root`,
+  `::many_series_to_rescan_queue_one_library_scan`,
+  `::recently_scanned_series_is_not_rescanned`,
+  `::duplicate_removal_is_confirmed_and_purged_without_a_stat`, and
+  `tests/hard_purge.rs::purge_keeps_rows_whose_files_are_back`,
+  `::purge_keeps_rows_it_cannot_read`,
+  `::purge_skips_a_library_whose_root_is_missing`,
+  `::empty_root_is_skipped_by_both_sweeps`.
 
 The purge ([`jobs/hard_purge.rs`](../../crates/server/src/jobs/hard_purge.rs)):
 

@@ -784,6 +784,31 @@ pub fn walk_archives_with(folder: &Path, ignore: &IgnoreRules) -> ArchiveWalk {
     out
 }
 
+/// What a removal sweep may conclude about a stored path from the disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    /// A scan would index it.
+    Present,
+    /// Really gone: a not-found class of error (`NotFound`,
+    /// `NotADirectory`) on the file or a path component, or a path a scan
+    /// would never index (wrong place, ignored, not a regular file).
+    Absent,
+    /// The disk would not say (permission denied, I/O error, stale or
+    /// disconnected mount, an unreadable folder in the walk). Like the
+    /// scanner's `unreadable_folders`, unknown is never gone.
+    Unknown,
+}
+
+impl Presence {
+    /// Map a failed stat: only the not-found class means absent.
+    fn from_error(e: &std::io::Error) -> Self {
+        match e.kind() {
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => Self::Absent,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Would a scan of the library rooted at `root` index the archive at
 /// `path`? The one definition of "this file is present" for the removal
 /// sweeps (`reconcile::auto_confirm_sweep`, `jobs::hard_purge`), mirroring
@@ -799,24 +824,26 @@ pub fn walk_archives_with(folder: &Path, ignore: &IgnoreRules) -> ArchiveWalk {
 /// - its canonical path stays inside the canonical root, so a symlinked
 ///   folder that points out of the library never makes a file "present".
 ///
-/// `root_canon` is `canonicalize(root)`, computed once by the caller.
-/// Blocking: run it on the blocking pool.
-pub fn is_indexable_archive(
+/// A stat that fails with anything but the not-found class is
+/// [`Presence::Unknown`], never absent. `root_canon` is
+/// `canonicalize(root)`, computed once by the caller. Blocking: run it on
+/// the blocking pool.
+pub fn archive_presence(
     root: &Path,
     root_canon: &Path,
     path: &Path,
     ignore: &IgnoreRules,
-) -> bool {
+) -> Presence {
     use crate::library::ignore::is_recognized_archive_ext;
     let Ok(rel) = path.strip_prefix(root) else {
-        return false;
+        return Presence::Absent;
     };
     if rel.components().count() < 2
         || rel
             .components()
             .any(|c| !matches!(c, std::path::Component::Normal(_)))
     {
-        return false;
+        return Presence::Absent;
     }
     let is_archive = path
         .extension()
@@ -825,7 +852,7 @@ pub fn is_indexable_archive(
         .as_deref()
         .is_some_and(is_recognized_archive_ext);
     if !is_archive {
-        return false;
+        return Presence::Absent;
     }
     // Every entry between the root (exclusive) and the file (inclusive).
     if path
@@ -833,37 +860,63 @@ pub fn is_indexable_archive(
         .take_while(|a| *a != root)
         .any(|a| ignore.should_skip(a))
     {
-        return false;
+        return Presence::Absent;
     }
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_file() => {}
-        _ => return false,
+        Ok(_) => return Presence::Absent,
+        Err(e) => return Presence::from_error(&e),
     }
-    std::fs::canonicalize(path).is_ok_and(|c| c.starts_with(root_canon) && c != root_canon)
+    match std::fs::canonicalize(path) {
+        Ok(c) if c.starts_with(root_canon) && c != root_canon => Presence::Present,
+        Ok(_) => Presence::Absent,
+        Err(e) => Presence::from_error(&e),
+    }
 }
 
 /// Does the series `folder` (inside `root`) hold an archive a scan would
 /// index, other than those `exclude` rejects? Same rules as
-/// [`is_indexable_archive`]: the folder must resolve inside the canonical
-/// root, and the walk is [`walk_archives_with`] itself. Blocking.
-pub fn folder_has_indexable_archive(
+/// [`archive_presence`]: the folder must resolve inside the canonical root,
+/// and the walk is [`walk_archives_with`] itself. `Present` as soon as one
+/// archive is; otherwise `Unknown` when the walk met an unreadable folder or
+/// an archive it could not stat, else `Absent`. Blocking.
+pub fn folder_presence(
     root: &Path,
     root_canon: &Path,
     folder: &Path,
     ignore: &IgnoreRules,
     exclude: impl Fn(&Path) -> bool,
-) -> bool {
+) -> Presence {
     if folder.strip_prefix(root).is_err() {
-        return false;
+        return Presence::Absent;
     }
     match std::fs::canonicalize(folder) {
-        Ok(c) if c.starts_with(root_canon) && c != root_canon && c.is_dir() => {}
-        _ => return false,
+        Ok(c) if c.starts_with(root_canon) && c != root_canon => {}
+        Ok(_) => return Presence::Absent,
+        Err(e) => return Presence::from_error(&e),
     }
-    walk_archives_with(folder, ignore)
-        .archives
-        .iter()
-        .any(|a| is_indexable_archive(root, root_canon, a, ignore) && !exclude(a))
+    match std::fs::metadata(folder) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Presence::Absent,
+        Err(e) => return Presence::from_error(&e),
+    }
+    let walk = walk_archives_with(folder, ignore);
+    let mut unknown = !walk.unreadable.is_empty();
+    for a in &walk.archives {
+        if exclude(a) {
+            continue;
+        }
+        match archive_presence(root, root_canon, a, ignore) {
+            Presence::Present => return Presence::Present,
+            Presence::Unknown => unknown = true,
+            Presence::Absent => {}
+        }
+    }
+    if unknown {
+        Presence::Unknown
+    } else {
+        Presence::Absent
+    }
 }
 
 /// Record a walkdir error as an unreadable directory. `NotFound` is not

@@ -790,6 +790,13 @@ async fn purge_keeps_rows_whose_files_are_back() {
     .await;
     set_removal(db, "series", eta_id.into(), Some(60), Some(30)).await;
     set_removal(db, "series", theta_id.into(), Some(60), Some(30)).await;
+    // Past the sweeps' rescan throttle.
+    exec(
+        db,
+        "UPDATE series SET last_scanned_at = now() - interval '7 days' WHERE library_id = $1",
+        vec![lib_id.into()],
+    )
+    .await;
 
     let stats = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
         .await
@@ -901,4 +908,103 @@ async fn purge_skips_a_library_whose_root_is_missing() {
         .await,
         1
     );
+}
+
+/// Restores a directory's mode when dropped.
+struct ModeGuard(std::path::PathBuf);
+impl Drop for ModeGuard {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+    }
+}
+
+/// An issue whose series folder cannot be read is unknown, not gone: the
+/// purge keeps it confirmed and undeleted and queues no rescan. A file under
+/// a readable folder that is really gone is still purged.
+#[tokio::test]
+async fn purge_keeps_rows_it_cannot_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let locked = tmp.path().join("Kappa (2020)");
+    let open = tmp.path().join("Lambda (2021)");
+    for d in [&locked, &open] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    write_cbz(&locked.join("Kappa 001.cbz"), 1);
+    write_cbz(&open.join("Lambda 001.cbz"), 2);
+    write_cbz(&open.join("Lambda 002.cbz"), 3);
+    let lib_id = create_library(&app, tmp.path(), 10).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let db = &state.db;
+    let (k1, ..) = issue_by_file(db, "Kappa 001.cbz").await;
+    let (l1, ..) = issue_by_file(db, "Lambda 001.cbz").await;
+    let kappa_id = series_id_of_issue(db, &k1).await;
+    set_removal(db, "issues", k1.clone().into(), Some(60), Some(30)).await;
+    std::fs::remove_file(open.join("Lambda 001.cbz")).unwrap();
+    set_removal(db, "issues", l1.clone().into(), Some(60), Some(30)).await;
+
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let _guard = ModeGuard(locked.clone());
+    if std::fs::read_dir(&locked).is_ok() {
+        // Skipped: running with privileges (root) that ignore directory
+        // modes, so the folder cannot be made unreadable.
+        return;
+    }
+
+    let stats = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 1, "{stats:?}");
+    assert_eq!(stats.kept_unknown, 1, "{stats:?}");
+    assert_eq!(stats.kept_present, 0, "{stats:?}");
+    assert_eq!(stats.rescans_queued, 0, "{stats:?}");
+    assert!(issue_exists(db, &k1).await, "unreadable: kept");
+    assert!(
+        removal_confirmed(db, &k1).await,
+        "unknown keeps its confirmation"
+    );
+    assert!(!issue_exists(db, &l1).await, "really gone: purged");
+    assert_eq!(series_scan_runs(db, kappa_id).await, 0);
+}
+
+/// A root that is an empty directory (the `RootEmpty` validation result,
+/// an unmounted share's mount point) is skipped by both sweeps.
+#[tokio::test]
+async fn empty_root_is_skipped_by_both_sweeps() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let mu = tmp.path().join("Mu (2020)");
+    std::fs::create_dir_all(&mu).unwrap();
+    write_cbz(&mu.join("Mu 001.cbz"), 1);
+    write_cbz(&mu.join("Mu 002.cbz"), 2);
+    let lib_id = create_library(&app, tmp.path(), 10).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let db = &state.db;
+    let (m1, ..) = issue_by_file(db, "Mu 001.cbz").await;
+    let (m2, ..) = issue_by_file(db, "Mu 002.cbz").await;
+    // m1 waits for confirmation, m2 for the purge.
+    set_removal(db, "issues", m1.clone().into(), Some(60), None).await;
+    set_removal(db, "issues", m2.clone().into(), Some(60), Some(30)).await;
+
+    // Everything under the root is gone; the root itself is an empty dir.
+    std::fs::remove_dir_all(&mu).unwrap();
+    assert!(std::fs::read_dir(tmp.path()).unwrap().next().is_none());
+
+    let confirm = server::library::reconcile::auto_confirm_sweep(&state)
+        .await
+        .unwrap();
+    assert_eq!(confirm.libraries_skipped, 1, "{confirm:?}");
+    assert_eq!(confirm.confirmed, 0, "{confirm:?}");
+    assert!(!removal_confirmed(db, &m1).await);
+
+    let purge = hard_purge::run_with(&state, 2, Utc::now().fixed_offset())
+        .await
+        .unwrap();
+    assert_eq!(purge.libraries_skipped, 1, "{purge:?}");
+    assert_eq!(purge.issues, 0, "{purge:?}");
+    assert!(issue_exists(db, &m2).await);
 }

@@ -857,21 +857,119 @@ async fn mark_empty_series_removed(
     Ok(())
 }
 
-/// Max soft-removed issue rows (and, separately, series rows) the
-/// auto-confirm sweep examines per library per run. Rows are read oldest
-/// removal first in pages of [`PRESENCE_BATCH`]; whatever is left over is
-/// picked up by the next daily run.
-pub const CONFIRM_MAX_ROWS_PER_LIBRARY_PER_RUN: usize = 5_000;
+/// Max soft-removed issue rows the auto-confirm sweep examines per library
+/// per run, read oldest removal first in keyset pages. Rows kept because
+/// they are present or unknown are re-examined every run, so the bound is
+/// generous; past it the sweep makes no further progress that run (the
+/// safe direction) and the next daily run continues.
+pub const CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN: usize = 20_000;
+
+/// The same bound for soft-removed series rows.
+pub const CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN: usize = 20_000;
 
 /// Paths stat-ed per `spawn_blocking` call by the removal sweeps, and rows
 /// per candidate page.
-pub(crate) const PRESENCE_BATCH: usize = 500;
+pub const PRESENCE_BATCH: usize = 500;
 
 /// Ids bound per `IN (...)` statement by the library reconcile and the
 /// removal sweeps. Postgres caps a statement at 65,535 bind parameters;
 /// 5,000 (the `jobs::orphan_sweep::ALIVE_QUERY_CHUNK` size) keeps every
 /// statement far below it.
 pub const RECONCILE_ID_CHUNK: usize = 5_000;
+
+/// A sweep never queues a rescan for a series scanned within this many
+/// days. A file that is present but that a recent scan did not restore will
+/// not be restored by another one; the row is still kept, never confirmed
+/// or purged.
+pub const RESCAN_THROTTLE_DAYS: i64 = 6;
+
+/// Above this many series to rescan in one library and run, a sweep queues
+/// one (coalesced) library scan instead of per-series scans.
+pub const MAX_SERIES_RESCANS_PER_RUN: usize = 50;
+
+/// Paging bounds for [`auto_confirm_sweep_with`]. Production uses
+/// [`SweepLimits::default`]; tests shrink them to cross page boundaries
+/// with a handful of rows.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct SweepLimits {
+    pub page: usize,
+    pub max_issue_rows: usize,
+    pub max_series_rows: usize,
+    pub max_series_rescans: usize,
+}
+
+impl Default for SweepLimits {
+    fn default() -> Self {
+        Self {
+            page: PRESENCE_BATCH,
+            max_issue_rows: CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN,
+            max_series_rows: CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN,
+            max_series_rescans: MAX_SERIES_RESCANS_PER_RUN,
+        }
+    }
+}
+
+pub use super::scanner::enumerate::Presence;
+
+/// The library root emptied or vanished while a sweep was stat-ing it (a
+/// share unmounted mid-run leaves an empty mount point). The batch's
+/// "absent" answers are worthless; the library is aborted for the run.
+#[derive(Debug, thiserror::Error)]
+#[error("library root {0} is empty or unavailable mid-sweep; aborting the library for this run")]
+pub struct RootVanished(pub String);
+
+/// The canonical root must still resolve and hold at least one entry.
+fn root_still_populated(root: &Path) -> anyhow::Result<PathBuf> {
+    let vanished = || RootVanished(root.display().to_string());
+    let canon = std::fs::canonicalize(root).map_err(|_| vanished())?;
+    let mut entries = std::fs::read_dir(&canon).map_err(|_| vanished())?;
+    if entries.next().is_none() {
+        return Err(vanished().into());
+    }
+    Ok(canon)
+}
+
+/// Blocking batch: the [`Presence`] of each path, then a check that the
+/// root still holds an entry. If it does not, the whole batch is an error
+/// ([`RootVanished`]) and nothing from it may be confirmed or deleted.
+#[doc(hidden)]
+pub fn probe_files_blocking(
+    root: &Path,
+    ignore: &IgnoreRules,
+    paths: &[String],
+) -> anyhow::Result<Vec<Presence>> {
+    let root_canon = root_still_populated(root)?;
+    let out = paths
+        .iter()
+        .map(|p| enumerate::archive_presence(root, &root_canon, Path::new(p), ignore))
+        .collect();
+    root_still_populated(root)?;
+    Ok(out)
+}
+
+/// Blocking batch: the [`Presence`] of each series folder (archives in
+/// `exclude` do not count), with the same root check as
+/// [`probe_files_blocking`].
+#[doc(hidden)]
+pub fn probe_folders_blocking(
+    root: &Path,
+    ignore: &IgnoreRules,
+    folders: &[String],
+    exclude: &HashSet<String>,
+) -> anyhow::Result<Vec<Presence>> {
+    let root_canon = root_still_populated(root)?;
+    let out = folders
+        .iter()
+        .map(|f| {
+            enumerate::folder_presence(root, &root_canon, Path::new(f), ignore, |a| {
+                exclude.contains(a.to_string_lossy().as_ref())
+            })
+        })
+        .collect();
+    root_still_populated(root)?;
+    Ok(out)
+}
 
 /// Is `lib` safe to judge from disk right now? Runs the scanner's own
 /// [`validate_library`](super::scanner::validate::validate_library) gate
@@ -909,8 +1007,8 @@ pub(crate) async fn library_ready_for_sweep(
 }
 
 /// What the removal sweeps need to stat a library's files: its root (as
-/// stored and canonical) and its ignore rules, so "present" means exactly
-/// what a scan would index ([`enumerate::is_indexable_archive`]).
+/// stored) and its ignore rules, so "present" means exactly what a scan
+/// would index ([`enumerate::archive_presence`]).
 #[derive(Clone)]
 pub(crate) struct PresenceProbe {
     root: PathBuf,
@@ -929,115 +1027,124 @@ impl PresenceProbe {
         }
     }
 
-    /// Which of `items` (`(key, file_path)`) name a file a scan would index.
-    /// Stats on the blocking pool, [`PRESENCE_BATCH`] paths per call.
-    pub(crate) async fn present_files<K>(&self, items: Vec<(K, String)>) -> anyhow::Result<Vec<K>>
+    /// The [`Presence`] of each `(key, file_path)`, [`PRESENCE_BATCH`]
+    /// paths per blocking call. Errors (the root vanished mid-run) abort.
+    pub(crate) async fn files<K>(
+        &self,
+        items: Vec<(K, String)>,
+    ) -> anyhow::Result<Vec<(K, Presence)>>
     where
         K: Send + 'static,
     {
-        let mut present = Vec::new();
+        let mut out = Vec::with_capacity(items.len());
         let mut items = items.into_iter().peekable();
         while items.peek().is_some() {
-            let batch: Vec<(K, String)> = items.by_ref().take(PRESENCE_BATCH).collect();
+            let (keys, paths): (Vec<K>, Vec<String>) = items.by_ref().take(PRESENCE_BATCH).unzip();
             let probe = self.clone();
-            present.extend(
-                tokio::task::spawn_blocking(move || {
-                    let root_canon = std::fs::canonicalize(&probe.root)?;
-                    Ok::<_, std::io::Error>(
-                        batch
-                            .into_iter()
-                            .filter(|(_, p)| {
-                                enumerate::is_indexable_archive(
-                                    &probe.root,
-                                    &root_canon,
-                                    Path::new(p),
-                                    &probe.ignore,
-                                )
-                            })
-                            .map(|(k, _)| k)
-                            .collect::<Vec<K>>(),
-                    )
-                })
-                .await??,
-            );
+            let presence = tokio::task::spawn_blocking(move || {
+                probe_files_blocking(&probe.root, &probe.ignore, &paths)
+            })
+            .await??;
+            out.extend(keys.into_iter().zip(presence));
         }
-        Ok(present)
+        Ok(out)
     }
 
-    /// Which of `folders` (`(series id, folder_path)`) hold an archive a scan
-    /// would index, other than the paths in `exclude`. Blocking pool, one
-    /// call per [`PRESENCE_BATCH`] folders.
-    pub(crate) async fn folders_with_archives(
+    /// The [`Presence`] of each `(series id, folder_path)`, excluding the
+    /// archives in `exclude`.
+    pub(crate) async fn folders(
         &self,
         folders: Vec<(Uuid, String)>,
         exclude: HashSet<String>,
-    ) -> anyhow::Result<HashSet<Uuid>> {
+    ) -> anyhow::Result<std::collections::HashMap<Uuid, Presence>> {
         let exclude = std::sync::Arc::new(exclude);
-        let mut present = HashSet::new();
+        let mut out = std::collections::HashMap::new();
         for batch in folders.chunks(PRESENCE_BATCH) {
-            let batch = batch.to_vec();
+            let (ids, paths): (Vec<Uuid>, Vec<String>) = batch.iter().cloned().unzip();
             let probe = self.clone();
             let exclude = exclude.clone();
-            present.extend(
-                tokio::task::spawn_blocking(move || {
-                    let root_canon = std::fs::canonicalize(&probe.root)?;
-                    Ok::<_, std::io::Error>(
-                        batch
-                            .into_iter()
-                            .filter(|(_, folder)| {
-                                enumerate::folder_has_indexable_archive(
-                                    &probe.root,
-                                    &root_canon,
-                                    Path::new(folder),
-                                    &probe.ignore,
-                                    |a| exclude.contains(a.to_string_lossy().as_ref()),
-                                )
-                            })
-                            .map(|(id, _)| id)
-                            .collect::<Vec<Uuid>>(),
-                    )
-                })
-                .await??,
-            );
+            let presence = tokio::task::spawn_blocking(move || {
+                probe_folders_blocking(&probe.root, &probe.ignore, &paths, &exclude)
+            })
+            .await??;
+            out.extend(ids.into_iter().zip(presence));
         }
-        Ok(present)
+        Ok(out)
     }
 }
 
-/// Queue one scoped scan per series in `series_ids` through the same
-/// coalescing gate as the admin "Scan series" button
-/// (`JobRuntime::coalesce_scoped_scan`, non-forced): a series that already
-/// has a scoped scan in flight is coalesced into it, not queued twice. The
-/// normal scan restore path then brings the series' returning files back.
-/// Enqueue failures are logged, never fatal. Returns the number of series
-/// queued or coalesced.
+/// What [`queue_series_rescans`] did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RescanOutcome {
+    /// Scoped series scans queued (or coalesced into one in flight).
+    pub series_scans: u64,
+    /// Library scans queued instead (0 or 1).
+    pub library_scans: u64,
+    /// Series not rescanned because they were scanned within
+    /// [`RESCAN_THROTTLE_DAYS`].
+    pub throttled: u64,
+}
+
+/// Queue rescans for `series_ids` so the normal restore path brings their
+/// returning files back. A series scanned within [`RESCAN_THROTTLE_DAYS`]
+/// is skipped (throttled). Up to `max_series` series get one scoped scan
+/// each through the admin "Scan series" gate
+/// (`JobRuntime::coalesce_scoped_scan`, not forced; a series with a scoped
+/// scan in flight is coalesced into it); above that, one library scan goes
+/// through `JobRuntime::coalesce_scan` instead. Enqueue failures are logged,
+/// never fatal.
 pub(crate) async fn queue_series_rescans(
     state: &AppState,
     library_id: Uuid,
     series_ids: &BTreeSet<Uuid>,
-) -> usize {
+    max_series: usize,
+) -> RescanOutcome {
+    type Row = (
+        Uuid,
+        Option<String>,
+        Option<chrono::DateTime<chrono::FixedOffset>>,
+    );
+    let mut outcome = RescanOutcome::default();
     let ids: Vec<Uuid> = series_ids.iter().copied().collect();
-    let mut folders: std::collections::HashMap<Uuid, Option<String>> =
-        std::collections::HashMap::new();
+    let mut rows: Vec<Row> = Vec::new();
     for chunk in ids.chunks(RECONCILE_ID_CHUNK) {
         match series::Entity::find()
             .select_only()
             .column(series::Column::Id)
             .column(series::Column::FolderPath)
+            .column(series::Column::LastScannedAt)
             .filter(series::Column::Id.is_in(chunk.to_vec()))
-            .into_tuple::<(Uuid, Option<String>)>()
+            .into_tuple::<Row>()
             .all(&state.db)
             .await
         {
-            Ok(rows) => folders.extend(rows),
+            Ok(r) => rows.extend(r),
             Err(e) => {
                 tracing::error!(library_id = %library_id, error = %e, "removal sweep: series lookup failed");
-                return 0;
+                return outcome;
             }
         }
     }
-    let mut queued = 0;
-    for (series_id, folder_path) in folders {
+    let recent = Utc::now().fixed_offset() - Duration::days(RESCAN_THROTTLE_DAYS);
+    let (eligible, throttled): (Vec<Row>, Vec<Row>) = rows
+        .into_iter()
+        .partition(|(_, _, last)| last.is_none_or(|t| t < recent));
+    outcome.throttled = throttled.len() as u64;
+    if eligible.is_empty() {
+        return outcome;
+    }
+    if eligible.len() > max_series {
+        match state.jobs.coalesce_scan(library_id, false).await {
+            Ok(_) => outcome.library_scans = 1,
+            Err(e) => tracing::error!(
+                library_id = %library_id,
+                error = %e,
+                "removal sweep: library rescan enqueue failed",
+            ),
+        }
+        return outcome;
+    }
+    for (series_id, folder_path, _) in eligible {
         match state
             .jobs
             .coalesce_scoped_scan(
@@ -1050,7 +1157,7 @@ pub(crate) async fn queue_series_rescans(
             )
             .await
         {
-            Ok(_) => queued += 1,
+            Ok(_) => outcome.series_scans += 1,
             Err(e) => tracing::error!(
                 library_id = %library_id,
                 series_id = %series_id,
@@ -1059,7 +1166,7 @@ pub(crate) async fn queue_series_rescans(
             ),
         }
     }
-    queued
+    outcome
 }
 
 /// `file_path`s of the Duplicates-page removals among `series_ids`'
@@ -1088,6 +1195,106 @@ pub(crate) async fn duplicate_removed_paths(
     Ok(out)
 }
 
+/// Rows a removal sweep left alone in one library run.
+#[derive(Debug, Default)]
+pub(crate) struct KeptRows {
+    /// Present again: kept, and their series rescanned.
+    pub present_issues: Vec<String>,
+    pub present_series: HashSet<Uuid>,
+    /// The disk would not say: kept, not rescanned.
+    pub unknown_issues: Vec<String>,
+    pub unknown_series: HashSet<Uuid>,
+    /// Series to rescan (those of present issues plus present series).
+    pub rescan: BTreeSet<Uuid>,
+    /// Series holding an issue whose presence is unknown: never confirmed
+    /// in this run, never rescanned.
+    pub held_series: HashSet<Uuid>,
+}
+
+impl KeptRows {
+    pub(crate) fn present(&self) -> u64 {
+        (self.present_issues.len() + self.present_series.len()) as u64
+    }
+    pub(crate) fn unknown(&self) -> u64 {
+        (self.unknown_issues.len() + self.unknown_series.len()) as u64
+    }
+
+    /// Queue the rescans, then log and record what was kept: one WARN each
+    /// for present and unknown rows, and one `issue` / `skipped` summary
+    /// event per library and sweep.
+    pub(crate) async fn finish(
+        &self,
+        state: &AppState,
+        library_id: Uuid,
+        sweep: &'static str,
+        max_series_rescans: usize,
+    ) -> RescanOutcome {
+        let outcome = if self.rescan.is_empty() {
+            RescanOutcome::default()
+        } else {
+            queue_series_rescans(state, library_id, &self.rescan, max_series_rescans).await
+        };
+        if self.present() > 0 {
+            tracing::warn!(
+                library_id = %library_id,
+                sweep,
+                kept_issues = self.present_issues.len(),
+                kept_series = self.present_series.len(),
+                series_scans = outcome.series_scans,
+                library_scans = outcome.library_scans,
+                throttled = outcome.throttled,
+                "removal sweep: removed rows are on disk again; kept and rescanned",
+            );
+        }
+        if self.unknown() > 0 {
+            tracing::warn!(
+                library_id = %library_id,
+                sweep,
+                unknown_issues = self.unknown_issues.len(),
+                unknown_series = self.unknown_series.len(),
+                "removal sweep: rows whose files could not be read (unknown, not gone); kept",
+            );
+        }
+        if self.present() > 0 || self.unknown() > 0 {
+            /// Ids listed in the event detail; the counts are always complete.
+            const SAMPLE: usize = 50;
+            event_log::record(
+                &state.db,
+                NewEvent::new(
+                    library_id,
+                    Category::Issue,
+                    Action::Skipped,
+                    Severity::Warning,
+                    format!(
+                        "{sweep} kept {} row(s) whose files are on disk again and {} it could \
+                         not read; {} series scan(s) and {} library scan(s) queued",
+                        self.present(),
+                        self.unknown(),
+                        outcome.series_scans,
+                        outcome.library_scans,
+                    ),
+                )
+                .detail(serde_json::json!({
+                    "sweep": sweep,
+                    "present_issues": self.present_issues.len(),
+                    "present_series": self.present_series.len(),
+                    "unknown_issues": self.unknown_issues.len(),
+                    "unknown_series": self.unknown_series.len(),
+                    "series_scans": outcome.series_scans,
+                    "library_scans": outcome.library_scans,
+                    "rescans_throttled": outcome.throttled,
+                    "present_issue_ids": self.present_issues.iter().take(SAMPLE).collect::<Vec<_>>(),
+                    "present_series_ids": self.present_series.iter().take(SAMPLE).collect::<Vec<_>>(),
+                    "unknown_issue_ids": self.unknown_issues.iter().take(SAMPLE).collect::<Vec<_>>(),
+                    "unknown_series_ids": self.unknown_series.iter().take(SAMPLE).collect::<Vec<_>>(),
+                })),
+            )
+            .await;
+        }
+        outcome
+    }
+}
+
 #[derive(Debug, FromQueryResult)]
 struct ConfirmIssueCandidate {
     id: String,
@@ -1101,6 +1308,7 @@ struct ConfirmIssueCandidate {
 struct ConfirmSeriesCandidate {
     id: Uuid,
     folder_path: Option<String>,
+    removed_at: chrono::DateTime<chrono::FixedOffset>,
 }
 
 /// What one [`auto_confirm_sweep`] run did.
@@ -1111,10 +1319,19 @@ pub struct ConfirmStats {
     /// Rows left unconfirmed because their file (or series folder) is on
     /// disk again.
     pub kept_present: u64,
-    /// Series rescans queued (or coalesced into one already in flight).
+    /// Rows left unconfirmed because the disk would not say (unreadable
+    /// folder, I/O error): unknown is never gone.
+    pub kept_unknown: u64,
+    /// Scoped series scans queued (or coalesced into one in flight).
     pub rescans_queued: u64,
+    /// Library scans queued instead of series scans.
+    pub library_scans_queued: u64,
+    /// Series not rescanned because they were scanned recently.
+    pub rescans_throttled: u64,
     /// Libraries skipped because `validate_library` refused them.
     pub libraries_skipped: u64,
+    /// Libraries aborted mid-run (the root emptied, a query failed).
+    pub libraries_aborted: u64,
 }
 
 /// Cron-driven sweep: confirm removals once they've sat past the per-library
@@ -1123,18 +1340,33 @@ pub struct ConfirmStats {
 /// Per library: the scanner's `validate_library` gate runs first and a
 /// library that fails it (root missing, unreadable, empty) is skipped whole.
 /// Then the candidates (soft-removed past the window, unconfirmed) are read
-/// oldest first, at most [`CONFIRM_MAX_ROWS_PER_LIBRARY_PER_RUN`] issue rows
-/// and as many series rows per run, and stat-ed on the blocking pool:
+/// oldest first in keyset pages, at most
+/// [`CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN`] issue rows and
+/// [`CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN`] series rows per run, and
+/// stat-ed on the blocking pool ([`Presence`]):
 ///
-/// - an issue whose file a scan would index again is **not** confirmed; its
-///   series gets one coalesced scoped rescan, which restores it;
-/// - an issue whose file is absent is confirmed as before;
+/// - `Absent` (not-found class only): confirmed as before;
+/// - `Present`: not confirmed; its series is rescanned (throttled, see
+///   [`queue_series_rescans`]), which restores it;
+/// - `Unknown` (any other I/O error, an unreadable folder): not confirmed,
+///   not rescanned;
 /// - a Duplicates-page removal (deliberate, file present by definition) is
 ///   confirmed without a stat;
-/// - a series is not confirmed while one of its issues was just found
-///   present, or while its folder holds an archive a scan would index
-///   (other than Duplicates-page removals); it gets the same rescan.
+/// - a series is not confirmed while one of its issues was just kept, or
+///   while its folder holds (or may hold) an archive a scan would index.
+///
+/// After every stat batch the root must still hold an entry; if it emptied
+/// mid-run the library is aborted and nothing from that batch is confirmed.
 pub async fn auto_confirm_sweep(state: &AppState) -> anyhow::Result<ConfirmStats> {
+    auto_confirm_sweep_with(state, SweepLimits::default()).await
+}
+
+/// [`auto_confirm_sweep`] with explicit paging bounds (tests).
+#[doc(hidden)]
+pub async fn auto_confirm_sweep_with(
+    state: &AppState,
+    limits: SweepLimits,
+) -> anyhow::Result<ConfirmStats> {
     let libs = library::Entity::find().all(&state.db).await?;
     let mut stats = ConfirmStats::default();
     let now = Utc::now().fixed_offset();
@@ -1145,48 +1377,84 @@ pub async fn auto_confirm_sweep(state: &AppState) -> anyhow::Result<ConfirmStats
             continue;
         }
         let cutoff = now - Duration::days(lib.soft_delete_days as i64);
-        match confirm_library(state, &lib, now, cutoff).await {
-            Ok(s) => {
-                stats.confirmed += s.confirmed;
-                stats.kept_present += s.kept_present;
-                stats.rescans_queued += s.rescans_queued;
-            }
+        let mut kept = KeptRows::default();
+        let result = confirm_library(state, &lib, now, cutoff, limits, &mut kept).await;
+        // Rows kept before an abort are still reported and rescanned.
+        let outcome = kept
+            .finish(
+                state,
+                lib.id,
+                "Removal confirmation",
+                limits.max_series_rescans,
+            )
+            .await;
+        stats.kept_present += kept.present();
+        stats.kept_unknown += kept.unknown();
+        stats.rescans_queued += outcome.series_scans;
+        stats.library_scans_queued += outcome.library_scans;
+        stats.rescans_throttled += outcome.throttled;
+        match result {
+            Ok(n) => stats.confirmed += n,
             // One library failing must not stop the others being swept.
-            Err(e) => tracing::error!(
-                library_id = %lib.id,
-                error = %e,
-                "reconcile sweep: library failed",
-            ),
+            Err((n, e)) => {
+                stats.confirmed += n;
+                stats.libraries_aborted += 1;
+                tracing::error!(
+                    library_id = %lib.id,
+                    error = %e,
+                    "reconcile sweep: library aborted",
+                );
+            }
         }
     }
 
     Ok(stats)
 }
 
+/// Returns the rows confirmed, or on an abort the rows confirmed before it
+/// together with the error.
 async fn confirm_library(
     state: &AppState,
     lib: &library::Model,
     now: chrono::DateTime<chrono::FixedOffset>,
     cutoff: chrono::DateTime<chrono::FixedOffset>,
-) -> anyhow::Result<ConfirmStats> {
+    limits: SweepLimits,
+    kept: &mut KeptRows,
+) -> Result<u64, (u64, anyhow::Error)> {
+    let mut confirmed = 0u64;
+    match confirm_issues(state, lib, now, cutoff, limits, kept, &mut confirmed).await {
+        Ok(()) => {}
+        Err(e) => return Err((confirmed, e)),
+    }
+    match confirm_series(state, lib, now, cutoff, limits, kept, &mut confirmed).await {
+        Ok(()) => Ok(confirmed),
+        Err(e) => Err((confirmed, e)),
+    }
+}
+
+async fn confirm_issues(
+    state: &AppState,
+    lib: &library::Model,
+    now: chrono::DateTime<chrono::FixedOffset>,
+    cutoff: chrono::DateTime<chrono::FixedOffset>,
+    limits: SweepLimits,
+    kept: &mut KeptRows,
+    confirmed: &mut u64,
+) -> anyhow::Result<()> {
     let db = &state.db;
     let probe = PresenceProbe::for_library(lib);
-    let mut stats = ConfirmStats::default();
-    let mut rescan: BTreeSet<Uuid> = BTreeSet::new();
-    let mut kept_issue_ids: Vec<String> = Vec::new();
-
-    // ── Issues: keyset pages of PRESENCE_BATCH, oldest removal first.
+    let page_size = limits.page.max(1);
     let mut after: Option<(chrono::DateTime<chrono::FixedOffset>, String)> = None;
     let mut examined = 0usize;
-    while examined < CONFIRM_MAX_ROWS_PER_LIBRARY_PER_RUN {
-        let limit = PRESENCE_BATCH.min(CONFIRM_MAX_ROWS_PER_LIBRARY_PER_RUN - examined);
+    while examined < limits.max_issue_rows {
+        let limit = page_size.min(limits.max_issue_rows - examined);
         let page = confirm_issue_page(db, lib.id, cutoff, after.as_ref(), limit).await?;
         if page.is_empty() {
             break;
         }
         examined += page.len();
-        let last = page.last().map(|c| (c.removed_at, c.id.clone()));
         let full_page = page.len() == limit;
+        after = page.last().map(|c| (c.removed_at, c.id.clone()));
 
         let mut confirm: Vec<String> = Vec::new();
         let mut to_stat: Vec<((String, Uuid), String)> = Vec::new();
@@ -1197,15 +1465,17 @@ async fn confirm_library(
                 to_stat.push(((c.id, c.series_id), c.file_path));
             }
         }
-        let all_stat: Vec<(String, Uuid)> = to_stat.iter().map(|(k, _)| k.clone()).collect();
-        let present: HashSet<(String, Uuid)> =
-            probe.present_files(to_stat).await?.into_iter().collect();
-        for key in all_stat {
-            if present.contains(&key) {
-                rescan.insert(key.1);
-                kept_issue_ids.push(key.0);
-            } else {
-                confirm.push(key.0);
+        for ((id, series_id), presence) in probe.files(to_stat).await? {
+            match presence {
+                Presence::Absent => confirm.push(id),
+                Presence::Present => {
+                    kept.rescan.insert(series_id);
+                    kept.present_issues.push(id);
+                }
+                Presence::Unknown => {
+                    kept.held_series.insert(series_id);
+                    kept.unknown_issues.push(id);
+                }
             }
         }
         for ids in confirm.chunks(RECONCILE_ID_CHUNK) {
@@ -1218,121 +1488,81 @@ async fn confirm_library(
                 .filter(issue::Column::RemovedAt.lt(cutoff))
                 .exec(db)
                 .await?;
-            stats.confirmed += res.rows_affected;
+            *confirmed += res.rows_affected;
         }
         if !full_page {
             break;
         }
-        after = last;
     }
-    stats.kept_present += kept_issue_ids.len() as u64;
-
-    // ── Series: never confirm one whose issue was just found present; else
-    // look for archives in its folder.
-    let candidates = ConfirmSeriesCandidate::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id, folder_path FROM series \
-         WHERE library_id = $1 AND removed_at IS NOT NULL \
-           AND removal_confirmed_at IS NULL AND removed_at < $2 \
-         ORDER BY removed_at, id LIMIT $3",
-        [
-            lib.id.into(),
-            cutoff.into(),
-            (CONFIRM_MAX_ROWS_PER_LIBRARY_PER_RUN as i64).into(),
-        ],
-    ))
-    .all(db)
-    .await?;
-    let candidates: Vec<ConfirmSeriesCandidate> = candidates
-        .into_iter()
-        .filter(|c| !rescan.contains(&c.id))
-        .collect();
-    let with_folder: Vec<(Uuid, String)> = candidates
-        .iter()
-        .filter_map(|c| c.folder_path.clone().map(|f| (c.id, f)))
-        .collect();
-    let folder_ids: Vec<Uuid> = with_folder.iter().map(|(id, _)| *id).collect();
-    let exclude = duplicate_removed_paths(db, &folder_ids).await?;
-    let present_series = probe.folders_with_archives(with_folder, exclude).await?;
-    let confirm_series: Vec<Uuid> = candidates
-        .iter()
-        .map(|c| c.id)
-        .filter(|id| !present_series.contains(id))
-        .collect();
-    for ids in confirm_series.chunks(RECONCILE_ID_CHUNK) {
-        let res = series::Entity::update_many()
-            .col_expr(series::Column::RemovalConfirmedAt, Expr::value(now))
-            .filter(series::Column::LibraryId.eq(lib.id))
-            .filter(series::Column::Id.is_in(ids.to_vec()))
-            .filter(series::Column::RemovedAt.is_not_null())
-            .filter(series::Column::RemovalConfirmedAt.is_null())
-            .filter(series::Column::RemovedAt.lt(cutoff))
-            .exec(db)
-            .await?;
-        stats.confirmed += res.rows_affected;
-    }
-    stats.kept_present += present_series.len() as u64;
-    rescan.extend(present_series.iter().copied());
-
-    if !rescan.is_empty() {
-        stats.rescans_queued = queue_series_rescans(state, lib.id, &rescan).await as u64;
-        tracing::warn!(
-            library_id = %lib.id,
-            kept_issues = kept_issue_ids.len(),
-            kept_series = present_series.len(),
-            rescans = stats.rescans_queued,
-            "reconcile sweep: removed rows are on disk again; not confirmed, rescans queued",
-        );
-        record_kept_present(
-            &state.db,
-            lib.id,
-            "Removal confirmation",
-            &kept_issue_ids,
-            &present_series,
-            &rescan,
-        )
-        .await;
-    }
-    Ok(stats)
+    Ok(())
 }
 
-/// One summary `issue` / `skipped` event per library and sweep for rows a
-/// removal sweep left alone because their files are back on disk.
-pub(crate) async fn record_kept_present(
-    db: &DatabaseConnection,
-    library_id: Uuid,
-    sweep: &'static str,
-    issue_ids: &[String],
-    series_ids: &HashSet<Uuid>,
-    rescanned: &BTreeSet<Uuid>,
-) {
-    /// Ids listed in the event detail; the counts are always complete.
-    const SAMPLE: usize = 50;
-    event_log::record(
-        db,
-        NewEvent::new(
-            library_id,
-            Category::Issue,
-            Action::Skipped,
-            Severity::Warning,
-            format!(
-                "{sweep} skipped {} issue(s) and {} series whose files are on disk again; \
-                 {} series rescan(s) queued",
-                issue_ids.len(),
-                series_ids.len(),
-                rescanned.len(),
-            ),
-        )
-        .detail(serde_json::json!({
-            "sweep": sweep,
-            "issues_kept": issue_ids.len(),
-            "series_kept": series_ids.len(),
-            "issue_ids": issue_ids.iter().take(SAMPLE).collect::<Vec<_>>(),
-            "series_ids": series_ids.iter().take(SAMPLE).collect::<Vec<_>>(),
-            "rescanned_series_ids": rescanned.iter().take(SAMPLE).collect::<Vec<_>>(),
-        })),
-    )
-    .await;
+async fn confirm_series(
+    state: &AppState,
+    lib: &library::Model,
+    now: chrono::DateTime<chrono::FixedOffset>,
+    cutoff: chrono::DateTime<chrono::FixedOffset>,
+    limits: SweepLimits,
+    kept: &mut KeptRows,
+    confirmed: &mut u64,
+) -> anyhow::Result<()> {
+    let db = &state.db;
+    let probe = PresenceProbe::for_library(lib);
+    let page_size = limits.page.max(1);
+    let mut after: Option<(chrono::DateTime<chrono::FixedOffset>, Uuid)> = None;
+    let mut examined = 0usize;
+    while examined < limits.max_series_rows {
+        let limit = page_size.min(limits.max_series_rows - examined);
+        let page = confirm_series_page(db, lib.id, cutoff, after.as_ref(), limit).await?;
+        if page.is_empty() {
+            break;
+        }
+        examined += page.len();
+        let full_page = page.len() == limit;
+        after = page.last().map(|c| (c.removed_at, c.id));
+
+        // Never confirm a series one of whose issues was just kept.
+        let candidates: Vec<ConfirmSeriesCandidate> = page
+            .into_iter()
+            .filter(|c| !kept.rescan.contains(&c.id) && !kept.held_series.contains(&c.id))
+            .collect();
+        let with_folder: Vec<(Uuid, String)> = candidates
+            .iter()
+            .filter_map(|c| c.folder_path.clone().map(|f| (c.id, f)))
+            .collect();
+        let folder_ids: Vec<Uuid> = with_folder.iter().map(|(id, _)| *id).collect();
+        let exclude = duplicate_removed_paths(db, &folder_ids).await?;
+        let presence = probe.folders(with_folder, exclude).await?;
+        let mut confirm: Vec<Uuid> = Vec::new();
+        for c in &candidates {
+            match presence.get(&c.id).copied().unwrap_or(Presence::Absent) {
+                Presence::Absent => confirm.push(c.id),
+                Presence::Present => {
+                    kept.present_series.insert(c.id);
+                    kept.rescan.insert(c.id);
+                }
+                Presence::Unknown => {
+                    kept.unknown_series.insert(c.id);
+                }
+            }
+        }
+        for ids in confirm.chunks(RECONCILE_ID_CHUNK) {
+            let res = series::Entity::update_many()
+                .col_expr(series::Column::RemovalConfirmedAt, Expr::value(now))
+                .filter(series::Column::LibraryId.eq(lib.id))
+                .filter(series::Column::Id.is_in(ids.to_vec()))
+                .filter(series::Column::RemovedAt.is_not_null())
+                .filter(series::Column::RemovalConfirmedAt.is_null())
+                .filter(series::Column::RemovedAt.lt(cutoff))
+                .exec(db)
+                .await?;
+            *confirmed += res.rows_affected;
+        }
+        if !full_page {
+            break;
+        }
+    }
+    Ok(())
 }
 
 async fn confirm_issue_page(
@@ -1368,6 +1598,39 @@ async fn confirm_issue_page(
         ),
     };
     Ok(ConfirmIssueCandidate::find_by_statement(stmt)
+        .all(db)
+        .await?)
+}
+
+async fn confirm_series_page(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    cutoff: chrono::DateTime<chrono::FixedOffset>,
+    after: Option<&(chrono::DateTime<chrono::FixedOffset>, Uuid)>,
+    limit: usize,
+) -> anyhow::Result<Vec<ConfirmSeriesCandidate>> {
+    const SELECT: &str = "SELECT id, folder_path, removed_at FROM series \
+         WHERE library_id = $1 AND removed_at IS NOT NULL \
+           AND removal_confirmed_at IS NULL AND removed_at < $2";
+    let stmt = match after {
+        None => Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("{SELECT} ORDER BY removed_at, id LIMIT $3"),
+            [library_id.into(), cutoff.into(), (limit as i64).into()],
+        ),
+        Some((at, id)) => Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!("{SELECT} AND (removed_at, id) > ($4, $5) ORDER BY removed_at, id LIMIT $3"),
+            [
+                library_id.into(),
+                cutoff.into(),
+                (limit as i64).into(),
+                (*at).into(),
+                (*id).into(),
+            ],
+        ),
+    };
+    Ok(ConfirmSeriesCandidate::find_by_statement(stmt)
         .all(db)
         .await?)
 }
