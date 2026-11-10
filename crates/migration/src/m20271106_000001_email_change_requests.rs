@@ -5,6 +5,13 @@
 //! single-use link to the new address; the link's token embeds `token_id`
 //! the way password-reset tokens embed theirs (`password_reset_uses`).
 //! `user_id` is unique, so a new request replaces the previous one.
+//!
+//! `token_version` is the user's `users.token_version` when the request was
+//! made; the link works only while it is unchanged, so a password change,
+//! password reset, sign-out-everywhere or admin disable cancels it.
+//! `window_started_at` + `request_count` bound how many requests (each
+//! sends two emails) a user makes per hour; a replacing request carries
+//! them over, and a cancelled request keeps its row so the count survives.
 
 use sea_orm_migration::prelude::*;
 
@@ -21,6 +28,9 @@ enum EmailChangeRequests {
     ExpiresAt,
     ConsumedAt,
     CreatedAt,
+    TokenVersion,
+    WindowStartedAt,
+    RequestCount,
 }
 
 #[derive(Iden)]
@@ -73,6 +83,23 @@ impl MigrationTrait for Migration {
                             .timestamp_with_time_zone()
                             .not_null()
                             .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(EmailChangeRequests::TokenVersion)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(EmailChangeRequests::WindowStartedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
+                    )
+                    .col(
+                        ColumnDef::new(EmailChangeRequests::RequestCount)
+                            .integer()
+                            .not_null()
+                            .default(1),
                     )
                     .foreign_key(
                         ForeignKey::create()

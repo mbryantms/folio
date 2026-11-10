@@ -152,7 +152,8 @@ pub fn email_change_requested(public_url: &str, to: &str, new_email: &str) -> Em
          The change happens only if the link sent to that address is opened.\n\n\
          If you made this request, you can ignore this email.\n\n\
          If you DIDN'T, sign in at {base} and change your password: \
-         the request needed your current password. If you can no longer sign in, \
+         the request needed your current password, and changing it cancels the request. \
+         If you can no longer sign in, \
          ask the person who runs this Folio server for help."
     );
     let new_html = html_escape(new_email);
@@ -162,7 +163,8 @@ pub fn email_change_requested(public_url: &str, to: &str, new_email: &str) -> Em
          <p>The change happens only if the link sent to that address is opened.</p>\
          <p>If you made this request, you can ignore this email.</p>\
          <p>If you <strong>DIDN'T</strong>, <a href=\"{base}\">sign in</a> and change your password: \
-         the request needed your current password. If you can no longer sign in, \
+         the request needed your current password, and changing it cancels the request. \
+         If you can no longer sign in, \
          ask the person who runs this Folio server for help.</p>"
     );
     Email {

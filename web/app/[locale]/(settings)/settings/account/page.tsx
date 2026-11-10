@@ -10,7 +10,11 @@ function parseEmailChangeStatus(
   v: string | string[] | undefined,
 ): EmailChangeStatus | null {
   const s = Array.isArray(v) ? v[0] : v;
-  return s === "confirmed" || s === "invalid" || s === "taken" || s === "sent"
+  return s === "confirmed" ||
+    s === "confirmed_signed_out" ||
+    s === "invalid" ||
+    s === "taken" ||
+    s === "sent"
     ? s
     : null;
 }

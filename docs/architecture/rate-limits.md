@@ -38,6 +38,7 @@ Every limit that is attached to a route today. A route not listed here has no li
 | Marker writes (`POST /me/markers`, `PATCH`/`DELETE /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST /me/markers/restore`), one shared bucket | `marker_write` | IP | 10 / s | 60 |
 | Free-text search, metadata writes, collection and saved-view writes, collection reorder | see [Per-user web-app buckets](#per-user-web-app-buckets) | user | | |
 | CBL imports: create (upload / URL / catalog), manual refresh, manual check (`cbl::quota`; admins exempt; Redis fixed 1 h window) | `cbl_import` | user | 20 / hour | none |
+| `PATCH /me/account` requests that change the email while mail delivery is configured (see [Email-change requests](#email-change-requests)) | none (request row) | user | 5 / hour | none |
 
 No limit: page bytes (`GET /issues/{id}/pages/{n}`), thumbnails and stored covers (`…/pages/{n}/thumb`, `/issues/{id}/covers/{cover_id}`), library and series scans (`POST /libraries/{slug}/scan`, `POST /series/{slug}/scan`), OPDS progression (`/opds/v1/progression/{id}`), the Komga shim (`/api/v1/books/*`), `POST /auth/refresh`, and every other route not in this table.
 
@@ -50,11 +51,17 @@ Redis-backed ([`auth/failed_auth.rs`](../../crates/server/src/auth/failed_auth.r
 | `POST /auth/local/login` | client IP and the submitted email (hashed) |
 | `GET /auth/oidc/callback` | client IP |
 | `DELETE /me` (password re-check) | client IP and the account's email |
-| `PATCH /me/account` email change (password re-check) | client IP and the account's email |
+| `PATCH /me/account` email or password change (password re-check, shared with `DELETE /me` through `failed_auth::verify_password_counted`) | client IP and the account's email |
 
 The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
 
 Verified against the code at `1c51a486` on 2026-11-10.
+
+### Email-change requests
+
+Each accepted email change sends two emails (the link to the new address, a notice to the old one), so a user may make at most 5 requests per hour ([`api/account.rs`](../../crates/server/src/api/account.rs), `EMAIL_CHANGE_HOURLY_LIMIT`). Not a token bucket: the route also carries display-name and password edits, which this limit must not touch. The count lives on the user's `email_change_requests` row (`window_started_at`, `request_count`) and is carried over when a new request replaces the row or the user cancels it (a cancel keeps the row, expired). The window is fixed: it starts at the first request and lasts an hour. The 6th request inside it gets 429 `rate_limited` with `Retry-After` set to the rest of the window, before anything is written or sent. Because the count is in Postgres it neither fails open with Redis nor follows the `auth.rate_limit_enabled` switch. Without mail delivery an email change applies at once and sends nothing, so it is not counted.
+
+Verified against the code at `8c13f331` on 2026-11-10.
 
 ## Per-user web-app buckets
 
@@ -76,7 +83,7 @@ Each instance is its own store, so a script that rotates across the four `metada
 
 - 429 with `Retry-After` (seconds, at least 1).
 - `Content-Type: application/json` body: `{ "error": { "code": "rate_limited", "message": "...", "retry_after_seconds": N } }`.
-- The CBL import quota answers the same 429 shape. The failed-auth lockout answers 429 `auth.locked_out` (see [Failed-auth lockout](#failed-auth-lockout)).
+- The CBL import quota and the email-change request limit answer the same 429 shape. The failed-auth lockout answers 429 `auth.locked_out` (see [Failed-auth lockout](#failed-auth-lockout)).
 - If a request carries no resolvable client IP (a wiring fault), a per-IP bucket answers 500 `internal`.
 
 ## The `auth.rate_limit_enabled` switch

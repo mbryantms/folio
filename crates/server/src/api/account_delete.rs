@@ -85,9 +85,10 @@ use entity::user;
 use crate::api::extractors::Validated;
 use crate::api::{respond, respond_with_field_errors};
 use crate::audit::{self, AuditEntry};
+use crate::auth::failed_auth::PasswordCheck;
 use crate::auth::last_admin::LockedAdmins;
 use crate::auth::local::has_local_password;
-use crate::auth::{CurrentUser, cookies, failed_auth, password};
+use crate::auth::{CurrentUser, cookies, failed_auth};
 use crate::middleware::{RequestContext, rate_limit};
 use crate::state::AppState;
 use server_macros::handler;
@@ -253,36 +254,21 @@ pub async fn delete_me(
     // password; anything else (OIDC, including a local account later linked
     // to an issuer) confirms by typing.
     let reauth = if has_local_password(&row) {
-        let stored = row.password_hash.as_deref().unwrap_or_default();
         let Some(given) = req.password.as_deref().filter(|p| !p.is_empty()) else {
             return field_error("password", "enter your password to delete your account");
         };
-        // The email axis is keyed the way sign-in keys it (lower-cased).
-        let email_key = usable_email(row.email.as_deref()).map(str::to_lowercase);
-        // Same lockout gates as sign-in: refuse before any argon2 work.
-        if let Some(ip) = ctx.client_ip
-            && let Ok(Some(retry)) = failed_auth::check_lockout_for(&app, ip).await
-        {
-            return failed_auth::lockout_response(retry);
-        }
-        if let Some(key) = email_key.as_deref()
-            && let Ok(Some(retry)) = failed_auth::check_lockout_for_email(&app, key).await
-        {
-            return failed_auth::lockout_response(retry);
-        }
-        let ok =
-            password::verify_rotating(stored, given, app.secrets.peppers()).is_ok_and(|v| v.ok());
-        if !ok {
-            failed_auth::record_failure_for(&app, &ctx).await;
-            if let Some(key) = email_key.as_deref() {
-                failed_auth::record_failure_for_email(&app, key).await;
+        // Same lockout gates and failure counting as sign-in.
+        match failed_auth::verify_password_counted(&app, &ctx, &row, given).await {
+            PasswordCheck::Ok => {}
+            PasswordCheck::LockedOut(retry) => return failed_auth::lockout_response(retry),
+            PasswordCheck::Wrong => {
+                tracing::info!(reason = "bad_password", "account delete rejected");
+                return respond(
+                    StatusCode::FORBIDDEN,
+                    ApiErrorCode::AuthInvalid,
+                    "password is incorrect",
+                );
             }
-            tracing::info!(reason = "bad_password", "account delete rejected");
-            return respond(
-                StatusCode::FORBIDDEN,
-                ApiErrorCode::AuthInvalid,
-                "password is incorrect",
-            );
         }
         Reauth::Password
     } else {

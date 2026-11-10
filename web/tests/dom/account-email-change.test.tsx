@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Settings → Account email change: the form asks for the current password
- * once the email field changes, binds server field errors to it, and shows
- * the pending address while a confirmation link is outstanding. The real
+ * Settings → Account email change: the form carries a current-password
+ * field (required once the email changes), binds server field errors to it,
+ * and shows the pending address, with a Cancel control, while a
+ * confirmation link is outstanding. The real
  * `useMe` / `useUpdateAccount` hooks run against a mocked `apiFetch`.
  */
 import {
@@ -144,12 +145,14 @@ beforeEach(() => {
 });
 
 describe("Account email change", () => {
-  it("asks for the current password only once the email changes", async () => {
+  it("renders the current-password field up front for the form fallback", async () => {
     wrap();
     await screen.findByLabelText("Email");
-    expect(profile().queryByLabelText("Current password")).toBeNull();
-    await typeEmail("new@example.com");
-    expect(profile().getByLabelText("Current password")).toBeTruthy();
+    const field = profile().getByLabelText("Current password");
+    expect(field.getAttribute("name")).toBe("current_password");
+    expect(
+      profile().getByText(/Only needed when you change your email/),
+    ).toBeTruthy();
   });
 
   it("refuses to submit without the password", async () => {
@@ -241,6 +244,79 @@ describe("Account email change", () => {
     wrap();
     await typeEmail("new@example.com");
     expect(profile().queryByLabelText("Current password")).toBeNull();
+  });
+
+  it("cancels a pending change", async () => {
+    state.me = baseMe({ pending_email: "pending@example.com" });
+    state.patch = (body) => {
+      state.me = baseMe({ email: String(body.email), pending_email: null });
+      return json(state.me);
+    };
+    wrap();
+    await screen.findByText("Confirmation sent to pending@example.com");
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Cancel email change" }),
+      );
+    });
+    await waitFor(() =>
+      expect(patches()[0]?.body).toEqual({ email: "old@example.com" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Confirmation sent to pending@example.com"),
+      ).toBeNull(),
+    );
+    expect(state.toastSuccess).toHaveBeenCalledWith(
+      "Email change cancelled",
+      expect.anything(),
+    );
+  });
+
+  it("binds a wrong password on the password card to its field", async () => {
+    state.patch = () =>
+      json(
+        {
+          error: {
+            code: "auth.invalid",
+            message: "current password is incorrect",
+            details: [
+              {
+                field: "current_password",
+                message: "current password is incorrect",
+              },
+            ],
+          },
+        },
+        403,
+      );
+    wrap();
+    const button = await screen.findByRole("button", {
+      name: "Change password",
+    });
+    const card = within(button.closest("form")!);
+    await act(async () => {
+      fireEvent.change(card.getByLabelText("Current password"), {
+        target: { value: "wrong-password" },
+      });
+      fireEvent.change(card.getByLabelText("New password"), {
+        target: { value: "a-whole-new-passphrase" },
+      });
+      fireEvent.change(card.getByLabelText("Confirm new password"), {
+        target: { value: "a-whole-new-passphrase" },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(await card.findByText("current password is incorrect")).toBeTruthy();
+  });
+
+  it("says every device was signed out when no session was kept", async () => {
+    wrap("confirmed_signed_out");
+    expect(
+      await screen.findByText(/Every device signed in to that account/),
+    ).toBeTruthy();
   });
 
   it("reports the outcome of a confirmation link", async () => {

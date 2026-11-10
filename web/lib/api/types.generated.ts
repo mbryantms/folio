@@ -1635,12 +1635,14 @@ export interface paths {
          * `GET /auth/local/confirm-email-change?token=...`
          * @description Opens the link `PATCH /me/account` mailed to a new address. The token
          *     must match an unconsumed, unexpired `email_change_requests` row of the
-         *     same user, and the address must still be free. Then, in one
-         *     transaction: `users.email` = the new address, `email_verified = true`,
-         *     `token_version` bumped, the row consumed, and every refresh session
-         *     revoked except the one of the browser opening the link (as a password
-         *     change does). Always answers with a redirect to `/settings/account`
-         *     carrying `email_change=confirmed|invalid|taken`.
+         *     same user, made under the account's current `token_version` (a
+         *     credential change since voids it: the row is deleted), and the address
+         *     must still be free. Then, in one transaction: `users.email` = the new
+         *     address, `email_verified = true`, `token_version` bumped, the row
+         *     consumed, and every refresh session revoked except the opening
+         *     browser's, kept only when it belongs to the same user. Always answers
+         *     with a redirect to `/settings/account` carrying
+         *     `email_change=confirmed|confirmed_signed_out|invalid|taken`.
          */
         get: operations["local_confirm_email_change"];
         put?: never;
@@ -20099,7 +20101,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description redirect to /settings/account?email_change=confirmed (or =invalid / =taken) */
+            /** @description redirect to /settings/account?email_change=confirmed (the opening browser's session of this account kept), =confirmed_signed_out (no session of the account kept), =invalid or =taken */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -22513,7 +22515,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description updated. After an email change with mail delivery configured, `email` is unchanged and `pending_email` names the address the confirmation link went to */
+            /** @description updated. After an email change with mail delivery configured, `email` is unchanged and `pending_email` names the address the confirmation link went to. Submitting the current address cancels a pending change */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -22529,21 +22531,21 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description current_password incorrect (password change) or session invalid */
+            /** @description session invalid */
             401: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description OIDC users cannot edit email/password, or current_password incorrect for an email change */
+            /** @description OIDC users cannot edit email/password, or current_password incorrect (code `auth.invalid`, field error on `current_password`) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description email already in use */
+            /** @description email already in use (checked after the password) */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -22557,7 +22559,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description locked out after failed password attempts */
+            /** @description locked out after failed password attempts (`auth.locked_out`), or more than 5 email-change requests in an hour (`rate_limited`); both carry Retry-After */
             429: {
                 headers: {
                     [name: string]: unknown;

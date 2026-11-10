@@ -155,8 +155,10 @@ async fn change_password_validates_current() {
         r#"{"current_password":"wrong-password-xx","new_password":"new-password-stronger-9"}"#,
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // 403, not 401: the web client reads a 401 as an expired session.
+    assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "auth.invalid");
+    assert_eq!(body["error"]["details"][0]["field"], "current_password");
 }
 
 #[tokio::test]
@@ -199,8 +201,17 @@ async fn email_change_round_trip_and_uniqueness() {
     let _other = register(&app, "taken@example.com", "correctly-horse-battery").await;
     let auth = register(&app, "renamer@example.com", "correctly-horse-battery").await;
 
-    // Conflict with another user's email
+    // Conflict with another user's email (reported only past the password
+    // check; without one the missing password is the answer).
     let (status, body) = patch_account(&app, &auth, r#"{"email":"taken@example.com"}"#).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["details"][0]["field"], "current_password");
+    let (status, body) = patch_account(
+        &app,
+        &auth,
+        r#"{"email":"Taken@Example.com","current_password":"correctly-horse-battery"}"#,
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "conflict");
 

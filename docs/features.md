@@ -501,7 +501,9 @@ per-list opt-out to preserve curated orders).
   current password. When the server can send mail, the new address gets a
   confirmation link (valid one hour, single use) and the old address a
   notice; the address changes only when the link is opened, and your other
-  devices are then signed out. Without mail delivery the change applies at
+  devices are then signed out. A pending change can be cancelled, and
+  changing your password or signing out everywhere cancels it too; at most
+  five requests an hour. Without mail delivery the change applies at
   once, unverified, and other devices are signed out. Identity-provider
   accounts change their email at the provider.
 - **Self-service account deletion**: Settings → Account → Delete account

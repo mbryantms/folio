@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { useForm, useWatch } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
@@ -21,7 +21,11 @@ import { Switch } from "@/components/ui/switch";
 import { getCsrfToken } from "@/lib/api/auth-refresh";
 import { applyServerErrors } from "@/lib/api/form-errors";
 import { useMe } from "@/lib/api/queries";
-import { useUpdateAccount, useUpdatePreferences } from "@/lib/api/mutations";
+import {
+  useCancelEmailChange,
+  useUpdateAccount,
+  useUpdatePreferences,
+} from "@/lib/api/mutations";
 
 import { DataExportCard } from "./DataExportCard";
 import { DeleteAccountCard } from "./DeleteAccountCard";
@@ -83,8 +87,10 @@ type PasswordValues = z.infer<typeof passwordSchema>;
 
 /** Outcome of opening an email-change link, from the
  *  `?email_change=` query the server redirects to (or the no-JS form
- *  fallback's `sent`). */
-export type EmailChangeStatus = "confirmed" | "invalid" | "taken" | "sent";
+ *  fallback's `sent`). `confirmed_signed_out`: the link was opened in a
+ *  browser not signed in to that account, so no session of it was kept. */
+export type EmailChangeStatus =
+  "confirmed" | "confirmed_signed_out" | "invalid" | "taken" | "sent";
 
 export function AccountForm({
   emailChange = null,
@@ -155,6 +161,11 @@ function SidebarPrefsCard({
 }
 
 const PROFILE_FIELDS = ["display_name", "email", "current_password"] as const;
+const PASSWORD_FIELDS = [
+  "current_password",
+  "new_password",
+  "confirm_password",
+] as const;
 
 /** What the page shows after an email-change link was opened. */
 function EmailChangeOutcome({ status }: { status: EmailChangeStatus | null }) {
@@ -168,13 +179,25 @@ function EmailChangeOutcome({ status }: { status: EmailChangeStatus | null }) {
       </Alert>
     );
   }
+  if (status === "confirmed_signed_out") {
+    return (
+      <Alert>
+        <AlertTitle>Email address changed</AlertTitle>
+        <AlertDescription>
+          The new address is confirmed. Every device signed in to that account
+          was signed out; sign in again with the new address.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   if (status === "invalid") {
     return (
       <Alert variant="destructive">
         <AlertTitle>That confirmation link didn&rsquo;t work</AlertTitle>
         <AlertDescription>
-          It has expired, was already used, or was replaced by a newer request.
-          Your email address was not changed.
+          It has expired, was already used, was cancelled or replaced by a newer
+          request, or the account&rsquo;s password or sessions changed since it
+          was sent. Your email address was not changed.
         </AlertDescription>
       </Alert>
     );
@@ -200,6 +223,7 @@ function ProfileCard({
   emailChange: EmailChangeStatus | null;
 }) {
   const update = useUpdateAccount();
+  const cancelChange = useCancelEmailChange();
   const csrf = useCsrfToken();
   const emailEditable = me.email_editable !== false;
   const passwordEditable = me.password_editable !== false;
@@ -221,10 +245,9 @@ function ProfileCard({
     });
   }, [me.display_name, me.email, form]);
 
-  const emailValue = useWatch({ control: form.control, name: "email" });
-  const emailChanged =
-    emailEditable && !!emailValue && emailValue !== (me.email ?? "");
-  const needsPassword = emailChanged && passwordEditable;
+  // The password field is always in the markup (so the no-JS form POST
+  // can carry it); it is only required once the email changes.
+  const askPassword = emailEditable && passwordEditable;
 
   const onSubmit = form.handleSubmit((values) => {
     const body: {
@@ -275,9 +298,23 @@ function ProfileCard({
           <Alert>
             <AlertTitle>Confirmation sent to {pendingEmail}</AlertTitle>
             <AlertDescription>
-              Open the link in that email to finish changing your address. It
-              expires after an hour. Until then you keep using{" "}
-              {me.email ?? "your current address"}.
+              <p>
+                Open the link in that email to finish changing your address. It
+                expires after an hour. Until then you keep using{" "}
+                {me.email ?? "your current address"}.
+              </p>
+              {me.email ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-label="Cancel email change"
+                  disabled={cancelChange.isPending}
+                  onClick={() => cancelChange.mutate({ email: me.email! })}
+                >
+                  {cancelChange.isPending ? "Cancelling…" : "Cancel"}
+                </Button>
+              ) : null}
             </AlertDescription>
           </Alert>
         ) : emailChange === "sent" ? (
@@ -342,7 +379,7 @@ function ProfileCard({
                 </FormItem>
               )}
             />
-            {needsPassword ? (
+            {askPassword ? (
               <FormField
                 control={form.control}
                 name="current_password"
@@ -357,9 +394,9 @@ function ProfileCard({
                       />
                     </FormControl>
                     <FormDescription>
-                      Needed to change your email. If this server sends email,
-                      the change waits until you open the link sent to the new
-                      address.
+                      Only needed when you change your email. If this server
+                      sends email, the change waits until you open the link sent
+                      to the new address.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -420,6 +457,10 @@ function PasswordCard({
       },
       {
         onSuccess: () => form.reset(),
+        // A wrong current password comes back as a 403 field error.
+        onError: (err) => {
+          applyServerErrors(form.setError, err, [...PASSWORD_FIELDS]);
+        },
       },
     );
   });

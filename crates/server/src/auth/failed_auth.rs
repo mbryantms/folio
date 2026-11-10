@@ -248,3 +248,59 @@ pub fn lockout_response(retry_after_seconds: u64) -> Response {
     }
     resp
 }
+
+// ─────────────── signed-in password re-checks ──────────────────
+
+/// Outcome of [`verify_password_counted`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordCheck {
+    /// The password matches.
+    Ok,
+    /// Wrong password; the failure was counted on both axes.
+    Wrong,
+    /// The IP or the account is locked out; nothing was verified. Carries
+    /// the remaining lockout in seconds (for [`lockout_response`]).
+    LockedOut(u64),
+}
+
+/// Re-check a signed-in user's password (account deletion, email and
+/// password changes) the way sign-in checks it: refuse while the client IP
+/// or the account's email is locked out (before any argon2 work), verify
+/// (rotation-aware), and count a wrong password against both axes, keyed
+/// as sign-in keys them (the lower-cased account email). `row` must have a
+/// password hash; a row without one never verifies.
+pub async fn verify_password_counted(
+    app: &AppState,
+    ctx: &RequestContext,
+    row: &entity::user::Model,
+    given: &str,
+) -> PasswordCheck {
+    let email_key = row
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(str::to_lowercase);
+    if let Some(ip) = ctx.client_ip
+        && let Ok(Some(retry)) = check_lockout_for(app, ip).await
+    {
+        return PasswordCheck::LockedOut(retry);
+    }
+    if let Some(key) = email_key.as_deref()
+        && let Ok(Some(retry)) = check_lockout_for_email(app, key).await
+    {
+        return PasswordCheck::LockedOut(retry);
+    }
+    let stored = row.password_hash.as_deref().unwrap_or_default();
+    let ok = !stored.is_empty()
+        && crate::auth::password::verify_rotating(stored, given, app.secrets.peppers())
+            .is_ok_and(|v| v.ok());
+    if ok {
+        return PasswordCheck::Ok;
+    }
+    record_failure_for(app, ctx).await;
+    if let Some(key) = email_key.as_deref() {
+        record_failure_for_email(app, key).await;
+    }
+    PasswordCheck::Wrong
+}

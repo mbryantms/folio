@@ -145,34 +145,17 @@ Verified against the code at `1c51a486` on 2026-11-10.
 
 ### Email change
 
-`PATCH /api/me/account { email, current_password }` (local accounts only;
-`email_editable` on `/auth/me` is false for identity-provider accounts, which
-get `403 auth.email_managed_by_issuer`).
+`PATCH /me/account { email, current_password }` (local accounts only; `email_editable` on `/auth/me` is false for identity-provider accounts, which get 403 `auth.email_managed_by_issuer`).
 
-- **Re-auth.** An account with a password must send `current_password`
-  (missing → `422` with a `current_password` field error). A wrong one is
-  `403 auth.invalid` and counts against both failed-auth lockout axes (IP and
-  account email), as `DELETE /me` does; after the threshold the endpoint
-  answers `429 auth.locked_out`.
-- **Mail configured** (`smtp_host` set — the same signal registration and
-  `/auth/config` use): `users.email` is **not** changed. The handler replaces
-  the user's row in `email_change_requests` (one per user: a new request
-  voids the previous link), mails a confirmation link to the new address and a
-  notice to the old one, and returns the account with `pending_email` set
-  (`/auth/me` reports it too while the request is unconsumed and unexpired).
-  The link is `GET /auth/local/confirm-email-change?token=…`; the token is the
-  password-reset envelope with purpose `EmailChange` and the row's
-  `token_id`, valid 1 h (same as reset). Opening it checks the token and the
-  row (same user, token hash, unconsumed, unexpired) and that no other account
-  holds the address, then in one transaction sets `email`, marks it verified,
-  bumps `token_version`, consumes the row and revokes every refresh session
-  except the one of the browser opening the link. It redirects to
-  `/settings/account?email_change=confirmed|invalid|taken`.
-- **Mail not configured** (the server logs `COMIC_SMTP_HOST not set`): there
-  is no way to confirm, so after the password check the change applies at
-  once with `email_verified = false`, `token_version` is bumped, the other
-  sessions are revoked, and a WARN log line plus the `user.account.update`
-  audit row record it. Configure SMTP to get confirmed changes.
+- **Re-auth.** An account with a password must send `current_password` (missing: 422 with a `current_password` field error). The check is `failed_auth::verify_password_counted`, shared with `DELETE /me` and the password branch of the same route: a locked-out IP or account gets 429 `auth.locked_out` before any hashing; a wrong password is 403 `auth.invalid` with a `current_password` field error (not 401, which the web client reads as an expired session) and counts on both failed-auth axes.
+- **Address in use.** Only after the password checks out does a taken address get 409 `conflict` (registration reveals the same). The lookup compares `lower(email)`, like the unique index.
+- **Limit.** At most 5 requests per user per hour while mail is configured; the 6th gets 429 `rate_limited` with `Retry-After` (see [rate-limits.md](rate-limits.md#email-change-requests)).
+- **Mail configured** (`smtp_host` set, the signal registration and `/auth/config` use): `users.email` does not change. The handler replaces the user's `email_change_requests` row (one per user, so a new request voids the previous link), storing the user's current `token_version`, mails a confirmation link to the new address and a notice to the old one, and returns the account with `pending_email` set (`/auth/me` reports it too while the row is unconsumed and unexpired). Submitting the account's current address cancels the pending request; the row stays, expired, so the hourly count holds.
+- **Confirm.** `GET /auth/local/confirm-email-change?token=…`. The token is the password-reset envelope with purpose `EmailChange` and the row's `token_id`, valid 1 h. The row must match the user and token hash, be unconsumed and unexpired, and carry the user's current `token_version`: a password change or reset, sign-out-everywhere or an admin disable since the request bumps it, and then the row is deleted and the link answers `invalid`. If another account holds the address the answer is `taken` (also on a unique-index race; any other database error is `invalid`). Otherwise one transaction sets `email`, marks it verified, bumps `token_version`, consumes the row and revokes every refresh session except the opening browser's, which is kept only when it is a live session of the same user. The redirect is `/settings/account?email_change=` `confirmed` (that session kept), `confirmed_signed_out` (no session of the account kept), `invalid` or `taken`.
+- **Mail not configured** (the server logs `COMIC_SMTP_HOST not set`): there is no way to confirm, so after the password check the change applies at once with `email_verified = false`, `token_version` is bumped, the other sessions are revoked, and a WARN log line plus the `user.account.update` audit row record it. Configure SMTP to get confirmed changes.
+- **Audit.** `user.account.update` names the address: `pending_email` with `email_change: requested | cancelled`, or `email` + `previous_email` for an immediate change. `user.account.email_change.confirm` records `email`, `previous_email` and whether the opening browser's session was kept.
+
+Verified against the code at `8c13f331` on 2026-11-10.
 
 ### Logout
 

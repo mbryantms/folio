@@ -1766,6 +1766,21 @@ export function useUpdateAccount() {
   );
 }
 
+/** Cancel a pending email change: `PATCH /me/account` with the account's
+ *  current address drops the outstanding confirmation link. */
+export function useCancelEmailChange() {
+  const qc = useQueryClient();
+  return useApiMutation<MeView, { email: string }>(
+    (body) => ({ path: "/me/account", method: "PATCH", body }),
+    {
+      successMessage: "Email change cancelled",
+      onSuccess: (data) => {
+        if (data) qc.setQueryData(queryKeys.me, data);
+      },
+    },
+  );
+}
+
 /** `DELETE /me` (audit 2026-11 F5). No success toast: the caller leaves for
  *  the sign-in page, whose "account deleted" notice is the confirmation.
  *  Errors toast as usual and the dialog also shows them inline. */
