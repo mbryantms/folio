@@ -129,8 +129,21 @@ function zipStored(entries) {
   return Buffer.concat([...locals, cd, eocd]);
 }
 
-/** ComicInfo.xml for one issue (only the fields the scanner needs). */
-function comicInfo({ series, volume, year, number, publisher, writer, genre }) {
+/** ComicInfo.xml for one issue (only the fields the scanner needs).
+ *  `extra` adds optional elements (name → text) after `<Genre>`. */
+function comicInfo({
+  series,
+  volume,
+  year,
+  number,
+  publisher,
+  writer,
+  genre,
+  extra = {},
+}) {
+  const extraXml = Object.entries(extra)
+    .map(([name, value]) => `\n  <${name}>${value}</${name}>`)
+    .join("");
   return Buffer.from(
     `<?xml version="1.0" encoding="utf-8"?>
 <ComicInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
@@ -141,7 +154,7 @@ function comicInfo({ series, volume, year, number, publisher, writer, genre }) {
   <Month>1</Month>
   <Publisher>${publisher}</Publisher>
   <Writer>${writer}</Writer>
-  <Genre>${genre}</Genre>
+  <Genre>${genre}</Genre>${extraXml}
   <LanguageISO>en</LanguageISO>
   <PageCount>2</PageCount>
 </ComicInfo>
@@ -208,6 +221,16 @@ for (const [volume, year, colours] of [
         publisher: "Folio Test Comics",
         writer: "Ada Fixture",
         genre: "Science Fiction",
+        // Entity landing pages for the a11y sweep (volume 1 only).
+        extra:
+          volume === 1
+            ? {
+                Characters: "Captain Fixture",
+                Teams: "Fixture League",
+                Locations: "Fixture City",
+                StoryArc: "Fixture Saga",
+              }
+            : {},
       }),
     ],
     ["page-001.png", png(100, 150, colours[0])],

@@ -783,7 +783,7 @@ pub async fn random_picks(State(app): State<AppState>, user: CurrentUser) -> Res
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let items = crate::api::series::hydrate_series(&app, rows, user.id).await;
+    let items = crate::api::series::hydrate_series(&app, rows, user.id, &acl).await;
     Json(RandomPicksView { seed_date, items }).into_response()
 }
 
@@ -2354,11 +2354,12 @@ async fn hydrate_dismissals(
             .await
             .map_err(internal)?
     };
-    let series_views: HashMap<String, SeriesView> = hydrate_series(app, series_models, user_id)
-        .await
-        .into_iter()
-        .map(|v| (v.id.clone(), v))
-        .collect();
+    let series_views: HashMap<String, SeriesView> =
+        hydrate_series(app, series_models, user_id, acl)
+            .await
+            .into_iter()
+            .map(|v| (v.id.clone(), v))
+            .collect();
 
     // CBL lists: own or global, plus the saved view that links them.
     let cbl_ids = uuids_of(DISMISS_KIND_CBL);

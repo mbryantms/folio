@@ -791,7 +791,6 @@ function SaveStep({
       // detail page Settings tab.
       void schedule;
       if (!view) throw new Error("Saved-view create returned empty");
-      toast.success("View created");
       onSaved(view.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create view");

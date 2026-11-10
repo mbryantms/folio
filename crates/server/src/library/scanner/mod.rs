@@ -241,6 +241,9 @@ struct PlannedFolder {
     /// non-empty the folder's walk is *incomplete*: it is processed, its
     /// files are seen, but it never authorises removal of the unseen ones.
     unreadable: Vec<enumerate::UnreadableFolder>,
+    /// Symbolic links the walk met and did not follow; each is reported as
+    /// `SymlinkSkipped`.
+    symlinks: Vec<PathBuf>,
     known_series_id: Option<Uuid>,
     skipped_unchanged: bool,
     /// Set when the series was discovered beneath a publisher container
@@ -467,23 +470,35 @@ pub async fn scan_series_folder(
     }
     let root_path = lib.root_path.clone();
     let folder_pb = folder.to_path_buf();
-    let canonicalized: anyhow::Result<(std::path::PathBuf, std::path::PathBuf)> =
-        tokio::task::spawn_blocking(move || {
-            let root_canon = std::fs::canonicalize(&root_path)
-                .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
-            let folder_canon = std::fs::canonicalize(&folder_pb)
-                .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
-            Ok((root_canon, folder_canon))
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("canonicalize task failed: {e}"))?;
-    let (root_canon, folder_canon) = canonicalized?;
-    if !folder_canon.starts_with(&root_canon) {
-        anyhow::bail!(
-            "series folder is not inside the library root: {}",
-            folder_canon.display()
-        );
-    }
+    let checked: anyhow::Result<()> = tokio::task::spawn_blocking(move || {
+        let root_canon = std::fs::canonicalize(&root_path)
+            .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
+        let folder_canon = std::fs::canonicalize(&folder_pb)
+            .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
+        // Links below the root are never followed: the folder must be
+        // the root (its own links resolved) plus the same names, so no
+        // folder between the root and it, nor it, is a link.
+        let rel = folder_pb
+            .strip_prefix(&root_path)
+            .or_else(|_| folder_pb.strip_prefix(&root_canon))
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "series folder is not inside the library root: {}",
+                    folder_pb.display()
+                )
+            })?;
+        if !folder_canon.starts_with(&root_canon) || folder_canon != root_canon.join(rel) {
+            anyhow::bail!(
+                "series folder is not inside the library root, or is reached through \
+                     a symbolic link: {}",
+                folder_pb.display()
+            );
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("canonicalize task failed: {e}"))?;
+    checked?;
 
     let (scan_id, batch_id) = open_scan_run(
         state,
@@ -521,7 +536,10 @@ pub async fn scan_series_folder(
         &lib,
         scan_id,
         series_id,
-        &folder_canon,
+        // The stored spelling: with no link below the root it names the same
+        // folder as its canonical path, and it is the spelling the issue
+        // rows were written with (a root that is itself a link differs).
+        folder,
         &mut stats,
         &mut health,
         &mut events,
@@ -1263,6 +1281,39 @@ async fn known_series_by_folder(
         .collect())
 }
 
+/// Paths named by the library's open (unresolved) `SymlinkSkipped`
+/// findings.
+async fn open_symlink_findings(
+    db: &sea_orm::DatabaseConnection,
+    library_id: Uuid,
+) -> anyhow::Result<HashSet<String>> {
+    use entity::library_health_issue as lhi;
+    let payloads: Vec<serde_json::Value> = lhi::Entity::find()
+        .select_only()
+        .column(lhi::Column::Payload)
+        .filter(lhi::Column::LibraryId.eq(library_id))
+        .filter(lhi::Column::Kind.eq(lhi::HealthIssueKind::SymlinkSkipped))
+        .filter(lhi::Column::ResolvedAt.is_null())
+        .into_tuple()
+        .all(db)
+        .await?;
+    Ok(payloads
+        .iter()
+        .filter_map(|p| p.get("data")?.get("path")?.as_str().map(str::to_owned))
+        .collect())
+}
+
+/// One INFO line and one `SymlinkSkipped` finding per symbolic link the
+/// scan met and did not follow.
+fn report_skipped_symlink(library_id: Uuid, path: PathBuf, health: &mut HealthCollector) {
+    tracing::info!(
+        %library_id,
+        path = %path.display(),
+        "scanner: symbolic link skipped (links are never followed)"
+    );
+    health.emit(crate::library::health::IssueKind::SymlinkSkipped { path });
+}
+
 async fn list_archives_for_plan(
     folder: &std::path::Path,
     ignore: &crate::library::ignore::IgnoreRules,
@@ -1330,6 +1381,11 @@ async fn build_library_scan_plan(
     // walk finds one of them is processed instead.
     let removal_paths = crate::library::reconcile::series_removal_paths(&state.db, lib.id).await?;
     let removal_paths = &removal_paths;
+    // Paths of the library's open `SymlinkSkipped` findings, one query per
+    // scan: the unchanged-folder skip below is turned off for a folder whose
+    // walk meets a link not reported yet.
+    let reported_links = open_symlink_findings(&state.db, lib.id).await?;
+    let reported_links = &reported_links;
     // Post-audit T1.2: folders in flight per scan are their own knob —
     // queue concurrency (`scan_worker_count`) × per-scan fan-out used to
     // multiply into up to n² open transactions.
@@ -1368,7 +1424,17 @@ async fn build_library_scan_plan(
                         })
                         .await
                         .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))?;
+                        // A link the walk met that no open `SymlinkSkipped`
+                        // finding names yet turns the skip off once, so rows
+                        // indexed through it are reconciled and the finding
+                        // recorded; with the finding open, the folder is
+                        // skipped again as usual.
+                        let new_link = walk
+                            .symlinks
+                            .iter()
+                            .any(|l| !reported_links.contains(l.to_string_lossy().as_ref()));
                         skipped_unchanged = !walk.changed_since
+                            && !new_link
                             && !walk_needs_processing(&walk.archives, removed, paths);
                         walk
                     } else {
@@ -1385,6 +1451,7 @@ async fn build_library_scan_plan(
                     path: folder,
                     archives: walk.archives,
                     unreadable: walk.unreadable,
+                    symlinks: walk.symlinks,
                     known_series_id,
                     skipped_unchanged,
                     publisher_hint,
@@ -1417,6 +1484,7 @@ async fn build_series_scan_plan(
             path: folder.to_path_buf(),
             archives: walk.archives,
             unreadable: walk.unreadable,
+            symlinks: walk.symlinks,
             known_series_id: Some(series_id),
             skipped_unchanged: false,
             publisher_hint: None,
@@ -1638,6 +1706,61 @@ async fn run_issue_phase(
     )
     .await;
     let path = PathBuf::from(&row.file_path);
+    // Links below the root are never followed, here either: a stored path
+    // that is (or runs through) a link is not ingested, and the row is left
+    // for the next full scan to reconcile. Missing / I/O errors fall through
+    // to the checks below, which already handle them.
+    let root = PathBuf::from(&lib.root_path);
+    let check_path = path.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        let canon = std::fs::canonicalize(&root).ok();
+        crate::library::no_follow::open_below_roots(&root, canon.as_deref(), &check_path).map(drop)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("issue path check task failed: {e}"))?;
+    let refused = match checked {
+        Err(crate::library::no_follow::Refusal::Symlink) => {
+            // Log only. The `SymlinkSkipped` finding is opened by the
+            // folder walk of a library or series scan, which also
+            // reconciles the row. Opening it here would make that walk
+            // treat the link as already reported and, on an unchanged
+            // folder, skip the reconcile.
+            tracing::info!(
+                library_id = %lib.id,
+                path = %path.display(),
+                "scanner: issue rescan skipped a symbolic link (links are never followed)"
+            );
+            true
+        }
+        Err(
+            reason @ (crate::library::no_follow::Refusal::NotRegular
+            | crate::library::no_follow::Refusal::OutsideRoot),
+        ) => {
+            health.emit(crate::library::health::IssueKind::UnreadableFile {
+                path: path.clone(),
+                error: reason.to_string(),
+            });
+            true
+        }
+        _ => false,
+    };
+    if refused {
+        stats.files_skipped += 1;
+        progress.completed = 1;
+        progress.health_issues = health.count() as u64;
+        emit_progress(
+            state,
+            lib.id,
+            scan_id,
+            &progress,
+            "complete",
+            "file",
+            Some(row.file_path.clone()),
+            stats,
+        )
+        .await;
+        return Ok(());
+    }
     // Post-audit T1.1: only `NotFound` is "the file is gone". A permission
     // or mount error leaves the file unknown — report it, don't remove it.
     if let Err(e) = std::fs::metadata(&path)
@@ -1956,6 +2079,11 @@ async fn run_phases(
             skipped_archives: ambiguous.skipped_archives.clone(),
             skipped_archive_count: ambiguous.skipped_archive_count,
         });
+    }
+    // Links are never followed: a series reached only through one is not in
+    // `present_folders`, so the reconcile below reports it missing.
+    for link in &layout.symlinks {
+        report_skipped_symlink(lib.id, link.clone(), health);
     }
     // Post-audit T1.1: an unreadable scope is unknown, not absent. Raise a
     // health row per folder and keep every series at or under it out of
@@ -2455,6 +2583,9 @@ async fn process_planned_folder(
             error: u.error,
         });
     }
+    for link in planned.symlinks {
+        report_skipped_symlink(lib.id, link, health);
+    }
 
     // Read series.json up-front so the early-skip branches can still
     // surface it to the caller. The sidecar is the authoritative
@@ -2930,10 +3061,14 @@ async fn process_planned_folder(
     // per library by the broadcaster (spec §14.3); the cover lookup (one
     // indexed query) only runs for an event that will go out.
     if state.events.series_updated_due(lib.id, series_created) {
-        let cover_url = crate::api::series::series_cover_issue_ids(&state.db, &[series_id])
-            .await
-            .remove(&series_id)
-            .map(|issue_id| format!("/issues/{issue_id}/pages/0/thumb"));
+        let cover_url = crate::api::series::series_cover_issue_ids(
+            &state.db,
+            &[series_id],
+            &crate::library::access::VisibleLibraries::unrestricted(),
+        )
+        .await
+        .remove(&series_id)
+        .map(|issue_id| format!("/issues/{issue_id}/pages/0/thumb"));
         state.events.emit(ScanEvent::SeriesUpdated {
             library_id: lib.id,
             series_id,

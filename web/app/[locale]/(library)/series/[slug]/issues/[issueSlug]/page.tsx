@@ -94,6 +94,7 @@ import { InlineNotesEditor } from "./InlineNotesEditor";
 import { IssueActions } from "./IssueActions";
 import { IssueReadLabel } from "./IssueReadLabel";
 import { IssueMetadataTab } from "./IssueMetadataTab";
+import { apiPath, routeParam } from "@/lib/api/path";
 
 export default async function IssuePage({
   params,
@@ -102,7 +103,9 @@ export default async function IssuePage({
   params: Promise<{ slug: string; issueSlug: string }>;
   searchParams: Promise<{ cbl?: string }>;
 }) {
-  const { slug: seriesSlug, issueSlug } = await params;
+  const routeParams = await params;
+  const seriesSlug = routeParam(routeParams.slug);
+  const issueSlug = routeParam(routeParams.issueSlug);
   // Propagate the CBL reading-context onto the primary "Read" CTA so
   // a user arriving here via a CBL link keeps their next-up resolver
   // tied to the list when they hit Read.
@@ -111,7 +114,7 @@ export default async function IssuePage({
   let issue: IssueDetailView;
   try {
     issue = await apiGet<IssueDetailView>(
-      `/series/${seriesSlug}/issues/${issueSlug}`,
+      apiPath`/series/${seriesSlug}/issues/${issueSlug}`,
     );
   } catch (e) {
     if (e instanceof ApiError) {
@@ -139,29 +142,29 @@ export default async function IssuePage({
     appearances,
     hasNotes,
   ] = await Promise.all([
-    apiGet<SeriesView>(`/series/${seriesSlug}`).catch(() => null),
+    apiGet<SeriesView>(apiPath`/series/${seriesSlug}`).catch(() => null),
     // Only this issue's record (post-audit T2.2) — the unfiltered list
     // walked the user's whole history to `.find()` one row.
-    apiGet<{ records: ProgressLike[] }>(
-      `/progress?issue_id=${encodeURIComponent(issue.id)}`,
-    )
+    apiGet<{ records: ProgressLike[] }>(apiPath`/progress?issue_id=${issue.id}`)
       .then(
         (delta) => delta.records.find((r) => r.issue_id === issue.id) ?? null,
       )
       .catch(() => null),
     apiGet<ReadingStatsView>(
-      `/me/reading-stats?range=all&issue_id=${encodeURIComponent(issue.id)}`,
+      apiPath`/me/reading-stats?range=all&issue_id=${issue.id}`,
     ).catch(() => null),
     apiGet<NextInSeriesView>(
-      `/series/${seriesSlug}/issues/${issueSlug}/next?limit=5`,
+      apiPath`/series/${seriesSlug}/issues/${issueSlug}/next?limit=5`,
     )
       .then((next) => next.items)
       .catch(() => [] as IssueSummaryView[]),
-    apiGet<PrevInSeriesView>(`/series/${seriesSlug}/issues/${issueSlug}/prev`)
+    apiGet<PrevInSeriesView>(
+      apiPath`/series/${seriesSlug}/issues/${issueSlug}/prev`,
+    )
       .then((prev) => prev.item ?? null)
       .catch(() => null),
     apiGet<ExternalIdsListResp>(
-      `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+      apiPath`/series/${seriesSlug}/issues/${issueSlug}/external-ids`,
     )
       .then((externalIds) => externalIds.rows)
       .catch(() => [] as ExternalIdRow[]),
@@ -169,13 +172,11 @@ export default async function IssuePage({
     // when this issue is in none of the user's lists/collections/arcs, and
     // reused as the tab's initial data (no refetch flash). Non-fatal.
     apiGet<AppearancesView>(
-      `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/appearances`,
+      apiPath`/series/${seriesSlug}/issues/${issueSlug}/appearances`,
     ).catch(() => null),
     // "Your notes" tab only shows when the caller has a marker on this
     // issue — a one-row probe of the same list the tab renders.
-    apiGet<MarkerListView>(
-      `/me/markers?issue_id=${encodeURIComponent(issue.id)}&limit=1`,
-    )
+    apiGet<MarkerListView>(apiPath`/me/markers?issue_id=${issue.id}&limit=1`)
       .then((page) => page.items.length > 0)
       .catch(() => false),
   ]);

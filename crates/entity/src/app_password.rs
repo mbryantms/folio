@@ -21,6 +21,12 @@ pub struct Model {
     /// Enforced by a CHECK constraint at the DB level; defaults to
     /// `read` so pre-M7 tokens keep their existing capability.
     pub scope: String,
+    /// SHA-256 of the plaintext token, the key the extractor looks a
+    /// presented token up by (unique when set). NULL only on rows written
+    /// before the column existed; the extractor fills it the first time
+    /// such a token verifies.
+    #[sea_orm(nullable)]
+    pub lookup_digest: Option<Vec<u8>>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

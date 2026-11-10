@@ -2,14 +2,35 @@
 //! scripts, and other API consumers that can't go through the cookie
 //! flow (M7, audit M-14).
 //!
-//! Plaintext format: `app_<base32-no-padding(32 bytes)>` — 64 ASCII chars
+//! Plaintext format: `app_<base32-no-padding(32 bytes)>` — 56 ASCII chars
 //! total, 32 bytes of entropy. The `app_` prefix lets the extractor
 //! distinguish app passwords from JWT access tokens without a DB hit
 //! (JWTs start with `eyJ`).
 //!
-//! Storage: argon2id under the same pepper as user passwords. Bearer
-//! auth scans the user's active rows and tries each — cardinality is
-//! tiny (≤ handful per user) so the per-request cost is bounded.
+//! Storage: argon2id under the same pepper as user passwords, plus a
+//! `lookup_digest` (SHA-256 of the plaintext, [`lookup_digest`]) that
+//! indexes a token to its one row.
+//!
+//! Verification ([`verify`]), in order:
+//! 1. **Cache**: a token this process already verified skips argon2 but
+//!    re-reads its row, so revocation and scope stay authoritative.
+//! 2. **Refusal cache**: a token refused outright within the last
+//!    [`REFUSAL_TTL`] is refused again with no query, no hashing and no
+//!    new counted failure ([`AppPasswordRefusals`]).
+//! 3. **Lockout**: the client IP's app-password lockout
+//!    ([`super::failed_auth::IpCounter::AppPassword`], a counter separate
+//!    from sign-in's) is checked before any lookup or hashing.
+//! 4. **Digest**: one indexed lookup by digest, then one argon2 check of
+//!    that row (defence in depth; it also drives the pepper rehash).
+//! 5. **Legacy**: only when no row has the digest, the newest
+//!    [`MAX_LEGACY_CANDIDATES`] active rows written before the digest
+//!    column existed (`lookup_digest IS NULL`) are tried; a match stores
+//!    its digest, so that token never takes this path again. The miss is
+//!    charged to the client IP *before* this scan starts.
+//!
+//! Every argon2 verification runs on the blocking pool behind a small
+//! global gate ([`AppPasswordGate`], [`VERIFY_PERMITS`]); a request that
+//! can't get a permit within [`VERIFY_PERMIT_WAIT`] is answered 503.
 //!
 //! Soft-delete only — `revoked_at` flips the row to inactive without
 //! losing audit history.
@@ -17,15 +38,25 @@
 use chrono::Utc;
 use lru::LruCache;
 use rand::Rng;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::sea_query::{Expr, NullOrdering};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set,
+};
 use sha2::{Digest, Sha256};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
 use entity::app_password::{self, ActiveModel as AppPasswordAM, Entity as AppPasswordEntity};
 
+use super::failed_auth::IpCounter;
 use super::password;
+use crate::middleware::RequestContext;
+use crate::state::AppState;
 
 /// Token prefix used to distinguish app-password Bearer tokens from JWTs
 /// at extractor time. A JWT can never start with this string because
@@ -47,6 +78,33 @@ pub fn is_valid_scope(s: &str) -> bool {
 /// Length of the random component (in bytes, pre-base32).
 const SECRET_BYTES: usize = 32;
 
+/// How many rows without a lookup digest one request may try. Bounds the
+/// argon2 work of a request that matches no digest while such rows remain.
+/// Candidates are the most recently used first, so tokens in active use
+/// are verified (and given their digest) first; a legacy token that has
+/// gone unused while more than this many newer legacy tokens exist is
+/// never reached and has to be re-created.
+pub const MAX_LEGACY_CANDIDATES: u64 = 20;
+
+/// Global cap on concurrent app-password argon2 verifications.
+pub const VERIFY_PERMITS: usize = 2;
+
+/// How long a request waits for a verification permit before it is
+/// answered 503 (overridable per gate for tests, [`AppPasswordGate::set_permit_wait`]).
+pub const VERIFY_PERMIT_WAIT: Duration = Duration::from_secs(2);
+
+/// `Retry-After` (seconds) on the 503 a request gets when no permit freed up.
+pub const BUSY_RETRY_AFTER_SECS: u64 = 1;
+
+/// How long a refused token stays in [`AppPasswordRefusals`].
+pub const REFUSAL_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// Bound on [`AppPasswordRefusals`]; junk tokens just churn it.
+pub const REFUSAL_CACHE_CAP: usize = 1024;
+
+/// Gauge: active app passwords that still have no lookup digest.
+pub const LEGACY_GAUGE: &str = "folio_auth_app_password_legacy_remaining";
+
 /// True if the token has the app-password shape.
 pub fn looks_like_app_password(token: &str) -> bool {
     token.starts_with(PREFIX)
@@ -64,9 +122,25 @@ fn random_plaintext() -> String {
     format!("{PREFIX}{body}")
 }
 
+/// The token's lookup key: SHA-256 of the plaintext. Unkeyed on purpose.
+/// The token is 256 random bits, so the digest can't be inverted or
+/// guessed, and a digest that doesn't involve the pepper keeps working
+/// across a pepper rotation (a pepper-keyed digest would orphan every row
+/// written under the old pepper). The argon2 hash stays peppered.
+pub fn lookup_digest(plaintext: &str) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(plaintext.as_bytes());
+    h.finalize().into()
+}
+
 /// Create a new app-password for `user_id` with the given `scope`.
 /// Returns the new row's id and the plaintext — the plaintext must be
 /// displayed to the user immediately and is never retrievable again.
+///
+/// The row stores the token's [`lookup_digest`]. The digest column is
+/// unique, so a colliding digest (two tokens with the same SHA-256) fails
+/// the insert instead of producing a second row that the lookup could
+/// confuse with the first.
 pub async fn issue(
     db: &sea_orm::DatabaseConnection,
     user_id: Uuid,
@@ -91,9 +165,27 @@ pub async fn issue(
         created_at: Set(now),
         revoked_at: Set(None),
         scope: Set(scope.to_owned()),
+        lookup_digest: Set(Some(lookup_digest(&plaintext).to_vec())),
     };
     am.insert(db).await?;
+    refresh_legacy_gauge(db).await;
     Ok((id, plaintext))
+}
+
+/// Count the active rows without a lookup digest and publish it as
+/// [`LEGACY_GAUGE`]. Called at startup and when a row is created,
+/// revoked or given its digest, never per request. Rows removed by a user
+/// deletion are picked up at the next of those.
+pub async fn refresh_legacy_gauge(db: &DatabaseConnection) {
+    match AppPasswordEntity::find()
+        .filter(app_password::Column::RevokedAt.is_null())
+        .filter(app_password::Column::LookupDigest.is_null())
+        .count(db)
+        .await
+    {
+        Ok(n) => metrics::gauge!(LEGACY_GAUGE).set(n as f64),
+        Err(e) => tracing::warn!(error = %e, "app password legacy count failed"),
+    }
 }
 
 /// Resolved app-password — the parts the extractor needs after a
@@ -105,26 +197,36 @@ pub struct ResolvedAppPassword {
     pub scope: String,
 }
 
+/// Why [`verify`] did not resolve a token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyError {
+    /// No active row matches (or the lookup failed).
+    Invalid,
+    /// The client IP is in app-password lockout; nothing was looked up.
+    /// Carries the remaining lockout in seconds.
+    LockedOut(u64),
+    /// No verification permit freed up within the gate's wait.
+    Busy,
+}
+
 /// Don't re-bump `last_used_at` more than once per this interval — every
 /// authenticated OPDS request would otherwise be a row UPDATE (PERF-1).
 const LAST_USED_DEBOUNCE_SECS: i64 = 60;
 
-/// Process-wide cache mapping `SHA-256(plaintext)` → the app-password row id,
-/// so a repeat Bearer/Basic auth skips the argon2 scan over every active token
-/// (PERF-1). argon2id verification is ~10-30 ms on x86 and 100-300 ms on a Pi,
-/// and the old path ran it once per active token per request on the async
-/// executor — the dominant OPDS hot-path cost.
+/// Process-wide cache mapping the token's [`lookup_digest`] to its row id,
+/// so a repeat Bearer/Basic auth skips argon2 (PERF-1): argon2id is
+/// ~10-60 ms per verification and a reader app sends a request per page.
 ///
 /// Keyed by a hash of the token, never the plaintext, so secrets don't sit in a
 /// long-lived map. Entries are only ever written after a successful argon2
-/// match, so the cache can't be poisoned. Revocation stays immediate: a cache
-/// hit still re-reads the row by id and honors `revoked_at` + current `scope`.
+/// match, so the cache can't be poisoned and holds no negative results.
+/// Revocation stays immediate: a cache hit still re-reads the row by id and
+/// honors `revoked_at` + current `scope`.
 #[derive(Clone)]
 pub struct AppPasswordCache(Arc<Mutex<LruCache<[u8; 32], Uuid>>>);
 
 impl AppPasswordCache {
-    /// Bounded so a token-spray (many distinct bad tokens never reach the
-    /// cache anyway, but valid-then-revoked churn) can't grow it without limit.
+    /// Bounded so valid-then-revoked churn can't grow it without limit.
     /// 1024 live tokens is far beyond any self-host's real fleet.
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(LruCache::new(
@@ -150,6 +252,12 @@ impl AppPasswordCache {
     fn invalidate(&self, key: &[u8; 32]) {
         self.0.lock().expect("app-password cache poisoned").pop(key);
     }
+
+    /// Forget every entry, so the next request of each token verifies again
+    /// (test hook: exercises the lookup paths behind the cache).
+    pub fn clear(&self) {
+        self.0.lock().expect("app-password cache poisoned").clear();
+    }
 }
 
 impl Default for AppPasswordCache {
@@ -158,120 +266,354 @@ impl Default for AppPasswordCache {
     }
 }
 
-fn token_hash(plaintext: &str) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(plaintext.as_bytes());
-    h.finalize().into()
+/// Process-wide, bounded cache of token digests that were refused outright:
+/// no row has the digest and the legacy scan finished without a match (or
+/// there were no legacy rows). A hit is answered as a miss with no query,
+/// no hashing and no new counted failure, so a reader app that keeps
+/// polling with a stale token is charged once per [`REFUSAL_TTL`] instead
+/// of once per request.
+///
+/// An entry can't hide a token that becomes valid: a newly issued token is
+/// a fresh random value, so its digest can't already be here. A legacy row
+/// can become reachable later when the [`MAX_LEGACY_CANDIDATES`] window
+/// shifts; the short lifetime covers that. Never written on a busy
+/// answer, a lockout refusal or a scan that was cut short.
+#[derive(Clone)]
+pub struct AppPasswordRefusals(Arc<Mutex<LruCache<[u8; 32], std::time::Instant>>>);
+
+impl AppPasswordRefusals {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(LruCache::new(
+            NonZeroUsize::new(REFUSAL_CACHE_CAP).expect("nonzero"),
+        ))))
+    }
+
+    fn contains(&self, key: &[u8; 32]) -> bool {
+        let mut map = self.0.lock().expect("app-password refusals poisoned");
+        match map.get(key) {
+            Some(at) if at.elapsed() < REFUSAL_TTL => true,
+            Some(_) => {
+                map.pop(key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn put(&self, key: [u8; 32]) {
+        self.0
+            .lock()
+            .expect("app-password refusals poisoned")
+            .put(key, std::time::Instant::now());
+    }
+
+    /// Forget every entry (test hook).
+    pub fn clear(&self) {
+        self.0
+            .lock()
+            .expect("app-password refusals poisoned")
+            .clear();
+    }
 }
 
-/// Resolve a plaintext app-password to its owning user + scope.
-/// Returns `None` for malformed prefix, missing user, or no matching
-/// active row. Updates `last_used_at` on success (debounced).
-///
-/// Fast path: a previously-verified token hits the `cache` and skips argon2 —
-/// but still re-reads its row so revocation and scope stay authoritative. Slow
-/// path: scan active rows and argon2 each, on a blocking thread so the per-row
-/// hashing never stalls the async runtime.
-pub async fn verify(
-    db: &DatabaseConnection,
-    cache: &AppPasswordCache,
-    plaintext: &str,
-    peppers: password::Peppers<'_>,
-    cost: password::HashCost,
-) -> Option<ResolvedAppPassword> {
-    if !looks_like_app_password(plaintext) {
-        return None;
+impl Default for AppPasswordRefusals {
+    fn default() -> Self {
+        Self::new()
     }
-    let key = token_hash(plaintext);
+}
+
+/// Global gate around app-password argon2 verification: [`VERIFY_PERMITS`]
+/// concurrent verifications, each on the blocking pool, and a bounded wait
+/// for a permit. Also counts the verifications it ran.
+#[derive(Clone)]
+pub struct AppPasswordGate(Arc<GateInner>);
+
+struct GateInner {
+    permits: Arc<Semaphore>,
+    wait_ms: AtomicU64,
+    verifications: AtomicU64,
+}
+
+impl AppPasswordGate {
+    pub fn new() -> Self {
+        Self(Arc::new(GateInner {
+            permits: Arc::new(Semaphore::new(VERIFY_PERMITS)),
+            wait_ms: AtomicU64::new(VERIFY_PERMIT_WAIT.as_millis() as u64),
+            verifications: AtomicU64::new(0),
+        }))
+    }
+
+    /// How many argon2 verifications this gate has run (one per candidate
+    /// row tried, whether or not it matched).
+    pub fn verifications(&self) -> u64 {
+        self.0.verifications.load(Ordering::Relaxed)
+    }
+
+    /// Change the permit wait. Tests shorten it; production keeps
+    /// [`VERIFY_PERMIT_WAIT`].
+    pub fn set_permit_wait(&self, wait: Duration) {
+        self.0
+            .wait_ms
+            .store(wait.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// Take every permit (test hook: makes the next verification wait out
+    /// the permit wait and answer busy). Dropping the guard frees them.
+    pub async fn hold_all_permits(&self) -> OwnedSemaphorePermit {
+        self.0
+            .permits
+            .clone()
+            .acquire_many_owned(VERIFY_PERMITS as u32)
+            .await
+            .expect("gate semaphore never closes")
+    }
+
+    /// Verify `plaintext` against one stored hash on the blocking pool,
+    /// holding a permit. On a previous-pepper match also returns the
+    /// plaintext rehashed under the current pepper. `Err(())` = no permit
+    /// within the wait, or the hashing task did not finish; both answer
+    /// busy.
+    async fn verify_one(
+        &self,
+        stored: String,
+        plaintext: &str,
+        peppers: password::Peppers<'_>,
+        cost: password::HashCost,
+    ) -> Result<(password::Verified, Option<String>), ()> {
+        let wait = Duration::from_millis(self.0.wait_ms.load(Ordering::Relaxed));
+        let permit = match tokio::time::timeout(wait, self.0.permits.clone().acquire_owned()).await
+        {
+            Ok(Ok(p)) => p,
+            _ => return Err(()),
+        };
+        self.0.verifications.fetch_add(1, Ordering::Relaxed);
+        let plaintext = zeroize::Zeroizing::new(plaintext.to_owned());
+        let current = zeroize::Zeroizing::new(peppers.current.to_vec());
+        let previous = peppers
+            .previous
+            .map(|p| zeroize::Zeroizing::new(p.to_vec()));
+        let joined = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let peppers = password::Peppers {
+                current: &current,
+                previous: previous.as_ref().map(|p| p.as_slice()),
+            };
+            let verified = password::verify_rotating(&stored, &plaintext, peppers)
+                .unwrap_or(password::Verified::No);
+            // L-1 (WP-6.3): matched under the previous pepper → rehash under
+            // the current one while we still hold the plaintext.
+            let rehash = if verified == password::Verified::Previous {
+                password::hash(&plaintext, peppers.current, cost).ok()
+            } else {
+                None
+            };
+            (verified, rehash)
+        })
+        .await;
+        // A panicked or cancelled hash is not a verdict: answering "no"
+        // would let a completed scan record a valid token as refused.
+        joined.map_err(|_| ())
+    }
+}
+
+impl Default for AppPasswordGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Resolve a plaintext app-password to its owning user + scope (module docs
+/// for the order of checks). Updates `last_used_at` on success (debounced).
+/// `ctx` supplies the client IP for the failed-auth lockout.
+pub async fn verify(
+    app: &AppState,
+    ctx: Option<&RequestContext>,
+    plaintext: &str,
+) -> Result<ResolvedAppPassword, VerifyError> {
+    if !looks_like_app_password(plaintext) {
+        return Err(VerifyError::Invalid);
+    }
+    let db = &app.db;
+    let cache = &app.app_password_cache;
+    let digest = lookup_digest(plaintext);
 
     // Fast path: we've argon2-verified this exact token before. Re-read the row
     // by id so `revoked_at` / `scope` stay authoritative — only the argon2 work
     // is skipped, not the revocation check.
-    if let Some(id) = cache.get(&key) {
-        match AppPasswordEntity::find_by_id(id).one(db).await {
-            Ok(Some(row)) if row.revoked_at.is_none() => {
-                let resolved = ResolvedAppPassword {
-                    user_id: row.user_id,
-                    app_password_id: row.id,
-                    scope: row.scope.clone(),
-                };
-                touch_last_used(db, row).await;
-                return Some(resolved);
-            }
-            // Revoked or deleted — drop the stale entry. (A revoked token would
-            // also fail the scan below, so return None rather than re-scan.)
+    if let Some(id) = cache.get(&digest) {
+        return match AppPasswordEntity::find_by_id(id).one(db).await {
+            Ok(Some(row)) if row.revoked_at.is_none() => Ok(resolve(db, row).await),
+            // Revoked or deleted — drop the stale entry.
             Ok(_) => {
-                cache.invalidate(&key);
-                return None;
+                cache.invalidate(&digest);
+                Err(VerifyError::Invalid)
             }
             // Transient DB error — leave the entry and fail this request.
-            Err(_) => return None,
-        }
+            Err(_) => Err(VerifyError::Invalid),
+        };
     }
 
-    // Slow path: scan active rows. The partial index keeps this O(active-tokens)
-    // rather than O(all-tokens); argon2 runs on a blocking thread.
-    let rows = AppPasswordEntity::find()
+    // A token refused outright a moment ago: same answer, no query, no
+    // hashing, not counted again.
+    let refusals = &app.app_password_refusals;
+    if refusals.contains(&digest) {
+        return Err(VerifyError::Invalid);
+    }
+
+    // Lockout before any lookup or hashing, on the app-password counter
+    // (sign-in has its own). A refused request is not counted, as at sign-in.
+    let ip = ctx.and_then(|c| c.client_ip);
+    if let Some(ip) = ip
+        && let Ok(Some(retry)) =
+            super::failed_auth::check_ip_lockout_for(app, IpCounter::AppPassword, ip).await
+    {
+        return Err(VerifyError::LockedOut(retry));
+    }
+
+    let peppers = app.secrets.peppers();
+    let cost = app.cfg().password_hash_cost;
+    let gate = &app.app_password_gate;
+
+    // Digest path: one indexed lookup, one argon2 check.
+    let by_digest = match AppPasswordEntity::find()
+        .filter(app_password::Column::LookupDigest.eq(digest.to_vec()))
+        .one(db)
+        .await
+    {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::warn!(error = %e, "app password digest lookup failed");
+            return Err(VerifyError::Invalid);
+        }
+    };
+    if let Some(row) = by_digest {
+        // A revoked token found by its digest is a real token, not a
+        // guess: refused without hashing and without counting.
+        if row.revoked_at.is_some() {
+            return Err(VerifyError::Invalid);
+        }
+        let (verified, rehash) = gate
+            .verify_one(row.hash.clone(), plaintext, peppers, cost)
+            .await
+            .map_err(|()| VerifyError::Busy)?;
+        if !verified.ok() {
+            // Practically impossible (the digest matched); still counted.
+            record_miss(app, ip).await;
+            return Err(VerifyError::Invalid);
+        }
+        store_rehash(db, row.id, rehash).await;
+        cache.put(digest, row.id);
+        return Ok(resolve(db, row).await);
+    }
+
+    // Legacy path: rows written before the digest column, newest use first,
+    // at most MAX_LEGACY_CANDIDATES of them.
+    let legacy = match AppPasswordEntity::find()
         .filter(app_password::Column::RevokedAt.is_null())
+        .filter(app_password::Column::LookupDigest.is_null())
+        .order_by_with_nulls(
+            app_password::Column::LastUsedAt,
+            Order::Desc,
+            NullOrdering::Last,
+        )
+        .order_by_desc(app_password::Column::CreatedAt)
+        .limit(MAX_LEGACY_CANDIDATES)
         .all(db)
         .await
-        .ok()?;
-    let candidates: Vec<(Uuid, String)> = rows.iter().map(|r| (r.id, r.hash.clone())).collect();
-    let plaintext_owned = plaintext.to_owned();
-    let current_owned = zeroize::Zeroizing::new(peppers.current.to_vec());
-    let previous_owned = peppers
-        .previous
-        .map(|p| zeroize::Zeroizing::new(p.to_vec()));
-    let (matched_id, rehash) = tokio::task::spawn_blocking(move || {
-        let peppers = password::Peppers {
-            current: &current_owned,
-            previous: previous_owned.as_ref().map(|p| p.as_slice()),
-        };
-        let (id, verified) = candidates.into_iter().find_map(|(id, hash)| {
-            match password::verify_rotating(&hash, &plaintext_owned, peppers) {
-                Ok(v) if v.ok() => Some((id, v)),
-                _ => None,
-            }
-        })?;
-        // L-1 (WP-6.3): matched under the previous pepper → rehash under the
-        // current one while we still hold the plaintext.
-        let rehash = if verified == password::Verified::Previous {
-            password::hash(&plaintext_owned, peppers.current, cost).ok()
-        } else {
-            None
-        };
-        Some((id, rehash))
-    })
-    .await
-    .ok()??;
-
-    if let Some(new_hash) = rehash {
-        let am = AppPasswordAM {
-            id: Set(matched_id),
-            hash: Set(new_hash),
-            ..Default::default()
-        };
-        match am.update(db).await {
-            Ok(_) => {
-                metrics::counter!("folio_auth_pepper_rehash_total", "kind" => "app_password")
-                    .increment(1);
-                tracing::info!(app_password_id = %matched_id, "app password rehashed onto the current pepper");
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, app_password_id = %matched_id, "app password pepper rehash failed");
-            }
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(error = %e, "app password legacy lookup failed");
+            return Err(VerifyError::Invalid);
         }
+    };
+
+    // Charge the miss before any hashing, so a request that ends busy or is
+    // dropped part-way through the scan has still been counted. The cost:
+    // a legacy token's first successful use counts one failure, once in its
+    // lifetime (it has its digest afterwards).
+    record_miss(app, ip).await;
+
+    for row in legacy {
+        let (verified, rehash) = gate
+            .verify_one(row.hash.clone(), plaintext, peppers, cost)
+            .await
+            .map_err(|()| VerifyError::Busy)?;
+        if !verified.ok() {
+            continue;
+        }
+        store_rehash(db, row.id, rehash).await;
+        backfill_digest(db, row.id, &digest).await;
+        cache.put(digest, row.id);
+        return Ok(resolve(db, row).await);
     }
 
-    let row = rows.into_iter().find(|r| r.id == matched_id)?;
+    // No row has the digest and the scan finished: refused outright.
+    refusals.put(digest);
+    Err(VerifyError::Invalid)
+}
+
+/// A presented token matched nothing: count it for the client IP on the
+/// app-password counter (no-op when the failed-auth counters are off).
+async fn record_miss(app: &AppState, ip: Option<std::net::IpAddr>) {
+    if let Some(ip) = ip {
+        super::failed_auth::record_ip_failure_for(app, IpCounter::AppPassword, ip).await;
+    }
+}
+
+async fn resolve(db: &DatabaseConnection, row: app_password::Model) -> ResolvedAppPassword {
     let resolved = ResolvedAppPassword {
         user_id: row.user_id,
         app_password_id: row.id,
         scope: row.scope.clone(),
     };
-    cache.put(key, row.id);
     touch_last_used(db, row).await;
-    Some(resolved)
+    resolved
+}
+
+/// Persist a previous-pepper rehash (pepper rotation, L-1). Best-effort.
+async fn store_rehash(db: &DatabaseConnection, id: Uuid, rehash: Option<String>) {
+    let Some(new_hash) = rehash else { return };
+    let am = AppPasswordAM {
+        id: Set(id),
+        hash: Set(new_hash),
+        ..Default::default()
+    };
+    match am.update(db).await {
+        Ok(_) => {
+            metrics::counter!("folio_auth_pepper_rehash_total", "kind" => "app_password")
+                .increment(1);
+            tracing::info!(app_password_id = %id, "app password rehashed onto the current pepper");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, app_password_id = %id, "app password pepper rehash failed");
+        }
+    }
+}
+
+/// Give a legacy row its lookup digest after its token verified, so the
+/// next request takes the digest path. Only fills a NULL, so two
+/// concurrent first uses write the same value once. Best-effort: a
+/// failure only means the next request scans again.
+async fn backfill_digest(db: &DatabaseConnection, id: Uuid, digest: &[u8; 32]) {
+    let res = AppPasswordEntity::update_many()
+        .col_expr(
+            app_password::Column::LookupDigest,
+            Expr::value(digest.to_vec()),
+        )
+        .filter(app_password::Column::Id.eq(id))
+        .filter(app_password::Column::LookupDigest.is_null())
+        .exec(db)
+        .await;
+    match res {
+        Ok(_) => {
+            tracing::info!(app_password_id = %id, "app password given its lookup digest");
+            refresh_legacy_gauge(db).await;
+        }
+        Err(e) => {
+            tracing::error!(error = %e, app_password_id = %id, "app password digest backfill failed");
+        }
+    }
 }
 
 /// Best-effort `last_used_at` bump, debounced to at most once per
@@ -310,5 +652,15 @@ mod tests {
         let a = random_plaintext();
         let b = random_plaintext();
         assert_ne!(a, b, "32 bytes of entropy should never collide");
+    }
+
+    #[test]
+    fn lookup_digest_is_sha256_of_the_token() {
+        let t = random_plaintext();
+        let d = lookup_digest(&t);
+        assert_eq!(d, lookup_digest(&t));
+        assert_ne!(d, lookup_digest(&random_plaintext()));
+        let expected: [u8; 32] = Sha256::digest(t.as_bytes()).into();
+        assert_eq!(d, expected);
     }
 }

@@ -45,6 +45,8 @@ const config: NextConfig = {
   },
   reactStrictMode: true,
   poweredByHeader: false,
+  // No `next/image` anywhere: covers and pages come sized from the Rust server.
+  images: { unoptimized: true },
   // React Compiler (audit G4, chunk 1.0b). Auto-memoizes components and
   // hooks at build time so render hygiene stops regressing per-site —
   // Wave-0 chunk 0.3 added the hottest React.memo wrappers by hand; the

@@ -440,7 +440,7 @@ async fn series_list(
     };
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let facets = fetch_series_facets(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
@@ -670,7 +670,7 @@ async fn browse(
         Err(e) => return server_error(e.to_string()),
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let series_facets = fetch_series_facets(&app.db, &series_ids).await;
     let mut entries = String::new();
     for s in &rows {
@@ -783,7 +783,7 @@ async fn series_one(
     // shows just the title and the issue grid. M5 follow-up to
     // close that gap (observed in Panels on 2026-05-16).
     let series_facets = fetch_series_facets(&app.db, &[s.id]).await;
-    let cover_map = fetch_cover_issues(&app.db, &[s.id]).await;
+    let cover_map = crate::api::series::series_cover_issue_ids(&app.db, &[s.id], &acl).await;
     let cover = cover_map.get(&s.id).map(String::as_str);
     let key = app.secrets.url_signing_key.as_ref();
     let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
@@ -1362,7 +1362,7 @@ async fn by_creator(
     };
 
     let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &result_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &result_ids, &allowed).await;
     let facets = fetch_series_facets(&app.db, &result_ids).await;
     let mut entries = String::new();
     for s in &rows {
@@ -1475,7 +1475,7 @@ async fn search(
     };
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
     let facets = fetch_series_facets(&app.db, &series_ids).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
@@ -1567,20 +1567,26 @@ pub(crate) async fn download(
     AxPath(id): AxPath<String>,
     headers: HeaderMap,
 ) -> Response {
-    let row = match issue::Entity::find_by_id(id).one(&app.db).await {
+    // Soft-removed issues (or issues of a soft-removed series) are not
+    // downloadable, for every role: OPDS is a list surface and its catalogs
+    // hide removed rows, so the download does too. (The page-bytes and
+    // page-stream routes check access through `issue_visible`, which does
+    // not look at `removed_at`; they are unchanged here.)
+    let acl = access::for_user(&app, &user).await;
+    let row = match access::visible_issues_select(&acl)
+        .filter(issue::Column::Id.eq(id))
+        .one(&app.db)
+        .await
+    {
         Ok(Some(r)) => r,
         _ => return not_found(),
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    // Never through a symbolic link, and only a regular file below the
+    // library root; the response streams from this handle.
+    let Some(f) = crate::library::no_follow::open_issue(&app, &row).await else {
         return not_found();
-    }
-    let mut f = match tokio::fs::File::open(&row.file_path).await {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!(error = %e, path = %row.file_path, "opds download open failed");
-            return not_found();
-        }
     };
+    let mut f = tokio::fs::File::from_std(f);
     let total = f.metadata().await.ok().map(|m| m.len()).unwrap_or(0);
     let leaf = std::path::Path::new(&row.file_path)
         .file_name()
@@ -2259,9 +2265,10 @@ fn render_pse_stream_link(
 /// `image` rels pointing at that issue's page-0 art. Clients use
 /// these to display series cover art in browse views; without them
 /// they fall back to a generic folder icon. Resolved in bulk via
-/// [`fetch_cover_issues`] one query per feed render. `None` means
-/// the series has no active issues (in-progress import, fully-
-/// removed library) — emit the entry without image links and let
+/// [`crate::api::series::series_cover_issue_ids`] (the web grid's pick
+/// rule, under the caller's ACL so a cover is never an issue the client
+/// can't open) once per feed render. `None` means the series has no
+/// active issue the caller can see — emit the entry without image links and let
 /// the client render its placeholder.
 fn render_series_subsection_entry(
     s: &series::Model,
@@ -2386,73 +2393,6 @@ fn entry_metadata_series(s: &series::Model, facets: Option<&SeriesFacets>) -> St
         }
     }
     out
-}
-
-/// Resolve a "cover issue" per series for OPDS feeds — the issue
-/// whose page-0 thumbnail should represent the series in clients
-/// like Panels, Chunky, KOReader. Without this, OPDS clients fall
-/// back to a generic folder icon for every series entry.
-///
-/// Pick rule: the same one as the web grid / detail hero
-/// (`api::series::hydrate_series`), so OPDS and web see the same
-/// image — main run before specials (an `Annuals/… Annual 001` must
-/// not win over the regular run), numbered issues (`sort_number >= 1`)
-/// before #0 / #½ preludes, then `sort_number ASC NULLS LAST,
-/// file_path ASC`.
-///
-/// One DB round-trip regardless of input length via Postgres'
-/// `DISTINCT ON`. Empty inputs short-circuit. Failures degrade
-/// gracefully — return an empty map and let the renderer emit a
-/// folder-icon fallback rather than 500ing the whole feed.
-pub(crate) async fn fetch_cover_issues(
-    db: &sea_orm::DatabaseConnection,
-    series_ids: &[Uuid],
-) -> HashMap<Uuid, String> {
-    if series_ids.is_empty() {
-        return HashMap::new();
-    }
-    let mut ids: Vec<Uuid> = series_ids.to_vec();
-    ids.sort();
-    ids.dedup();
-    #[derive(FromQueryResult)]
-    struct Row {
-        series_id: Uuid,
-        id: String,
-    }
-    // Postgres `DISTINCT ON (series_id)` keeps the first row per
-    // group as ordered by the outer ORDER BY clause. sea-orm doesn't
-    // model this directly so we drop to a raw statement; the
-    // alternative (a LATERAL join or a window function) is more
-    // code for the same plan.
-    let stmt = Statement::from_sql_and_values(
-        sea_orm::DatabaseBackend::Postgres,
-        r#"
-        SELECT DISTINCT ON (series_id) series_id, id
-        FROM issues
-        WHERE series_id = ANY($1)
-          AND state = 'active'
-          AND removed_at IS NULL
-        ORDER BY series_id,
-                 (special_type IS NOT NULL),
-                 (CASE WHEN sort_number >= 1 THEN 0 ELSE 1 END),
-                 sort_number ASC NULLS LAST,
-                 file_path ASC
-        "#,
-        [ids.clone().into()],
-    );
-    let mut map: HashMap<Uuid, String> = match Row::find_by_statement(stmt).all(db).await {
-        Ok(rows) => rows.into_iter().map(|r| (r.series_id, r.id)).collect(),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "opds: cover-issue lookup failed; series entries will fall back to folder icons"
-            );
-            HashMap::new()
-        }
-    };
-    // An explicit series cover pick (post-audit T4.2) beats the heuristic.
-    map.extend(crate::api::cover_pick::user_cover_picks(db, &ids).await);
-    map
 }
 
 /// Bulk-load the caller's `progress_record` rows for every issue id in
@@ -3216,7 +3156,7 @@ async fn view_acq(
         limit: view_limit,
         cursor: None,
         user_id: user.id,
-        visible_libraries: visible,
+        visible_libraries: visible.clone(),
     };
     let stmt = match compile::compile(&input) {
         Ok(s) => s,
@@ -3235,7 +3175,7 @@ async fn view_acq(
         rows.truncate(view_limit as usize);
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = fetch_cover_issues(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &visible).await;
     let facets = fetch_series_facets(&app.db, &series_ids).await;
     let entries: String = rows
         .iter()
@@ -3527,7 +3467,8 @@ async fn render_collection_acq(
     // Per-series facets so they also carry dc:publisher / author /
     // category metadata (M2).
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
-    let series_covers = fetch_cover_issues(&app.db, &collection_series_ids).await;
+    let series_covers =
+        crate::api::series::series_cover_issue_ids(&app.db, &collection_series_ids, &visible).await;
     let series_facets = fetch_series_facets(&app.db, &collection_series_ids).await;
     let issue_id_list: Vec<String> = issue_by_id.keys().cloned().collect();
     let progress = fetch_user_progress(&app.db, user.id, &issue_id_list).await;

@@ -165,10 +165,7 @@ export function NewCollectionDialog({
     create.mutate(
       { name: trimmed, description },
       {
-        onSuccess: () => {
-          toast.success(`Collection "${trimmed}" created`);
-          onOpenChange(false);
-        },
+        onSuccess: () => onOpenChange(false),
         onError: (err) => setErrors(collectServerErrors(err, ["name"])),
       },
     );

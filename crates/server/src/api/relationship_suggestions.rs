@@ -893,11 +893,16 @@ async fn hydrate(
         .filter(series::Column::Id.is_in(ids.into_iter().collect::<Vec<_>>()))
         .all(&app.db)
         .await?;
-    let views: HashMap<String, SeriesView> = super::series::hydrate_series(app, models, viewer)
-        .await
-        .into_iter()
-        .map(|v| (v.id.clone(), v))
-        .collect();
+    let views: HashMap<String, SeriesView> = super::series::hydrate_series(
+        app,
+        models,
+        viewer,
+        &crate::library::access::VisibleLibraries::unrestricted(),
+    )
+    .await
+    .into_iter()
+    .map(|v| (v.id.clone(), v))
+    .collect();
     let arc_ids: HashSet<Uuid> = rows.iter().filter_map(|r| r.to_arc_id).collect();
     let arcs: HashMap<Uuid, RelationshipArcRef> = if arc_ids.is_empty() {
         HashMap::new()

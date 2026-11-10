@@ -11,6 +11,7 @@ import { apiGet, ApiError } from "@/lib/api/fetch";
 import type { CreatorDetailView, CreatorRoleRail } from "@/lib/api/types";
 import { RecordVisit } from "@/components/search/RecordVisit";
 import { creatorVisit } from "@/lib/search/recent-visits";
+import { apiPath, routeParam } from "@/lib/api/path";
 
 /** Hard cap on cards mounted per role rail on the overview page.
  *  The rail is a horizontal scroller, so the cap never shows as a
@@ -62,13 +63,11 @@ export default async function CreatorPage({
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ role?: string }>;
 }) {
-  const { slug } = await params;
+  const slug = routeParam((await params).slug);
   const { role: activeRoleRaw } = await searchParams;
   let detail: CreatorDetailView;
   try {
-    detail = await apiGet<CreatorDetailView>(
-      `/creators/${encodeURIComponent(slug)}`,
-    );
+    detail = await apiGet<CreatorDetailView>(apiPath`/creators/${slug}`);
   } catch (e) {
     if (e instanceof ApiError) {
       if (e.status === 401) redirect(await signInUrl());

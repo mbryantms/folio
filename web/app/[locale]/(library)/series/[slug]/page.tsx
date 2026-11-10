@@ -84,6 +84,7 @@ import { SeriesProgressStats } from "./SeriesProgressStats";
 import { SeriesTabs } from "./SeriesTabs";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
 import { entityHrefFor } from "@/lib/entities";
+import { apiPath, routeParam } from "@/lib/api/path";
 
 export default async function SeriesPage({
   params,
@@ -92,7 +93,7 @@ export default async function SeriesPage({
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ q?: string; tab?: string; match?: string }>;
 }) {
-  const { slug } = await params;
+  const slug = routeParam((await params).slug);
   const { q: initialQuery, tab, match } = await searchParams;
   // `?match=1` (the needs-metadata worklist's "Find metadata") lands on the
   // Metadata tab, where the match dialog opens.
@@ -106,18 +107,16 @@ export default async function SeriesPage({
   // only drives the optional "Appears in" tab). Awaited after the try so a
   // failure here never 404s the page.
   const appearancesPromise = apiGet<AppearancesView>(
-    `/series/${slug}/appearances`,
+    apiPath`/series/${slug}/appearances`,
   ).catch(() => null);
-  const seriesPromise = apiGet<SeriesView>(`/series/${slug}`);
+  const seriesPromise = apiGet<SeriesView>(apiPath`/series/${slug}`);
   // "Your notes" tab only shows when the caller has a marker in this
   // series — a one-row probe of the same list the tab renders. Chained
   // off the series fetch (it needs the id) so it overlaps the other
   // critical fetches; non-fatal.
   const hasNotesPromise = seriesPromise
     .then((s) =>
-      apiGet<MarkerListView>(
-        `/me/markers?series_id=${encodeURIComponent(s.id)}&limit=1`,
-      ),
+      apiGet<MarkerListView>(apiPath`/me/markers?series_id=${s.id}&limit=1`),
     )
     .then((page) => page.items.length > 0)
     .catch(() => false);
@@ -130,8 +129,8 @@ export default async function SeriesPage({
     // resolves the breadcrumb's library segment by `series.library_id`.
     [series, firstIssuePage, resume, libraries] = await Promise.all([
       seriesPromise,
-      apiGet<IssueListView>(`/series/${slug}/issues?limit=200`),
-      apiGet<SeriesResumeView>(`/series/${slug}/resume`),
+      apiGet<IssueListView>(apiPath`/series/${slug}/issues?limit=200`),
+      apiGet<SeriesResumeView>(apiPath`/series/${slug}/resume`),
       apiGet<LibraryView[]>(`/libraries`),
     ]);
   } catch (e) {

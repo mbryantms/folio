@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "../queries";
 import type { HashBackfillStartResp } from "../types";
 import { useApiMutation } from "./_core";
+import { apiPath } from "../path";
 
 /**
  * `POST /libraries/{slug}/hash-backfill`. (Re)enqueues the content-hash
@@ -17,7 +18,7 @@ export function useStartHashBackfill(librarySlug: string) {
   const qc = useQueryClient();
   return useApiMutation<HashBackfillStartResp, void>(
     () => ({
-      path: `/libraries/${librarySlug}/hash-backfill`,
+      path: apiPath`/libraries/${librarySlug}/hash-backfill`,
       method: "POST",
     }),
     {
