@@ -1659,7 +1659,7 @@ async fn hydrate_entries(
             .await
             .unwrap_or_default()
     };
-    let hydrated_series = hydrate_series(app, series_rows, viewer).await;
+    let hydrated_series = hydrate_series(app, series_rows, viewer, acl).await;
     let series_by_id: HashMap<Uuid, SeriesView> = hydrated_series
         .into_iter()
         .filter_map(|v| Uuid::parse_str(&v.id).ok().map(|id| (id, v)))

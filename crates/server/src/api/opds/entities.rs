@@ -20,9 +20,8 @@ use uuid::Uuid;
 
 use super::{
     ACQ_CT, AcquisitionFeedArgs, NAV_CT, OpdsIssueRow, PAGE_SIZE, PageQuery, atom,
-    build_acquisition_feed, fetch_cover_issues, fetch_series_facets, paginate_links,
-    render_nav_entry, render_series_subsection_entry, server_error, url_escape, wrap_nav_feed,
-    xml_escape,
+    build_acquisition_feed, fetch_series_facets, paginate_links, render_nav_entry,
+    render_series_subsection_entry, server_error, url_escape, wrap_nav_feed, xml_escape,
 };
 use crate::api::entity_pages::{self as ep, EntityKind, ListFilter, Paging};
 use crate::auth::CurrentUser;
@@ -198,7 +197,7 @@ async fn publisher_series_feed(
         Err(e) => return server_error(e.to_string()),
     };
     let rows: Vec<series::Model> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
-    let covers = fetch_cover_issues(&app.db, &ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &ids, &visible).await;
     let facets = fetch_series_facets(&app.db, &ids).await;
     let mut entries = String::new();
     for s in &rows {

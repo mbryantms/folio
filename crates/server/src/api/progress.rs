@@ -601,7 +601,8 @@ pub async fn upsert_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::series_visible(&app, &user, &srow).await {
+    let acl = access::for_library(&app, &user, srow.library_id).await;
+    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -610,10 +611,16 @@ pub async fn upsert_series(
     // future "unread series" queries.
     // WP-3.6: only id / page_count are read — project, don't hydrate the
     // wide rows of every issue in the series.
-    let issues = match issue::Entity::find()
+    let mut issues_sel = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(srow.id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
+        .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: never write (or count) progress for an issue rated above
+    // the caller's cap, even inside a visible series.
+    if let Some(cap) = acl.issue_cap_condition() {
+        issues_sel = issues_sel.filter(cap);
+    }
+    let issues = match issues_sel
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
@@ -738,7 +745,8 @@ pub async fn upsert_series_matching(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::series_visible(&app, &user, &srow).await {
+    let acl = access::for_library(&app, &user, srow.library_id).await;
+    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -746,6 +754,10 @@ pub async fn upsert_series_matching(
         .filter(issue::Column::SeriesId.eq(srow.id))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
         .filter(issue::Column::RemovedAt.is_null());
+    // WP-2.7: the issue-level cap applies inside a visible series.
+    if let Some(cap) = acl.issue_cap_condition() {
+        query = query.filter(cap);
+    }
 
     if let Some(raw) = req.q.as_deref() {
         let trimmed = raw.trim();
@@ -878,13 +890,11 @@ pub struct UpsertBulkResp {
     pub updated: u32,
     /// Issues already in the target state (no DB write — cheap re-click).
     pub skipped: u32,
-    /// Issues the caller doesn't have library access to read. Silent
-    /// from the user's perspective; surfaced here so an admin
-    /// debugging a "mark read did nothing" report can see the
-    /// filter fired.
+    /// Always 0. Kept for response shape: an issue the caller can't see
+    /// is counted in `not_found`, indistinguishable from an unknown id.
     pub forbidden: u32,
     /// Issues whose id didn't resolve to a row (removed / never
-    /// existed / typo). Treated the same as forbidden — the caller
+    /// existed / typo) or that the caller can't see — the caller
     /// doesn't get to distinguish a missing row from one they're
     /// not allowed to see.
     pub not_found: u32,
@@ -965,7 +975,7 @@ pub async fn upsert_bulk(
     };
 
     let found_ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-    let not_found = ids
+    let mut not_found = ids
         .iter()
         .filter(|id| !found_ids.contains(id.as_str()))
         .count() as u32;
@@ -979,11 +989,14 @@ pub async fn upsert_bulk(
     let mut skipped: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
-    let mut forbidden: u32 = 0;
+    // An issue the caller can't see (outside the grant, or rated above
+    // their cap) is counted exactly like an unknown id; `forbidden` stays
+    // in the response for shape and is always 0.
+    let forbidden: u32 = 0;
 
     for iss in rows {
         if !access::issue_allowed(&app, &acl, &iss).await {
-            forbidden += 1;
+            not_found += 1;
             continue;
         }
         let target_page = if req.finished {
@@ -1086,9 +1099,10 @@ pub struct UpsertSeriesBulkResp {
     pub updated: u32,
     /// Issues already in the target state.
     pub skipped: u32,
-    /// Series the caller can't see (library access denied).
+    /// Always 0. Kept for response shape: a series the caller can't see
+    /// is counted in `not_found_series`.
     pub forbidden_series: u32,
-    /// Series whose id didn't resolve.
+    /// Series whose id didn't resolve, or that the caller can't see.
     pub not_found_series: u32,
     /// Issues whose write failed (post-audit T3.7); see
     /// [`UpsertSeriesResp::failed`].
@@ -1160,7 +1174,7 @@ pub async fn upsert_series_bulk(
     };
     let found_ids: std::collections::HashSet<uuid::Uuid> =
         series_rows.iter().map(|r| r.id).collect();
-    let not_found_series = series_ids
+    let mut not_found_series = series_ids
         .iter()
         .filter(|id| !found_ids.contains(id))
         .count() as u32;
@@ -1172,20 +1186,27 @@ pub async fn upsert_series_bulk(
     let mut skipped: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
-    let mut forbidden_series: u32 = 0;
+    // A series the caller can't see counts exactly like an unknown id;
+    // `forbidden_series` stays in the response for shape and is always 0.
+    let forbidden_series: u32 = 0;
 
     for srow in series_rows {
         if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
-            forbidden_series += 1;
+            not_found_series += 1;
             continue;
         }
         // Pull every active, on-disk issue for the series in one
         // query. Mirrors `upsert_series`'s filter.
         // WP-3.6: id / page_count only — project.
-        let issues = match issue::Entity::find()
+        let mut issues_sel = issue::Entity::find()
             .filter(issue::Column::SeriesId.eq(srow.id))
             .filter(issue::Column::State.eq(issue::IssueState::Active))
-            .filter(issue::Column::RemovedAt.is_null())
+            .filter(issue::Column::RemovedAt.is_null());
+        // WP-2.7: the issue-level cap applies inside a visible series.
+        if let Some(cap) = acl.issue_cap_condition() {
+            issues_sel = issues_sel.filter(cap);
+        }
+        let issues = match issues_sel
             .into_partial_model::<IssueCardRow>()
             .all(&app.db)
             .await

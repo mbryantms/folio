@@ -16242,16 +16242,14 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Issues the caller doesn't have library access to read. Silent
-             *     from the user's perspective; surfaced here so an admin
-             *     debugging a "mark read did nothing" report can see the
-             *     filter fired.
+             * @description Always 0. Kept for response shape: an issue the caller can't see
+             *     is counted in `not_found`, indistinguishable from an unknown id.
              */
             forbidden: number;
             /**
              * Format: int32
              * @description Issues whose id didn't resolve to a row (removed / never
-             *     existed / typo). Treated the same as forbidden — the caller
+             *     existed / typo) or that the caller can't see — the caller
              *     doesn't get to distinguish a missing row from one they're
              *     not allowed to see.
              */
@@ -16325,12 +16323,13 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Series the caller can't see (library access denied).
+             * @description Always 0. Kept for response shape: a series the caller can't see
+             *     is counted in `not_found_series`.
              */
             forbidden_series: number;
             /**
              * Format: int32
-             * @description Series whose id didn't resolve.
+             * @description Series whose id didn't resolve, or that the caller can't see.
              */
             not_found_series: number;
             /**
@@ -21292,14 +21291,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueCoversResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description issue not found */
+            /** @description issue not found, or not visible to the caller */
             404: {
                 headers: {
                     [name: string]: unknown;
