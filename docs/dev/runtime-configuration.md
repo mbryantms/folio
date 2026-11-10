@@ -52,7 +52,7 @@ config.
 | `auth.local.registration_open` | `/admin/auth` → Local | Live. |
 | `auth.oidc.{issuer,client_id,client_secret,trust_unverified_email,link_local_by_verified_email,auto_redirect,grant_all_libraries}` | `/admin/auth` → OIDC | Live; OIDC discovery cache is evicted on save. |
 | `auth.jwt.{access_ttl,refresh_ttl}` | `/admin/auth` → Tokens | Live for newly-minted tokens; existing tokens keep their original `exp`. |
-| `auth.rate_limit_enabled` | `/admin/server` → Hardening | Live, but only affects the failed-auth Redis lockout. The per-route `tower_governor` buckets are sized at boot. |
+| `auth.rate_limit_enabled` | `/admin/server` → Hardening | Live, but only affects the failed-auth Redis lockout and the CBL import quota's hourly window. The per-route `tower_governor` buckets are sized at boot and stay on when it is `false`. |
 | `observability.log_level` | `/admin/server` → Diagnostics | Live via `tracing_subscriber::reload::Handle`. |
 | `library.hard_purge_multiplier` | `/admin/server` → Removed-file purge | Live — the 04:15 hard-purge sweep reads it each run. Confirmed-removed rows are deleted after `soft_delete_days × this` days; `0` disables; range `[0, 100]`, default `2` (WP-3.5, see [library-scanner.md](library-scanner.md#removal-lifecycle)). Env bootstrap: `COMIC_LIBRARY_HARD_PURGE_MULTIPLIER`. |
 | `audit_log.retention_days` | `/admin/server` → Audit log retention | Live — the 03:45 UTC sweep ([`jobs::audit_log_retention`](../../crates/server/src/jobs/audit_log_retention.rs)) reads it each run. `0` (default) keeps every `audit_log` row forever. When set (floor `90`, ceiling `36500`), rows older than this many days are first exported as newline-delimited JSON to `${COMIC_DATA_PATH}/audit-log-exports/audit-log-<timestamp>.ndjson` (fsync + atomic rename) and only then deleted in batches of 1000; a failed export deletes nothing. The job is the one sanctioned deleter of `audit_log` — handlers stay append-only ([observability.md](observability.md#server-stream)). Env bootstrap: `COMIC_AUDIT_LOG_RETENTION_DAYS` (audit 2026-11 E1). |
@@ -115,7 +115,7 @@ edit from there.
   drains in-flight jobs; tracked as future work.
 - **Per-route `tower_governor` toggle**: the `auth.rate_limit_enabled`
   kill switch covers the failed-auth Redis lockout (the operationally
-  painful case) but the per-route buckets stay installed regardless.
+  painful case) and the CBL import quota's hourly window, but the per-route buckets stay installed regardless.
   Disabling them at runtime needs a custom tower `Service` wrapping each
   `GovernorLayer`. Tracked as future work.
 - ~~**OTLP exporter** (`COMIC_OTLP_ENDPOINT`)~~: **considered, not chosen

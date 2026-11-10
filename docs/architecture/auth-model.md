@@ -9,8 +9,10 @@ Phase 0 deliverable. Source of truth: [comic-reader-spec.md §17.1–§17.3, §9
 | Mode | Use case |
 |---|---|
 | `oidc` | Homelab with Authentik/Keycloak/Dex. The most common deployment. |
-| `local` | Single-user / small-family installs without an IdP. argon2id + optional TOTP. |
+| `local` | Single-user / small-family installs without an IdP. argon2id + pepper; no second factor (TOTP is not implemented; the unused `users.totp_secret` column is kept for a possible later version). |
 | `both` | Mixed — admin via OIDC, opportunistic local accounts (e.g., a guest reader). |
+
+Verified against the code at `1c51a486` on 2026-11-10.
 
 ## Token shapes
 
@@ -20,7 +22,7 @@ Phase 0 deliverable. Source of truth: [comic-reader-spec.md §17.1–§17.3, §9
 {
   "iss": "https://comics.example.com",
   "sub": "<user_uuid>",
-  "aud": "comic-reader",
+  "aud": "folio",
   "exp": 1735689900,
   "iat": 1735689000,
   "tv":  17,
@@ -38,13 +40,13 @@ Phase 0 deliverable. Source of truth: [comic-reader-spec.md §17.1–§17.3, §9
 
 Operators wanting tighter defaults can set `COMIC_JWT_ACCESS_TTL=15m`. The web client transparently calls `/auth/refresh` on 401 so the user-visible experience is unchanged — only `/auth/refresh` QPS increases.
 
-Algorithm: `EdDSA` (Ed25519). Server holds the keypair under `/data/secrets/jwt-ed25519.key`. The audience is hardcoded to `comic-reader`.
+Algorithm: `EdDSA` (Ed25519). Server holds the keypair under `/data/secrets/jwt-ed25519.key`. The audience is hardcoded to `folio`; verification also accepts the legacy `comic-reader` audience from before the rename.
 
 ### Refresh token (random opaque, 30 d default)
 
 - 32 bytes, base64url. Never inspectable.
 - SHA-256 hash stored in `auth_sessions.refresh_token_hash`.
-- Rotated on every use; old hash overwritten in the same transaction.
+- Rotated on every use: the session row's hash is overwritten in the same transaction.
 - `auth_sessions.ip` + `.user_agent` recorded on issue and refresh (M1) — used by `/me/sessions` (M5) and the audit log. Not enforced as a binding (proxy IPs change).
 - `COMIC_JWT_REFRESH_TTL` controls the cookie lifetime; validated at boot to be `>= access TTL`.
 
@@ -65,18 +67,20 @@ The CSRF cookie is intentionally **not** HttpOnly — JS reads it for the `X-CSR
 ### Local login
 
 ```
-POST /auth/local/login {email, password, totp?}
+POST /auth/local/login {email, password}
    ↓
-verify argon2id(password + pepper, hash)
+refuse if the client IP or the email is in failed-auth lockout (429)
    ↓
-if user.totp_secret IS NOT NULL: verify(totp, secret)
+verify argon2id(password + pepper, hash); user must be active
    ↓
 INSERT auth_sessions (refresh_token_hash) VALUES (sha256(rt))
    ↓
-mint access (15m) → set __Host-comic_session
+mint access (access TTL, 24h default) → set __Host-comic_session
 mint refresh (30d) → set __Host-comic_refresh
 generate csrf       → set __Host-comic_csrf, return in body
 ```
+
+Verified against the code at `1c51a486` on 2026-11-10.
 
 ### OIDC login (PKCE)
 
@@ -112,14 +116,17 @@ issue cookie session (same as local)
 ```
 POST /auth/refresh  (with __Host-comic_refresh cookie)
    ↓
-look up auth_sessions WHERE refresh_token_hash = sha256(rt) AND revoked_at IS NULL AND expires_at > now()
+look up auth_sessions WHERE refresh_token_hash = sha256(rt); refuse (401) if missing, revoked or expired
    ↓
-DELETE old row, INSERT new row with rotated refresh, in one transaction
+UPDATE that row with the rotated refresh hash, last_used_at, expiry, IP, user agent;
+user must be active, else roll back (401); one transaction
    ↓
 mint new access; set new cookies
 ```
 
-If the lookup misses (token reuse, race, replay), all sessions for that user are revoked (`UPDATE auth_sessions SET revoked_at = now() WHERE user_id = ?`) and the user is forced through full re-auth. This is the standard refresh-token-reuse defense.
+If the lookup misses (an already-rotated token replayed, a race between two tabs, an expired or unknown token), the request gets 401 `auth.invalid` and nothing else happens: the server cannot tell which user the old hash belonged to, so no other session is revoked. Refresh-token reuse detection is not implemented. To cut off every device, revoke all sessions (`POST /me/sessions/revoke-all`, which also bumps `token_version`); a password change revokes every session except the current one.
+
+Verified against the code at `1c51a486` on 2026-11-10.
 
 ### CSRF (double-submit)
 
@@ -130,13 +137,16 @@ If the lookup misses (token reuse, race, replay), all sessions for that user are
 
 ### WebSocket auth (one-shot ticket)
 
-- `POST /ws/ticket` (cookie + CSRF) → server generates `ticket = base64url(rand 24)`, stores `(ticket → user_id)` in Redis with 30 s TTL, returns `{ ticket, expires_in: 30 }`.
-- Client opens `wss://…/ws?ticket=<…>`. Server consumes the ticket atomically (Redis `GETDEL`) and accepts the upgrade if found and unexpired.
-- Cookie is **not** re-checked at upgrade — the ticket is the credential.
+- `POST /auth/ws-ticket` (cookie + CSRF; also mounted at `/api/auth/ws-ticket`) → server generates a random UUID ticket, stores `(ticket → user_id, role)` in Redis with a 5 min TTL, returns `{ ticket, expires_in: 300 }`.
+- Client opens `wss://…/ws/scan-events?ticket=<…>`. Server consumes the ticket atomically (Redis `GETDEL`); a missing or used ticket is 401.
+- Without a `ticket` parameter the upgrade falls back to the cookie session. Either way the user row is re-read at upgrade: the account must be active and, for `/ws/scan-events` (the only WebSocket endpoint), an admin.
+
+Verified against the code at `1c51a486` on 2026-11-10.
 
 ### Logout
 
-- `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`), bumps `users.token_version` if "log out everywhere" was requested, clears all three cookies.
+- `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`) and clears all three cookies; for an OIDC session it also redirects through the issuer's `end_session_endpoint` when one is published. It does not touch other sessions or `token_version`.
+- "Log out everywhere" is a separate call, `POST /me/sessions/revoke-all`: it revokes every refresh row for the user and bumps `users.token_version`.
 
 ## Library ACL and the age-rating cap
 
@@ -217,5 +227,6 @@ can be re-introduced with real semantics later.
 |---|---|
 | Loop: cookie set, immediately rejected | `COMIC_PUBLIC_URL` doesn't match the host the cookie was set on (`__Host-` requires exact host). |
 | OIDC callback 401 with valid token | Clock skew > 60 s; check NTP on the app host. |
-| All sessions invalidated unexpectedly | Refresh-token reuse detected — likely two devices polling stale tokens. |
+| One tab or device signed out unexpectedly | Its refresh token was already rotated by another request (two tabs refreshing at once) or the session expired or was revoked; `/auth/refresh` answers 401 for that token only. |
+| All sessions invalidated | A password reset, an admin disable, or "revoke all sessions" (each bumps `token_version` and revokes sessions; a self-serve password change does the same but keeps the current session). Refresh-token replay never does this. |
 | OIDC user marked unverified | `email_verified` claim missing from the issuer; fix the Authentik mapping (`docs/install/authentik.md`) or set the trust flag. |

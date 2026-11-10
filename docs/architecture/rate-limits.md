@@ -13,27 +13,46 @@ Without `COMIC_TRUSTED_PROXIES` set, every request appears to come from the reve
 
 ## Buckets
 
-| Bucket | Per-IP | Per-user | Burst |
-|---|---|---|---|
-| `GET /issues/.../pages/.*` | 60 req/s | 300 req/s | 120 / 600 |
-| `GET /issues/.../pages/.*/thumb` | 200 req/s | 1000 req/s | 400 / 2000 |
-| Free-text search, metadata writes, collection and saved-view writes, collection reorder | — | see [Per-user web-app buckets](#per-user-web-app-buckets) | — |
-| `POST /libraries/{id}/scan` | 1 / 5 min | 1 / 5 min | — |
-| `POST /auth/oidc/callback`, `POST /auth/local/login` | 5 / min | — | 10 |
-| OPDS catalog / navigation / search (`/opds/v1/*`, `/opds/v2/*` except the rows below) — bucket `opds_catalog` | 30 / min | — | 60 |
-| OPDS reading path — downloads (`…/issues/{id}/file`, Komga-shape alias), PSE pages (`/opds/pse/*`), progress writes incl. KOReader sync — bucket `opds_stream` (independent of `opds_catalog`, security audit H-3.2) | 120 / min | — | 120 |
-| CBL imports — create (upload / URL / catalog), manual refresh, manual check (`cbl::quota`; admins exempt; Redis fixed 1 h window) | — | 20 / hour | — |
-| Failed-auth (any) | 10 / min / IP | — | — |
-| `POST /csp-report` | 100 / min | — | — |
-| `POST /ws/ticket` | 30 / s | — | — |
-| `POST /auth/local/request-password-reset` | 5 / hour | 3 / hour / email | 5 / 5 |
-| `POST /auth/local/resend-verification` | 5 / hour | 3 / hour / email | 5 / 5 |
-| `POST /auth/local/reset-password` | 10 / hour | — | 10 |
-| `GET /me/export` | 6 / min | — | 6 |
-| `GET /me/markers/export` | 6 / min | — | 6 |
-| `GET /me/holdings.csv` (bucket `holdings_export`) | 6 / min | — | 6 |
-| `DELETE /me` (bucket `account_delete`; wrong passwords also count as failed auth) | 1 / min | — | 5 |
-| Marker writes (`POST /me/markers`, `PATCH`/`DELETE /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST /me/markers/restore`), one shared bucket | 10 / s | — | 60 |
+Every limit that is attached to a route today. A route not listed here has no limit. JSON routes are served under `/api` (the table drops the prefix); `auth::local` and the WebSocket ticket are mounted both bare and under `/api`, and each mount has its own bucket.
+
+| Route(s) | Bucket | Key | Sustained | Burst |
+|---|---|---|---|---|
+| `POST /auth/local/login` | `auth.login` | IP | 5 / min | 10 |
+| `POST /auth/local/register` | `auth.register` | IP | 5 / min | 10 |
+| `GET /auth/oidc/callback` | `auth.oidc_callback` | IP | 5 / min | 10 |
+| `POST /admin/auth/oidc/discover` (separate instance of the same constants) | `auth.oidc_callback` | IP | 5 / min | 10 |
+| `POST /auth/local/request-password-reset` | `auth.password_reset_request` | IP | 5 / hour | 5 |
+| `POST /auth/local/resend-verification` + `GET /auth/local/verify-email` (shared) | `auth.resend_verification` | IP | 5 / hour | 5 |
+| `POST /auth/local/reset-password` | `auth.password_reset_redeem` | IP | 10 / hour | 10 |
+| `POST /auth/ws-ticket` | `ws_ticket` | IP | 30 / s | 60 |
+| `POST /csp-report` | `csp_report` | IP | 100 / min | 200 |
+| OPDS catalog / navigation / search (`/opds/v1/*`, `/opds/v2/*` except the row below) | `opds_catalog` | IP | 30 / min | 60 |
+| OPDS reading path: downloads (`…/issues/{id}/file`, `/opds/v1.2/books/{id}/file/{filename}`), PSE pages (`/opds/pse/*`), progress writes (`PUT …/issues/{id}/progress`, KOReader `PUT /opds/v1/syncs/progress/{hash}`); independent of `opds_catalog` (security audit H-3.2) | `opds_stream` | IP | 120 / min | 120 |
+| `POST /me/issues/{id}/ocr` | `ocr` | IP | 60 / min | 60 |
+| `GET /me/issues/{id}/pages/{page}/text-regions` | `ocr.detect` | IP | 15 / min | 10 |
+| `GET /me/export` | `user_export` | IP | 6 / min | 6 |
+| `GET /me/markers/export` | `notes_export` | IP | 6 / min | 6 |
+| `GET /me/holdings.csv` | `holdings_export` | IP | 6 / min | 6 |
+| `DELETE /me` (wrong passwords also count as failed auth) | `account_delete` | IP | 1 / min | 5 |
+| Marker writes (`POST /me/markers`, `PATCH`/`DELETE /me/markers/{id}`, `POST /me/markers/bulk-delete`, `POST /me/markers/restore`), one shared bucket | `marker_write` | IP | 10 / s | 60 |
+| Free-text search, metadata writes, collection and saved-view writes, collection reorder | see [Per-user web-app buckets](#per-user-web-app-buckets) | user | | |
+| CBL imports: create (upload / URL / catalog), manual refresh, manual check (`cbl::quota`; admins exempt; Redis fixed 1 h window) | `cbl_import` | user | 20 / hour | none |
+
+No limit: page bytes (`GET /issues/{id}/pages/{n}`), thumbnails and stored covers (`…/pages/{n}/thumb`, `/issues/{id}/covers/{cover_id}`), library and series scans (`POST /libraries/{slug}/scan`, `POST /series/{slug}/scan`), OPDS progression (`/opds/v1/progression/{id}`), the Komga shim (`/api/v1/books/*`), `POST /auth/refresh`, and every other route not in this table.
+
+### Failed-auth lockout
+
+Redis-backed ([`auth/failed_auth.rs`](../../crates/server/src/auth/failed_auth.rs)), separate from the token buckets. Two axes, each 10 failures inside a sliding 60 s window, then a 15 min lockout:
+
+| Applied on | Axes |
+|---|---|
+| `POST /auth/local/login` | client IP and the submitted email (hashed) |
+| `GET /auth/oidc/callback` | client IP |
+| `DELETE /me` (password re-check) | client IP and the account's email |
+
+The handler checks the lockout before any password hashing. A locked-out request gets 429 `auth.locked_out` with `Retry-After` (the no-JS sign-in form gets a redirect to `/sign-in` with an `auth.locked` error instead). The lockout is not applied to OPDS, app-password or Bearer authentication (not implemented). When Redis is unavailable the lockout fails open.
+
+Verified against the code at `1c51a486` on 2026-11-10.
 
 ## Per-user web-app buckets
 
@@ -53,16 +72,30 @@ Each instance is its own store, so a script that rotates across the four `metada
 
 ## Behavior on bucket exhaustion
 
-- 429 with `Retry-After` (seconds).
+- 429 with `Retry-After` (seconds, at least 1).
 - `Content-Type: application/json` body: `{ "error": { "code": "rate_limited", "message": "...", "retry_after_seconds": N } }`.
-- Failed-auth bucket triggers a 15 min IP-only OPDS lockout (returned as 401 even with valid creds during that window).
+- The CBL import quota answers the same 429 shape. The failed-auth lockout answers 429 `auth.locked_out` (see [Failed-auth lockout](#failed-auth-lockout)).
+- If a request carries no resolvable client IP (a wiring fault), a per-IP bucket answers 500 `internal`.
+
+## The `auth.rate_limit_enabled` switch
+
+`auth.rate_limit_enabled` (default `true`) is a database setting, editable at `/admin/server` → Hardening and applied live. The deprecated `COMIC_RATE_LIMIT_ENABLED` env var only seeds it on first boot. Setting it to `false` turns off:
+
+- the failed-auth lockout, both recording and checking, on both axes;
+- the CBL import quota's hourly window (the 50-list standing cap below stays).
+
+It does not turn off any token bucket in the [Buckets](#buckets) table: those are installed at boot and stay on regardless.
+
+Verified against the code at `1c51a486` on 2026-11-10.
 
 Resource cap (not a rate): a non-admin user may own at most 50 server-fetched CBL lists (`source_kind` `url` or `catalog`) — each one is re-fetched by the hourly refresh sweep when it has a schedule. Over the cap, `POST /me/cbl-lists` returns `422 cbl.remote_list_limit`; uploads don't count.
 
 ## Metrics
 
 - `folio_rate_limit_denied_total{bucket="…"}` (the CBL import quota reports as `bucket="cbl_import"`)
-- `comic_rate_limit_remaining{bucket="…"}` (gauge, sampled per request)
+- `folio_auth_lockout_total` and `folio_auth_lockout_email_total` (a lockout was set on the IP or email axis)
+
+There is no remaining-tokens gauge.
 
 Alert when `folio_rate_limit_denied_total` for any auth bucket exceeds 100/hour — likely brute force in progress.
 
@@ -71,7 +104,7 @@ Alert when `folio_rate_limit_denied_total` for any auth bucket exceeds 100/hour 
 Defaults are conservative for single-tenant-to-small-family scale (the spec's primary user, §1.3). For larger deployments:
 
 - Raise per-user buckets first; per-IP defenses are independent.
-- Search and autocomplete are cheap to relax; page bytes are I/O-bound, raise carefully.
+- Search and autocomplete are cheap to relax; the OPDS reading path (`opds_stream`) is I/O-bound, raise carefully.
 - Auth endpoints should stay tight regardless of scale.
 
 Override via env (planned; not yet implemented in Phase 0):
