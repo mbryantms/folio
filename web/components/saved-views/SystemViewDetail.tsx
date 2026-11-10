@@ -32,6 +32,7 @@ import {
   useRandomPicks,
   useRecentHistory,
   useSimilarRailInfinite,
+  PROGRESS_RAIL_CAP,
 } from "@/lib/api/queries";
 import type {
   ContinueReadingCard,
@@ -107,6 +108,18 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
               : isOnThisDay
                 ? (otd.data?.items.length ?? null)
                 : null;
+  // These three endpoints return at most `PROGRESS_RAIL_CAP` items and no
+  // cursor: a full response may be cut short, so it is captioned as the
+  // most recent N rather than counted as if it were the whole list.
+  const isCapped = isContinueReading || isOnDeck || isRecentHistory;
+  const countLabel =
+    itemCount == null
+      ? null
+      : itemCount === 0
+        ? "Nothing here yet."
+        : isCapped && itemCount >= PROGRESS_RAIL_CAP
+          ? `Most recent ${PROGRESS_RAIL_CAP}`
+          : `${itemCount} ${itemCount === 1 ? "item" : "items"}`;
 
   return (
     <div className="space-y-6">
@@ -152,12 +165,8 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
               </Link>
             </p>
           ) : null}
-          {itemCount != null && (
-            <p className="text-muted-foreground mt-2 text-sm">
-              {itemCount === 0
-                ? "Nothing here yet."
-                : `${itemCount} ${itemCount === 1 ? "item" : "items"}`}
-            </p>
+          {countLabel != null && (
+            <p className="text-muted-foreground mt-2 text-sm">{countLabel}</p>
           )}
         </div>
         {/* Desktop: the card-size popover. Phones: the same fields in a
