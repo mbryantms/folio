@@ -150,7 +150,6 @@ export function NewFilterViewDialog({
                       }
                     }
                   }
-                  toast.success("View created");
                   onOpenChange(false);
                   router.refresh();
                 } catch (e) {

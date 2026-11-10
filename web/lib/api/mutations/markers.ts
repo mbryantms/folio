@@ -23,19 +23,43 @@ import type {
 import { queryKeys } from "../query-keys";
 import { useApiMutation } from "./_core";
 
+/** Success copy for a new marker, from what was created: page-level
+ *  bookmarks and stars name the page, highlights and notes say saved. */
+export function markerCreatedMessage(input: CreateMarkerReq): string {
+  const page = input.page_index + 1;
+  switch (input.kind) {
+    case "bookmark":
+      return `Bookmarked page ${page}`;
+    case "favorite":
+      return `Starred page ${page}`;
+    case "highlight":
+      return "Highlight saved";
+    default:
+      return "Note saved";
+  }
+}
+
 /** Create a marker — bookmark / note / favorite / highlight. The
  *  reader cover-menu and `b` / `n` / `h` keybinds chain here. On
  *  success the per-issue + global feed caches are invalidated so the
  *  overlay and `/bookmarks` page refresh together.
  *
- *  No toast on success — reader keybind call sites wrap with
- *  kind-specific toasts ("Bookmarked page X", "Starred page X"); a
- *  generic "Marker created" would compete. */
-export function useCreateMarker() {
+ *  Toasts the kind-specific `markerCreatedMessage`. `silent: true` is
+ *  for the reader chrome's bookmark / star buttons, whose filled icon is
+ *  the confirmation. */
+export function useCreateMarker(opts?: { silent?: boolean }) {
   const qc = useQueryClient();
   return useApiMutation<MarkerView, CreateMarkerReq>(
     (body) => ({ path: "/me/markers", method: "POST", body }),
     {
+      ...(opts?.silent
+        ? {}
+        : {
+            successMessage: (
+              _data: MarkerView | null,
+              input: CreateMarkerReq,
+            ) => markerCreatedMessage(input),
+          }),
       onSuccess: (_data, input) => {
         qc.invalidateQueries({
           queryKey: ["markers", "issue", input.issue_id],
@@ -58,8 +82,9 @@ export function useUpdateMarker(id: string, issueId: string) {
   return useApiMutation<MarkerView, UpdateMarkerReq>(
     (body) => ({ path: `/me/markers/${id}`, method: "PATCH", body }),
     {
-      // Tailor the toast for the most common single-field toggles so
-      // the action is unambiguous. Falls back to "Saved" for editor
+      // Tailor the toast for the single-field updates so the action is
+      // unambiguous: the favorite toggle, and the editor's OCR capture /
+      // clear (a selection-only patch). Falls back to "Saved" for editor
       // submits (body / region / tags / multiple-field updates).
       successMessage: (_data, input) => {
         const keys = Object.keys(input);
@@ -67,6 +92,10 @@ export function useUpdateMarker(id: string, issueId: string) {
           return input.is_favorite
             ? "Added to favorites"
             : "Removed from favorites";
+        }
+        if (keys.length === 1 && keys[0] === "selection") {
+          const selection = input.selection as { text?: string | null } | null;
+          return selection?.text ? "Text captured" : "Detected text cleared";
         }
         return "Saved";
       },

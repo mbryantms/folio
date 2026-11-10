@@ -8,7 +8,6 @@ import {
   ListChecks,
   Sparkles,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
@@ -65,7 +64,6 @@ const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const results = useSavedViewResultsInfinite(view.id);
-  const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
   const isAdmin = useMe().data?.role === "admin";
 
@@ -97,23 +95,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const fetchViewMetadata = () => {
-    createBatch.mutate(
-      { saved_view_id: view.id },
-      {
-        onSuccess: (resp) => {
-          if (!resp) return;
-          toast.success(`Searching ${resp.items_total} items for metadata`, {
-            action: {
-              label: "Review",
-              onClick: () =>
-                router.push(
-                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
-                ),
-            },
-          });
-        },
-      },
-    );
+    createBatch.mutate({ saved_view_id: view.id });
   };
   const [cardSize, setCardSize] = useCardSize({
     storageKey: CARD_SIZE_STORAGE_KEY,
