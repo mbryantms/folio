@@ -16,12 +16,19 @@
 //! identities aren't silently merged. `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL=true`
 //! (DB key `auth.oidc.link_local_by_verified_email`) opts in to auto-linking
 //! the OIDC identity onto that local account instead, audited as
-//! `auth.oidc.auto_link`. The link needs the ID token's `email_verified` to be
-//! the JSON boolean `true` (an absent claim admitted by the trust-unverified
-//! opt-in does not count) and the local row's own address to be verified;
-//! otherwise the login is refused as without the opt-in. openidconnect is
-//! built without `accept-string-booleans`, so a string `"true"` fails ID-token
-//! parsing and never reaches the link.
+//! `auth.oidc.auto_link`. Three cases:
+//!   - the ID token's `email_verified` is not the JSON boolean `true` (absent,
+//!     even when the trust-unverified opt-in admits the login, or `false`): no
+//!     link; the login is refused as without the opt-in (403 "verify your
+//!     email first" for a pending local row, 409 `auth.email_in_use`
+//!     otherwise). openidconnect is built without `accept-string-booleans`,
+//!     so a string `"true"` fails ID-token parsing and never reaches the link;
+//!   - the claim is `true` and the local row's address is verified: link and
+//!     keep the local password;
+//!   - the claim is `true` and the local row's address is unverified (pending
+//!     or active): link and take the account over — password dropped,
+//!     `token_version` bumped, refresh sessions revoked, `email_verified` set,
+//!     a pending row activated ([`take_over_if_unproven`]).
 
 use axum::{
     Extension, Router,
@@ -731,7 +738,11 @@ pub async fn callback(
         am.display_name = Set(display_name.clone());
         am.last_login_at = Set(Some(now));
         am.updated_at = Set(now);
-        let activated = activate_if_pending(&mut am, &row, idp_proved_email);
+        // A row already keyed to this identity is "unproven" only while it
+        // is pending: its `email_verified` mirrors the last login's claim,
+        // not a local address someone else may have set.
+        let unproven = row.state == UserState::PendingVerification;
+        let takeover = take_over_if_unproven(&mut am, &row, idp_proved_email, unproven);
         let synced = match am.update(&app.db).await {
             Ok(m) => m,
             Err(e) => {
@@ -739,8 +750,10 @@ pub async fn callback(
                 return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
             }
         };
-        if activated {
+        if takeover.taken_over {
             super::local::revoke_sessions_for_user(&app.db, synced.id, None).await;
+        }
+        if takeover.activated {
             let _ = crate::audit::record(
                 &app.db,
                 crate::audit::AuditEntry {
@@ -766,11 +779,13 @@ pub async fn callback(
         //   - default: refuse (`auth.email_in_use`); admin migrates manually.
         //   - opt-in `auth.oidc.link_local_by_verified_email`: auto-link the
         //     OIDC identity onto the existing local account, but only when
-        //     the provider itself asserted `email_verified: true` AND the
-        //     local row's own address is verified. A missing claim admitted
-        //     by the trust-unverified opt-in proves nothing, and a local row
-        //     holding an address it never verified must not receive the
-        //     real owner's sign-in. Either gap refuses like the default.
+        //     the provider itself asserted `email_verified: true`. A missing
+        //     claim admitted by the trust-unverified opt-in proves nothing,
+        //     so it refuses like the default. When the local row's own
+        //     address was never verified, the link takes the account over
+        //     ([`take_over_if_unproven`]): whoever set that address loses
+        //     their password and every session, so the owner's sign-in never
+        //     lands in an account someone else can still open.
         if let Some(ref e) = email
             && let Ok(Some(local)) = UserEntity::find()
                 .filter(user::Column::Email.eq(e.clone()))
@@ -796,8 +811,6 @@ pub async fn callback(
                 None
             } else if !idp_proved_email {
                 Some("provider did not assert email_verified")
-            } else if !local.email_verified {
-                Some("local account email is unverified")
             } else {
                 None
             };
@@ -822,7 +835,9 @@ pub async fn callback(
                 am.external_id = Set(external_id.clone());
                 am.email = Set(email.clone());
                 am.email_verified = Set(email_verified);
-                let activated = activate_if_pending(&mut am, &local, idp_proved_email);
+                let unproven =
+                    !local.email_verified || local.state == UserState::PendingVerification;
+                let takeover = take_over_if_unproven(&mut am, &local, idp_proved_email, unproven);
                 am.display_name = Set(display_name.clone());
                 am.last_login_at = Set(Some(now));
                 am.updated_at = Set(now);
@@ -833,7 +848,7 @@ pub async fn callback(
                         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
                     }
                 };
-                if activated {
+                if takeover.taken_over {
                     super::local::revoke_sessions_for_user(&app.db, linked.id, None).await;
                 }
                 let _ = crate::audit::record(
@@ -847,7 +862,8 @@ pub async fn callback(
                             "issuer": issuer,
                             "subject_hash": sha256_hex(&subject)[..12].to_owned(),
                             "prior_external_id": prior_external_id,
-                            "activated": activated,
+                            "activated": takeover.activated,
+                            "password_dropped": takeover.password_dropped,
                         }),
                         ip: ctx.ip_string(),
                         user_agent: ctx.user_agent.clone(),
@@ -1045,23 +1061,50 @@ pub async fn callback(
     (jar, Redirect::to(&target)).into_response()
 }
 
-/// `pending_verification` means "email not proven". When the IdP's own
-/// `email_verified = true` claim proves it (`idp_proved_email`), the row
-/// becomes `active` — the proof the verify-email link asks for. Whoever
-/// registered a pending local row never proved the address, so the local
-/// password they chose is dropped and every token they could hold is revoked
-/// (`token_version` bump here, refresh sessions by the caller once the row is
-/// written): activating must not hand the registrant the owner's account.
-/// Returns whether it activated. Other states are left alone (a disabled row
-/// stays disabled and `admit_state` refuses it).
-fn activate_if_pending(am: &mut UserAM, row: &user::Model, idp_proved_email: bool) -> bool {
-    if row.state != UserState::PendingVerification || !idp_proved_email {
-        return false;
+/// What [`take_over_if_unproven`] did to a row.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Takeover {
+    /// The row's address was unproven and the IdP proved it: password
+    /// dropped (if any), `token_version` bumped, `email_verified` set. The
+    /// caller revokes the user's refresh sessions once the row is written.
+    taken_over: bool,
+    /// `pending_verification` → `active`.
+    activated: bool,
+    /// A local password existed and was dropped.
+    password_dropped: bool,
+}
+
+/// `unproven` means nobody has proven the row's address: a pending row, or
+/// (when linking onto a local account) a local row whose `email_verified` is
+/// false. When the IdP's own `email_verified = true` claim proves it
+/// (`idp_proved_email`), the account is handed to the address's owner:
+/// whoever set the address never proved it, so the local password they chose
+/// is dropped and every token they could hold is revoked (`token_version`
+/// bump here, refresh sessions by the caller once the row is written), the
+/// address is marked verified, and a pending row becomes `active`. Other
+/// states are left alone (a disabled row stays disabled and `admit_state`
+/// refuses it).
+fn take_over_if_unproven(
+    am: &mut UserAM,
+    row: &user::Model,
+    idp_proved_email: bool,
+    unproven: bool,
+) -> Takeover {
+    if !unproven || !idp_proved_email {
+        return Takeover::default();
     }
-    am.state = Set(UserState::Active);
+    let activated = row.state == UserState::PendingVerification;
+    if activated {
+        am.state = Set(UserState::Active);
+    }
     am.password_hash = Set(None);
     am.token_version = Set(row.token_version + 1);
-    true
+    am.email_verified = Set(true);
+    Takeover {
+        taken_over: true,
+        activated,
+        password_dropped: row.password_hash.is_some(),
+    }
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> Response {

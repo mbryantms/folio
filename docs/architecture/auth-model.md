@@ -122,6 +122,16 @@ upsert users (external_id = "oidc:<iss>|<sub>")
 issue cookie session (same as local)
 ```
 
+A first OIDC login whose email belongs to a local (password) account is refused with 409 `auth.email_in_use` unless `auth.oidc.link_local_by_verified_email` is on. With it on, `auth/oidc.rs::callback` decides in three cases:
+
+- The ID token's `email_verified` is not the JSON boolean `true` (absent, even when the trust-unverified opt-in admits the login, or `false`; a string `"true"` fails ID-token parsing): no link. A pending local row gets 403 "verify your email first", any other row 409.
+- The claim is `true` and the local row's address is verified: the identity is linked onto the row and the local password keeps working.
+- The claim is `true` and the local row's address is unverified, pending or active: the identity is linked and the account is taken over (`take_over_if_unproven`). The local password is dropped, `token_version` is bumped, every refresh session is revoked, `email_verified` is set, and a pending row becomes active. A disabled row stays disabled and is refused.
+
+The `auth.oidc.auto_link` audit row records `activated` and `password_dropped`.
+
+Verified against the code at `ca66f430` on 2026-11-10.
+
 ### Refresh
 
 ```

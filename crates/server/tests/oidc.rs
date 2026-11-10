@@ -1623,25 +1623,181 @@ async fn auto_link_refuses_a_string_claim() {
     assert_not_linked(&app, &before).await;
 }
 
-/// A verified claim does not link onto a local row whose own address was
-/// never verified (here: changed without a verification step).
+/// Local password sign-in: `(status, refresh cookie, csrf cookie)`.
+async fn local_login(app: &TestApp, email: &str, password: &str) -> (StatusCode, String, String) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "email": email, "password": password }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let refresh = extract_set_cookie(&resp, "__Host-comic_refresh").unwrap_or_default();
+    let csrf = extract_set_cookie(&resp, "__Host-comic_csrf").unwrap_or_default();
+    if status != StatusCode::OK {
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "auth.invalid", "{body}");
+    }
+    (status, refresh, csrf)
+}
+
+async fn refresh_status(app: &TestApp, refresh: &str, csrf: &str) -> StatusCode {
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/refresh")
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_refresh={refresh}; __Host-comic_csrf={csrf}"),
+                )
+                .header("x-csrf-token", csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+/// Set a row's `email_verified` (and optionally its state) in the DB.
+async fn force_unverified(
+    app: &TestApp,
+    id: uuid::Uuid,
+    state: Option<entity::user::UserState>,
+) -> entity::user::Model {
+    use sea_orm::{ActiveModelTrait, EntityTrait, IntoActiveModel, Set};
+    let row = entity::user::Entity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am = row.into_active_model();
+    am.email_verified = Set(false);
+    if let Some(s) = state {
+        am.state = Set(s);
+    }
+    am.update(&app.state().db).await.unwrap()
+}
+
+async fn auto_link_payload(app: &TestApp) -> serde_json::Value {
+    use sea_orm::EntityTrait;
+    entity::audit_log::Entity::find()
+        .all(&app.state().db)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|a| a.action == "auth.oidc.auto_link")
+        .expect("auto-link audit row")
+        .payload
+}
+
+/// An active local row whose address was never verified (e.g. changed
+/// without a verification step) is linked and taken over when the IdP
+/// proves the address: the old password and sessions stop working.
 #[tokio::test]
-async fn auto_link_refuses_a_local_row_with_an_unverified_email() {
-    use sea_orm::{ActiveModelTrait, IntoActiveModel, Set};
+async fn auto_link_takes_over_an_active_local_row_with_an_unverified_email() {
     let op = MockOp::start().await;
     let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
     let email = "unverified-local@example.com";
     let row = active_local_user(&app, email).await;
-    let mut am = row.into_active_model();
-    am.email_verified = Set(false);
-    let before = am.update(&app.state().db).await.unwrap();
+    let (status, refresh, csrf) = local_login(&app, email, "correctly-horse-battery").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!refresh.is_empty());
+    let before = force_unverified(&app, row.id, None).await;
 
     let resp = oidc_sign_in(&app, &op, "subject-owner", email, Some(true), "c1").await;
-    assert_eq!(resp.status(), StatusCode::CONFLICT);
-    assert!(extract_set_cookie(&resp, "__Host-comic_session").is_none());
-    let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error"]["code"], "auth.email_in_use", "{body}");
-    assert_not_linked(&app, &before).await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
+    assert_eq!(me_status(&app, &session).await, StatusCode::OK);
+
+    let after = user_row(&app, row.id).await;
+    assert!(after.external_id.starts_with("oidc:"), "linked");
+    assert!(after.email_verified);
+    assert!(after.password_hash.is_none());
+    assert_eq!(after.token_version, before.token_version + 1);
+    assert_eq!(after.state, entity::user::UserState::Active);
+    let (status, _, _) = local_login(&app, email, "correctly-horse-battery").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "old password refused");
+    assert_eq!(
+        refresh_status(&app, &refresh, &csrf).await,
+        StatusCode::UNAUTHORIZED,
+        "pre-link refresh session revoked"
+    );
+    let payload = auto_link_payload(&app).await;
+    assert_eq!(payload["password_dropped"], true, "{payload}");
+    assert_eq!(payload["activated"], false, "{payload}");
+}
+
+/// A realistic pending local row (`email_verified = false`) is linked,
+/// activated and taken over when the IdP proves the address.
+#[tokio::test]
+async fn auto_link_takes_over_a_pending_local_row_with_an_unverified_email() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "pending-unverified@example.com";
+    let row = active_local_user(&app, email).await;
+    let (status, refresh, csrf) = local_login(&app, email, "correctly-horse-battery").await;
+    assert_eq!(status, StatusCode::OK);
+    let before = force_unverified(
+        &app,
+        row.id,
+        Some(entity::user::UserState::PendingVerification),
+    )
+    .await;
+
+    let resp = oidc_sign_in(&app, &op, "subject-pending-owner", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let session = extract_set_cookie(&resp, "__Host-comic_session").expect("session cookie");
+    assert_eq!(me_status(&app, &session).await, StatusCode::OK);
+
+    let after = user_row(&app, row.id).await;
+    assert!(after.external_id.starts_with("oidc:"), "linked");
+    assert_eq!(after.state, entity::user::UserState::Active);
+    assert!(after.email_verified);
+    assert!(after.password_hash.is_none());
+    assert_eq!(after.token_version, before.token_version + 1);
+    assert_eq!(
+        refresh_status(&app, &refresh, &csrf).await,
+        StatusCode::UNAUTHORIZED,
+        "pre-link refresh session revoked"
+    );
+    let (status, _, _) = local_login(&app, email, "correctly-horse-battery").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let payload = auto_link_payload(&app).await;
+    assert_eq!(payload["activated"], true, "{payload}");
+    assert_eq!(payload["password_dropped"], true, "{payload}");
+}
+
+/// A verified local row is linked and keeps its password.
+#[tokio::test]
+async fn auto_link_keeps_the_password_of_a_verified_local_row() {
+    let op = MockOp::start().await;
+    let app = TestApp::spawn_with_oidc_link_local(op.issuer()).await;
+    let email = "verified-local@example.com";
+    let row = active_local_user(&app, email).await;
+
+    let resp = oidc_sign_in(&app, &op, "subject-verified", email, Some(true), "c1").await;
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let after = user_row(&app, row.id).await;
+    assert!(after.external_id.starts_with("oidc:"), "linked");
+    assert_eq!(after.password_hash, row.password_hash);
+    assert_eq!(after.token_version, row.token_version);
+    let (status, _, _) = local_login(&app, email, "correctly-horse-battery").await;
+    assert_eq!(status, StatusCode::OK, "local password still signs in");
+    let payload = auto_link_payload(&app).await;
+    assert_eq!(payload["password_dropped"], false, "{payload}");
+    assert_eq!(payload["activated"], false, "{payload}");
 }
 
 /// With the opt-in off a verified claim still refuses the collision.
