@@ -60,6 +60,8 @@ pub struct Inner {
     pub app_password_cache: crate::auth::app_password::AppPasswordCache,
     /// Concurrency gate (and verification count) for app-password argon2.
     pub app_password_gate: crate::auth::app_password::AppPasswordGate,
+    /// Short-lived cache of refused app-password digests (no query, no count).
+    pub app_password_refusals: crate::auth::app_password::AppPasswordRefusals,
     pub prometheus: PrometheusHandle,
     /// Process/runtime gauge sampler (`folio_process_*`). The `/metrics`
     /// handler calls `.collect()` per scrape before rendering.
@@ -233,6 +235,7 @@ impl AppState {
             zip_lru,
             app_password_cache,
             app_password_gate: crate::auth::app_password::AppPasswordGate::new(),
+            app_password_refusals: crate::auth::app_password::AppPasswordRefusals::new(),
             prometheus,
             process_metrics,
             log_buffer,

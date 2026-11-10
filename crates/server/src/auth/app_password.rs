@@ -14,20 +14,23 @@
 //! Verification ([`verify`]), in order:
 //! 1. **Cache**: a token this process already verified skips argon2 but
 //!    re-reads its row, so revocation and scope stay authoritative.
-//! 2. **Lockout**: the client IP's failed-auth lockout
-//!    ([`super::failed_auth`], shared with sign-in) is checked before any
-//!    lookup or hashing; a locked-out IP is refused.
-//! 3. **Digest**: one indexed lookup by digest, then one argon2 check of
+//! 2. **Refusal cache**: a token refused outright within the last
+//!    [`REFUSAL_TTL`] is refused again with no query, no hashing and no
+//!    new counted failure ([`AppPasswordRefusals`]).
+//! 3. **Lockout**: the client IP's app-password lockout
+//!    ([`super::failed_auth::IpCounter::AppPassword`], a counter separate
+//!    from sign-in's) is checked before any lookup or hashing.
+//! 4. **Digest**: one indexed lookup by digest, then one argon2 check of
 //!    that row (defence in depth; it also drives the pepper rehash).
-//! 4. **Legacy**: only when no row has the digest, the newest
+//! 5. **Legacy**: only when no row has the digest, the newest
 //!    [`MAX_LEGACY_CANDIDATES`] active rows written before the digest
 //!    column existed (`lookup_digest IS NULL`) are tried; a match stores
-//!    its digest, so that token never takes this path again.
+//!    its digest, so that token never takes this path again. The miss is
+//!    charged to the client IP *before* this scan starts.
 //!
-//! A miss counts as a failed-auth attempt for the client IP. Every argon2
-//! verification runs on the blocking pool behind a small global gate
-//! ([`AppPasswordGate`], [`VERIFY_PERMITS`]); a request that can't get a
-//! permit within [`VERIFY_PERMIT_WAIT`] is answered 503.
+//! Every argon2 verification runs on the blocking pool behind a small
+//! global gate ([`AppPasswordGate`], [`VERIFY_PERMITS`]); a request that
+//! can't get a permit within [`VERIFY_PERMIT_WAIT`] is answered 503.
 //!
 //! Soft-delete only — `revoked_at` flips the row to inactive without
 //! losing audit history.
@@ -50,6 +53,7 @@ use uuid::Uuid;
 
 use entity::app_password::{self, ActiveModel as AppPasswordAM, Entity as AppPasswordEntity};
 
+use super::failed_auth::IpCounter;
 use super::password;
 use crate::middleware::RequestContext;
 use crate::state::AppState;
@@ -91,6 +95,12 @@ pub const VERIFY_PERMIT_WAIT: Duration = Duration::from_secs(2);
 
 /// `Retry-After` (seconds) on the 503 a request gets when no permit freed up.
 pub const BUSY_RETRY_AFTER_SECS: u64 = 1;
+
+/// How long a refused token stays in [`AppPasswordRefusals`].
+pub const REFUSAL_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// Bound on [`AppPasswordRefusals`]; junk tokens just churn it.
+pub const REFUSAL_CACHE_CAP: usize = 1024;
 
 /// Gauge: active app passwords that still have no lookup digest.
 pub const LEGACY_GAUGE: &str = "folio_auth_app_password_legacy_remaining";
@@ -192,7 +202,7 @@ pub struct ResolvedAppPassword {
 pub enum VerifyError {
     /// No active row matches (or the lookup failed).
     Invalid,
-    /// The client IP is in failed-auth lockout; nothing was looked up.
+    /// The client IP is in app-password lockout; nothing was looked up.
     /// Carries the remaining lockout in seconds.
     LockedOut(u64),
     /// No verification permit freed up within the gate's wait.
@@ -251,6 +261,62 @@ impl AppPasswordCache {
 }
 
 impl Default for AppPasswordCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Process-wide, bounded cache of token digests that were refused outright:
+/// no row has the digest and the legacy scan finished without a match (or
+/// there were no legacy rows). A hit is answered as a miss with no query,
+/// no hashing and no new counted failure, so a reader app that keeps
+/// polling with a stale token is charged once per [`REFUSAL_TTL`] instead
+/// of once per request.
+///
+/// An entry can't hide a token that becomes valid: a newly issued token is
+/// a fresh random value, so its digest can't already be here. A legacy row
+/// can become reachable later when the [`MAX_LEGACY_CANDIDATES`] window
+/// shifts; the short lifetime covers that. Never written on a busy
+/// answer, a lockout refusal or a scan that was cut short.
+#[derive(Clone)]
+pub struct AppPasswordRefusals(Arc<Mutex<LruCache<[u8; 32], std::time::Instant>>>);
+
+impl AppPasswordRefusals {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(LruCache::new(
+            NonZeroUsize::new(REFUSAL_CACHE_CAP).expect("nonzero"),
+        ))))
+    }
+
+    fn contains(&self, key: &[u8; 32]) -> bool {
+        let mut map = self.0.lock().expect("app-password refusals poisoned");
+        match map.get(key) {
+            Some(at) if at.elapsed() < REFUSAL_TTL => true,
+            Some(_) => {
+                map.pop(key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn put(&self, key: [u8; 32]) {
+        self.0
+            .lock()
+            .expect("app-password refusals poisoned")
+            .put(key, std::time::Instant::now());
+    }
+
+    /// Forget every entry (test hook).
+    pub fn clear(&self) {
+        self.0
+            .lock()
+            .expect("app-password refusals poisoned")
+            .clear();
+    }
+}
+
+impl Default for AppPasswordRefusals {
     fn default() -> Self {
         Self::new()
     }
@@ -384,9 +450,19 @@ pub async fn verify(
         };
     }
 
-    // Lockout before any lookup or hashing, the same IP axis sign-in uses.
-    if let Some(ip) = ctx.and_then(|c| c.client_ip)
-        && let Ok(Some(retry)) = super::failed_auth::check_lockout_for(app, ip).await
+    // A token refused outright a moment ago: same answer, no query, no
+    // hashing, not counted again.
+    let refusals = &app.app_password_refusals;
+    if refusals.contains(&digest) {
+        return Err(VerifyError::Invalid);
+    }
+
+    // Lockout before any lookup or hashing, on the app-password counter
+    // (sign-in has its own). A refused request is not counted, as at sign-in.
+    let ip = ctx.and_then(|c| c.client_ip);
+    if let Some(ip) = ip
+        && let Ok(Some(retry)) =
+            super::failed_auth::check_ip_lockout_for(app, IpCounter::AppPassword, ip).await
     {
         return Err(VerifyError::LockedOut(retry));
     }
@@ -408,8 +484,8 @@ pub async fn verify(
         }
     };
     if let Some(row) = by_digest {
-        // A revoked token is a real token, not a guess: refuse it without
-        // hashing and without counting it against the IP.
+        // A revoked token found by its digest is a real token, not a
+        // guess: refused without hashing and without counting.
         if row.revoked_at.is_some() {
             return Err(VerifyError::Invalid);
         }
@@ -418,7 +494,8 @@ pub async fn verify(
             .await
             .map_err(|()| VerifyError::Busy)?;
         if !verified.ok() {
-            record_miss(app, ctx).await;
+            // Practically impossible (the digest matched); still counted.
+            record_miss(app, ip).await;
             return Err(VerifyError::Invalid);
         }
         store_rehash(db, row.id, rehash).await;
@@ -447,6 +524,13 @@ pub async fn verify(
             return Err(VerifyError::Invalid);
         }
     };
+
+    // Charge the miss before any hashing, so a request that ends busy or is
+    // dropped part-way through the scan has still been counted. The cost:
+    // a legacy token's first successful use counts one failure, once in its
+    // lifetime (it has its digest afterwards).
+    record_miss(app, ip).await;
+
     for row in legacy {
         let (verified, rehash) = gate
             .verify_one(row.hash.clone(), plaintext, peppers, cost)
@@ -461,15 +545,16 @@ pub async fn verify(
         return Ok(resolve(db, row).await);
     }
 
-    record_miss(app, ctx).await;
+    // No row has the digest and the scan finished: refused outright.
+    refusals.put(digest);
     Err(VerifyError::Invalid)
 }
 
-/// A presented token matched nothing: count it for the client IP (no-op
-/// when the failed-auth counters are switched off).
-async fn record_miss(app: &AppState, ctx: Option<&RequestContext>) {
-    if let Some(ctx) = ctx {
-        super::failed_auth::record_failure_for(app, ctx).await;
+/// A presented token matched nothing: count it for the client IP on the
+/// app-password counter (no-op when the failed-auth counters are off).
+async fn record_miss(app: &AppState, ip: Option<std::net::IpAddr>) {
+    if let Some(ip) = ip {
+        super::failed_auth::record_ip_failure_for(app, IpCounter::AppPassword, ip).await;
     }
 }
 

@@ -104,19 +104,27 @@ pub enum AuthRejection {
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> axum::response::Response {
         let (status, code, message) = match self {
-            // Same answer sign-in gives a locked-out IP.
-            Self::LockedOut(retry) => return super::failed_auth::lockout_response(retry),
+            // Typed envelope plus `Retry-After`; reader apps get the code
+            // sign-in uses for a locked-out address.
+            Self::LockedOut(retry) => {
+                return with_retry_after(
+                    crate::api::respond(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        shared::error::ApiErrorCode::AuthLockedOut,
+                        "too many failed app-password attempts; try again later",
+                    ),
+                    retry,
+                );
+            }
             Self::Busy => {
-                let mut resp = crate::api::error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "auth.busy",
-                    "Too many sign-ins are being checked right now; try again shortly",
+                return with_retry_after(
+                    crate::api::respond(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        shared::error::ApiErrorCode::AuthBusy,
+                        "Too many sign-ins are being checked right now; try again shortly",
+                    ),
+                    super::app_password::BUSY_RETRY_AFTER_SECS,
                 );
-                resp.headers_mut().insert(
-                    axum::http::header::RETRY_AFTER,
-                    axum::http::HeaderValue::from(super::app_password::BUSY_RETRY_AFTER_SECS),
-                );
-                return resp;
             }
             Self::Missing => (
                 StatusCode::UNAUTHORIZED,
@@ -153,6 +161,14 @@ impl IntoResponse for AuthRejection {
         };
         crate::api::error(status, code, message)
     }
+}
+
+fn with_retry_after(mut resp: axum::response::Response, secs: u64) -> axum::response::Response {
+    resp.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from(secs),
+    );
+    resp
 }
 
 impl<S> FromRequestParts<S> for CurrentUser
@@ -224,9 +240,9 @@ pub fn admit_state(state: UserState) -> Result<(), AuthRejection> {
 
 /// Resolve an `app_…` Bearer token to its owning user. Bumps the row's
 /// `last_used_at` on success (best-effort, see `app_password::verify`).
-/// A wrong token is 401 `auth.invalid` as before; a locked-out client IP
-/// gets sign-in's 429 `auth.locked_out`, and a request that found every
-/// verification permit taken gets 503 `auth.busy`.
+/// A wrong token is 401 `auth.invalid` as before; an address in
+/// app-password lockout gets 429 `auth.locked_out`, and a request that found
+/// every verification permit taken gets 503 `auth.busy`.
 async fn resolve_app_password(
     app: &AppState,
     ctx: Option<&crate::middleware::RequestContext>,

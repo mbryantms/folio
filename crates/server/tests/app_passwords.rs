@@ -892,6 +892,60 @@ async fn opds_from(app: &TestApp, token: &str, ip: [u8; 4]) -> Response<Body> {
     app.router.clone().oneshot(req).await.unwrap()
 }
 
+/// A distinct well-formed token that matches nothing.
+fn junk(i: usize) -> String {
+    format!("app_{:a>52}", format!("junk{i}"))
+}
+
+/// GET `uri` with `Bearer <token>` from client IP `ip`.
+async fn get_from(app: &TestApp, uri: &str, token: &str, ip: [u8; 4]) -> Response<Body> {
+    let mut req = Request::builder()
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            ip, 40000,
+        ))));
+    app.router.clone().oneshot(req).await.unwrap()
+}
+
+/// Current value of the app-password failure counter for `ip`.
+async fn app_fail_count(app: &TestApp, ip: [u8; 4]) -> i64 {
+    use redis::AsyncCommands;
+    let key =
+        server::auth::failed_auth::IpCounter::AppPassword.counter_key(std::net::IpAddr::from(ip));
+    let mut redis = app.state().jobs.redis.clone();
+    let n: Option<i64> = redis.get(key).await.unwrap();
+    n.unwrap_or(0)
+}
+
+/// Push `ip` over the threshold on one counter, the way failures would.
+async fn lock_out(app: &TestApp, which: server::auth::failed_auth::IpCounter, ip: [u8; 4]) {
+    for _ in 0..server::auth::failed_auth::FAIL_THRESHOLD {
+        server::auth::failed_auth::record_failure_on(
+            app.state().jobs.redis.clone(),
+            which,
+            std::net::IpAddr::from(ip),
+        )
+        .await;
+    }
+}
+
+async fn set_last_used_now(app: &TestApp, id: uuid::Uuid) {
+    use sea_orm::sea_query::Expr;
+    entity::app_password::Entity::update_many()
+        .col_expr(
+            entity::app_password::Column::LastUsedAt,
+            Expr::value(chrono::Utc::now().fixed_offset()),
+        )
+        .filter(entity::app_password::Column::Id.eq(id))
+        .exec(&app.state().db)
+        .await
+        .unwrap();
+}
+
 async fn user_id(app: &TestApp, email: &str) -> uuid::Uuid {
     entity::user::Entity::find()
         .filter(entity::user::Column::Email.eq(email))
@@ -1059,6 +1113,17 @@ async fn legacy_scan_is_bounded() {
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(verifications(&app) - before, MAX_LEGACY_CANDIDATES);
+
+    // Another old one, just used elsewhere, sorts first and is reached with
+    // a single verification.
+    let (recent_id, recent) = &ids[1];
+    set_last_used_now(&app, *recent_id).await;
+    let before = verifications(&app);
+    assert_eq!(
+        opds_with_bearer(&app, recent).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(verifications(&app) - before, 1);
 }
 
 #[tokio::test]
@@ -1074,13 +1139,14 @@ async fn lockout_refuses_before_any_verification_per_ip() {
     let a = [198, 51, 100, 7];
     let threshold = server::auth::failed_auth::FAIL_THRESHOLD as u64;
     for i in 0..threshold {
-        let resp = opds_from(&app, JUNK, a).await;
+        let resp = opds_from(&app, &junk(i as usize), a).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "attempt {i}");
     }
     assert_eq!(verifications(&app), threshold);
+    assert_eq!(app_fail_count(&app, a).await, threshold as i64);
 
-    // Locked out: refused before any lookup or hashing, as sign-in is.
-    let resp = opds_from(&app, JUNK, a).await;
+    // Locked out: refused before any lookup or hashing, and not counted.
+    let resp = opds_from(&app, &junk(99), a).await;
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(resp.headers().contains_key(header::RETRY_AFTER));
     let body = body_json(resp.into_body()).await;
@@ -1095,6 +1161,7 @@ async fn lockout_refuses_before_any_verification_per_ip() {
         threshold,
         "no hashing while locked out"
     );
+    assert_eq!(app_fail_count(&app, a).await, threshold as i64);
 
     // Another IP is unaffected.
     assert_eq!(
@@ -1116,10 +1183,11 @@ async fn lockout_off_when_failed_auth_counters_are_disabled() {
     state.replace_cfg(cfg);
 
     let ip = [198, 51, 100, 8];
-    for i in 0..(server::auth::failed_auth::FAIL_THRESHOLD + 2) {
-        let resp = opds_from(&app, JUNK, ip).await;
+    for i in 0..(server::auth::failed_auth::FAIL_THRESHOLD as usize + 2) {
+        let resp = opds_from(&app, &junk(i), ip).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "attempt {i}");
     }
+    assert_eq!(app_fail_count(&app, ip).await, 0);
 }
 
 #[tokio::test]
@@ -1235,4 +1303,252 @@ async fn busy_gate_answers_503_then_recovers() {
         StatusCode::OK
     );
     assert_eq!(verifications(&app), 1);
+}
+
+/// Concurrent junk while legacy rows remain: every request is charged before
+/// it hashes, so even requests that end busy lock the address.
+#[tokio::test]
+async fn concurrent_busy_misses_still_lock_the_address() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "concurrent@example.com").await;
+    let (legacy_id, _) = issue_direct(&app, uid).await;
+    make_legacy(&app, legacy_id).await;
+    let gate = app.state().app_password_gate.clone();
+    gate.set_permit_wait(std::time::Duration::from_millis(50));
+    let ip = [198, 51, 100, 20];
+
+    let held = gate.hold_all_permits().await;
+    let n = server::auth::failed_auth::FAIL_THRESHOLD as usize + 5;
+    let reqs = (0..n).map(|i| {
+        let token = junk(i);
+        let app = &app;
+        async move { opds_from(app, &token, ip).await.status() }
+    });
+    let statuses = futures::future::join_all(reqs).await;
+    assert!(
+        statuses
+            .iter()
+            .all(|s| *s == StatusCode::SERVICE_UNAVAILABLE),
+        "{statuses:?}"
+    );
+    drop(held);
+
+    let resp = opds_from(&app, &junk(500), ip).await;
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// A request dropped part-way through the legacy scan has been counted.
+#[tokio::test]
+async fn dropped_request_mid_scan_is_counted() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "dropped@example.com").await;
+    let (legacy_id, _) = issue_direct(&app, uid).await;
+    make_legacy(&app, legacy_id).await;
+    let gate = app.state().app_password_gate.clone();
+    gate.set_permit_wait(std::time::Duration::from_secs(30));
+    let ip = [198, 51, 100, 21];
+
+    let held = gate.hold_all_permits().await;
+    let router = app.router.clone();
+    let task = tokio::spawn(async move {
+        let mut req = Request::builder()
+            .uri("/opds/v1")
+            .header(header::AUTHORIZATION, format!("Bearer {}", junk(1)))
+            .body(Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 40000,
+            ))));
+        router.oneshot(req).await.unwrap().status()
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app_fail_count(&app, ip).await == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "miss not charged while the request waits to hash"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    task.abort();
+    let _ = task.await;
+    drop(held);
+    assert_eq!(app_fail_count(&app, ip).await, 1);
+    assert_eq!(verifications(&app), 0);
+}
+
+/// Busy at the legacy loop answers 503 and leaves exactly one counted miss.
+#[tokio::test]
+async fn busy_in_legacy_loop_is_counted_once() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "busyloop@example.com").await;
+    for _ in 0..2 {
+        let (id, _) = issue_direct(&app, uid).await;
+        make_legacy(&app, id).await;
+    }
+    let gate = app.state().app_password_gate.clone();
+    gate.set_permit_wait(std::time::Duration::from_millis(50));
+    let ip = [198, 51, 100, 22];
+    let held = gate.hold_all_permits().await;
+    let resp = opds_from(&app, JUNK, ip).await;
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(resp.headers().contains_key(header::RETRY_AFTER));
+    drop(held);
+    assert_eq!(app_fail_count(&app, ip).await, 1);
+}
+
+async fn login_from(app: &TestApp, email: &str, ip: [u8; 4]) -> StatusCode {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/auth/local/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(format!(
+            r#"{{"email":"{email}","password":"correctly-horse-battery"}}"#
+        )))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            ip, 40000,
+        ))));
+    app.router.clone().oneshot(req).await.unwrap().status()
+}
+
+/// Sign-in and app passwords lock out on separate counters.
+#[tokio::test]
+async fn sign_in_and_app_password_lockouts_are_separate() {
+    use server::auth::failed_auth::IpCounter;
+    let app = TestApp::spawn().await;
+    let (auth, _) = owner(&app, "separate@example.com").await;
+    let token = mint(&app, &auth).await;
+
+    // A sign-in lockout does not refuse a valid, uncached app password.
+    let a = [198, 51, 100, 30];
+    lock_out(&app, IpCounter::SignIn, a).await;
+    assert_eq!(
+        login_from(&app, "separate@example.com", a).await,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(opds_from(&app, &token, a).await.status(), StatusCode::OK);
+
+    // An app-password lockout, reached by real misses, does not refuse
+    // sign-in with correct credentials.
+    let b = [198, 51, 100, 31];
+    for i in 0..server::auth::failed_auth::FAIL_THRESHOLD as usize {
+        assert_eq!(
+            opds_from(&app, &junk(i), b).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        opds_from(&app, &junk(77), b).await.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        login_from(&app, "separate@example.com", b).await,
+        StatusCode::OK
+    );
+}
+
+/// The same refused token, presented over and over, is charged once and
+/// hashed once; a different token is still charged.
+#[tokio::test]
+async fn repeated_refused_token_is_charged_once() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "repeat@example.com").await;
+    let (legacy_id, _) = issue_direct(&app, uid).await;
+    make_legacy(&app, legacy_id).await;
+    let ip = [198, 51, 100, 40];
+
+    for i in 0..15 {
+        let resp = opds_from(&app, JUNK, ip).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "attempt {i}");
+        assert!(resp.headers().contains_key(header::WWW_AUTHENTICATE));
+    }
+    assert_eq!(verifications(&app), 1, "only the first presentation hashed");
+    assert_eq!(app_fail_count(&app, ip).await, 1);
+
+    assert_eq!(
+        opds_from(&app, &junk(3), ip).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(app_fail_count(&app, ip).await, 2);
+}
+
+/// A legacy row revoked before it got a digest: refused, counted once, then
+/// answered from the refusal cache.
+#[tokio::test]
+async fn revoked_legacy_row_is_counted_once() {
+    let app = TestApp::spawn().await;
+    let (_, uid) = owner(&app, "revlegacy@example.com").await;
+    let (id, token) = issue_direct(&app, uid).await;
+    make_legacy(&app, id).await;
+    {
+        use sea_orm::sea_query::Expr;
+        entity::app_password::Entity::update_many()
+            .col_expr(
+                entity::app_password::Column::RevokedAt,
+                Expr::value(chrono::Utc::now().fixed_offset()),
+            )
+            .filter(entity::app_password::Column::Id.eq(id))
+            .exec(&app.state().db)
+            .await
+            .unwrap();
+    }
+    let ip = [198, 51, 100, 41];
+    for _ in 0..5 {
+        assert_eq!(
+            opds_from(&app, &token, ip).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(app_fail_count(&app, ip).await, 1);
+    assert_eq!(verifications(&app), 0);
+}
+
+/// A cached token whose user was deleted is refused on the next request.
+#[tokio::test]
+async fn deleted_users_cached_token_is_refused() {
+    let app = TestApp::spawn().await;
+    let (auth, uid) = owner(&app, "gone@example.com").await;
+    let token = mint(&app, &auth).await;
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::OK
+    );
+    entity::user::Entity::delete_by_id(uid)
+        .exec(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(
+        opds_with_bearer(&app, &token).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+/// Page bytes and the Komga shim go through the same path: a junk token
+/// costs no hashing, and a locked address gets the 429 there too.
+#[tokio::test]
+async fn other_reader_routes_use_the_same_path() {
+    use server::auth::failed_auth::IpCounter;
+    let app = TestApp::spawn().await;
+    let (auth, _) = owner(&app, "routes@example.com").await;
+    let _ = mint(&app, &auth).await;
+    let issue = uuid::Uuid::now_v7();
+    let page = format!("/issues/{issue}/pages/0");
+    let book = format!("/api/v1/books/{issue}");
+    let ip = [198, 51, 100, 50];
+
+    for (i, uri) in [&page, &book].into_iter().enumerate() {
+        let resp = get_from(&app, uri, &junk(i), ip).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{uri}");
+    }
+    assert_eq!(verifications(&app), 0);
+    assert_eq!(app_fail_count(&app, ip).await, 2);
+
+    let locked = [198, 51, 100, 51];
+    lock_out(&app, IpCounter::AppPassword, locked).await;
+    for (i, uri) in [&page, &book].into_iter().enumerate() {
+        let resp = get_from(&app, uri, &junk(10 + i), locked).await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS, "{uri}");
+    }
 }

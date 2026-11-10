@@ -51,32 +51,43 @@ checks, in order:
 1. **Verified-token cache.** A token this process already verified
    skips argon2 but re-reads its row, so a revocation or scope change
    applies on the next request. Only successes are cached.
-2. **Failed-auth lockout** for the client IP, shared with sign-in: a
-   locked-out IP gets 429 `auth.locked_out` with `Retry-After` before
-   any lookup or hashing.
-3. **Digest lookup.** One indexed query by digest, then one argon2
+2. **Refusal cache.** A token refused outright in the last 5 minutes
+   (`REFUSAL_TTL`, at most 1024 entries) gets the same 401 again with no
+   query, no hashing and no new counted failure.
+3. **App-password lockout** for the client address, a counter separate
+   from sign-in's: a locked-out address gets 429 `auth.locked_out` with
+   `Retry-After` before any lookup or hashing. Sign-in from that address
+   is not affected, and a sign-in lockout does not refuse app passwords.
+4. **Digest lookup.** One indexed query by digest, then one argon2
    check of that row (which also rehashes a row still under the previous
-   pepper during a rotation). A revoked row is refused without hashing.
-4. **Legacy rows.** Only when no row has the digest: active rows written
+   pepper during a rotation). A revoked row is refused without hashing
+   and without counting.
+5. **Legacy rows.** Only when no row has the digest: active rows written
    before the digest column existed are tried, at most 20 per request
-   (`MAX_LEGACY_CANDIDATES`), most recently used first. A match stores
-   the row's digest, so that token takes step 3 from then on.
+   (`MAX_LEGACY_CANDIDATES`), most recently used first. The miss is
+   counted for the client address before this scan hashes anything. A
+   match stores the row's digest, so that token takes step 4 from then
+   on; its first successful use therefore counts one miss, once.
 
 A token that matches nothing gets the usual 401 `auth.invalid` with the
-Basic challenge and counts as a failed attempt for the client IP. Every
-argon2 check runs on the blocking pool behind a global gate of 2 permits;
-a request that waits more than 2 s for one gets 503 `auth.busy` with
-`Retry-After: 1`. The account-state rule (disabled or unverified users
-refused), the `read` / `read+progress` scope check and the reader-route
-rule apply after a match exactly as before.
+Basic challenge and counts as a failed attempt for the client address.
+Every argon2 check runs on the blocking pool behind a global gate of 2
+permits; a request that waits more than 2 s for one gets 503 `auth.busy`
+with `Retry-After: 1`. The account-state rule (disabled or unverified
+users refused), the `read` / `read+progress` scope check and the
+reader-route rule apply after a match exactly as before. The Basic
+username is still ignored, so the legacy scan is not narrowed to one
+account.
 
-**Legacy note.** Tokens created before the digest existed are upgraded
-on their first successful use; the Prometheus gauge
-`folio_auth_app_password_legacy_remaining` counts the active ones still
-waiting. Because the scan takes the 20 most recently used, a legacy
-token that has never been used (or not for a long time) on an install
-with more than 20 legacy tokens may never be reached: revoke it and
-create a new one. Once the gauge reads 0 a wrong token costs one indexed
+**Legacy note.** Tokens created before this version have no digest.
+They are matched most recently used first, 20 per request, and a row
+gains its digest only when its token is next presented successfully. A
+token created before the upgrade that has not been used recently, on a
+server with more than 20 such tokens, may never be reached and need to
+be re-created. Tokens that are never presented again keep their place
+in that window until they are revoked, so revoke app passwords nobody
+uses. The Prometheus gauge `folio_auth_app_password_legacy_remaining`
+shows how many remain; once it reads 0 a wrong token costs one indexed
 lookup and no argon2 work.
 
 ## Endpoint catalog
