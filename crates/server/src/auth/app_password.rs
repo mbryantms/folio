@@ -371,7 +371,8 @@ impl AppPasswordGate {
     /// Verify `plaintext` against one stored hash on the blocking pool,
     /// holding a permit. On a previous-pepper match also returns the
     /// plaintext rehashed under the current pepper. `Err(())` = no permit
-    /// within the wait.
+    /// within the wait, or the hashing task did not finish; both answer
+    /// busy.
     async fn verify_one(
         &self,
         stored: String,
@@ -409,7 +410,9 @@ impl AppPasswordGate {
             (verified, rehash)
         })
         .await;
-        Ok(joined.unwrap_or((password::Verified::No, None)))
+        // A panicked or cancelled hash is not a verdict: answering "no"
+        // would let a completed scan record a valid token as refused.
+        joined.map_err(|_| ())
     }
 }
 

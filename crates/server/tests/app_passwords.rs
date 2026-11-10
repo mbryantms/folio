@@ -1395,6 +1395,14 @@ async fn busy_in_legacy_loop_is_counted_once() {
     assert!(resp.headers().contains_key(header::RETRY_AFTER));
     drop(held);
     assert_eq!(app_fail_count(&app, ip).await, 1);
+
+    // A busy answer is not a verdict, so the token was not remembered as
+    // refused: with permits free the same token is scanned for real.
+    let before = gate.verifications();
+    let resp = opds_from(&app, JUNK, ip).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(gate.verifications() - before, 2);
+    assert_eq!(app_fail_count(&app, ip).await, 2);
 }
 
 async fn login_from(app: &TestApp, email: &str, ip: [u8; 4]) -> StatusCode {
