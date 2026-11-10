@@ -5,7 +5,8 @@
 //! - SVG entries rejected outright (script vector).
 //! - 200 with full body, 206 with `Content-Range` for ranges, 416 for invalid.
 //! - `If-Range` honored against ETag (`{issue_id}-{page_index}`).
-//! - `Cache-Control: private, max-age=3600` (per-user — ACL).
+//! - `Cache-Control: private, max-age=3600` (per-user — ACL) with
+//!   `Vary: Cookie, Authorization`, matching the thumbnail routes.
 //!
 //! The handler uses a synchronous `spawn_blocking` boundary because the
 //! archive readers use blocking file I/O.
@@ -45,6 +46,11 @@ pub struct PageQuery {
     #[serde(default)]
     pub w: Option<u32>,
 }
+
+/// Every page response is ACL'd per user, so a browser that switches
+/// accounts keys its cache on the credentials (same as the thumbnail and
+/// stored-cover routes).
+const CREDENTIALS_VARY: &str = "Cookie, Authorization";
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/issues/{id}/pages/{n}", get(serve))
@@ -213,6 +219,7 @@ pub async fn serve(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=3600"),
     );
+    hdrs.insert(header::VARY, HeaderValue::from_static(CREDENTIALS_VARY));
     hdrs.insert(
         header::ETAG,
         HeaderValue::from_str(&etag_value)
@@ -380,6 +387,7 @@ async fn serve_variant(
             header::CACHE_CONTROL,
             HeaderValue::from_static("private, max-age=3600"),
         );
+        hdrs.insert(header::VARY, HeaderValue::from_static(CREDENTIALS_VARY));
         hdrs.insert(
             header::ETAG,
             HeaderValue::from_str(&etag_value)
@@ -502,6 +510,7 @@ fn not_modified(etag: &str) -> Response {
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=3600"),
     );
+    hdrs.insert(header::VARY, HeaderValue::from_static(CREDENTIALS_VARY));
     hdrs.insert(
         header::ETAG,
         HeaderValue::from_str(etag).unwrap_or_else(|_| HeaderValue::from_static("\"unknown\"")),

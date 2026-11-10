@@ -83,6 +83,11 @@ const INLINE_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// account's cover for the second.
 const THUMB_CACHE_CONTROL: &str = "private, max-age=300";
 
+/// `Cache-Control` for a stored `issue_cover` artifact. The bytes never
+/// change under a cover id, hence the year-long `immutable`; `private` for
+/// the same per-user ACL reason as [`THUMB_CACHE_CONTROL`].
+const STORED_COVER_CACHE_CONTROL: &str = "private, max-age=31536000, immutable";
+
 #[derive(Debug, Deserialize)]
 pub struct ThumbQuery {
     /// `cover` (default) or `strip`. Unknown values fall back to `cover`
@@ -449,12 +454,20 @@ async fn serve_cover_file(
     cover_id: uuid::Uuid,
 ) -> Response {
     // Cover bytes are immutable per row id (a re-apply mints a new
-    // `cover_id`), so we can cache hard.
+    // `cover_id`), so the browser can cache hard. `private` because the
+    // route is ACL'd per user like the thumbnails above: a shared cache
+    // must never store an access-checked cover and hand it to another
+    // account. `Vary: Cookie, Authorization` keeps a browser that switches
+    // accounts from reusing the entry.
     let etag = format!("\"cover-{cover_id}\"");
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
+        HeaderValue::from_static(STORED_COVER_CACHE_CONTROL),
+    );
+    headers.insert(
+        header::VARY,
+        HeaderValue::from_static("Cookie, Authorization"),
     );
     headers.insert(
         header::ETAG,

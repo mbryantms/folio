@@ -768,6 +768,11 @@ async fn variant_renders_webp_then_serves_from_cache() {
         cache_control.contains("max-age=3600") && !cache_control.contains("immutable"),
         "{cache_control}"
     );
+    assert!(cache_control.starts_with("private"), "{cache_control}");
+    assert_eq!(
+        resp.headers().get(header::VARY).unwrap(),
+        "Cookie, Authorization"
+    );
     let etag = resp
         .headers()
         .get(header::ETAG)
@@ -913,6 +918,7 @@ async fn cbt_full_body_streams_page_bytes_with_cbz_headers() {
             h.get(header::CACHE_CONTROL).unwrap(),
             "private, max-age=3600"
         );
+        assert_eq!(h.get(header::VARY).unwrap(), "Cookie, Authorization");
         assert_eq!(
             h.get(header::CONTENT_LENGTH).unwrap(),
             expected.len().to_string().as_str()
