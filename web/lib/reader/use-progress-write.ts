@@ -2,7 +2,10 @@ import { useEffect, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, getCsrfToken } from "@/lib/api/auth-refresh";
-import { invalidateRails } from "@/lib/api/mutations/rails";
+import {
+  invalidateRails,
+  invalidateSeriesProgress,
+} from "@/lib/api/mutations/rails";
 import { queryKeys } from "@/lib/api/queries";
 import { nextPersistedProgressPage } from "@/lib/reader/webtoon-window";
 
@@ -76,7 +79,8 @@ export function postProgress(body: ProgressBody): Promise<Response> {
  *
  * Cache invalidation: after each successful write we mark the
  * shared `useUserProgress` query stale + invalidate every cached
- * rail/detail-page surface that consumes it. Without this, finishing
+ * rail/detail-page surface that consumes it, including the series
+ * detail + list queries that carry `progress_summary`. Without this, finishing
  * an issue in the reader and navigating back to a CBL detail page
  * (or any kebab-affording paginated list) showed the pre-read state
  * until either `useUserProgress`'s 30 s `staleTime` elapsed or the
@@ -160,6 +164,10 @@ export function useReaderProgressWrite(opts: {
           if (!response.ok) return false;
           void qc.invalidateQueries({ queryKey: queryKeys.userProgress });
           invalidateRails(qc);
+          // Mark the series page's progress stats stale; the reader's own
+          // series summary is read once per issue, so don't refetch it on
+          // every page turn.
+          invalidateSeriesProgress(qc, { refetchActive: false });
           // Hand the reply's run back to the writer, which adopts it for
           // the next write (after a `restart` it is the new run; a newer
           // run than ours means another device restarted — follow it).

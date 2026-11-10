@@ -1018,11 +1018,20 @@ export function useDuplicatesInfinite(
   });
 }
 
-export function useSeries(id: string) {
+export function useSeries(
+  id: string,
+  opts: {
+    /** The server-rendered series, so a page that already has it reads
+     *  the same cache entry progress writes invalidate (series page
+     *  read-progress stats) without a second fetch on mount. */
+    initialData?: SeriesView;
+  } = {},
+) {
   return useQuery({
     queryKey: queryKeys.series(id),
     queryFn: () => jsonFetch<SeriesView>(`/series/${id}`),
     enabled: !!id,
+    initialData: opts.initialData,
   });
 }
 

@@ -25,7 +25,7 @@ import { readStateFor } from "@/lib/reading-state";
 import { jsonFetch, queryKeys } from "../queries";
 import type { ContinueReadingView, ProgressView } from "../types";
 import { apiMutate } from "./_core";
-import { invalidateRails } from "./rails";
+import { invalidateRails, invalidateSeriesProgress } from "./rails";
 
 export type ProgressMap = Map<string, ProgressView>;
 
@@ -234,6 +234,7 @@ export async function restoreProgress(
     }
     qc.invalidateQueries({ queryKey: queryKeys.userProgress });
     invalidateRails(qc);
+    invalidateSeriesProgress(qc);
   }
 }
 

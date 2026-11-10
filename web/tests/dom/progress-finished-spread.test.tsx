@@ -15,7 +15,10 @@ vi.mock("@/lib/api/auth-refresh", () => ({
   apiFetch: api.send,
   getCsrfToken: () => "csrf",
 }));
-vi.mock("@/lib/api/mutations/rails", () => ({ invalidateRails: vi.fn() }));
+vi.mock("@/lib/api/mutations/rails", () => ({
+  invalidateRails: vi.fn(),
+  invalidateSeriesProgress: vi.fn(),
+}));
 
 import { useReaderProgressWrite } from "@/lib/reader/use-progress-write";
 

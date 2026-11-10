@@ -26,7 +26,7 @@ import {
   type PriorProgress,
   type ProgressWrite,
 } from "./progress";
-import { invalidateRails } from "./rails";
+import { invalidateRails, invalidateSeriesProgress } from "./rails";
 
 // Re-exports kept stable across the M5 directory split so callers
 // can continue to import everything from `"@/lib/api/mutations"`.
@@ -42,7 +42,7 @@ export * from "./duplicates";
 export * from "./hash-backfill";
 export * from "./sidecar-reemit";
 export * from "./markers";
-export { invalidateRails } from "./rails";
+export { invalidateRails, invalidateSeriesProgress } from "./rails";
 export {
   issueProgressKey,
   restoreProgress,
@@ -609,6 +609,7 @@ export function useBulkMarkProgress() {
       onSuccess: (data, input, ctx) => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
         const message = summarizeBulkProgress(data, input.finished);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (!prior || data?.updated === 0) {
@@ -653,6 +654,7 @@ export function useBulkMarkSeriesMatchingProgress(seriesSlug: string) {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
       },
     },
   );
@@ -771,6 +773,7 @@ export function useBulkMarkSeriesProgress() {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
       },
     },
   );
@@ -1519,6 +1522,7 @@ export function useUpsertIssueProgress() {
         if (data) qc.setQueryData(issueProgressKey(input.issue_id), data);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (typeof input.finished !== "boolean" || !prior) return;
         showUndoToast({
@@ -1555,6 +1559,7 @@ export function useUpsertSeriesProgress(seriesId: string) {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
       },
     },
   );
