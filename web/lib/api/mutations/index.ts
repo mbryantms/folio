@@ -51,6 +51,8 @@ export {
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
 export * from "./shared-lists";
+export * from "./issue-user-state";
+export * from "./preferences";
 
 import type {
   CancelBatchResp,
@@ -92,7 +94,6 @@ import type {
   ReorderLogWidgetsReq,
   ManualMatchReq,
   MeView,
-  PreferencesReq,
   QueueClearReq,
   QueueClearResp,
   DeadJobRetryReq,
@@ -100,7 +101,6 @@ import type {
   DeadJobsPurgeReq,
   DeadJobsPurgeResp,
   ProgressView,
-  IssueNoteView,
   RatingView,
   SavedViewListView,
   SavedViewView,
@@ -108,7 +108,6 @@ import type {
   ScanAllResp,
   ScanMode,
   ScanResp,
-  SetIssueNoteReq,
   SetRatingReq,
   AppPasswordCreatedView,
   CreateAppPasswordReq,
@@ -1084,61 +1083,6 @@ export function useSetSeriesRating(seriesSlug: string) {
 }
 
 /**
- * `PUT /series/{slug}/issues/{slug}/rating` — same shape as the series
- * rating endpoint but scoped to a single issue.
- *
- * No toast on success — the star control fills in inline; a per-click
- * toast would be noisy. Mirrors `useSetSeriesRating`.
- */
-export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
-  return useApiMutation<RatingView, SetRatingReq>(
-    (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/rating`,
-      method: "PUT",
-      body,
-    }),
-    {},
-  );
-}
-
-/**
- * `PUT /series/{series_slug}/issues/{issue_slug}/note` — the caller's
- * issue-level closing note (not a page note). `body: null` or blank
- * clears it. Written from the reader's end-of-issue Wrap up pane and
- * the issue page; the response echoes the stored body.
- */
-export function useSetIssueNote(
-  seriesSlug: string,
-  issueSlug: string,
-  opts?: { silent?: boolean },
-) {
-  const qc = useQueryClient();
-  return useApiMutation<IssueNoteView, SetIssueNoteReq>(
-    (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/note`,
-      method: "PUT",
-      body,
-    }),
-    {
-      // `silent`: the caller raises its own (Undo) toast.
-      ...(opts?.silent
-        ? {}
-        : {
-            successMessage: (view: IssueNoteView | null) =>
-              view?.body ? "Closing note saved" : "Closing note cleared",
-          }),
-      // The /bookmarks feed, its counts and series list carry closing
-      // notes (`["markers", "feed…"]` keys).
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["markers", "feed"] });
-        qc.invalidateQueries({ queryKey: ["markers", "feed-counts"] });
-        qc.invalidateQueries({ queryKey: ["markers", "feed-series"] });
-      },
-    },
-  );
-}
-
-/**
  * `PATCH /series/{series_slug}/issues/{issue_slug}`. Used by the issue page
  * Edit drawer to override ComicInfo-derived fields. Server user-pins the
  * touched fields in `field_provenance` so the scanner skips them on rescans.
@@ -1697,31 +1641,6 @@ export function useUpdateLibraryAccess(id: string) {
 }
 
 // ---------- Per-user settings (M4) ----------
-
-/**
- * `PATCH /me/preferences`. Updates the calling user's reader/theme/keybind
- * preferences and returns the refreshed `MeView`. The cache is updated in
- * place so the new prefs are immediately visible to every consumer of
- * `useMe()` without an extra round-trip.
- */
-export function useUpdatePreferences(opts?: {
-  silent?: boolean;
-  /** Collapse repeated error toasts into one (autosave-like callers such
-   *  as the reader's coalesced display-pref sync). */
-  toastId?: string;
-}) {
-  const qc = useQueryClient();
-  return useApiMutation<MeView, PreferencesReq>(
-    (body) => ({ path: "/me/preferences", method: "PATCH", body }),
-    {
-      ...(opts?.silent ? {} : { successMessage: "Preferences saved" }),
-      ...(opts?.toastId ? { toastId: opts.toastId } : {}),
-      onSuccess: (data) => {
-        if (data) qc.setQueryData(queryKeys.me, data);
-      },
-    },
-  );
-}
 
 /**
  * `POST /me/reading-sessions/clear`. Destructive — deletes ALL of the

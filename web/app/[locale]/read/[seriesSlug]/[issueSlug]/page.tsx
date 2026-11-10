@@ -1,7 +1,8 @@
 import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
-import { ReaderHealthToast } from "./ReaderHealthToast";
+// Client-only and code-split: see ./lazy.
+import { ReaderHealthToast } from "./lazy";
 import { ReaderCoverHandoff } from "./ReaderCoverMorph";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
