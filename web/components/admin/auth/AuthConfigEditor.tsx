@@ -32,8 +32,9 @@ export function AuthConfigEditor() {
       />
       <TokensCard
         initial={{
-          access_ttl: asString("auth.jwt.access_ttl", "24h"),
+          access_ttl: asString("auth.jwt.access_ttl", "1h"),
           refresh_ttl: asString("auth.jwt.refresh_ttl", "30d"),
+          session_max_age: asString("auth.session.max_age", "90d"),
         }}
       />
     </div>

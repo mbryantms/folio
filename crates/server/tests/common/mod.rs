@@ -1049,6 +1049,7 @@ impl TestApp {
             local_registration_open: true,
             jwt_access_ttl: "15m".into(),
             jwt_refresh_ttl: "30d".into(),
+            session_max_age: "90d".into(),
             rate_limit_enabled: true,
             check_upstream_releases: true,
             otlp_endpoint: None,

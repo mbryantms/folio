@@ -9,6 +9,7 @@ import {
 } from "react";
 import { Loader2, RotateCw } from "lucide-react";
 import { READER_FILTER_VAR } from "@/lib/reader/filters";
+import { ensureFreshSession } from "@/lib/api/session-refresh";
 
 /** Show the "still loading…" hint after this long in flight (audit C3). */
 const SLOW_HINT_MS = 8000;
@@ -128,7 +129,8 @@ export function PageImage({
     if (!autoRetried.current) {
       autoRetried.current = true;
       setSlow(false);
-      setRetry((n) => n + 1);
+      // A lapsed access cookie fails the image too; renew it first.
+      void ensureFreshSession().then(() => setRetry((n) => n + 1));
       return;
     }
     setStatus("error");
@@ -193,7 +195,7 @@ export function PageImage({
     autoRetried.current = false;
     setSlow(false);
     setStatus("loading");
-    setRetry((n) => n + 1);
+    void ensureFreshSession().then(() => setRetry((n) => n + 1));
   };
 
   // Page aspect (w/h) exposed as `--page-ar` for the `contain` fit class

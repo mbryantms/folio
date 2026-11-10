@@ -34,6 +34,7 @@ import {
   TabsTrigger,
 } from "@/components/folio/tabs";
 import { statusTone } from "@/lib/ui/status-tone";
+import { getCsrfToken, resumeSession } from "@/lib/api/auth-refresh";
 import { authErrorText } from "@/lib/auth/error-text";
 import type { PublicAuthConfigView } from "@/lib/api/types";
 
@@ -56,11 +57,17 @@ export function SignInClient({
   next,
   banner,
   errorMessage,
+  mayResume = false,
 }: {
   config: PublicAuthConfigView;
   next: string | null;
   banner: Banner;
   errorMessage: string | null;
+  /** The server saw a CSRF cookie (a session may exist) and nothing that
+   *  rules a resume out, so the first paint is the "Signing you in…" card
+   *  rather than a form that flashes and disappears. The client re-decides
+   *  after hydration. */
+  mayResume?: boolean;
 }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
@@ -112,12 +119,37 @@ export function SignInClient({
       ),
     getServerInsecureSnapshot,
   );
+  // A full page load whose access cookie expired lands here although the
+  // refresh session is still live: renew it silently and go back to `next`
+  // before showing the form (or bouncing to the IdP).
+  const canResume = useSyncExternalStore(
+    subscribeNoop,
+    () => shouldResumeSession(banner, errorMessage),
+    () => mayResume && banner === null && !errorMessage,
+  );
+  const [resumeFailed, setResumeFailed] = useState(false);
+  const resuming = canResume && !resumeFailed;
+  const resumeStarted = useRef(false);
+  useEffect(() => {
+    if (!resuming || resumeStarted.current) return;
+    resumeStarted.current = true;
+    // The loop guard is recorded for every attempt, failed or not.
+    markResumeAttempt();
+    void resumeSession().then((ok) => {
+      if (!ok) {
+        setResumeFailed(true);
+        return;
+      }
+      window.location.replace(next ?? "/");
+    });
+  }, [resuming, next]);
+
   const ssoHref = oidcStartHref(next);
   // Strict Mode re-runs effects in dev; a second `location.replace` would
   // start a second OIDC attempt. The ref survives that remount.
   const redirected = useRef(false);
   useEffect(() => {
-    if (!autoRedirect || redirected.current) return;
+    if (resuming || !autoRedirect || redirected.current) return;
     redirected.current = true;
     try {
       window.sessionStorage.setItem(AUTO_REDIRECT_KEY, String(Date.now()));
@@ -125,7 +157,38 @@ export function SignInClient({
       // storage unavailable (private mode): the guard just doesn't apply
     }
     window.location.replace(ssoHref);
-  }, [autoRedirect, ssoHref]);
+  }, [resuming, autoRedirect, ssoHref]);
+
+  if (resuming) {
+    // Only script leaves this card, so it carries a way out that needs
+    // none: a no-script link, and the same link revealed by CSS after a
+    // few seconds for a page whose script failed to start.
+    const formHref = signInFormHref(next);
+    return (
+      <CenteredCard>
+        <CardHeader className="space-y-2 text-center">
+          <CardTitle className="text-2xl">
+            <h1>Signing you in…</h1>
+          </CardTitle>
+          <CardDescription>Restoring your session.</CardDescription>
+        </CardHeader>
+        <CardContent className="text-center text-sm">
+          <noscript>
+            <a className="underline" href={formHref}>
+              Sign in with your password
+            </a>
+          </noscript>
+          <a
+            className="delayed-reveal text-muted-foreground underline"
+            href={formHref}
+            data-resume-way-out=""
+          >
+            Sign in instead
+          </a>
+        </CardContent>
+      </CenteredCard>
+    );
+  }
 
   if (autoRedirect) {
     return (
@@ -345,6 +408,62 @@ const AUTO_REDIRECT_KEY = "folio:oidc-auto-redirect-at";
  *  user straight back (e.g. a failed callback) — show the page instead of
  *  looping. */
 const AUTO_REDIRECT_GUARD_MS = 30_000;
+
+const RESUME_KEY = "folio:session-resume-at";
+/** `?resume=0` renders the form without trying to resume (and shows no
+ *  banner): the way out of the "Signing you in…" card without script. */
+export const NO_RESUME_PARAM = "resume";
+
+/** The sign-in page with the resume suppressed, keeping `next`. */
+export function signInFormHref(next: string | null): string {
+  const params = new URLSearchParams({ [NO_RESUME_PARAM]: "0" });
+  if (next) params.set("next", next);
+  return `/sign-in?${params.toString()}`;
+}
+/** Fallback guard when sessionStorage is unavailable: at most one resume
+ *  per page load (module state starts fresh with each document). */
+let resumedThisLoad = false;
+
+/** Record a resume attempt for the loop guard. */
+export function markResumeAttempt(now = Date.now()): void {
+  resumedThisLoad = true;
+  try {
+    window.sessionStorage.setItem(RESUME_KEY, String(now));
+  } catch {
+    // storage unavailable (private mode): the per-load flag still applies
+  }
+}
+
+/** Test hook: forget the per-load flag. */
+export function resetResumeGuardForTests(): void {
+  resumedThisLoad = false;
+}
+
+/** Decide (client-side) whether `/sign-in` should first try to renew an
+ *  existing session. Only when a CSRF cookie shows one may exist (sign-out
+ *  clears it, and so does a refresh the server refused), the page carries
+ *  no banner or error, it doesn't follow a sign-out, and no resume was
+ *  attempted within the guard window, successful or not (a resumed session
+ *  that still lands here must not loop). Without sessionStorage the guard
+ *  is one attempt per page load. */
+export function shouldResumeSession(
+  banner: Banner,
+  errorMessage: string | null,
+): boolean {
+  if (banner !== null || errorMessage) return false;
+  if (typeof window === "undefined" || !getCsrfToken()) return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("signed_out") === "1") return false;
+  if (params.get(NO_RESUME_PARAM) === "0") return false;
+  if (resumedThisLoad) return false;
+  try {
+    const last = Number(window.sessionStorage.getItem(RESUME_KEY));
+    if (last && Date.now() - last < AUTO_REDIRECT_GUARD_MS) return false;
+  } catch {
+    // storage unavailable: fall through
+  }
+  return true;
+}
 
 function oidcStartHref(next: string | null): string {
   return next

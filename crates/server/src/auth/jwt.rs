@@ -45,7 +45,8 @@ pub struct JwtKeys {
 const AUDIENCE: &str = "folio";
 /// Legacy audience still accepted during verification so access tokens
 /// issued before the 2026-06 `comic-reader` → `folio` rename keep
-/// validating for the rest of their (≤24h) TTL — i.e. no forced
+/// validating for the rest of their access TTL (`auth.jwt.access_ttl`,
+/// default 1 h; installs seeded before that default keep 24 h) — no forced
 /// re-login on upgrade. Refresh tokens don't carry `aud`, so refresh
 /// keeps working and mints new `folio`-audience access tokens. Safe to
 /// drop one access-TTL after this ships.
