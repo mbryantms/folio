@@ -76,7 +76,8 @@ failed — check the server log for `folio::audit_log_retention` errors.
 `folio_zip_lru_{hits,misses,evictions}_total`, `folio_zip_lru_open_fds`,
 `folio_ocr_{pipeline,recognize}_seconds`, `folio_ocr_{cache,detect_cache}_{hits,misses}_total`,
 `folio_auth_lockout_total`, `folio_auth_lockout_email_total`,
-`folio_rate_limit_denied_total`, `folio_csp_violations_total`,
+`folio_rate_limit_denied_total`, `folio_csp_violations_total` (one per logged
+violation), `folio_csp_reports_rejected_total` (report bodies in no known shape),
 `folio_metadata_writeback_libraries_remaining`.
 
 Histograms named `*_seconds` use buckets

@@ -42,7 +42,7 @@ For HTML pages served by Next.js, a per-request **nonce** is injected by Next.js
 
 ## Reporting
 
-CSP violation reports POST to `/csp-report`. Modern browsers send `application/reports+json` envelopes; legacy send `application/csp-report`. The handler accepts both, increments the `folio_csp_violations_total` counter once per violation, and logs at `warn` only selected fields (document URL, directive, blocked URL, source file, line, disposition) for at most 20 violations per request. URLs are logged without their query string or fragment, and every value is length-capped; the raw body, referrer, original policy and script sample are never logged. A body in neither shape is answered 204 and only counted in `folio_csp_reports_rejected_total`.
+CSP violation reports POST to `/csp-report`. Modern browsers send `application/reports+json` envelopes; legacy send `application/csp-report`. The handler accepts both, increments the `folio_csp_violations_total` counter once per logged violation, and logs at `warn` only selected fields (document URL, directive, blocked URL, source file, line, disposition) for at most 20 violations per request. URLs are logged without their query string or fragment, and every value is length-capped; the raw body, referrer, original policy and script sample are never logged. Violations beyond the 20th in one request are neither logged nor counted, and Reporting API entries of another type are ignored. A body in neither shape is answered 204 and only counted in `folio_csp_reports_rejected_total`.
 
 The body is capped at 64 KiB (`api::csp::CSP_REPORT_BODY_LIMIT`); larger bodies get the standard 413 `too_large` envelope.
 

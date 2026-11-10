@@ -143,12 +143,24 @@ fn sanitize_url(s: &str) -> String {
     truncate_clean(&s[..end], MAX_URL_CHARS)
 }
 
-/// First `max` chars, with control characters replaced by `?`.
+/// First `max` chars, with characters that could forge or disguise a log
+/// line replaced by `?`.
 fn truncate_clean(s: &str, max: usize) -> String {
     s.chars()
         .take(max)
-        .map(|c| if c.is_control() { '?' } else { c })
+        .map(|c| if is_unsafe_log_char(c) { '?' } else { c })
         .collect()
+}
+
+/// Control characters, the Unicode line and paragraph separators, and the
+/// bidirectional marks and overrides that can make a logged URL display as
+/// something else in the admin log viewer.
+fn is_unsafe_log_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}' | '\u{2029}' | '\u{200e}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        )
 }
 
 // Note: no #[utoipa::path] — the body shape is browser-defined and varies by user-agent.
@@ -338,6 +350,20 @@ mod tests {
         assert!(!doc.chars().any(char::is_control), "{doc:?}");
         assert_eq!(doc, "https://comics.example.com/a?FAKE LOG LINE?[31m");
         assert_eq!(got[0].directive.as_deref(), Some("script-src??"));
+    }
+
+    #[test]
+    fn bidi_marks_and_line_separators_replaced() {
+        let got = summarize(&json!({"csp-report": {
+            "document-uri": "https://comics.example.com/a\u{202e}gnp.exe\u{2028}x\u{2066}y",
+            "effective-directive": "script-src\u{200f}",
+        }}))
+        .unwrap();
+        assert_eq!(
+            got[0].document_url.as_deref(),
+            Some("https://comics.example.com/a?gnp.exe?x?y")
+        );
+        assert_eq!(got[0].directive.as_deref(), Some("script-src?"));
     }
 
     #[test]
