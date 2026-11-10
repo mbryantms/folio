@@ -2552,6 +2552,14 @@ export function useSeriesIssuesInfinite(
 
 // ---------- Home rails (Continue Reading / On Deck) ----------
 
+/** Item cap of the Continue reading, On deck and Recently read endpoints:
+ *  `LIMIT 24` in `progress_cards` (continue-reading + recent-history) and
+ *  `items.truncate(24)` in `on_deck`, crates/server/src/api/rails.rs. The
+ *  responses carry no cursor, so a full response may be truncated — the
+ *  "see all" pages say "Most recent 24" instead of printing a total.
+ *  Drop this once those endpoints are cursor-paginated. */
+export const PROGRESS_RAIL_CAP = 24;
+
 /** Issues the user has started but not finished, most-recent-activity first.
  *  Drives the Continue Reading rail on the home page. */
 export function useContinueReading(opts?: { enabled?: boolean }) {
