@@ -8,7 +8,12 @@
 //!     (the dev path: page is on :3000, API is on :8080, so the auth cookie
 //!     can't ride along on the cross-origin upgrade).
 //!   - cookie session — the prod path, when the page is served same-origin
-//!     by the Rust binary.
+//!     by the Rust binary. A cookie-authenticated upgrade must carry an
+//!     `Origin` equal to the configured public origin (`public_url`):
+//!     WebSocket upgrades are outside both the CSRF header check and CORS,
+//!     and `SameSite=Lax` still sends the cookie from a sibling subdomain.
+//!     A ticket-authenticated upgrade has no Origin requirement — the
+//!     ticket is the credential and non-browser clients send no Origin.
 //!
 //! On lagged receivers (broadcast channel overflow), we send a `lagged`
 //! ping frame and continue; clients that care can refresh.
@@ -20,7 +25,7 @@ use axum::{
         Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::get,
 };
@@ -83,7 +88,21 @@ pub async fn scan_events(
             }
         },
         None => match cookie_user {
-            Ok(cu) => cu.id,
+            Ok(cu) => {
+                let origin = req.headers().get(header::ORIGIN);
+                if !origin_is_public(origin, &app.cfg().public_url) {
+                    tracing::debug!(
+                        origin = ?origin,
+                        "ws_scan_events: cookie upgrade from a foreign or missing origin"
+                    );
+                    return super::error(
+                        StatusCode::FORBIDDEN,
+                        "auth.permission_denied",
+                        "WebSocket upgrade must come from the app's own origin",
+                    );
+                }
+                cu.id
+            }
             Err(_) => return unauthorized(),
         },
     };
@@ -130,6 +149,22 @@ pub async fn scan_events(
     }
 }
 
+/// True when `origin` is present and names the same origin (scheme, host,
+/// port) as the configured `public_url`. Both sides are parsed and
+/// compared by their serialized origin so default ports and letter case
+/// normalize (`https://Example.com:443` equals `https://example.com`).
+/// `null` and unparsable values never match.
+pub fn origin_is_public(origin: Option<&HeaderValue>, public_url: &str) -> bool {
+    let Some(origin) = origin.and_then(|v| v.to_str().ok()) else {
+        return false;
+    };
+    let (Ok(got), Ok(want)) = (url::Url::parse(origin), url::Url::parse(public_url)) else {
+        return false;
+    };
+    let got = got.origin();
+    got.is_tuple() && got == want.origin()
+}
+
 fn unauthorized() -> axum::response::Response {
     super::error(
         StatusCode::UNAUTHORIZED,
@@ -172,5 +207,48 @@ async fn run(mut socket: WebSocket, app: AppState) {
                 _ => {}
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::origin_is_public;
+    use axum::http::HeaderValue;
+
+    fn check(origin: &str, public_url: &str) -> bool {
+        origin_is_public(Some(&HeaderValue::from_str(origin).unwrap()), public_url)
+    }
+
+    #[test]
+    fn same_origin_matches_after_normalization() {
+        assert!(check("http://localhost:8080", "http://localhost:8080"));
+        assert!(check("http://localhost:8080", "http://localhost:8080/"));
+        assert!(check(
+            "https://Comics.Example.com",
+            "https://comics.example.com:443/"
+        ));
+    }
+
+    #[test]
+    fn foreign_or_missing_origin_does_not_match() {
+        assert!(!origin_is_public(None, "https://comics.example.com"));
+        assert!(!check("null", "https://comics.example.com"));
+        assert!(!check(
+            "https://evil.example.com",
+            "https://comics.example.com"
+        ));
+        assert!(!check(
+            "https://other.example.com",
+            "https://comics.example.com"
+        ));
+        assert!(!check(
+            "http://comics.example.com",
+            "https://comics.example.com"
+        ));
+        assert!(!check(
+            "https://comics.example.com:8443",
+            "https://comics.example.com"
+        ));
+        assert!(!check("http://localhost:3000", "http://localhost:8080"));
     }
 }

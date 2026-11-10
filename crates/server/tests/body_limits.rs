@@ -645,6 +645,7 @@ async fn ws_scan_events_closes_client_sending_oversize_frame() {
          Connection: upgrade\r\n\
          Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
          Sec-WebSocket-Version: 13\r\n\
+         Origin: http://localhost:8080\r\n\
          Cookie: {}\r\n\
          \r\n",
         auth.cookie()
