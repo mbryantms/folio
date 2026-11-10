@@ -12,12 +12,18 @@
 //! Stale entries refetch with `If-None-Match`; a 304 keeps the existing
 //! cache and just bumps `last_indexed_at`.
 //!
-//! Requests go through [`crate::util::ssrf::shared_public_client`]: every
-//! DNS answer is vetted, redirects are limited to [`CATALOG_MAX_REDIRECTS`]
-//! hops with each target checked, and [`CATALOG_REQUEST_TIMEOUT`] bounds a
-//! whole request including its body. Bodies are streamed with a running
-//! cap ([`MAX_INDEX_BYTES`], [`MAX_BLOB_BYTES`]) and refused up front when
-//! `Content-Length` already exceeds it.
+//! The hosts are constants (`api.github.com`, `raw.githubusercontent.com`)
+//! and only the repository path comes from the admin, so names are not
+//! vetted: the client uses the default resolver and honours the proxy
+//! environment, and behind a proxy the proxy resolves the name. It keeps
+//! the bounds that do not depend on the resolver: at most
+//! [`CATALOG_MAX_REDIRECTS`] redirect hops, each one required to stay on
+//! https and refused when its host is an internal address literal
+//! ([`crate::util::ssrf::outbound_redirect_policy`]);
+//! [`CATALOG_REQUEST_TIMEOUT`] for a whole request including its body; and
+//! bodies streamed with a running cap ([`MAX_INDEX_BYTES`],
+//! [`MAX_BLOB_BYTES`]), refused up front when `Content-Length` already
+//! exceeds it.
 
 use chrono::{Duration, Utc};
 use entity::catalog_source;
@@ -85,11 +91,17 @@ pub enum CatalogError {
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        crate::util::ssrf::shared_public_client(
-            USER_AGENT,
-            CATALOG_REQUEST_TIMEOUT,
-            CATALOG_MAX_REDIRECTS,
-        )
+        // Fixed hosts: default resolver and proxy environment (see the
+        // module docs); redirects bounded and kept on https.
+        reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(CATALOG_REQUEST_TIMEOUT)
+            .redirect(crate::util::ssrf::outbound_redirect_policy(
+                CATALOG_MAX_REDIRECTS,
+                true,
+            ))
+            .build()
+            .expect("reqwest client init")
     })
 }
 

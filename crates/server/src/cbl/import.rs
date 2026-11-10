@@ -104,6 +104,12 @@ pub async fn apply_parsed(
         .filter(cbl_entry::Column::CblListId.eq(list_id))
         .exec(db)
         .await?;
+    #[cfg(debug_assertions)]
+    if fail_after_delete_hit(list_id) {
+        return Err(sea_orm::DbErr::Custom(
+            "injected failure after the entry delete".into(),
+        ));
+    }
 
     // Run the matcher fresh on every refresh — even unchanged entries
     // can newly resolve when the scanner adds matching issues.
@@ -309,6 +315,35 @@ pub async fn apply_parsed(
     }
 
     Ok(summary)
+}
+
+// ───── debug-build fault hook ─────
+//
+// Lets an integration test fail `apply_parsed` right after the entry
+// delete, to prove the caller's transaction leaves the stored list
+// unchanged. Keyed by list id so concurrent tests don't interfere. Not
+// compiled into release builds.
+
+#[cfg(debug_assertions)]
+static FAIL_AFTER_DELETE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<Uuid>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Make the next [`apply_parsed`] for `list_id` fail after deleting the
+/// entries. Debug builds only; for integration tests.
+#[cfg(debug_assertions)]
+pub fn fail_after_delete_for_tests(list_id: Uuid) {
+    FAIL_AFTER_DELETE
+        .lock()
+        .expect("fault hook lock")
+        .insert(list_id);
+}
+
+#[cfg(debug_assertions)]
+fn fail_after_delete_hit(list_id: Uuid) -> bool {
+    FAIL_AFTER_DELETE
+        .lock()
+        .expect("fault hook lock")
+        .remove(&list_id)
 }
 
 /// Run the matcher against the existing `cbl_entries` rows without

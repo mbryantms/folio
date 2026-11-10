@@ -12,17 +12,25 @@
 //!   - `'catalog'` — fetch the path from the configured catalog source;
 //!     compare blob SHAs to skip when unchanged.
 //!
-//! Every path refuses a file with more than [`super::MAX_BOOKS_PER_LIST`]
-//! entries ([`RefreshError::TooManyEntries`]) before anything is written,
-//! so the stored list stays as it was. The remote part of one refresh is
-//! bounded by [`super::fetch::CBL_LIST_FETCH_BUDGET`].
+//! New content (a changed URL body or catalog blob) with more than
+//! [`super::MAX_BOOKS_PER_LIST`] entries is refused
+//! ([`RefreshError::TooManyEntries`]) before anything is written. Stored
+//! content that has not changed is not re-checked, so a list already over
+//! the cap keeps re-matching until its source changes.
+//!
+//! The remote part of one refresh runs first, under the caller's
+//! [`FetchBudget`]; the entry replacement, the list-row update and the
+//! refresh-log row then commit in one transaction, so an error or a
+//! dropped request leaves the stored list exactly as it was.
 
 use entity::{catalog_source, cbl_list};
 use sea_orm::{ConnectionTrait, EntityTrait, TransactionTrait};
 use uuid::Uuid;
 
 use super::catalog;
-use super::fetch::{CBL_LIST_FETCH_BUDGET, CBL_SWEEP_BUDGET, fetch_cbl_url};
+use super::fetch::{
+    CBL_SWEEP_BUDGET, FetchBudget, SWEEP_BUDGET, fetch_cbl_url, fetch_cbl_url_conditional,
+};
 use super::import::{self, ImportSummary, RefreshTrigger};
 use crate::util::ssrf::{Conditional, FetchOutcome};
 
@@ -49,15 +57,21 @@ pub enum RefreshError {
     TooManyEntries,
     #[error("timed out fetching the list")]
     Timeout,
+    /// A bulk request ran out of time before reaching this list.
+    #[error("not attempted: the request ran out of time; run it again")]
+    NotAttempted,
     #[error("DB: {0}")]
     Db(#[from] sea_orm::DbErr),
 }
 
+/// Refresh one list. `budget` bounds the remote work: request paths pass
+/// [`super::fetch::REQUEST_BUDGET`], the sweep [`SWEEP_BUDGET`].
 pub async fn refresh(
     db: &sea_orm::DatabaseConnection,
     list_id: Uuid,
     trigger: RefreshTrigger,
     force: bool,
+    budget: FetchBudget,
 ) -> Result<ImportSummary, RefreshError> {
     let list = cbl_list::Entity::find_by_id(list_id)
         .one(db)
@@ -69,15 +83,34 @@ pub async fn refresh(
             // No remote — re-parse the stored XML and re-match. Useful
             // after a library scan adds new issues that previously
             // missed entries can now match against.
-            let parsed = parse_within_cap(&list.raw_xml)?;
-            let summary =
-                import::apply_parsed(db, list.id, &parsed, &list.raw_xml, None, trigger).await?;
-            Ok(summary)
+            let parsed = parse_stored(&list.raw_xml)?;
+            apply_atomically(db, list.id, &parsed, &list.raw_xml, None, trigger, None).await
         }
-        "url" => fetch_url_and_apply(db, &list, trigger, force).await,
-        "catalog" => fetch_catalog_and_apply(db, &list, trigger, force).await,
+        "url" => fetch_url_and_apply(db, &list, trigger, force, budget).await,
+        "catalog" => fetch_catalog_and_apply(db, &list, trigger, force, budget).await,
         other => Err(RefreshError::Http(format!("unknown source_kind: {other}"))),
     }
+}
+
+/// Replace the list's entries from `parsed` and record the run, in one
+/// transaction: entries, list row, URL validators and the refresh-log row
+/// commit together or not at all. No network work happens inside it.
+async fn apply_atomically(
+    db: &sea_orm::DatabaseConnection,
+    list_id: Uuid,
+    parsed: &parsers::cbl::ParsedCbl,
+    raw_xml: &str,
+    blob_sha: Option<&str>,
+    trigger: RefreshTrigger,
+    url_validators: Option<(Option<String>, Option<String>)>,
+) -> Result<ImportSummary, RefreshError> {
+    let txn = db.begin().await?;
+    let summary = import::apply_parsed(&txn, list_id, parsed, raw_xml, blob_sha, trigger).await?;
+    if let Some((etag, last_modified)) = url_validators {
+        update_url_metadata(&txn, list_id, etag, last_modified).await?;
+    }
+    txn.commit().await?;
+    Ok(summary)
 }
 
 /// What a refresh *would* change, computed without persisting anything.
@@ -120,6 +153,7 @@ pub async fn check(
     db: &sea_orm::DatabaseConnection,
     list_id: Uuid,
     caller_view: Option<&crate::library::access::VisibleLibraries>,
+    budget: FetchBudget,
 ) -> Result<CheckOutcome, RefreshError> {
     let list = cbl_list::Entity::find_by_id(list_id)
         .one(db)
@@ -136,7 +170,7 @@ pub async fn check(
                 .source_url
                 .as_deref()
                 .ok_or_else(|| RefreshError::Http("url source missing source_url".into()))?;
-            match within_budget(fetch_url_source(url, &list, false)).await? {
+            match within_budget(budget, fetch_url_source(url, &list, false, budget)).await? {
                 UrlFetch::NotModified => None,
                 UrlFetch::Fetched(fetched) => {
                     if !is_allowed_cbl_response_type(
@@ -167,7 +201,7 @@ pub async fn check(
                 .one(db)
                 .await?
                 .ok_or(RefreshError::NotFound)?;
-            let blob = within_budget(async {
+            let blob = within_budget(budget, async {
                 Ok::<_, RefreshError>(catalog::fetch_blob(db, &source, path, false).await?)
             })
             .await?;
@@ -184,11 +218,17 @@ pub async fn check(
     let Some((xml, blob_sha)) = fetched else {
         // Upstream unchanged. A real refresh would still re-match in case the
         // library gained issues; reflect that as the rematch delta only.
-        let parsed = parse_within_cap(&list.raw_xml)?;
+        let parsed = parse_stored(&list.raw_xml)?;
         return dry_run_apply(db, list.id, &parsed, &list.raw_xml, None, caller_view).await;
     };
 
-    let parsed = parse_within_cap(&xml)?;
+    // An upload's stored XML is not new content; a fetched body is, unless
+    // its digest matches what is stored.
+    let parsed = if list.source_kind == "upload" {
+        parse_stored(&xml)?
+    } else {
+        parse_fetched(&xml, &list.raw_sha256)?
+    };
     dry_run_apply(db, list.id, &parsed, &xml, blob_sha.as_deref(), caller_view).await
 }
 
@@ -238,13 +278,14 @@ async fn fetch_url_and_apply(
     list: &cbl_list::Model,
     trigger: RefreshTrigger,
     force: bool,
+    budget: FetchBudget,
 ) -> Result<ImportSummary, RefreshError> {
     let url = list
         .source_url
         .as_deref()
         .ok_or_else(|| RefreshError::Http("url source missing source_url".into()))?;
 
-    let fetched = match within_budget(fetch_url_source(url, list, force)).await? {
+    let fetched = match within_budget(budget, fetch_url_source(url, list, force, budget)).await? {
         UrlFetch::NotModified => {
             // Bytes unchanged — re-match only.
             let rematched = import::rematch_existing(db, list.id, trigger).await?;
@@ -281,10 +322,17 @@ async fn fetch_url_and_apply(
         ));
     }
     let xml = String::from_utf8_lossy(&fetched.bytes).into_owned();
-    let parsed = parse_within_cap(&xml)?;
-    let summary = import::apply_parsed(db, list.id, &parsed, &xml, None, trigger).await?;
-    update_url_metadata(db, list.id, etag, last_modified).await?;
-    Ok(summary)
+    let parsed = parse_fetched(&xml, &list.raw_sha256)?;
+    apply_atomically(
+        db,
+        list.id,
+        &parsed,
+        &xml,
+        None,
+        trigger,
+        Some((etag, last_modified)),
+    )
+    .await
 }
 
 enum UrlFetch {
@@ -294,46 +342,68 @@ enum UrlFetch {
 
 /// Fetch a URL list's source. Unless `force`, the stored ETag /
 /// Last-Modified go along as validators. Conditional or not, the request is
-/// the import's ([`fetch_cbl_url`]): vetted, pinned, re-vetted on every
-/// redirect, capped and under one deadline.
+/// the import's ([`fetch_cbl_url`]): vetted, pinned, direct, re-vetted on
+/// every redirect, capped and under one deadline.
 async fn fetch_url_source(
     url: &str,
     list: &cbl_list::Model,
     force: bool,
+    budget: FetchBudget,
 ) -> Result<UrlFetch, RefreshError> {
-    let conditional = if force {
-        Conditional::default()
+    let result = if force {
+        fetch_cbl_url(url, budget)
+            .await
+            .map(|f| UrlFetch::Fetched(Box::new(f)))
     } else {
-        Conditional {
+        let conditional = Conditional {
             etag: list.source_etag.as_deref(),
             last_modified: list.source_last_modified.as_deref(),
-        }
+        };
+        fetch_cbl_url_conditional(url, conditional, budget)
+            .await
+            .map(|o| match o {
+                FetchOutcome::NotModified => UrlFetch::NotModified,
+                FetchOutcome::Fetched(f) => UrlFetch::Fetched(f),
+            })
     };
-    match fetch_cbl_url(url, conditional).await {
-        Ok(FetchOutcome::NotModified) => Ok(UrlFetch::NotModified),
-        Ok(FetchOutcome::Fetched(fetched)) => Ok(UrlFetch::Fetched(fetched)),
-        Err(e) => Err(RefreshError::Http(e.to_string())),
-    }
+    result.map_err(|e| match e {
+        crate::util::ssrf::FetchBytesError::Timeout => RefreshError::Timeout,
+        other => RefreshError::Http(other.to_string()),
+    })
 }
 
-/// Run the remote part of one refresh / check under
-/// [`CBL_LIST_FETCH_BUDGET`]. Only network work goes in here: nothing it
-/// wraps writes list entries, so running out of budget leaves the list as
-/// it was.
+/// Run the remote part of one refresh / check under the budget's
+/// `list_budget`. Only network work and the catalog's own index bookkeeping
+/// go in here (`catalog::fetch_blob` may update the catalog source row, a
+/// single-row write that is harmless if cut off); list entries are never
+/// written inside it.
 async fn within_budget<T>(
+    budget: FetchBudget,
     fut: impl std::future::Future<Output = Result<T, RefreshError>>,
 ) -> Result<T, RefreshError> {
-    tokio::time::timeout(CBL_LIST_FETCH_BUDGET, fut)
+    tokio::time::timeout(budget.list_budget, fut)
         .await
         .map_err(|_| RefreshError::Timeout)?
 }
 
-/// Parse a fetched (or stored) file and refuse it when it has more entries
-/// than an import accepts, before anything is written.
-fn parse_within_cap(xml: &str) -> Result<parsers::cbl::ParsedCbl, RefreshError> {
-    let parsed =
-        parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))?;
-    if parsed.books.len() > super::MAX_BOOKS_PER_LIST {
+fn parse(xml: &str) -> Result<parsers::cbl::ParsedCbl, RefreshError> {
+    parsers::cbl::parse(xml.as_bytes()).map_err(|e| RefreshError::Parse(e.to_string()))
+}
+
+/// Parse stored content. Not checked against the entry cap: it was
+/// accepted when it was stored, and the cap is for new content.
+fn parse_stored(xml: &str) -> Result<parsers::cbl::ParsedCbl, RefreshError> {
+    parse(xml)
+}
+
+/// Parse fetched content, refusing it when it is new (its digest differs
+/// from the stored `raw_sha256`) and has more entries than an import
+/// accepts, before anything is written.
+fn parse_fetched(xml: &str, stored_sha256: &[u8]) -> Result<parsers::cbl::ParsedCbl, RefreshError> {
+    let parsed = parse(xml)?;
+    if parsed.books.len() > super::MAX_BOOKS_PER_LIST
+        && import::sha256_of(xml.as_bytes()) != stored_sha256
+    {
         return Err(RefreshError::TooManyEntries);
     }
     Ok(parsed)
@@ -356,7 +426,7 @@ pub async fn run_sweep(db: &sea_orm::DatabaseConnection, mut due: Vec<Uuid>) {
             );
             break;
         }
-        match refresh(db, list_id, RefreshTrigger::Scheduled, false).await {
+        match refresh(db, list_id, RefreshTrigger::Scheduled, false, SWEEP_BUDGET).await {
             Ok(s) => {
                 if s.upstream_changed {
                     tracing::info!(
@@ -403,6 +473,7 @@ async fn fetch_catalog_and_apply(
     list: &cbl_list::Model,
     trigger: RefreshTrigger,
     force: bool,
+    budget: FetchBudget,
 ) -> Result<ImportSummary, RefreshError> {
     let source_id = list
         .catalog_source_id
@@ -416,7 +487,7 @@ async fn fetch_catalog_and_apply(
         .await?
         .ok_or(RefreshError::NotFound)?;
 
-    let blob = within_budget(async {
+    let blob = within_budget(budget, async {
         Ok::<_, RefreshError>(catalog::fetch_blob(db, &source, path, force).await?)
     })
     .await?;
@@ -436,10 +507,17 @@ async fn fetch_catalog_and_apply(
         return Ok(summary);
     }
     let xml = String::from_utf8_lossy(&blob.bytes).into_owned();
-    let parsed = parse_within_cap(&xml)?;
-    let summary =
-        import::apply_parsed(db, list.id, &parsed, &xml, Some(&blob.blob_sha), trigger).await?;
-    Ok(summary)
+    let parsed = parse_fetched(&xml, &list.raw_sha256)?;
+    apply_atomically(
+        db,
+        list.id,
+        &parsed,
+        &xml,
+        Some(&blob.blob_sha),
+        trigger,
+        None,
+    )
+    .await
 }
 
 async fn update_url_metadata<C: ConnectionTrait>(

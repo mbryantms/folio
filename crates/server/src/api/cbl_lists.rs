@@ -26,7 +26,7 @@ use chrono::Utc;
 use entity::{catalog_source, cbl_entry, cbl_list, cbl_refresh_log, issue};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, FromQueryResult, ModelTrait,
-    QueryFilter, QueryOrder, RelationTrait,
+    QueryFilter, QueryOrder, RelationTrait, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -1552,18 +1552,8 @@ async fn create_from_url(
     refresh_schedule: Option<String>,
 ) -> axum::response::Response {
     let fetched =
-        match crate::cbl::fetch::fetch_cbl_url(&url, crate::util::ssrf::Conditional::default())
-            .await
-        {
-            Ok(crate::util::ssrf::FetchOutcome::Fetched(fetched)) => fetched,
-            // No validators were sent, so a 304 answers nothing we asked.
-            Ok(crate::util::ssrf::FetchOutcome::NotModified) => {
-                return error(
-                    StatusCode::BAD_GATEWAY,
-                    "fetch_failed",
-                    "upstream returned status 304 Not Modified",
-                );
-            }
+        match crate::cbl::fetch::fetch_cbl_url(&url, crate::cbl::fetch::REQUEST_BUDGET).await {
+            Ok(fetched) => fetched,
             Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
                 return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
             }
@@ -1787,14 +1777,26 @@ async fn create_list_from_parsed(
             am.refresh_schedule = Set(refresh_schedule.or(Some("0 0 * * 0".to_owned())));
         }
     }
-    if let Err(e) = am.insert(&app.db).await {
+    // The list row, its entries and the first refresh-log row commit
+    // together: an error or a dropped request leaves no half-built list.
+    let txn = match app.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "cbl_lists: begin failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if let Err(e) = am.insert(&txn).await {
         tracing::error!(error = %e, "cbl_lists: insert failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
-    if let Err(e) =
-        import::apply_parsed(&app.db, id, parsed, xml, None, RefreshTrigger::Manual).await
+    if let Err(e) = import::apply_parsed(&txn, id, parsed, xml, None, RefreshTrigger::Manual).await
     {
         tracing::error!(error = %e, "cbl_lists: apply_parsed failed");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, "cbl_lists: commit failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
     // Re-read the freshly-written row + stats so the response shape
@@ -1936,7 +1938,15 @@ pub async fn refresh_one(
         Ok(b) => b,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    match refresh::refresh(&app.db, id, RefreshTrigger::Manual, false).await {
+    match refresh::refresh(
+        &app.db,
+        id,
+        RefreshTrigger::Manual,
+        false,
+        crate::cbl::fetch::REQUEST_BUDGET,
+    )
+    .await
+    {
         Ok(mut summary) => {
             audit_admin_list_write(
                 &app,
@@ -2065,6 +2075,26 @@ fn item_error(list: &cbl_list::Model, applied: bool, msg: String) -> CblBulkItem
     }
 }
 
+/// Time left in one `refresh-all` / `check-all` request
+/// ([`crate::cbl::fetch::CBL_REQUEST_BULK_BUDGET`]).
+struct BulkDeadline(tokio::time::Instant);
+
+impl BulkDeadline {
+    fn start() -> Self {
+        Self(tokio::time::Instant::now() + crate::cbl::fetch::CBL_REQUEST_BULK_BUDGET)
+    }
+
+    /// The budget for the next list, or `None` when too little time is
+    /// left to start one (the list is then reported as not attempted).
+    fn next_list_budget(&self) -> Option<crate::cbl::fetch::FetchBudget> {
+        let remaining = self
+            .0
+            .saturating_duration_since(tokio::time::Instant::now());
+        (remaining >= crate::cbl::fetch::CBL_REQUEST_MIN_LIST_BUDGET)
+            .then(|| crate::cbl::fetch::REQUEST_BUDGET.capped_at(remaining))
+    }
+}
+
 fn bulk_result(items: Vec<CblBulkItemView>) -> axum::response::Response {
     let changed_count = items.iter().filter(|i| i.changed).count() as i32;
     let failed_count = items.iter().filter(|i| !i.ok).count() as i32;
@@ -2103,7 +2133,14 @@ pub async fn check_one(
     }
     let acl = crate::library::access::for_user(&app, &user).await;
     let caller_view = check_caller_view(&app, acl).await;
-    match crate::cbl::refresh::check(&app.db, id, caller_view.as_ref()).await {
+    match crate::cbl::refresh::check(
+        &app.db,
+        id,
+        caller_view.as_ref(),
+        crate::cbl::fetch::REQUEST_BUDGET,
+    )
+    .await
+    {
         Ok(outcome) => Json(item_from_check(&row, &outcome)).into_response(),
         Err(crate::cbl::refresh::RefreshError::TooManyEntries) => error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -2137,8 +2174,19 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
     let acl = crate::library::access::for_user(&app, &user).await;
     let caller_view = check_caller_view(&app, acl).await;
     let mut items = Vec::with_capacity(lists.len());
+    let deadline = BulkDeadline::start();
     for list in &lists {
-        let item = match crate::cbl::refresh::check(&app.db, list.id, caller_view.as_ref()).await {
+        let Some(budget) = deadline.next_list_budget() else {
+            items.push(item_error(
+                list,
+                false,
+                crate::cbl::refresh::RefreshError::NotAttempted.to_string(),
+            ));
+            continue;
+        };
+        let item = match crate::cbl::refresh::check(&app.db, list.id, caller_view.as_ref(), budget)
+            .await
+        {
             Ok(o) => item_from_check(list, &o),
             Err(e) => {
                 tracing::warn!(error = %e, list_id = %list.id, "cbl_lists: check-all item failed");
@@ -2177,12 +2225,23 @@ pub async fn refresh_all(
     // `rematched` / `changed` are the caller's view, as on `refresh_one`.
     let acl = crate::library::access::for_user(&app, &user).await;
     let mut items = Vec::with_capacity(lists.len());
+    let deadline = BulkDeadline::start();
     for list in &lists {
+        let Some(budget) = deadline.next_list_budget() else {
+            items.push(item_error(
+                list,
+                true,
+                refresh::RefreshError::NotAttempted.to_string(),
+            ));
+            continue;
+        };
         let before = match snapshot_for_caller(&app.db, list.id, &acl).await {
             Ok(b) => b,
             Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
         };
-        let item = match refresh::refresh(&app.db, list.id, RefreshTrigger::Manual, false).await {
+        let item = match refresh::refresh(&app.db, list.id, RefreshTrigger::Manual, false, budget)
+            .await
+        {
             Ok(mut s) => {
                 audit_admin_list_write(
                     &app,

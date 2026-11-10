@@ -2652,35 +2652,15 @@ async fn window_total_matched_excludes_a_removed_match_for_admins() {
     assert_eq!(totals().await, [2, 2]);
 }
 
-/// A reading list whose source grows past the import cap after it was
-/// imported is refused on refresh and on check, with the import's error,
-/// and the stored entries are left as they were (no truncation, no
-/// refresh-log row).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn refresh_and_check_refuse_a_list_grown_past_the_entry_cap() {
-    let app = TestApp::spawn().await;
-    let auth = register(&app, "cap-grower@example.com").await;
-    let (status, view) = upload_cbl(&app, &auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
-    assert_eq!(status, StatusCode::CREATED, "{view}");
-    let list_id = Uuid::parse_str(view["id"].as_str().unwrap()).unwrap();
-    let db = Database::connect(&app.db_url).await.unwrap();
+// ───── refresh: entry cap, atomic writes, request budgets ─────
+//
+// URL sources go through `cbl::fetch::stub_source_for_tests` (debug builds
+// only): a test cannot serve https from a public address, which the vetted
+// fetch requires.
 
-    let entries_before: Vec<(i32, String, String)> = cbl_entry::Entity::find()
-        .filter(cbl_entry::Column::CblListId.eq(list_id))
-        .all(&db)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|e| (e.position, e.series_name, e.issue_number))
-        .collect();
-    assert_eq!(entries_before.len(), 269);
-    let logs_before = cbl_refresh_log::Entity::find()
-        .filter(cbl_refresh_log::Column::CblListId.eq(list_id))
-        .count(&db)
-        .await
-        .unwrap();
+use server::cbl::fetch::{TestSource, stub_source_for_tests};
 
-    // The source now carries one entry more than the cap.
+fn over_cap_xml() -> String {
     let over = server::cbl::MAX_BOOKS_PER_LIST + 1;
     let mut xml = String::from("<?xml version=\"1.0\"?>\n<ReadingList><Name>Grown</Name><Books>\n");
     for i in 0..over {
@@ -2689,14 +2669,76 @@ async fn refresh_and_check_refuse_a_list_grown_past_the_entry_cap() {
         ));
     }
     xml.push_str("</Books></ReadingList>\n");
-    let row = cbl_list::Entity::find_by_id(list_id)
-        .one(&db)
+    xml
+}
+
+/// Upload the sample list and return its id.
+async fn upload_sample(app: &TestApp, auth: &Authed) -> Uuid {
+    let (status, view) = upload_cbl(app, auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view}");
+    Uuid::parse_str(view["id"].as_str().unwrap()).unwrap()
+}
+
+/// Turn a list into a URL list at `url`, optionally replacing its stored
+/// XML (and digest).
+async fn make_url_list(db: &sea_orm::DatabaseConnection, id: Uuid, url: &str, raw: Option<&str>) {
+    let row = cbl_list::Entity::find_by_id(id)
+        .one(db)
         .await
         .unwrap()
         .unwrap();
     let mut am: cbl_list::ActiveModel = row.into();
-    am.raw_xml = Set(xml);
-    am.update(&db).await.unwrap();
+    am.source_kind = Set("url".into());
+    am.source_url = Set(Some(url.to_owned()));
+    if let Some(raw) = raw {
+        am.raw_xml = Set(raw.to_owned());
+        am.raw_sha256 = Set(server::cbl::import::sha256_of(raw.as_bytes()));
+    }
+    am.update(db).await.unwrap();
+}
+
+/// (sorted entries, list row, refresh-log row count) — everything a failed
+/// refresh must leave alone.
+async fn stored_state(
+    db: &sea_orm::DatabaseConnection,
+    id: Uuid,
+) -> (Vec<(i32, String, String)>, cbl_list::Model, u64) {
+    let mut entries: Vec<(i32, String, String)> = cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.eq(id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.position, e.series_name, e.issue_number))
+        .collect();
+    entries.sort();
+    let row = cbl_list::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let logs = cbl_refresh_log::Entity::find()
+        .filter(cbl_refresh_log::Column::CblListId.eq(id))
+        .count(db)
+        .await
+        .unwrap();
+    (entries, row, logs)
+}
+
+/// A source whose content changed and is over the import cap is refused on
+/// refresh and check with the import's error; the stored list is left as
+/// it was (no truncation, no refresh-log row).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_and_check_refuse_new_content_over_the_entry_cap() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cap-grower@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let url = format!("https://lists.example.test/{list_id}/grown.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Body(over_cap_xml().into_bytes()));
+    let before = stored_state(&db, list_id).await;
+    assert_eq!(before.0.len(), 269);
 
     let expected = format!("exceeds {} entries", server::cbl::MAX_BOOKS_PER_LIST);
     for path in ["refresh", "check"] {
@@ -2712,7 +2754,6 @@ async fn refresh_and_check_refuse_a_list_grown_past_the_entry_cap() {
         assert_eq!(body["error"]["code"], "too_many_entries", "{path}");
         assert_eq!(body["error"]["message"], expected.as_str(), "{path}");
     }
-    // The bulk dashboards report it per list, the way other failures are.
     for path in ["check-all", "refresh-all"] {
         let (status, body) = http(
             &app,
@@ -2724,27 +2765,122 @@ async fn refresh_and_check_refuse_a_list_grown_past_the_entry_cap() {
         .await;
         assert_eq!(status, StatusCode::OK, "{path}: {body}");
         assert_eq!(body["failed_count"], 1, "{path}: {body}");
-        assert_eq!(body["items"][0]["ok"], false);
         assert_eq!(body["items"][0]["error"], expected.as_str());
     }
+    assert_eq!(
+        stored_state(&db, list_id).await,
+        before,
+        "stored list untouched"
+    );
+}
 
-    let entries_after: Vec<(i32, String, String)> = cbl_entry::Entity::find()
-        .filter(cbl_entry::Column::CblListId.eq(list_id))
-        .all(&db)
+/// Stored content that has not changed is not re-checked against the cap:
+/// a list already over it keeps working on refresh and check, both for an
+/// upload and for a URL source that serves the same bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unchanged_content_over_the_cap_keeps_refreshing() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cap-unchanged@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let big = over_cap_xml();
+    let row = cbl_list::Entity::find_by_id(list_id)
+        .one(&db)
         .await
         .unwrap()
-        .into_iter()
-        .map(|e| (e.position, e.series_name, e.issue_number))
-        .collect();
-    let mut a = entries_before.clone();
-    let mut b = entries_after;
-    a.sort();
-    b.sort();
-    assert_eq!(a, b, "stored entries must be untouched");
-    let logs_after = cbl_refresh_log::Entity::find()
-        .filter(cbl_refresh_log::Column::CblListId.eq(list_id))
-        .count(&db)
-        .await
         .unwrap();
-    assert_eq!(logs_before, logs_after, "no refresh-log row for a refusal");
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.raw_xml = Set(big.clone());
+    am.raw_sha256 = Set(server::cbl::import::sha256_of(big.as_bytes()));
+    am.update(&db).await.unwrap();
+
+    let run = |path: &'static str| {
+        let app = &app;
+        let auth = &auth;
+        async move {
+            http(
+                app,
+                Method::POST,
+                &format!("/api/me/cbl-lists/{list_id}/{path}"),
+                Some(auth),
+                None,
+            )
+            .await
+        }
+    };
+    for path in ["check", "refresh"] {
+        let (status, body) = run(path).await;
+        assert_eq!(status, StatusCode::OK, "upload {path}: {body}");
+    }
+    let url = format!("https://lists.example.test/{list_id}/same.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Body(big.into_bytes()));
+    for path in ["check", "refresh"] {
+        let (status, body) = run(path).await;
+        assert_eq!(status, StatusCode::OK, "url {path}: {body}");
+    }
+}
+
+/// A failure after the entries were deleted rolls the whole refresh back:
+/// entries, list row and refresh log are exactly as before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refresh_that_fails_after_the_delete_leaves_the_list_unchanged() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "atomic@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let before = stored_state(&db, list_id).await;
+
+    server::cbl::import::fail_after_delete_for_tests(list_id);
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/refresh"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(stored_state(&db, list_id).await, before);
+}
+
+/// A host that never answers ends in the handler's own timeout error on
+/// the request budget, well before the 60 s route timeout, and the list is
+/// untouched. (Takes the 40 s request budget to run.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stalled_host_hits_the_request_budget_before_the_route_timeout() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "stall@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let url = format!("https://lists.example.test/{list_id}/stall.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Stall);
+    let before = stored_state(&db, list_id).await;
+
+    let started = std::time::Instant::now();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/refresh"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    let took = started.elapsed();
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(body["error"]["code"], "refresh_failed");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("timed out"),
+        "{body}"
+    );
+    assert!(
+        took >= server::cbl::fetch::REQUEST_BUDGET.fetch_deadline
+            && took < server::app::JSON_ROUTE_TIMEOUT,
+        "{took:?}"
+    );
+    assert_eq!(stored_state(&db, list_id).await, before);
 }

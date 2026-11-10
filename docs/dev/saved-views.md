@@ -392,36 +392,62 @@ the results.
 
 ### Fetching reading lists
 
-A URL list is fetched by `cbl::fetch::fetch_cbl_url` at import, on
-refresh and on "Check for updates". Refreshes send the stored ETag and
-Last-Modified as `If-None-Match` / `If-Modified-Since`; the conditional
-request goes through the same code as the first fetch
-(`util::ssrf::fetch_public`). That code accepts only `https://`, resolves
-the host once and refuses the URL when any address is internal (the
-ranges are listed on `util::ssrf::is_internal_ip`), connects to the
-address it vetted, follows at most 2 redirects by hand with each target
-vetted again, caps the body at 4 MiB while streaming and gives the whole
-fetch one 60 s deadline (`CBL_FETCH_DEADLINE`) on top of the 30 s
-per-step timeout. A refused URL gets a generic message that names
-neither the address nor the range; the address is logged at DEBUG.
+A URL list is fetched by `cbl::fetch::fetch_cbl_url` at import and on a
+forced refresh, and by `fetch_cbl_url_conditional` on refresh and "Check
+for updates", which send the stored ETag and Last-Modified as
+`If-None-Match` / `If-Modified-Since`. Both go through the same code
+(`util::ssrf::fetch_public`). It accepts only `https://`, resolves the
+host once and refuses the URL when any address is internal (the ranges
+are listed on `util::ssrf::is_internal_ip`), connects to the address it
+vetted, follows at most 2 redirects by hand with each target vetted
+again, caps the body at 4 MiB while streaming, and gives the whole fetch
+one deadline on top of the 30 s per-step timeout. A `304` is "not
+modified" only when validators were sent. A refused URL gets a generic
+message that names neither the address nor the range; the address is
+logged at DEBUG.
 
-Catalog lists use the vetted pooled client
-(`util::ssrf::shared_public_client`): DNS answers checked, 2 redirect
-hops, a 30 s bound per request including the body, and the tree listing
-(16 MiB) and blob (4 MiB) read with a running cap that also refuses an
-oversize `Content-Length` before reading.
+**Proxies.** Reading lists fetched from a user-supplied URL always
+connect directly and ignore `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`,
+so the address check is the last word. A server that reaches the
+internet only through a proxy therefore cannot import reading lists by
+URL. Catalog lists and provider fetches (covers, metadata APIs) honour
+the proxy environment; behind a proxy, the proxy performs the final name
+resolution.
 
-The remote part of one refresh or check has a 120 s budget
-(`CBL_LIST_FETCH_BUDGET`). The hourly sweep visits due lists in random
-order and starts no new list after 30 minutes (`CBL_SWEEP_BUDGET`);
-lists it did not reach stay due for the next run.
+Catalog lists talk to fixed GitHub hosts (only the repository is
+admin-configured), so names are not vetted: the client uses the default
+resolver and the proxy environment, follows at most 2 redirects, each
+required to stay on https and refused when its host is an internal
+address literal, bounds each request at 30 s including the body, and
+reads the tree listing (16 MiB) and blob (4 MiB) with a running cap that
+also refuses an oversize `Content-Length` before reading.
+
+**Time budgets** (`cbl::fetch`). Refresh, check, their `-all` variants
+and URL import run under the 60 s JSON route timeout, so they use
+`REQUEST_BUDGET`: 40 s per fetch and 40 s for one list's remote work,
+returning their own timeout error. `refresh-all` / `check-all` stop
+starting lists after 45 s (`CBL_REQUEST_BULK_BUDGET`, or when less than
+5 s is left) and report the rest as "not attempted". The hourly sweep
+uses `SWEEP_BUDGET` (60 s per fetch, 120 s per list), visits due lists
+in random order and starts no new list after 30 minutes
+(`CBL_SWEEP_BUDGET`); lists it did not reach stay due for the next run.
+
+**Atomic writes.** The fetch happens first. Replacing the entries,
+updating the list row (and URL validators) and writing the refresh-log
+row then commit in one transaction, as does creating a new list. An
+error or a dropped request at any step leaves the stored list, its
+entries and its log exactly as before.
 
 A list may have at most 5000 entries (`cbl::MAX_BOOKS_PER_LIST`). The
-cap applies at import and again on refresh and check: a source that has
-grown past it is refused with the import's `413 too_many_entries`
-("exceeds 5000 entries") before anything is written, so the stored
-entries and the refresh log stay as they were. The bulk check and
-refresh report it as that list's error, and the scheduled sweep logs it.
+cap applies at import and to new content on refresh and check: a source
+whose content has changed and is over the cap is refused with the
+import's `413 too_many_entries` ("exceeds 5000 entries") before anything
+is written. Stored content that has not changed (an upload, a `304`, an
+unchanged catalog blob or an identical body digest) is not re-checked,
+so a list already over the cap keeps re-matching until its source
+changes. The bulk check and refresh report a refusal as that list's
+error. The scheduled sweep only logs failures (WARN); they are not shown
+in the app.
 
 ## OPDS
 

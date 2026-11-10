@@ -29,6 +29,14 @@
 //! Refusal messages are generic: they never name the resolved address or
 //! the range it matched. The detail is logged at DEBUG.
 //!
+//! **Proxies.** A request through an HTTP proxy is a CONNECT by name and
+//! the proxy resolves the destination, so the address check cannot be the
+//! last word there. [`ProxyMode::Direct`] (URLs a signed-in user supplies:
+//! reading lists) ignores the proxy environment and connects to the vetted
+//! address; [`ProxyMode::Environment`] (provider covers) honours it. The
+//! pooled client honours it too, and its vetting resolver also vets a proxy
+//! named by hostname.
+//!
 //! Admin-configured endpoints that are documented to allow private hosts
 //! (the OIDC issuer and its discovery probe, metadata-provider base URLs)
 //! do not go through this module.
@@ -184,15 +192,23 @@ pub async fn fetch_public_bytes(
         user_agent,
         max_redirects,
         require_https,
+        // Provider covers: honour a deployment's outbound proxy, as before.
+        proxy: ProxyMode::Environment,
     };
-    match fetch_public(url, &opts, Conditional::default()).await? {
-        FetchOutcome::Fetched(fetched) => Ok(*fetched),
-        // No validators were sent, so a 304 is not an answer to anything
-        // this caller asked; treat it like any other non-success status.
-        FetchOutcome::NotModified => Err(FetchBytesError::HttpStatus(
-            reqwest::StatusCode::NOT_MODIFIED,
-        )),
-    }
+    fetch_public(url, &opts).await
+}
+
+/// How a per-hop client reaches the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProxyMode {
+    /// Connect straight to the vetted address and ignore the proxy
+    /// environment (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`). Through a
+    /// proxy the proxy resolves the name, so the address check would not be
+    /// the last word; URLs a signed-in user can supply always use this.
+    Direct,
+    /// Honour the proxy environment, as reqwest does by default. Behind a
+    /// proxy the proxy performs the final name resolution.
+    Environment,
 }
 
 /// Limits for one [`fetch_public`] call.
@@ -208,6 +224,7 @@ pub struct FetchOptions {
     pub user_agent: &'static str,
     pub max_redirects: usize,
     pub require_https: bool,
+    pub proxy: ProxyMode,
 }
 
 /// Cache validators for a conditional GET. Sent on every hop.
@@ -227,15 +244,28 @@ pub enum FetchOutcome {
 
 /// The one fetch path for user- or provider-supplied URLs: syntactic
 /// validation, DNS vetting of every hop with the connection pinned to the
-/// vetted address, redirects followed by hand (each target re-vetted, at
-/// most `max_redirects` hops), optional conditional validators, a streamed
-/// body cap and an optional overall deadline.
-pub async fn fetch_public(
+/// vetted address (when [`ProxyMode::Direct`]), redirects followed by hand
+/// (each target re-vetted, at most `max_redirects` hops), a streamed body
+/// cap and an optional overall deadline. A `304` is an unexpected status
+/// here, since no validators are sent.
+pub async fn fetch_public(url: &str, opts: &FetchOptions) -> Result<FetchedBytes, FetchBytesError> {
+    match fetch_public_with_policy(url, opts, None, is_internal_ip).await? {
+        FetchOutcome::Fetched(fetched) => Ok(*fetched),
+        // Only produced when validators were sent; see `fetch_hops`.
+        FetchOutcome::NotModified => Err(FetchBytesError::HttpStatus(
+            reqwest::StatusCode::NOT_MODIFIED,
+        )),
+    }
+}
+
+/// [`fetch_public`] with cache validators: a `304 Not Modified` answer
+/// comes back as [`FetchOutcome::NotModified`].
+pub async fn fetch_public_conditional(
     url: &str,
     opts: &FetchOptions,
     conditional: Conditional<'_>,
 ) -> Result<FetchOutcome, FetchBytesError> {
-    fetch_public_with_policy(url, opts, conditional, is_internal_ip).await
+    fetch_public_with_policy(url, opts, Some(conditional), is_internal_ip).await
 }
 
 /// Which addresses a fetch refuses. Production always passes
@@ -247,7 +277,7 @@ type RefusePolicy = fn(&IpAddr) -> bool;
 async fn fetch_public_with_policy(
     url: &str,
     opts: &FetchOptions,
-    conditional: Conditional<'_>,
+    conditional: Option<Conditional<'_>>,
     refuse: RefusePolicy,
 ) -> Result<FetchOutcome, FetchBytesError> {
     let fut = fetch_hops(url, opts, conditional, refuse);
@@ -262,7 +292,7 @@ async fn fetch_public_with_policy(
 async fn fetch_hops(
     url: &str,
     opts: &FetchOptions,
-    conditional: Conditional<'_>,
+    conditional: Option<Conditional<'_>>,
     refuse: RefusePolicy,
 ) -> Result<FetchOutcome, FetchBytesError> {
     let mut current = validate_public_url_with(url, opts.require_https, refuse)?;
@@ -279,29 +309,32 @@ async fn fetch_hops(
         // per-hop client keeps the override scoped to this one request; the
         // path is low-volume (CBL import / cover fetch) so the lost connection
         // pooling is irrelevant.
-        let client = reqwest::Client::builder()
-            .redirect(Policy::none())
-            .resolve(host, pinned)
-            .build()
-            .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
+        let client = per_hop_client(host, pinned, opts.proxy)?;
         let mut req = client
             .get(current.clone())
             .header(USER_AGENT, HeaderValue::from_static(opts.user_agent));
-        if let Some(etag) = conditional.etag {
-            req = req.header(IF_NONE_MATCH, etag);
-        }
-        if let Some(lm) = conditional.last_modified {
-            req = req.header(IF_MODIFIED_SINCE, lm);
+        let validators = conditional.filter(|c| c.etag.is_some() || c.last_modified.is_some());
+        if let Some(c) = validators {
+            if let Some(etag) = c.etag {
+                req = req.header(IF_NONE_MATCH, etag);
+            }
+            if let Some(lm) = c.last_modified {
+                req = req.header(IF_MODIFIED_SINCE, lm);
+            }
         }
         let resp = tokio::time::timeout(opts.idle_timeout, req.send())
             .await
             .map_err(|_| FetchBytesError::Timeout)?
             .map_err(|e| FetchBytesError::Transport(e.to_string()))?;
 
-        if resp.status() == reqwest::StatusCode::NOT_MODIFIED
-            && (conditional.etag.is_some() || conditional.last_modified.is_some())
-        {
-            return Ok(FetchOutcome::NotModified);
+        // 304 is in the 3xx range but is not a redirect: an answer to the
+        // validators when they were sent, an unexpected status otherwise.
+        if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+            return if validators.is_some() {
+                Ok(FetchOutcome::NotModified)
+            } else {
+                Err(FetchBytesError::HttpStatus(resp.status()))
+            };
         }
 
         if resp.status().is_redirection() {
@@ -334,6 +367,25 @@ async fn fetch_hops(
     }
 
     Err(FetchBytesError::TooManyRedirects(opts.max_redirects))
+}
+
+/// The client for one hop: no redirects of its own, and in
+/// [`ProxyMode::Direct`] connected to exactly the vetted address with the
+/// proxy environment ignored.
+fn per_hop_client(
+    host: &str,
+    pinned: SocketAddr,
+    proxy: ProxyMode,
+) -> Result<reqwest::Client, FetchBytesError> {
+    let mut builder = reqwest::Client::builder()
+        .redirect(Policy::none())
+        .resolve(host, pinned);
+    if proxy == ProxyMode::Direct {
+        builder = builder.no_proxy();
+    }
+    builder
+        .build()
+        .map_err(|e| FetchBytesError::Transport(e.to_string()))
 }
 
 /// Read a response body into memory, refusing it as soon as it is known to
@@ -480,12 +532,13 @@ pub fn shared_public_client(
     user_agent: &'static str,
     timeout: std::time::Duration,
     max_redirects: usize,
+    require_https: bool,
 ) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent(user_agent)
         .timeout(timeout)
         .connect_timeout(std::time::Duration::from_secs(10))
-        .redirect(outbound_redirect_policy(max_redirects))
+        .redirect(outbound_redirect_policy(max_redirects, require_https))
         .dns_resolver(std::sync::Arc::new(PublicOnlyResolver))
         .build()
         .expect("reqwest client init")
@@ -531,26 +584,38 @@ pub async fn fetch_public_bytes_pooled(
         .map_err(|_| FetchBytesError::Timeout)?
 }
 
-/// Build a redirect policy that limits hops to `max_hops` and rejects
-/// any hop whose URL host is a private-range IP literal. Hostname
-/// targets are *not* re-resolved here (sync callback, no async DNS);
-/// the per-request pre-flight — or, on a [`shared_public_client`], the
-/// vetting resolver — covers that.
-pub fn outbound_redirect_policy(max_hops: usize) -> Policy {
+/// Build a redirect policy that limits hops to `max_hops`, refuses a hop
+/// to an IPv4 or IPv6 address literal in an internal range (literals never
+/// reach a resolver), and with `require_https` refuses a hop that leaves
+/// https. Hostname targets are *not* resolved here (sync callback, no async
+/// DNS); on a [`shared_public_client`] the vetting resolver covers them.
+pub fn outbound_redirect_policy(max_hops: usize, require_https: bool) -> Policy {
     Policy::custom(move |attempt| {
         if attempt.previous().len() >= max_hops {
             return attempt.error(SsrfError::InvalidUrl(format!(
                 "exceeded {max_hops} redirect hops"
             )));
         }
-        if let Some(host) = attempt.url().host_str()
-            && let Ok(ip) = host.parse::<IpAddr>()
-            && is_internal_ip(&ip)
-        {
-            return attempt.error(refused(ip));
+        match redirect_hop_refusal(attempt.url(), require_https) {
+            Some(err) => attempt.error(err),
+            None => attempt.follow(),
         }
-        attempt.follow()
     })
+}
+
+/// Why a redirect target is refused, if it is: a non-https hop when https
+/// is required, a non-http(s) scheme, or an address-literal host in an
+/// internal range.
+fn redirect_hop_refusal(url: &url::Url, require_https: bool) -> Option<SsrfError> {
+    if !matches!(url.scheme(), "https" | "http") || (require_https && url.scheme() != "https") {
+        return Some(SsrfError::SchemeNotHttps);
+    }
+    let ip = match url.host()? {
+        url::Host::Ipv4(v4) => IpAddr::V4(v4),
+        url::Host::Ipv6(v6) => IpAddr::V6(v6),
+        url::Host::Domain(_) => return None,
+    };
+    is_internal_ip(&ip).then(|| refused(ip))
 }
 
 /// `true` if `ip` is in any range the server should refuse to talk to
@@ -745,7 +810,8 @@ mod tests {
 
     #[tokio::test]
     async fn pooled_fetch_rejects_internal_ip_literal_before_fetch() {
-        let client = shared_public_client("folio-test", std::time::Duration::from_secs(1), 2);
+        let client =
+            shared_public_client("folio-test", std::time::Duration::from_secs(1), 2, false);
         let err = fetch_public_bytes_pooled(
             &client,
             "http://127.0.0.1/cover.jpg",
@@ -773,7 +839,8 @@ mod tests {
             .expect(0)
             .mount(&mock)
             .await;
-        let client = shared_public_client("folio-test", std::time::Duration::from_secs(2), 2);
+        let client =
+            shared_public_client("folio-test", std::time::Duration::from_secs(2), 2, false);
         let url = format!("http://localhost:{}/cover.jpg", mock.address().port());
         let err = fetch_public_bytes_pooled(
             &client,
@@ -944,6 +1011,7 @@ mod tests {
             user_agent: "folio-test",
             max_redirects: 2,
             require_https: false,
+            proxy: ProxyMode::Direct,
         }
     }
 
@@ -957,7 +1025,165 @@ mod tests {
         o: &FetchOptions,
         conditional: Conditional<'_>,
     ) -> Result<FetchOutcome, FetchBytesError> {
-        fetch_public_with_policy(url, o, conditional, admit_test_loopback).await
+        fetch_public_with_policy(url, o, Some(conditional), admit_test_loopback).await
+    }
+
+    #[tokio::test]
+    async fn not_modified_without_validators_is_an_unexpected_status() {
+        use wiremock::matchers::method;
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(304))
+            .mount(&mock)
+            .await;
+        let url = format!("http://127.0.0.1:{}/list.cbl", mock.address().port());
+        let err = fetch_test(&url, &opts(None), Conditional::default())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, FetchBytesError::HttpStatus(s) if s == reqwest::StatusCode::NOT_MODIFIED),
+            "{err:?}"
+        );
+    }
+
+    /// A plain client carrying the pooled client's redirect policy (the
+    /// pooled client itself refuses the loopback test server up front).
+    async fn follow_with_policy(target: &str, require_https: bool) -> reqwest::Error {
+        use wiremock::matchers::method;
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(302).insert_header("location", target))
+            .mount(&mock)
+            .await;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(outbound_redirect_policy(2, require_https))
+            .build()
+            .unwrap();
+        client
+            .get(format!("http://127.0.0.1:{}/", mock.address().port()))
+            .send()
+            .await
+            .unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn pooled_redirect_policy_refuses_literals_and_downgrades() {
+        let refused_port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        for (target, https) in [
+            (format!("https://[::1]:{refused_port}/"), false),
+            ("https://[::ffff:127.0.0.1]/".to_owned(), false),
+            ("https://10.1.2.3/".to_owned(), false),
+            ("http://192.168.0.1/".to_owned(), false),
+            // https -> http downgrade on a caller that requires https.
+            ("http://covers.example.invalid/a.jpg".to_owned(), true),
+        ] {
+            let err = follow_with_policy(&target, https).await;
+            assert!(err.is_redirect(), "{target}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn redirect_hop_rules() {
+        let u = |s: &str| url::Url::parse(s).unwrap();
+        assert!(redirect_hop_refusal(&u("https://[::1]/"), false).is_some());
+        assert!(redirect_hop_refusal(&u("https://[fd00::1]:8443/"), false).is_some());
+        assert!(redirect_hop_refusal(&u("https://[::ffff:127.0.0.1]/"), false).is_some());
+        assert!(redirect_hop_refusal(&u("https://172.16.0.9/"), false).is_some());
+        assert!(redirect_hop_refusal(&u("http://example.com/"), true).is_some());
+        assert!(redirect_hop_refusal(&u("ftp://example.com/"), false).is_some());
+        assert!(redirect_hop_refusal(&u("http://example.com/"), false).is_none());
+        assert!(redirect_hop_refusal(&u("https://example.com/"), true).is_none());
+        assert!(redirect_hop_refusal(&u("https://[2606:4700:4700::1111]/"), true).is_none());
+        assert!(redirect_hop_refusal(&u("https://8.8.8.8/"), true).is_none());
+    }
+
+    const PROXY_CHILD_ENV: &str = "FOLIO_SSRF_PROXY_CHILD";
+
+    /// Direct mode ignores the proxy environment. The variables are set
+    /// only on a child test process (this binary, running the ignored
+    /// test below alone), so no other test sees them.
+    #[test]
+    fn direct_mode_ignores_the_proxy_environment() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        // A "proxy" that accepts connections and never answers.
+        let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+        let seen = Arc::new(AtomicUsize::new(0));
+        let counter = seen.clone();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for sock in proxy.incoming().flatten() {
+                counter.fetch_add(1, Ordering::SeqCst);
+                held.push(sock);
+            }
+        });
+        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args([
+            "--exact",
+            "util::ssrf::tests::proxy_environment_child",
+            "--ignored",
+            "--test-threads=1",
+        ])
+        .env(PROXY_CHILD_ENV, "1");
+        for var in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            cmd.env(var, &proxy_url);
+        }
+        for var in ["NO_PROXY", "no_proxy"] {
+            cmd.env_remove(var);
+        }
+        let out = cmd.output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Control: the environment-mode fetch in the child did reach the
+        // proxy, so the variables were in effect.
+        assert!(seen.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "run by direct_mode_ignores_the_proxy_environment in a child process"]
+    async fn proxy_environment_child() {
+        use wiremock::matchers::method;
+        if std::env::var_os(PROXY_CHILD_ENV).is_none() {
+            // Only meaningful in the child process the parent test starts.
+            return;
+        }
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
+            .mount(&mock)
+            .await;
+        let url = format!("http://127.0.0.1:{}/list.cbl", mock.address().port());
+
+        let direct = fetch_test(&url, &opts(None), Conditional::default())
+            .await
+            .unwrap();
+        assert!(matches!(direct, FetchOutcome::Fetched(ref b) if b.bytes == b"ok"));
+
+        let mut env_opts = opts(None);
+        env_opts.proxy = ProxyMode::Environment;
+        env_opts.idle_timeout = std::time::Duration::from_secs(2);
+        let via_proxy = fetch_test(&url, &env_opts, Conditional::default()).await;
+        assert!(
+            via_proxy.is_err(),
+            "environment mode should go to the proxy"
+        );
+        assert_eq!(mock.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
