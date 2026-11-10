@@ -14,7 +14,7 @@ import {
 import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { QuickReadOverlay } from "@/components/QuickReadOverlay";
 import { CoverMorph } from "@/components/library/CoverMorph";
-import { formatIssueHeading } from "@/lib/format";
+import { issueLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
 import { issueUrl, readerUrl } from "@/lib/urls";
@@ -55,7 +55,7 @@ export function OnDeckCard({
     card.kind === "series_next"
       ? card.series_name
       : (issue.series_name ?? null);
-  const heading = formatIssueHeading(issue, seriesName);
+  const heading = issueLabel(issue, { seriesName });
 
   const meta =
     card.kind === "series_next"

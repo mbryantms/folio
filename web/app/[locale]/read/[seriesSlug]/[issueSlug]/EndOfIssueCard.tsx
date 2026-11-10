@@ -37,6 +37,7 @@ import type { SeriesFinishProgress } from "@/lib/reader/finish-progress";
 import { nextUpListSubtitle } from "@/lib/reader/list-context";
 import { ratingFromKey, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { issueUrl, readerUrl } from "@/lib/urls";
+import { issueLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { FinishedMoment } from "./FinishedMoment";
@@ -93,11 +94,7 @@ export function EndOfIssueCard({
   // up", which is only true for a confirmed empty resolver result.
   const failed = isError && !data;
   const listSubtitle = nextUpListSubtitle(data);
-  const heading =
-    target?.title ??
-    (target?.series_name && target?.number
-      ? `${target.series_name} #${target.number}`
-      : (target?.series_name ?? ""));
+  const heading = target ? issueLabel(target) : "";
   const subheading =
     target?.title && target?.series_name && target?.number
       ? `${target.series_name} #${target.number}`
@@ -570,11 +567,7 @@ function FallbackSuggestionTile({
       ? (suggestion.cbl_saved_view_id ?? null)
       : null;
   const href = readerUrl(issue, { cbl });
-  const heading =
-    issue.title ??
-    (issue.series_name && issue.number
-      ? `${issue.series_name} #${issue.number}`
-      : (issue.series_name ?? "Untitled"));
+  const heading = issueLabel(issue);
   const subheading =
     suggestion.kind === "cbl_next"
       ? `In ${suggestion.cbl_list_name} · entry ${suggestion.position}`

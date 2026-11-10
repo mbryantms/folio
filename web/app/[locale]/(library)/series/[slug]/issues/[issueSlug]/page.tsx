@@ -80,6 +80,7 @@ import {
   formatPublicationStatus,
   formatReadingTime,
   formatRelativeDate,
+  issueLabel,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { statusTone } from "@/lib/ui/status-tone";
@@ -188,11 +189,7 @@ export default async function IssuePage({
 
   const readState: ReadState = readStateFor(issue, issueProgress);
 
-  const heading =
-    issue.title ??
-    (series && issue.number
-      ? `${series.name} #${issue.number}`
-      : (series?.name ?? "Issue"));
+  const heading = issueLabel(issue, { seriesName: series?.name });
   const publicationDate = formatPublicationDate(
     issue.year,
     issue.month,
@@ -1276,7 +1273,7 @@ function MoreInSeriesIssueCard({ issue }: { issue: IssueSummaryView }) {
       <CoverTilt className="relative">
         <Cover
           src={issue.cover_url}
-          alt={issue.title ?? `Issue ${issue.number ?? ""}`}
+          alt={issueLabel(issue)}
           fallback={
             issue.state === "active" ? "Cover" : issueStateLabel(issue.state)
           }

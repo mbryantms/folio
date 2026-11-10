@@ -128,35 +128,64 @@ export function formatPublicationStatus(
   return normalized.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Display heading for an issue card / rail tile. Mirrors the issue
- *  page's heading derivation so cards never read "Untitled" when we
- *  have enough context to render something more useful.
+/** Fields `issueLabel` reads. Every issue-shaped view (summary, detail,
+ *  rail card, next-up target, offline record) carries these. */
+export type IssueLabelSource = {
+  title?: string | null;
+  number?: string | null;
+  series_name?: string | null;
+};
+
+/** The one display label for an issue — cards, toasts, dialogs, alt
+ *  text, aria labels. Never repeats the number.
  *
- *  Preference order:
- *    1. `title` (the canonical ComicInfo title)
- *    2. `"<series> #<number>"` when both are present
- *    3. `"#<number>"`
- *    4. series name
- *    5. `"Untitled"` (last-resort fallback)
+ *  Rules:
+ *    1. a real title → the title; with `withNumber`, `"<title> #<n>"`
+ *       (for menus/dialogs that name the issue in one string)
+ *    2. no title → `"<series> #<n>"` when the series name is known,
+ *       else `"#<n>"`
+ *    3. no title, no number → the series name, else `"Untitled"`
  *
- *  Pass `seriesName` explicitly when the card knows it from a sibling
- *  field (e.g. `ContinueReadingCard.series_name`); otherwise the
- *  function reads it off `issue.series_name` populated by the rail-
- *  feeding endpoints. */
-export function formatIssueHeading(
-  issue: {
-    title?: string | null;
-    number?: string | null;
-    series_name?: string | null;
-  },
-  seriesName?: string | null,
+ *  Pass `seriesName` when the caller knows it from a sibling field
+ *  (e.g. `ContinueReadingCard.series_name`); otherwise it is read off
+ *  `issue.series_name`, which only some endpoints populate.
+ *
+ *  Pass `numberLabel` when the surface has a richer number text than
+ *  `"#<n>"` — a special's `"Annual #1"` — so the label never reads like
+ *  the run's #1. It is used only for an issue that has a number. */
+export function issueLabel(
+  issue: IssueLabelSource,
+  opts: {
+    seriesName?: string | null;
+    withNumber?: boolean;
+    numberLabel?: string | null;
+  } = {},
 ): string {
-  if (issue.title && issue.title.trim().length > 0) return issue.title;
-  const series = seriesName ?? issue.series_name ?? null;
-  if (issue.number && series) return `${series} #${issue.number}`;
-  if (issue.number) return `#${issue.number}`;
-  if (series) return series;
-  return "Untitled";
+  const title = issue.title?.trim();
+  const number = issue.number?.trim();
+  const numberText = number
+    ? opts.numberLabel?.trim() || `#${number}`
+    : undefined;
+  const series = opts.seriesName?.trim() || issue.series_name?.trim() || null;
+  if (title) {
+    return opts.withNumber && numberText ? `${title} ${numberText}` : title;
+  }
+  if (numberText) return series ? `${series} ${numberText}` : numberText;
+  return series ?? "Untitled";
+}
+
+/** The title line for a card that already prints the issue number as its
+ *  own element: `issueLabel`, or `null` when that label would only be the
+ *  bare `"#<n>"` the card already shows (an untitled issue on a surface
+ *  that doesn't know the series name). */
+export function issueCardTitle(
+  issue: IssueLabelSource,
+  seriesName?: string | null,
+): string | null {
+  const label = issueLabel(issue, { seriesName });
+  const number = issue.number?.trim();
+  const titled = !!issue.title?.trim();
+  return !titled && number && label === `#${number}` ? null : label;
 }
 
 /** Human byte size: `0 B`, `512 KB`, `1.4 MB`, `2.1 GB` (decimal units,

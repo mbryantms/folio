@@ -18,7 +18,7 @@ import { CoverMorph } from "@/components/library/CoverMorph";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import type { CblWindowEntry } from "@/lib/api/types";
-import { formatIssueHeading } from "@/lib/format";
+import { issueCardTitle, issueLabel } from "@/lib/format";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import { cn } from "@/lib/utils";
 
@@ -61,12 +61,13 @@ export function CblWindowCard({
   const router = useRouter();
   const issue = entry.issue;
   const numberLabel = issue.number ? `#${issue.number}` : "—";
-  const heading = formatIssueHeading(issue);
+  const heading = issueLabel(issue);
+  const cardTitle = issueCardTitle(issue);
   const positionLabel = `#${entry.position + 1}`;
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue.id,
-    label: `${heading} ${numberLabel}`,
+    label: issueLabel(issue, { withNumber: true }),
   });
 
   const inProgress = !entry.finished && entry.last_page > 0;
@@ -197,8 +198,11 @@ export function CblWindowCard({
               </span>
             )}
           </div>
-          <div className="truncate text-sm font-medium" title={heading}>
-            {heading}
+          <div
+            className="truncate text-sm font-medium"
+            title={cardTitle ?? undefined}
+          >
+            {cardTitle}
           </div>
         </div>
       </Link>
