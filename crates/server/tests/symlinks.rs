@@ -597,7 +597,8 @@ async fn linked_root_serves_rows_stored_under_the_canonical_spelling() {
 }
 
 /// "Scan issue" on an archive replaced by a link does not ingest the link's
-/// target: the row is left as it was and the link is reported.
+/// target and leaves the row as it was. It opens no finding of its own: the
+/// next library scan reports the link and reconciles the row.
 #[tokio::test]
 async fn issue_rescan_does_not_follow_a_link() {
     let app = TestApp::spawn().await;
@@ -636,6 +637,18 @@ async fn issue_rescan_does_not_follow_a_link() {
     );
     assert_eq!(after.file_size, before.file_size);
     assert!(after.removed_at.is_none(), "row left for the full scan");
+    assert!(
+        open_symlink_findings(&app, lib_id).await.is_empty(),
+        "the issue rescan must not pre-report the link"
+    );
+
+    scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    let reconciled = issue::Entity::find_by_id(before.id.clone())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(reconciled.removed_at.is_some(), "full scan removes the row");
     assert_eq!(open_symlink_findings(&app, lib_id).await, vec![s(&archive)]);
 }
 

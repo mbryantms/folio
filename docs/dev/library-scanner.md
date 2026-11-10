@@ -181,8 +181,10 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     page stream go by `issue_visible` and do not.
   - **Issue rescans** ("Scan issue", and the per-issue rescan writeback
     queues) check the stored path the same way before ingesting: a link
-    is reported as `SymlinkSkipped` and nothing is ingested; the row is
-    left for the next full scan to reconcile.
+    is logged and nothing is ingested; the row is left for the next
+    library or series scan, whose folder walk opens the `SymlinkSkipped`
+    finding and reconciles the row. The issue rescan opens no finding
+    itself, so that walk never sees the link as already reported.
   - **Unchanged folders.** The unchanged-folder fast path is turned off
     for a folder whose walk meets a link that no open `SymlinkSkipped`
     finding names yet (the open findings' paths are loaded once per

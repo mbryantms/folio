@@ -1720,7 +1720,16 @@ async fn run_issue_phase(
     .map_err(|e| anyhow::anyhow!("issue path check task failed: {e}"))?;
     let refused = match checked {
         Err(crate::library::no_follow::Refusal::Symlink) => {
-            report_skipped_symlink(lib.id, path.clone(), health);
+            // Log only. The `SymlinkSkipped` finding is opened by the
+            // folder walk of a library or series scan, which also
+            // reconciles the row. Opening it here would make that walk
+            // treat the link as already reported and, on an unchanged
+            // folder, skip the reconcile.
+            tracing::info!(
+                library_id = %lib.id,
+                path = %path.display(),
+                "scanner: issue rescan skipped a symbolic link (links are never followed)"
+            );
             true
         }
         Err(
