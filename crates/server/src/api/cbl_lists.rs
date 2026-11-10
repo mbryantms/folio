@@ -930,6 +930,45 @@ async fn ensure_can_manage(
     }
 }
 
+/// True when a write that passed [`ensure_can_manage`] is an admin acting
+/// on a list they do not own: a shared list (`owner_user_id IS NULL`). Such
+/// writes change every user's reading list and are audited as admin
+/// actions; an owner changing their own list is not an admin action.
+fn is_admin_write_to_shared(list: &cbl_list::Model, user: &CurrentUser) -> bool {
+    list.owner_user_id != Some(user.id) && user.role == entity::user::UserRole::Admin
+}
+
+/// Audit row for an admin write to a list they do not own (see
+/// [`is_admin_write_to_shared`]); no-op for an owner's own list. `detail`
+/// is merged into the payload next to the list's owner and name.
+async fn audit_admin_list_write(
+    app: &AppState,
+    ctx: &RequestContext,
+    user: &CurrentUser,
+    list: &cbl_list::Model,
+    action: &'static str,
+    detail: serde_json::Value,
+) {
+    if !is_admin_write_to_shared(list, user) {
+        return;
+    }
+    let mut payload = serde_json::json!({
+        "owner_user_id": list.owner_user_id.map(|o| o.to_string()),
+        "name": list.parsed_name,
+    });
+    if let (Some(obj), serde_json::Value::Object(extra)) = (payload.as_object_mut(), detail) {
+        obj.extend(extra);
+    }
+    crate::record_admin_action!(
+        db = &app.db,
+        ctx = ctx,
+        actor = user.id,
+        action = action,
+        target = ("cbl_list", list.id.to_string()),
+        payload = payload,
+    );
+}
+
 async fn fetch_list(
     db: &sea_orm::DatabaseConnection,
     id: Uuid,
@@ -1784,6 +1823,7 @@ async fn create_list_from_parsed(
 pub async fn update(
     State(app): State<AppState>,
     user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<Uuid>,
     Json(req): Json<UpdateCblListReq>,
 ) -> impl IntoResponse {
@@ -1794,18 +1834,32 @@ pub async fn update(
     if let Err(resp) = ensure_can_manage(&row, &user).await {
         return resp;
     }
-    let mut am: cbl_list::ActiveModel = row.into();
+    let mut changed = serde_json::Map::new();
+    let mut am: cbl_list::ActiveModel = row.clone().into();
     if let Some(d) = req.description {
-        am.description = Set(d.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()));
+        let d = d.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+        changed.insert("description".into(), serde_json::json!(d));
+        am.description = Set(d);
     }
     if let Some(s) = req.refresh_schedule {
-        am.refresh_schedule = Set(s.map(|v| v.trim().to_owned()).filter(|s| !s.is_empty()));
+        let s = s.map(|v| v.trim().to_owned()).filter(|s| !s.is_empty());
+        changed.insert("refresh_schedule".into(), serde_json::json!(s));
+        am.refresh_schedule = Set(s);
     }
     am.updated_at = Set(Utc::now().fixed_offset());
     let updated = match am.update(&app.db).await {
         Ok(m) => m,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
+    audit_admin_list_write(
+        &app,
+        &ctx,
+        &user,
+        &row,
+        "admin.cbl_list.update",
+        serde_json::json!({ "changed": changed }),
+    )
+    .await;
     let acl = crate::library::access::for_user(&app, &user).await;
     let stats = stats_for(&app.db, id, user.id, &acl)
         .await
@@ -1823,6 +1877,7 @@ pub async fn update(
 pub async fn delete_one(
     State(app): State<AppState>,
     user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<Uuid>,
 ) -> impl IntoResponse {
     let row = match fetch_list(&app.db, id).await {
@@ -1832,9 +1887,18 @@ pub async fn delete_one(
     if let Err(resp) = ensure_can_manage(&row, &user).await {
         return resp;
     }
-    if row.delete(&app.db).await.is_err() {
+    if row.clone().delete(&app.db).await.is_err() {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    audit_admin_list_write(
+        &app,
+        &ctx,
+        &user,
+        &row,
+        "admin.cbl_list.delete",
+        serde_json::json!({}),
+    )
+    .await;
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -1851,6 +1915,7 @@ pub async fn delete_one(
 pub async fn refresh_one(
     State(app): State<AppState>,
     user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
     AxPath(id): AxPath<Uuid>,
 ) -> impl IntoResponse {
     let row = match fetch_list(&app.db, id).await {
@@ -1872,6 +1937,15 @@ pub async fn refresh_one(
     };
     match refresh::refresh(&app.db, id, RefreshTrigger::Manual, false).await {
         Ok(mut summary) => {
+            audit_admin_list_write(
+                &app,
+                &ctx,
+                &user,
+                &row,
+                "admin.cbl_list.refresh",
+                refresh_audit_detail(&summary),
+            )
+            .await;
             if summary_for_caller(&app.db, &acl, before.as_ref(), &mut summary)
                 .await
                 .is_err()
@@ -1885,6 +1959,18 @@ pub async fn refresh_one(
             error(StatusCode::BAD_GATEWAY, "refresh_failed", &e.to_string())
         }
     }
+}
+
+/// The global (not caller-scoped) change counts of a refresh, for its
+/// audit row.
+fn refresh_audit_detail(s: &ImportSummary) -> serde_json::Value {
+    serde_json::json!({
+        "upstream_changed": s.upstream_changed,
+        "added": s.added,
+        "removed": s.removed,
+        "reordered": s.reordered,
+        "rematched": s.rematched,
+    })
 }
 
 // ───── bulk check / refresh (refresh dashboard) ─────
@@ -2062,7 +2148,11 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
     )
 )]
 #[handler]
-pub async fn refresh_all(State(app): State<AppState>, user: CurrentUser) -> impl IntoResponse {
+pub async fn refresh_all(
+    State(app): State<AppState>,
+    user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
+) -> impl IntoResponse {
     if let Err(resp) = crate::cbl::quota::consume_import(&app, &user).await {
         return resp;
     }
@@ -2083,6 +2173,15 @@ pub async fn refresh_all(State(app): State<AppState>, user: CurrentUser) -> impl
         };
         let item = match refresh::refresh(&app.db, list.id, RefreshTrigger::Manual, false).await {
             Ok(mut s) => {
+                audit_admin_list_write(
+                    &app,
+                    &ctx,
+                    &user,
+                    list,
+                    "admin.cbl_list.refresh",
+                    refresh_audit_detail(&s),
+                )
+                .await;
                 if summary_for_caller(&app.db, &acl, before.as_ref(), &mut s)
                     .await
                     .is_err()
@@ -2180,6 +2279,7 @@ pub async fn refresh_log(
 pub async fn manual_match(
     State(app): State<AppState>,
     user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
     AxPath((list_id, entry_id)): AxPath<(Uuid, Uuid)>,
     Json(req): Json<ManualMatchReq>,
 ) -> impl IntoResponse {
@@ -2215,7 +2315,7 @@ pub async fn manual_match(
     }
     let now = Utc::now().fixed_offset();
     let mut am: cbl_entry::ActiveModel = entry.into();
-    am.matched_issue_id = Set(Some(req.issue_id));
+    am.matched_issue_id = Set(Some(req.issue_id.clone()));
     am.match_status = Set("manual".into());
     am.match_method = Set(Some("manual".into()));
     am.match_confidence = Set(Some(1.0));
@@ -2226,6 +2326,18 @@ pub async fn manual_match(
         Ok(m) => m,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
+    audit_admin_list_write(
+        &app,
+        &ctx,
+        &user,
+        &list,
+        "admin.cbl_list.entry.match",
+        serde_json::json!({
+            "entry_id": entry_id.to_string(),
+            "issue_id": req.issue_id,
+        }),
+    )
+    .await;
     Json(entry_to_view(&updated)).into_response()
 }
 
@@ -2238,6 +2350,7 @@ pub async fn manual_match(
 pub async fn clear_match(
     State(app): State<AppState>,
     user: CurrentUser,
+    Extension(ctx): Extension<RequestContext>,
     AxPath((list_id, entry_id)): AxPath<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     let list = match fetch_list(&app.db, list_id).await {
@@ -2263,6 +2376,15 @@ pub async fn clear_match(
         Ok(m) => m,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
+    audit_admin_list_write(
+        &app,
+        &ctx,
+        &user,
+        &list,
+        "admin.cbl_list.entry.clear_match",
+        serde_json::json!({ "entry_id": entry_id.to_string() }),
+    )
+    .await;
     Json(entry_to_view(&updated)).into_response()
 }
 
