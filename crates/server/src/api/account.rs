@@ -6,7 +6,7 @@
 //!     issuer owns their email. A change needs `current_password` (when the
 //!     account has one; wrong passwords count toward the failed-auth
 //!     lockout); only past that check does a taken address answer 409.
-//!     At most [`EMAIL_CHANGE_HOURLY_LIMIT`] requests per hour (429).
+//!     At most [`EMAIL_CHANGE_REQUESTS_PER_HOUR`] requests per hour (429).
 //!     Submitting the current address cancels a pending change. With mail delivery configured the address does NOT change
 //!     here: an `email_change_requests` row is stored, a single-use link
 //!     goes to the new address and a notice to the old one, and the
@@ -99,7 +99,7 @@ pub struct AccountReq {
 
 /// At most this many email-change requests per user per hour (each sends
 /// two emails). Counted on the `email_change_requests` row.
-pub const EMAIL_CHANGE_HOURLY_LIMIT: i32 = 5;
+pub const EMAIL_CHANGE_REQUESTS_PER_HOUR: i32 = 5;
 const EMAIL_CHANGE_WINDOW: chrono::Duration = chrono::Duration::hours(1);
 
 #[utoipa::path(
@@ -659,7 +659,7 @@ fn next_window(
 ) -> Result<(chrono::DateTime<chrono::FixedOffset>, i32), u64> {
     match prev {
         Some(p) if p.window_started_at + EMAIL_CHANGE_WINDOW > now => {
-            if p.request_count >= EMAIL_CHANGE_HOURLY_LIMIT {
+            if p.request_count >= EMAIL_CHANGE_REQUESTS_PER_HOUR {
                 let left = (p.window_started_at + EMAIL_CHANGE_WINDOW - now).num_seconds();
                 Err(left.max(1) as u64)
             } else {
