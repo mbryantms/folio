@@ -63,36 +63,7 @@ export function BulkMarkReadDialog({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) setBackfill(true);
   }, [open]);
-  // Radix sets `pointer-events: none` on the body while the modal is
-  // open and removes it on close. When the close happens during an
-  // async mutation (the typical "click Mark read" → mutation pending
-  // → onSuccess closes the dialog + router.refresh()) the cleanup
-  // sometimes loses the race with the re-render storm and the body
-  // ends up interaction-locked indefinitely.
-  //
-  // Defensive cleanup: every time `open` transitions to false,
-  // explicitly restore `document.body.style.pointerEvents` on the
-  // next microtask (after Radix's own cleanup would have run in the
-  // happy path — so this is a no-op there). Encapsulated in the
-  // dialog itself rather than the four parent surfaces so the fix
-  // can't be missed at a new call site.
-  React.useEffect(() => {
-    if (open) return;
-    if (typeof document === "undefined") return;
-    const restore = () => {
-      // Only clear if Radix left it stuck — don't stomp a legitimate
-      // `pointer-events: none` set by another component.
-      if (document.body.style.pointerEvents === "none") {
-        document.body.style.pointerEvents = "";
-      }
-    };
-    // Two passes: one immediately after the close transition kicks
-    // off (microtask), one after the typical Radix close animation
-    // duration (200ms). Belt + suspenders for the common race shapes.
-    queueMicrotask(restore);
-    const t = window.setTimeout(restore, 250);
-    return () => window.clearTimeout(t);
-  }, [open]);
+  useReleaseStuckBodyPointerEvents(open);
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -138,4 +109,83 @@ export function BulkMarkReadDialog({
       </AlertDialogContent>
     </AlertDialog>
   );
+}
+
+/** Confirmation before a whole-series mark-as-unread. Unlike mark-read
+ *  there is no activity choice to make, but the write is destructive
+ *  (every issue's read state and saved page reset, no Undo), so the
+ *  call sites confirm it the same way. Controlled like
+ *  {@link BulkMarkReadDialog}; the parent runs the mutation in
+ *  `onConfirm` and closes the dialog on success. */
+export function BulkMarkUnreadDialog({
+  open,
+  onOpenChange,
+  title,
+  onConfirm,
+  isPending = false,
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  /** e.g. "Mark every issue in <Series> as unread?" */
+  title: string;
+  onConfirm: () => void;
+  isPending?: boolean;
+}) {
+  useReleaseStuckBodyPointerEvents(open);
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>
+            Every issue goes back to unread and its saved page resets to the
+            start. This can&apos;t be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={isPending}
+          >
+            Mark unread
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function useReleaseStuckBodyPointerEvents(open: boolean) {
+  // Radix sets `pointer-events: none` on the body while the modal is
+  // open and removes it on close. When the close happens during an
+  // async mutation (the typical "click Mark read" → mutation pending
+  // → onSuccess closes the dialog + router.refresh()) the cleanup
+  // sometimes loses the race with the re-render storm and the body
+  // ends up interaction-locked indefinitely.
+  //
+  // Defensive cleanup: every time `open` transitions to false,
+  // explicitly restore `document.body.style.pointerEvents` on the
+  // next microtask (after Radix's own cleanup would have run in the
+  // happy path — so this is a no-op there). Encapsulated in the
+  // dialog itself rather than the four parent surfaces so the fix
+  // can't be missed at a new call site.
+  React.useEffect(() => {
+    if (open) return;
+    if (typeof document === "undefined") return;
+    const restore = () => {
+      // Only clear if Radix left it stuck — don't stomp a legitimate
+      // `pointer-events: none` set by another component.
+      if (document.body.style.pointerEvents === "none") {
+        document.body.style.pointerEvents = "";
+      }
+    };
+    // Two passes: one immediately after the close transition kicks
+    // off (microtask), one after the typical Radix close animation
+    // duration (200ms). Belt + suspenders for the common race shapes.
+    queueMicrotask(restore);
+    const t = window.setTimeout(restore, 250);
+    return () => window.clearTimeout(t);
+  }, [open]);
 }
