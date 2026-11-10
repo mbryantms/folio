@@ -176,6 +176,7 @@ const ROUTES: Route[] = [
   { path: "/bookmarks", label: "bookmarks" },
   { path: "/downloads", label: "downloads" },
   { path: "/collections", label: "collections" },
+  { path: "/lists", label: "reading lists" },
   { path: "/log", label: "reading log" },
   { path: "/log/activity", label: "reading log, activity" },
   { path: "/log/stats", label: "reading log, stats" },

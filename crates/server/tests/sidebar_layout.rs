@@ -230,6 +230,7 @@ async fn default_layout_contains_builtins_and_libraries() {
             &"bookmarks",
             &"reading_log",
             &"collections",
+            &"reading_lists",
             &"browse",
             &"want_to_read",
         ],
@@ -918,4 +919,147 @@ async fn library_sidebar_default_flag_controls_default_visibility() {
     .await;
     let entries = json["entries"].as_array().unwrap().clone();
     assert_eq!(lib_visible(&entries, oni), Some(true), "override wins");
+}
+
+fn builtin<'a>(entries: &'a [serde_json::Value], key: &str) -> Option<&'a serde_json::Value> {
+    entries
+        .iter()
+        .find(|e| e["kind"] == "builtin" && e["ref_id"] == key)
+}
+
+async fn layout(app: &TestApp, auth: &Authed) -> Vec<serde_json::Value> {
+    let (status, json) = http(app, Method::GET, "/api/me/sidebar-layout", Some(auth), None).await;
+    assert_eq!(status, StatusCode::OK, "json: {json:#?}");
+    json["entries"].as_array().unwrap().clone()
+}
+
+/// A reader who never customised the sidebar gets the Reading lists
+/// built-in, visible, right after Collections.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_lists_builtin_shows_for_new_reader() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let reader = register(&app, "reader@example.com").await;
+    demote_to_user(&app, reader.user_id).await;
+
+    let entries = layout(&app, &reader).await;
+    let entry = builtin(&entries, "reading_lists").expect("reading_lists present");
+    assert_eq!(entry["visible"], true);
+    assert_eq!(entry["label"], "Reading lists");
+    assert_eq!(entry["href"], "/lists");
+    assert_eq!(entry["icon"], "ListOrdered");
+
+    let keys: Vec<&str> = entries
+        .iter()
+        .filter(|e| e["kind"] == "builtin")
+        .map(|e| e["ref_id"].as_str().unwrap())
+        .collect();
+    let at = |k: &str| keys.iter().position(|x| *x == k).unwrap();
+    assert_eq!(at("reading_lists"), at("collections") + 1, "keys: {keys:?}");
+}
+
+/// A layout saved before the built-in existed carries no row for it: the
+/// entry still appears (visible, at its default slot) and every saved
+/// override keeps its value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reading_lists_builtin_reaches_a_saved_custom_layout() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let reader = register(&app, "reader@example.com").await;
+    demote_to_user(&app, reader.user_id).await;
+
+    // A complete layout as the settings page saves it, minus the new
+    // built-in: Want to Read moved to the top, Bookmarks hidden,
+    // Collections renamed.
+    let entries = layout(&app, &reader).await;
+    let mut saved: Vec<serde_json::Value> = Vec::new();
+    let mut position = 1;
+    for e in &entries {
+        if e["kind"] == "builtin" && e["ref_id"] == "reading_lists" {
+            continue;
+        }
+        let is = |k: &str| e["kind"] == "builtin" && e["ref_id"] == k;
+        let mut row = serde_json::json!({
+            "kind": e["kind"],
+            "ref_id": e["ref_id"],
+            "visible": !is("bookmarks"),
+            "position": if is("want_to_read") { 0 } else { position },
+        });
+        if e["kind"] == "header" {
+            row["label"] = e["label"].clone();
+        }
+        if is("collections") {
+            row["label"] = serde_json::json!("My shelves");
+        }
+        saved.push(row);
+        position += 1;
+    }
+    let (status, json) = http(
+        &app,
+        Method::PATCH,
+        "/api/me/sidebar-layout",
+        Some(&reader),
+        Some(serde_json::json!({ "entries": saved })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "patch failed: {json:#?}");
+
+    let entries = layout(&app, &reader).await;
+    let entry = builtin(&entries, "reading_lists").expect("reading_lists present");
+    assert_eq!(entry["visible"], true, "new built-in shows");
+    assert_eq!(builtin(&entries, "bookmarks").unwrap()["visible"], false);
+    assert_eq!(
+        builtin(&entries, "collections").unwrap()["label"],
+        "My shelves"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .find(|e| e["kind"] == "builtin")
+            .map(|e| e["ref_id"].clone()),
+        Some(serde_json::json!("want_to_read")),
+        "the saved order still leads with Want to Read"
+    );
+    let keys: Vec<&str> = entries
+        .iter()
+        .filter(|e| e["kind"] == "builtin")
+        .map(|e| e["ref_id"].as_str().unwrap())
+        .collect();
+    let at = |k: &str| keys.iter().position(|x| *x == k).unwrap();
+    assert_eq!(at("reading_lists"), at("collections") + 1, "keys: {keys:?}");
+}
+
+/// Hiding the built-in is an ordinary override and survives later reads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hiding_reading_lists_builtin_persists() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "admin@example.com").await;
+    let reader = register(&app, "reader@example.com").await;
+    demote_to_user(&app, reader.user_id).await;
+
+    let (status, json) = http(
+        &app,
+        Method::PATCH,
+        "/api/me/sidebar-layout",
+        Some(&reader),
+        Some(serde_json::json!({ "entries": [
+            { "kind": "builtin", "ref_id": "reading_lists", "visible": false, "position": 5 },
+        ] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "patch failed: {json:#?}");
+    let patched = json["entries"].as_array().unwrap().clone();
+    assert_eq!(
+        builtin(&patched, "reading_lists").unwrap()["visible"],
+        false
+    );
+
+    for _ in 0..2 {
+        let entries = layout(&app, &reader).await;
+        assert_eq!(
+            builtin(&entries, "reading_lists").unwrap()["visible"],
+            false,
+            "hidden stays hidden"
+        );
+    }
 }

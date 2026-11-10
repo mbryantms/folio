@@ -16,7 +16,6 @@ import {
   PanelLeft,
   Pin,
   Plus,
-  RefreshCw,
   Sparkles,
   Trash2,
   type LucideIcon,
@@ -43,13 +42,10 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/folio/tabs";
-import { CblImportDialog } from "@/components/cbl/cbl-import-dialog";
 import {
-  CblUpdatesMenu,
-  CblUpdatesPanel,
-  CblUpdatesProvider,
-  useCblUpdates,
-} from "@/components/cbl/CblRefreshDashboard";
+  CblListsContext,
+  ReadingListsBoard,
+} from "@/components/cbl/ReadingListsBoard";
 import { CblStatsPillsStatic } from "@/components/cbl/CblStatsPills";
 import { NewFilterViewDialog } from "@/components/saved-views/AddViewButton";
 import { CoverStackStage } from "@/components/cover-stack/CoverStackStage";
@@ -71,7 +67,6 @@ import {
 import { useCollectionDeleteUndo } from "@/lib/collections/use-collection-undo";
 import {
   queryKeys,
-  useCblLists,
   useCollections,
   useSavedViews,
   useViewCovers,
@@ -84,9 +79,8 @@ import type {
   SavedViewView,
   SortOrder,
 } from "@/lib/api/types";
-import { BatchRefreshProvider } from "@/lib/cbl/use-batch-refresh";
 import { formatRelativeDate } from "@/lib/format";
-import { UNGROUPED_ID, type BoardGroup } from "@/lib/saved-views/view-board";
+import { UNGROUPED_ID } from "@/lib/saved-views/view-board";
 import { showUndoToast } from "@/lib/ui/undo-toast";
 import { cn } from "@/lib/utils";
 
@@ -117,12 +111,6 @@ export function splitSavedViews(items: SavedViewView[]): {
     readingLists: items.filter((v) => v.kind === "cbl"),
   };
 }
-
-/** CBL list rows keyed by list id, so each reading-list card can show
- *  stats without its own detail query. `null` until loaded. */
-const CblListsContext = React.createContext<Map<string, CblListView> | null>(
-  null,
-);
 
 /**
  * Unified saved-content index — the one management home for Views (audit
@@ -177,7 +165,6 @@ function ViewsTabs() {
 
   const viewsQ = useSavedViews();
   const collectionsQ = useCollections();
-  const cblListsQ = useCblLists();
   const { filterViews, readingLists } = React.useMemo(
     () => splitSavedViews(viewsQ.data?.items ?? []),
     [viewsQ.data],
@@ -186,16 +173,8 @@ function ViewsTabs() {
     () => collectionsQ.data ?? [],
     [collectionsQ.data],
   );
-  const cblListsById = React.useMemo(
-    () =>
-      cblListsQ.data
-        ? new Map(cblListsQ.data.items.map((l) => [l.id, l]))
-        : null,
-    [cblListsQ.data],
-  );
 
   const [newFilterOpen, setNewFilterOpen] = React.useState(false);
-  const [importOpen, setImportOpen] = React.useState(false);
   const [newCollectionOpen, setNewCollectionOpen] = React.useState(false);
 
   const renderFilterCard = React.useCallback(
@@ -250,16 +229,11 @@ function ViewsTabs() {
       </TabsContent>
 
       <TabsContent value="reading-lists">
-        <CblListsContext.Provider value={cblListsById}>
-          <BatchRefreshProvider>
-            <ReadingListsTab
-              views={readingLists}
-              loading={viewsQ.isLoading}
-              onImport={() => setImportOpen(true)}
-              renderCard={renderCblCard}
-            />
-          </BatchRefreshProvider>
-        </CblListsContext.Provider>
+        <ReadingListsBoard
+          views={readingLists}
+          loading={viewsQ.isLoading}
+          renderCard={renderCblCard}
+        />
       </TabsContent>
 
       <TabsContent value="collections">
@@ -284,102 +258,11 @@ function ViewsTabs() {
         open={newFilterOpen}
         onOpenChange={setNewFilterOpen}
       />
-      <CblImportDialog open={importOpen} onOpenChange={setImportOpen} />
       <NewCollectionDialog
         open={newCollectionOpen}
         onOpenChange={setNewCollectionOpen}
       />
     </Tabs>
-  );
-}
-
-/** Reading-lists tab: the grouped board with the updates feature tucked
- *  into its toolbar. The "Updates" menu runs a check or a bulk update and
- *  reveals the updates panel under the toolbar; the panel stays hidden
- *  otherwise. Each group's ⋯ menu gets "Update these lists", which feeds
- *  the same runner and opens the same panel. */
-function ReadingListsTab({
-  views,
-  loading,
-  onImport,
-  renderCard,
-}: {
-  views: SavedViewView[];
-  loading: boolean;
-  onImport: () => void;
-  renderCard: (view: SavedViewView) => React.ReactNode;
-}) {
-  const targets = React.useMemo(
-    () =>
-      views.flatMap((v) =>
-        v.cbl_list_id
-          ? [{ id: v.cbl_list_id, name: v.name, viewId: v.id }]
-          : [],
-      ),
-    [views],
-  );
-  return (
-    <CblUpdatesProvider lists={targets}>
-      <ReadingListsBoard
-        views={views}
-        loading={loading}
-        onImport={onImport}
-        renderCard={renderCard}
-      />
-    </CblUpdatesProvider>
-  );
-}
-
-function ReadingListsBoard({
-  views,
-  loading,
-  onImport,
-  renderCard,
-}: {
-  views: SavedViewView[];
-  loading: boolean;
-  onImport: () => void;
-  renderCard: (view: SavedViewView) => React.ReactNode;
-}) {
-  const { busy, startBatch } = useCblUpdates();
-  const groupMenuExtra = React.useCallback(
-    (group: BoardGroup) => {
-      const ids = group.views.flatMap((v) =>
-        v.cbl_list_id ? [{ id: v.cbl_list_id, name: v.name }] : [],
-      );
-      return (
-        <DropdownMenuItem
-          disabled={ids.length === 0 || busy}
-          onSelect={() => startBatch(ids)}
-        >
-          <RefreshCw className="size-4" /> Update{" "}
-          {ids.length === 1 ? "this list" : `these ${ids.length} lists`}
-        </DropdownMenuItem>
-      );
-    },
-    [busy, startBatch],
-  );
-  return (
-    <GroupedViewsBoard
-      scope="cbl"
-      views={views}
-      loading={loading}
-      blurb="Track an imported CBL reading order."
-      noun="list"
-      icon={List}
-      action={
-        <>
-          <CblUpdatesMenu />
-          <Button type="button" onClick={onImport}>
-            <Plus className="mr-1 size-4" /> Import CBL
-          </Button>
-        </>
-      }
-      panel={<CblUpdatesPanel />}
-      renderCard={renderCard}
-      groupMenuExtra={groupMenuExtra}
-      empty="No reading lists yet — import a CBL to track a reading order."
-    />
   );
 }
 
