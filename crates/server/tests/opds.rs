@@ -826,6 +826,93 @@ async fn series_one_paginates_at_50() {
     );
 }
 
+/// Soft-remove an issue the way a scan does (`removed_at` set, row kept).
+async fn soft_remove_issue(db: &DatabaseConnection, issue_id: &str) {
+    let row = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: IssueAM = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(db).await.unwrap();
+}
+
+/// Soft-remove a series (`removed_at` set, row kept).
+async fn soft_remove_series(db: &DatabaseConnection, series_id: Uuid) {
+    let row = entity::series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: SeriesAM = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(db).await.unwrap();
+}
+
+/// The per-series feed lists only live issues and its paging counts only
+/// them; a removed series answers 404 like an unknown id, for an admin
+/// too (OPDS is a list surface; only the admin Removed tab shows removed
+/// rows).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_one_omits_removed_issues_and_removed_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Shrinking Run").await;
+    let mut ids = Vec::new();
+    for i in 0..51 {
+        let file = tmp.path().join(format!("shrink-{i:03}.cbz"));
+        ids.push(
+            seed_issue_with_file(
+                &db,
+                lib_id,
+                series_id,
+                &file,
+                format!("shrink-{i:03}").as_bytes(),
+            )
+            .await,
+        );
+    }
+    let href = format!("/opds/v1/series/{series_id}");
+
+    // 51 live issues: two pages.
+    let body = body_text(
+        get_with_auth(&app, &href, Header::Cookie(auth.cookies()))
+            .await
+            .into_body(),
+    )
+    .await;
+    let page2 = format!("/opds/v1/series/{series_id}?page=2");
+    assert!(body.contains(&page2), "{body}");
+
+    let removed = ids[0].clone();
+    soft_remove_issue(&db, &removed).await;
+    let resp = get_with_auth(&app, &href, Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 50, "{body}");
+    assert!(!body.contains(&removed), "removed issue listed");
+    assert!(
+        !body.contains(&page2),
+        "the removed issue must not count toward the page total: {body}"
+    );
+
+    soft_remove_series(&db, series_id).await;
+    let resp = get_with_auth(&app, &href, Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "removed series feed");
+    let unknown = get_with_auth(
+        &app,
+        &format!("/opds/v1/series/{}", Uuid::now_v7()),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+}
+
 /// Audit N-L6: `/opds/v1/recent` used to be a hard `LIMIT 50` with no
 /// paging rels. It now pages like every other v1 feed — page 1 carries
 /// `next` + `last`, the last page carries `previous` but no `next`, and
@@ -2449,6 +2536,49 @@ async fn browse_advertises_facet_groups() {
     assert!(body.contains("Marvel A"));
     assert!(body.contains("Marvel B"));
     assert!(body.contains("DC A"));
+}
+
+/// The publisher facet counts only live series: soft-removing one drops
+/// its publisher's `thr:count`, and a publisher left with no live series
+/// disappears from the facet group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browse_publisher_facet_count_skips_removed_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "browse-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full(&db, lib_id, "Marvel A", "continuing", Some("Marvel")).await;
+    let marvel_b = seed_series_full(&db, lib_id, "Marvel B", "ended", Some("Marvel")).await;
+    let dc = seed_series_full(&db, lib_id, "DC A", "continuing", Some("DC Comics")).await;
+
+    let marvel_facet = |n: u32| {
+        format!(
+            r#"title="Marvel" opds:facetGroup="Publisher" opds:activeFacet="false" thr:count="{n}""#
+        )
+    };
+    let body = body_text(
+        get_with_auth(&app, "/opds/v1/browse", Header::Cookie(auth.cookies()))
+            .await
+            .into_body(),
+    )
+    .await;
+    assert!(body.contains(&marvel_facet(2)), "{body}");
+
+    soft_remove_series(&db, marvel_b).await;
+    soft_remove_series(&db, dc).await;
+    let body = body_text(
+        get_with_auth(&app, "/opds/v1/browse", Header::Cookie(auth.cookies()))
+            .await
+            .into_body(),
+    )
+    .await;
+    assert!(body.contains(&marvel_facet(1)), "{body}");
+    assert!(
+        !body.contains(r#"title="DC Comics""#),
+        "publisher with only removed series still faceted: {body}"
+    );
 }
 
 /// `?status=continuing` returns only continuing series and marks

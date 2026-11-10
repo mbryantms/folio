@@ -1400,6 +1400,108 @@ async fn v2_browse_advertises_facets_array() {
     assert_eq!(cont["properties"]["active"], false);
 }
 
+/// Soft-remove a series (`removed_at` set, row kept).
+async fn soft_remove_series_v2(db: &DatabaseConnection, series_id: Uuid) {
+    let row = entity::series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: SeriesAM = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(db).await.unwrap();
+}
+
+/// `numberOfItems` of one publisher facet link, `None` when absent.
+fn publisher_facet_count(body: &Value, publisher: &str) -> Option<u64> {
+    body["facets"]
+        .as_array()?
+        .iter()
+        .find(|f| f["metadata"]["title"] == "Publisher")?["links"]
+        .as_array()?
+        .iter()
+        .find(|l| l["title"] == publisher)?["properties"]["numberOfItems"]
+        .as_u64()
+}
+
+/// The v2 per-series feed lists only live issues (and `numberOfItems`
+/// counts only them); a removed series answers 404 like an unknown id,
+/// for an admin too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_series_one_omits_removed_issues_and_removed_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-series-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Shrinking v2").await;
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        ids.push(
+            seed_issue_with_file(
+                &db,
+                lib_id,
+                series_id,
+                &tmp.path().join(format!("v2-shrink-{i}.cbz")),
+                format!("v2-shrink-{i}").as_bytes(),
+            )
+            .await,
+        );
+    }
+    let href = format!("/opds/v2/series/{series_id}");
+
+    let removed = ids[1].clone();
+    let row = entity::issue::Entity::find_by_id(removed.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: IssueAM = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(&db).await.unwrap();
+
+    let (s, body) = get_json(&app, &auth, &href).await;
+    assert_eq!(s, StatusCode::OK);
+    let pubs = body["publications"].as_array().unwrap();
+    assert_eq!(pubs.len(), 2, "{body}");
+    assert_eq!(body["metadata"]["numberOfItems"], 2, "{body}");
+    assert!(
+        !body.to_string().contains(&removed),
+        "removed issue listed: {body}"
+    );
+
+    soft_remove_series_v2(&db, series_id).await;
+    let (s, _) = get_json(&app, &auth, &href).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "removed series feed");
+    let (s, _) = get_json(&app, &auth, &format!("/opds/v2/series/{}", Uuid::now_v7())).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
+/// The v2 publisher facet counts only live series.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v2_browse_publisher_facet_count_skips_removed_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "v2-browse-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full_v2(&db, lib_id, "Saga", "continuing", Some("Image Comics")).await;
+    let gone = seed_series_full_v2(&db, lib_id, "Gone", "ended", Some("Image Comics")).await;
+
+    let (_, body) = get_json(&app, &auth, "/opds/v2/browse").await;
+    assert_eq!(publisher_facet_count(&body, "Image Comics"), Some(2));
+
+    soft_remove_series_v2(&db, gone).await;
+    let (_, body) = get_json(&app, &auth, "/opds/v2/browse").await;
+    assert_eq!(
+        publisher_facet_count(&body, "Image Comics"),
+        Some(1),
+        "{body}"
+    );
+}
+
 /// Filtering `?status=ended` returns only ended series and marks the
 /// matching facet link `properties.active = true`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
