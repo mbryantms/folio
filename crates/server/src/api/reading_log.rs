@@ -596,6 +596,7 @@ async fn gather_events(
             .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await?;
+        let capped = acl.issue_cap_condition().is_some();
         let cover_candidates: HashSet<String> =
             candidates_for_cover.iter().map(|i| i.id.clone()).collect();
         let mut by_series: HashMap<Uuid, (Option<f64>, String)> = HashMap::new();
@@ -623,8 +624,10 @@ async fn gather_events(
         )
         .await
         {
-            // A pick the caller can't see never stands in as the cover.
-            if cover_candidates.contains(&iid) {
+            // For a capped caller, a pick they can't see never stands in as
+            // the cover; everyone else keeps the pick unconditionally, as
+            // `series::series_cover_issue_ids` does.
+            if !capped || cover_candidates.contains(&iid) {
                 by_series.insert(sid, (None, format!("/issues/{iid}/pages/0/thumb")));
             }
         }

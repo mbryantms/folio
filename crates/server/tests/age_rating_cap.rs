@@ -2035,3 +2035,84 @@ async fn reading_log_keeps_a_read_of_a_later_removed_issue() {
         "{csv}"
     );
 }
+
+// ───── capped-only filter SQL paths ─────
+
+/// Create a `filter_series` saved view with one condition as `user` and
+/// return the slugs of its results.
+async fn saved_view_slugs(app: &TestApp, user: &Authed, field: &str, value: &str) -> Vec<String> {
+    let (st, view) = post_json(
+        app,
+        "/api/me/saved-views",
+        user,
+        serde_json::json!({
+            "kind": "filter_series",
+            "name": format!("{field} {value}"),
+            "filter": {
+                "match_mode": "all",
+                "conditions": [
+                    { "group_id": 0, "field": field, "op": "is", "value": value }
+                ]
+            },
+            "sort_field": "name",
+            "sort_order": "asc",
+            "result_limit": 50,
+        }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{view}");
+    let id = view["id"].as_str().unwrap();
+    let (st, body) = get_json(app, &format!("/api/me/saved-views/{id}/results"), user).await;
+    assert_eq!(st, StatusCode::OK, "{field}: {body}");
+    names(&body, "slug")
+}
+
+#[tokio::test]
+async fn completeness_filters_run_under_the_cap() {
+    let (w, gap) = gap_world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    // #1 and #3 are accepted as metadata-complete, the hidden #2 is not: the
+    // capped reader's Gap Run is `complete`, everyone else's `partial`.
+    for id in [&gap.one, &gap.three] {
+        entity::issue::ActiveModel {
+            id: Unchanged(id.clone()),
+            metadata_review_accepted_at: Set(Some(Utc::now().fixed_offset())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+    }
+    // Three issues expected: complete for those who see three, not for the
+    // capped reader who sees two.
+    entity::series::ActiveModel {
+        id: Unchanged(gap.series_id),
+        total_issues: Set(Some(3)),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    let gap_run = "gap-run".to_owned();
+
+    // (a) series list `?metadata_completeness=`.
+    let path = "/api/series?metadata_completeness=complete&limit=50";
+    let (st, body) = get_json(&w.app, path, &w.capped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(names(&body, "slug").contains(&gap_run), "{body}");
+    let (st, body) = get_json(&w.app, path, &w.uncapped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(!names(&body, "slug").contains(&gap_run), "{body}");
+
+    // (b) saved view on `metadata_completeness`.
+    let got = saved_view_slugs(&w.app, &w.capped, "metadata_completeness", "complete").await;
+    assert!(got.contains(&gap_run), "{got:?}");
+    let got = saved_view_slugs(&w.app, &w.uncapped, "metadata_completeness", "complete").await;
+    assert!(!got.contains(&gap_run), "{got:?}");
+
+    // (c) saved view on `collection_completeness` (the active-issue count).
+    let got = saved_view_slugs(&w.app, &w.capped, "collection_completeness", "complete").await;
+    assert!(!got.contains(&gap_run), "{got:?}");
+    let got = saved_view_slugs(&w.app, &w.uncapped, "collection_completeness", "complete").await;
+    assert!(got.contains(&gap_run), "{got:?}");
+}
