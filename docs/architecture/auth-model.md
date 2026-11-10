@@ -265,10 +265,58 @@ that consults the library ACL applies it:
 | Continue reading, On Deck, New issues, rail dismissals | `api/rails.rs` |
 | Reader Up Next / Prev Up (series + CBL walks) | `api/next_up.rs` |
 | Creators, people search, filter-option pickers (UNION arms) | `api/creators.rs`, `api/people.rs`, `api/filter_options.rs` |
+| Character / team / location / arc / publisher pages, browse indexes, insights | `api/entity_pages.rs` (shared by the OPDS entity feeds) |
+| Similar-series reasons, series "Appears in" arcs, reading-stats top creators | `api/series_similar.rs`, `api/appearances.rs`, `api/reading_sessions.rs` |
 | CBL entries, markers, ratings, progress writes, reading sessions, OCR | `api/cbl_lists.rs`, `api/markers.rs`, `api/ratings.rs`, `api/progress.rs`, `api/reading_sessions.rs`, `api/issue_ocr.rs` |
 | OPDS 1.2 + 2.0 feeds, facets, downloads, PSE page streaming, progression + KOReader sync | `api/opds.rs`, `api/opds_v2.rs`, `api/opds_pse.rs`, `api/opds_progression.rs` |
 | Komga-compatible progress shim | `api/komga_compat.rs` |
 | Metadata search / external ids / provider ranges (series gates) | `api/metadata_search.rs`, `api/external_ids.rs`, `api/provider_ranges.rs` |
+
+### Entity surfaces
+
+Creators, characters, teams, locations, story arcs, publishers, genres
+and tags are shown to a capped caller only through the issues and series
+that caller can see. An issue counts when it is not removed, is active,
+sits in a non-removed series of a granted library and passes the cap
+(`COALESCE(issue.age_rating, series.age_rating)`, unrated passes), and
+its series' own rating passes the cap too
+(`VisibleLibraries::entity_issue_cap_sql`): entity surfaces never name a
+series the caller cannot open, even through an issue rated below it.
+The issue routes keep their own rule: an issue rated within the cap
+still opens when its series is rated above it, and its page shows its
+own cast and credits; the entity pages those names link to answer
+not-found for that caller unless something else they can see carries
+the same name.
+
+- **Issue junctions** (`issue_credits`, `issue_characters`,
+  `issue_teams`, `issue_locations`, `issue_arcs`, `issue_genres`,
+  `issue_tags`): a row counts when its issue counts.
+- **Series rollups** (`series_credits`, `series_characters`,
+  `series_teams`, `series_locations`, `series_genres`, `series_tags`):
+  the scanner rebuilds these as the union of every issue in the series,
+  hidden ones included. For a caller whose cap hides any rung
+  (`VisibleLibraries::hides_any`) they are not read; the issue junction
+  over the issues that caller can see answers instead.
+- **Series-level metadata** (`series.publisher`, `series_arcs`,
+  `series_universes`, `series_concepts`, `series_objects`,
+  `series_group`): describes the series itself and follows series
+  visibility.
+
+So an entity is listed, searchable, offered as a filter value or counted
+only when something visible links to it; its detail routes
+(`/<kind>/{slug}` and the `/series`, `/issues`, `/insights` sub-routes,
+`/creators/{slug}`) answer the same 404 as an unknown slug otherwise.
+Counts, roles, year ranges, co-appearances and top-N lists cover visible
+issues only, and a creator's role held only on hidden issues is not
+listed. The same rule covers the browse indexes and their `?q=` search,
+`/people`, the filter-option pickers, the series-list credit, genre and
+tag filters, the series saved-view filters on credits, characters, teams,
+locations, genres and tags, the series "Appears in" arcs, OPDS author and genre facets
+and the by-creator feeds, the reading-stats top creators and the
+similar-series reasons (see
+[`docs/dev/similar-series.md`](../dev/similar-series.md#acl-and-per-user-filtering)).
+Admins and callers without a cap that hides anything keep the rollup
+queries unchanged.
 
 Regression suite: `crates/server/tests/age_rating_cap.rs` (a `Teen`-capped
 user against `Teen` / `Mature 17+` / unrated series, plus an issue-level

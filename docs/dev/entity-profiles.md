@@ -65,6 +65,13 @@ excluded), most frequent creators, and the first ten issues in the
 entity's reading order as issue cards. No provider is involved, so this
 block works for every entity today.
 
+Visibility follows the rule in
+[`docs/architecture/auth-model.md`](../architecture/auth-model.md#entity-surfaces):
+for a caller with an age cap the entity must be linked from an issue that
+caller can see, otherwise every route under `/<kind>/{slug}` answers 404
+like an unknown slug. The provider profile is shown whenever the entity
+itself is visible.
+
 ## Web
 
 - `web/components/library/EntityProfile.tsx` — the profile block and
