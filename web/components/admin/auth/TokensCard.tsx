@@ -11,24 +11,30 @@ import { statusToneText } from "@/lib/ui/status-tone";
 
 const DURATION_RE = /^\d+[smhd]$/;
 
-/** Access + refresh JWT TTL inputs. Server-side validation in
- *  `Config::parse_duration` accepts `\d+[smhd]` (e.g. `15m`, `24h`, `30d`)
- *  and cross-validates `refresh >= access`. We mirror the unit check
- *  client-side so the most common mistakes don't round-trip to a 400. */
+/** Access + refresh JWT TTL and maximum session age inputs. Server-side
+ *  validation in `Config::parse_duration` accepts `\d+[smhd]` (e.g. `15m`,
+ *  `24h`, `30d`) and cross-validates `refresh >= access`, `max age >= 1d`
+ *  and `max age >= access`. We mirror the unit check client-side so the
+ *  most common mistakes don't round-trip to a 400. */
 export function TokensCard({
   initial,
 }: {
-  initial: { access_ttl: string; refresh_ttl: string };
+  initial: { access_ttl: string; refresh_ttl: string; session_max_age: string };
 }) {
   const [access, setAccess] = useState(initial.access_ttl);
   const [refresh, setRefresh] = useState(initial.refresh_ttl);
+  const [maxAge, setMaxAge] = useState(initial.session_max_age);
   const update = useUpdateSettings();
 
   const accessBad = access !== initial.access_ttl && !DURATION_RE.test(access);
   const refreshBad =
     refresh !== initial.refresh_ttl && !DURATION_RE.test(refresh);
+  const maxAgeBad =
+    maxAge !== initial.session_max_age && !DURATION_RE.test(maxAge);
   const dirty =
-    access !== initial.access_ttl || refresh !== initial.refresh_ttl;
+    access !== initial.access_ttl ||
+    refresh !== initial.refresh_ttl ||
+    maxAge !== initial.session_max_age;
 
   async function onSave() {
     // `disabled={!dirty}` on the submit button makes the no-op path
@@ -37,6 +43,8 @@ export function TokensCard({
     if (access !== initial.access_ttl) patch["auth.jwt.access_ttl"] = access;
     if (refresh !== initial.refresh_ttl)
       patch["auth.jwt.refresh_ttl"] = refresh;
+    if (maxAge !== initial.session_max_age)
+      patch["auth.session.max_age"] = maxAge;
     await update.mutateAsync(patch);
   }
 
@@ -55,7 +63,7 @@ export function TokensCard({
               id="access-ttl"
               value={access}
               onChange={(e) => setAccess(e.target.value)}
-              placeholder="24h"
+              placeholder="1h"
             />
             {accessBad && (
               <p className={`text-xs ${statusToneText("error")}`}>
@@ -86,15 +94,36 @@ export function TokensCard({
               server-side validation rejects shorter values.
             </p>
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="session-max-age">Maximum session age</Label>
+            <Input
+              id="session-max-age"
+              value={maxAge}
+              onChange={(e) => setMaxAge(e.target.value)}
+              placeholder="90d"
+            />
+            {maxAgeBad && (
+              <p className={`text-xs ${statusToneText("error")}`}>
+                Use a duration like <code>30d</code> or <code>90d</code>.
+              </p>
+            )}
+            <p className="text-muted-foreground text-xs">
+              How long after signing in a session ends for good, however often
+              it is used. At least <code>1d</code>.
+            </p>
+          </div>
         </div>
         <div className="flex items-center justify-end gap-3">
           <span className="text-muted-foreground text-xs">
             New tokens use the new TTLs. Existing tokens keep their original
-            expiry.
+            expiry; the maximum age applies at each session&rsquo;s next
+            refresh.
           </span>
           <Button
             onClick={onSave}
-            disabled={!dirty || update.isPending || accessBad || refreshBad}
+            disabled={
+              !dirty || update.isPending || accessBad || refreshBad || maxAgeBad
+            }
           >
             {update.isPending ? "Saving…" : "Save"}
           </Button>
