@@ -308,13 +308,13 @@ async fn parse_archive_for_ingest(
     state: &AppState,
     lib: &library::Model,
     path: &Path,
+    source: archive::ArchiveFile,
     size: i64,
     stats: &mut ScanStats,
     health: &mut HealthCollector,
     verify_dims: bool,
     defer_hash: bool,
 ) -> anyhow::Result<Option<ParsedArchive>> {
-    let path_for_blocking = path.to_path_buf();
     // F-9: tunable read buffer for BLAKE3 hashing. Larger buffers reduce
     // syscall + page-cache-readahead overhead; default 1024 KB matches the
     // historical hardcoded chunk and was the right value all along — the
@@ -338,14 +338,14 @@ async fn parse_archive_for_ingest(
             let hash = if defer_hash {
                 None
             } else {
-                Some(crate::library::hash::blake3_file_with_buffer(
-                    &path_for_blocking,
+                Some(crate::library::hash::blake3_open_file(
+                    source.file(),
                     hash_buffer_kb,
                 )?)
             };
             let hash_ms = hash_started.elapsed().as_millis() as u64;
             let (archive_outcome, mut timing, diagnostics) =
-                parse_archive_timed(&path_for_blocking, archive_limits, verify_dims);
+                parse_archive_timed(source, archive_limits, verify_dims);
             timing.hash_ms = hash_ms;
             Ok::<_, anyhow::Error>((hash, archive_outcome, timing, diagnostics))
         })
@@ -491,6 +491,59 @@ async fn parse_archive_for_ingest(
     }))
 }
 
+/// Open `path` for ingest through the no-follow walk from the library root
+/// (`library::no_follow`). `Ok(None)` when the file is refused, already
+/// counted and reported: a symbolic link (swapped in after the folder walk)
+/// is logged and skipped without a finding, as the issue rescan does, so
+/// the next folder walk opens the `SymlinkSkipped` finding and reconciles
+/// the row; a non-regular file or a path outside the root is an
+/// `UnreadableFile` finding. A missing file or an I/O error is an `Err`,
+/// as the hash read used to report it.
+async fn open_for_ingest(
+    lib: &library::Model,
+    path: &Path,
+    stats: &mut ScanStats,
+    health: &mut HealthCollector,
+) -> anyhow::Result<Option<archive::ArchiveFile>> {
+    use crate::library::no_follow::{Refusal, open_library_file};
+    let root = PathBuf::from(&lib.root_path);
+    let p = path.to_path_buf();
+    let opened = tokio::task::spawn_blocking(move || open_library_file(&root, &p))
+        .await
+        .map_err(|e| anyhow::anyhow!("ingest open task failed: {e}"))?;
+    match opened {
+        Ok(f) => Ok(Some(archive::ArchiveFile::new(f, path))),
+        Err(Refusal::Symlink) => {
+            tracing::info!(
+                library_id = %lib.id,
+                path = %path.display(),
+                "scanner: ingest skipped a symbolic link (links are never followed)"
+            );
+            stats.files_skipped += 1;
+            Ok(None)
+        }
+        Err(reason @ (Refusal::NotRegular | Refusal::OutsideRoot)) => {
+            tracing::warn!(
+                library_id = %lib.id,
+                path = %path.display(),
+                reason = %reason,
+                "scanner: ingest refused a file"
+            );
+            stats.files_skipped += 1;
+            health.emit(IssueKind::UnreadableFile {
+                path: path.to_path_buf(),
+                error: reason.to_string(),
+            });
+            Ok(None)
+        }
+        Err(Refusal::Missing) => Err(anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{} is missing", path.display()),
+        ))),
+        Err(Refusal::Io(e)) => Err(e.into()),
+    }
+}
+
 /// Outcome of attempting a scan-time CBR/CB7→CBZ conversion.
 enum CbrIngestAction {
     /// Converted to this `.cbz`; caller should ingest it.
@@ -540,20 +593,25 @@ fn conversion_eligible(lib: &library::Model, format: ConvertibleFormat) -> bool 
 /// propagate.
 async fn convert_for_ingest(
     state: &AppState,
+    lib: &library::Model,
     path: &Path,
     format: ConvertibleFormat,
 ) -> anyhow::Result<CbrIngestAction> {
     let limits = state.cfg().archive_limits();
     let src = path.to_path_buf();
+    let root = PathBuf::from(&lib.root_path);
     let _permit = state
         .archive_work_semaphore
         .clone()
         .acquire_owned()
         .await
         .map_err(|e| anyhow::anyhow!("archive work semaphore closed: {e}"))?;
-    let result = tokio::task::spawn_blocking(move || match format {
-        ConvertibleFormat::Cbr => super::cbr_convert::convert_cbr_to_cbz(&src, limits),
-        ConvertibleFormat::Cb7 => super::cbr_convert::convert_cb7_to_cbz(&src, limits),
+    let result = tokio::task::spawn_blocking(move || {
+        let root = crate::library::no_follow::LibraryRoot::resolve(root);
+        match format {
+            ConvertibleFormat::Cbr => super::cbr_convert::convert_cbr_to_cbz(&root, &src, limits),
+            ConvertibleFormat::Cb7 => super::cbr_convert::convert_cb7_to_cbz(&root, &src, limits),
+        }
     })
     .await
     .map_err(|e| anyhow::anyhow!("{} convert task failed: {e}", format.ext()))?;
@@ -807,6 +865,14 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
     // sniff is a 512-byte read, only paid by files already past the
     // size+mtime fast path; an I/O failure falls through so the normal path
     // reports `UnreadableArchive`.
+    //
+    // Every read below (the sniff, the hash, the parse) goes through one
+    // handle opened by the no-follow walk from the library root
+    // (`library::no_follow`): the bytes ingested are the file that was
+    // checked, never a name opened again.
+    let Some(source) = open_for_ingest(lib, path, stats, health).await? else {
+        return Ok(None);
+    };
     let ext_lower = path
         .extension()
         .and_then(|s| s.to_str())
@@ -814,7 +880,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
     let convertible = match ext_lower.as_deref() {
         Some("cbr") => Some(ConvertibleFormat::Cbr),
         Some("cb7") => Some(ConvertibleFormat::Cb7),
-        Some("cbz") | Some("cbt") => match archive::container::detect_container(path) {
+        Some("cbz") | Some("cbt") => match archive::container::detect_container(&source) {
             Ok(archive::container::Container::Rar) => Some(ConvertibleFormat::Cbr),
             Ok(archive::container::Container::SevenZ) => Some(ConvertibleFormat::Cb7),
             _ => None,
@@ -823,7 +889,10 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
     };
     if let Some(format) = convertible {
         if conversion_eligible(lib, format) {
-            match convert_for_ingest(state, path, format).await? {
+            // The converter opens the source and its folder itself, through
+            // the same no-follow walk; this handle is not needed.
+            drop(source);
+            match convert_for_ingest(state, lib, path, format).await? {
                 CbrIngestAction::Converted(dst) => {
                     stats.files_converted += 1;
                     let e = events
@@ -899,6 +968,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         state,
         lib,
         path,
+        source,
         size,
         stats,
         health,
@@ -1373,7 +1443,12 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             let prev = prev_page_count.filter(|p| *p > 0).unwrap_or(now_pages);
             let map = remap::PageMap::truncation(prev as usize, now_pages as usize);
             let new_hashes = if remap::issue_has_hashed_anchors(db, &row_id).await? {
-                crate::reading::page_hash::hash_all_pages(state, path.to_path_buf()).await
+                crate::reading::page_hash::hash_all_pages(
+                    state,
+                    Path::new(&lib.root_path),
+                    path.to_path_buf(),
+                )
+                .await
             } else {
                 None
             };
@@ -1806,7 +1881,19 @@ pub fn lazy_fingerprint(path: &str, size: i64, mtime: chrono::DateTime<chrono::U
 }
 
 pub fn file_fingerprint(path: &Path) -> anyhow::Result<(i64, chrono::DateTime<chrono::Utc>)> {
-    let meta = std::fs::metadata(path)?;
+    fingerprint_of(&std::fs::metadata(path)?)
+}
+
+/// [`file_fingerprint`] of an already-open file (`fstat` on the handle).
+pub fn open_file_fingerprint(
+    f: &std::fs::File,
+) -> anyhow::Result<(i64, chrono::DateTime<chrono::Utc>)> {
+    fingerprint_of(&f.metadata()?)
+}
+
+fn fingerprint_of(
+    meta: &std::fs::Metadata,
+) -> anyhow::Result<(i64, chrono::DateTime<chrono::Utc>)> {
     let mtime: chrono::DateTime<chrono::Utc> = truncate_to_micros(meta.modified()?.into());
     Ok((meta.len() as i64, mtime))
 }
@@ -1845,16 +1932,20 @@ fn row_needs_comicinfo_count_backfill(row: &issue::Model) -> bool {
             .is_some_and(|v| !v.is_null())
 }
 
-fn parse_archive_with(path: &Path, mode: ParseMode, limits: ArchiveLimits) -> ArchiveOutcome {
-    parse_archive_timed_with(path, mode, limits, false).0
+fn parse_archive_with(
+    source: archive::ArchiveFile,
+    mode: ParseMode,
+    limits: ArchiveLimits,
+) -> ArchiveOutcome {
+    parse_archive_timed_with(source, mode, limits, false).0
 }
 
 fn parse_archive_timed(
-    path: &Path,
+    source: archive::ArchiveFile,
     limits: ArchiveLimits,
     verify_dims: bool,
 ) -> (ArchiveOutcome, ArchiveTiming, ArchiveDiagnostics) {
-    parse_archive_timed_with(path, ParseMode::FullIngest, limits, verify_dims)
+    parse_archive_timed_with(source, ParseMode::FullIngest, limits, verify_dims)
 }
 
 /// `verify_dims`: the caller knows the file's bytes changed since the last
@@ -1864,14 +1955,14 @@ fn parse_archive_timed(
 /// dimension probe and let it correct stale entries instead of only
 /// backfilling missing ones.
 fn parse_archive_timed_with(
-    path: &Path,
+    source: archive::ArchiveFile,
     mode: ParseMode,
     limits: ArchiveLimits,
     verify_dims: bool,
 ) -> (ArchiveOutcome, ArchiveTiming, ArchiveDiagnostics) {
     let parse_started = Instant::now();
     let mut timing = ArchiveTiming::default();
-    let mut archive = match archive::open(path, limits) {
+    let mut archive = match archive::open_file(source, limits) {
         Ok(c) => c,
         Err(ArchiveError::Encrypted) => {
             return (
@@ -2729,11 +2820,22 @@ pub(crate) fn filename_opts(lib: &library::Model) -> filename::InferOpts {
 }
 
 pub fn peek_identity_hint(
+    library_root: &Path,
     path: &Path,
     limits: ArchiveLimits,
     infer_opts: filename::InferOpts,
 ) -> SeriesIdentityHint {
-    let info = match parse_archive_with(path, ParseMode::IdentityOnly, limits) {
+    // Through the no-follow walk like every read of a library file; a
+    // refused or unreadable archive contributes no metadata.
+    let parsed = match crate::library::no_follow::open_library_file(library_root, path) {
+        Ok(f) => parse_archive_with(
+            archive::ArchiveFile::new(f, path),
+            ParseMode::IdentityOnly,
+            limits,
+        ),
+        Err(_) => ArchiveOutcome::Unreadable("archive not opened".to_owned()),
+    };
+    let info = match parsed {
         ArchiveOutcome::Ok { info, metron, .. } => {
             // Apply MetronInfo precedence so the identity hint reflects the
             // strongest available metadata. The won-field set is only

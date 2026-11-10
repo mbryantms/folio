@@ -3,26 +3,39 @@
 //! Folio never follows a symbolic link below a library root: the scanner
 //! skips them (`scanner::enumerate`, reported as
 //! [`IssueKind::SymlinkSkipped`](crate::library::health::IssueKind::SymlinkSkipped)),
-//! and every route that hands a stored issue file to a reader opens it
-//! through [`open_issue`] here (or checks it with [`issue_path_ok`] where
-//! the archive crate reopens the path). The library root's own path may
-//! contain links (a mount point or `/data/comics -> /mnt/x` is a deployment
-//! choice):
-//! it is resolved once, exactly as `validate_library` canonicalizes it, and
-//! nothing below it is followed.
+//! and every open of a file under a library root goes through this module.
+//! The library root's own path may contain links (a mount point or
+//! `/data/comics -> /mnt/x` is a deployment choice): it is resolved once,
+//! exactly as `validate_library` canonicalizes it, and nothing below it is
+//! followed.
 //!
-//! [`open_below_root`] walks from the root directory one path component at a
-//! time with `openat(…, O_NOFOLLOW)`, so a link anywhere below the root (a
-//! linked series folder, a linked publisher folder, a linked archive) is
-//! refused, and a link swapped in during the walk is refused too: each step
-//! opens a name relative to the directory handle the previous step proved,
-//! never a path the kernel resolves again. The final open adds `O_NONBLOCK`
-//! so a FIFO cannot hang the request, and the handle is `fstat`-ed: only a
-//! regular file is returned. Callers read through that handle, never by
-//! reopening the path.
+//! [`open_parent_below_roots`] walks from the root directory one path
+//! component at a time with `openat(…, O_NOFOLLOW | O_DIRECTORY)`, so a
+//! link anywhere below the root (a linked series folder, a linked publisher
+//! folder) is refused, and a link swapped in during the walk is refused
+//! too: each step opens a name relative to the directory handle the
+//! previous step proved, never a path the kernel resolves again. It returns
+//! that folder as a [`LibraryDir`], and every later operation names an
+//! entry relative to it:
+//!
+//! - **Reads** ([`open_below_roots`], [`LibraryDir::open_regular`]): the
+//!   final open adds `O_NOFOLLOW | O_NONBLOCK` (a FIFO cannot hang it) and
+//!   the handle is `fstat`-ed, so only a regular file is returned. Callers
+//!   read through that handle and never reopen the path; the archive crate
+//!   takes it as an [`archive::ArchiveFile`] ([`open_issue_archive`],
+//!   [`LibraryRoot::open_archive`]).
+//! - **Writes** ([`LibraryDir::create_new`], [`LibraryDir::rename`],
+//!   [`LibraryDir::hard_link`], [`LibraryDir::remove_file`],
+//!   [`LibraryDir::sync`]): `openat` with `O_CREAT | O_EXCL | O_NOFOLLOW`,
+//!   `renameat`, `linkat` without `AT_SYMLINK_FOLLOW`, `unlinkat`, `fsync`
+//!   of the folder handle. `crate::archive_rewrite` builds the archive
+//!   write sequence on these.
+//!
+//! Hard links are not refused: they cannot be told apart from ordinary
+//! files.
 
 use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
 use std::os::fd::OwnedFd;
@@ -98,6 +111,30 @@ pub fn open_below_roots(
     root_canon: Option<&Path>,
     path: &Path,
 ) -> Result<File, Refusal> {
+    let (dir, file_name) = open_parent_below_roots(root, root_canon, path)?;
+    dir.open_regular(&file_name)
+}
+
+/// [`open_below_roots`] for a caller that has only the configured root:
+/// the canonical spelling is resolved only when `path` is not spelled under
+/// the configured root.
+pub fn open_library_file(root: &Path, path: &Path) -> Result<File, Refusal> {
+    match open_below_roots(root, None, path) {
+        Err(Refusal::OutsideRoot) => {
+            let canon = std::fs::canonicalize(root).map_err(|_| Refusal::OutsideRoot)?;
+            open_below_roots(root, Some(&canon), path)
+        }
+        other => other,
+    }
+}
+
+/// The relative components of `path` below `root` (or `root_canon`), all
+/// plain names, at least one.
+fn names_below<'a>(
+    root: &Path,
+    root_canon: Option<&Path>,
+    path: &'a Path,
+) -> Result<Vec<&'a OsStr>, Refusal> {
     let rel = path
         .strip_prefix(root)
         .ok()
@@ -110,46 +147,208 @@ pub fn open_below_roots(
             _ => return Err(Refusal::OutsideRoot),
         }
     }
+    if names.is_empty() {
+        return Err(Refusal::OutsideRoot);
+    }
+    Ok(names)
+}
+
+const DIR_FLAGS: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::CLOEXEC);
+
+/// Open the library root directory itself. Its own links are followed
+/// (the deployment rule).
+fn open_root_dir(root: &Path) -> Result<OwnedFd, Refusal> {
+    rustix::fs::openat(rustix::fs::CWD, root, DIR_FLAGS, Mode::empty()).map_err(|e| match e {
+        Errno::NOENT | Errno::NOTDIR => Refusal::Missing,
+        e => Refusal::Io(e.into()),
+    })
+}
+
+/// Walk `folders` from `dir`, one `O_NOFOLLOW` directory open at a time.
+fn walk_folders(mut dir: OwnedFd, folders: &[&OsStr]) -> Result<OwnedFd, Refusal> {
+    for name in folders {
+        dir = rustix::fs::openat(&dir, *name, DIR_FLAGS | OFlags::NOFOLLOW, Mode::empty())
+            .map_err(|e| refusal_for(&dir, name, e))?;
+    }
+    Ok(dir)
+}
+
+/// Open the directory that holds `path` (which must lie below `root`, or
+/// below `root_canon`) through the same no-follow walk, and return it with
+/// the final name. The final name itself is not looked at: the returned
+/// [`LibraryDir`] checks it per operation. The directory may be the root
+/// itself. Blocking.
+pub fn open_parent_below_roots(
+    root: &Path,
+    root_canon: Option<&Path>,
+    path: &Path,
+) -> Result<(LibraryDir, OsString), Refusal> {
+    let names = names_below(root, root_canon, path)?;
     let Some((file_name, folders)) = names.split_last() else {
         return Err(Refusal::OutsideRoot);
     };
-
-    let dir_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
-    // The root itself: its own links are followed (the deployment rule).
-    let mut dir = rustix::fs::openat(rustix::fs::CWD, root, dir_flags, Mode::empty()).map_err(
-        |e| match e {
-            Errno::NOENT | Errno::NOTDIR => Refusal::Missing,
-            e => Refusal::Io(e.into()),
+    let dir = walk_folders(open_root_dir(root)?, folders)?;
+    let shown = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    Ok((
+        LibraryDir {
+            fd: dir,
+            path: shown,
         },
-    )?;
-    for name in folders {
-        dir = rustix::fs::openat(&dir, *name, dir_flags | OFlags::NOFOLLOW, Mode::empty())
-            .map_err(|e| refusal_for(&dir, name, e))?;
+        file_name.to_os_string(),
+    ))
+}
+
+/// [`open_parent_below_roots`] for a caller that has only the configured
+/// root (see [`open_library_file`]).
+pub fn open_library_parent(root: &Path, path: &Path) -> Result<(LibraryDir, OsString), Refusal> {
+    match open_parent_below_roots(root, None, path) {
+        Err(Refusal::OutsideRoot) => {
+            let canon = std::fs::canonicalize(root).map_err(|_| Refusal::OutsideRoot)?;
+            open_parent_below_roots(root, Some(&canon), path)
+        }
+        other => other,
+    }
+}
+
+/// A directory below (or at) a library root, opened by the no-follow walk.
+/// Every operation names an entry relative to this handle (`openat`,
+/// `renameat`, `linkat`, `unlinkat`), so a folder swapped for a link after
+/// the walk cannot redirect it, and no operation follows a link in the
+/// final name. Blocking.
+#[derive(Debug)]
+pub struct LibraryDir {
+    fd: OwnedFd,
+    /// The directory's path, for messages only; never opened.
+    path: PathBuf,
+}
+
+/// What an entry of a [`LibraryDir`] is, looked at without following links.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryKind {
+    Missing,
+    Regular,
+    Symlink,
+    Other,
+}
+
+impl LibraryDir {
+    /// The directory's path, for messages.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
-    // Stat before opening so a device or FIFO is never opened at all.
-    let pre = rustix::fs::statat(&dir, *file_name, AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(|e| refusal_for(&dir, file_name, e))?;
-    match FileType::from_raw_mode(pre.st_mode) {
-        FileType::RegularFile => {}
-        FileType::Symlink => return Err(Refusal::Symlink),
-        _ => return Err(Refusal::NotRegular),
+    /// `name`'s full path, for messages.
+    pub fn display(&self, name: &OsStr) -> PathBuf {
+        self.path.join(name)
     }
-    // Swapped between the stat and the open: `O_NOFOLLOW` refuses a link,
-    // `O_NONBLOCK` keeps a FIFO from blocking, the `fstat` below refuses
-    // anything that is not a regular file.
-    let fd = rustix::fs::openat(
-        &dir,
-        *file_name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(|e| refusal_for(&dir, file_name, e))?;
-    let st = rustix::fs::fstat(&fd).map_err(|e| Refusal::Io(e.into()))?;
-    if !FileType::from_raw_mode(st.st_mode).is_file() {
-        return Err(Refusal::NotRegular);
+
+    /// What `name` is, without following it.
+    pub fn kind(&self, name: &OsStr) -> std::io::Result<EntryKind> {
+        match rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(st) => Ok(match FileType::from_raw_mode(st.st_mode) {
+                FileType::RegularFile => EntryKind::Regular,
+                FileType::Symlink => EntryKind::Symlink,
+                _ => EntryKind::Other,
+            }),
+            Err(Errno::NOENT) => Ok(EntryKind::Missing),
+            Err(e) => Err(e.into()),
+        }
     }
-    Ok(File::from(fd))
+
+    /// `(device, inode)` of `name`, without following it.
+    pub fn identity(&self, name: &OsStr) -> std::io::Result<(u64, u64)> {
+        let st = rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW)?;
+        Ok((st.st_dev, st.st_ino))
+    }
+
+    /// Open `name` for reading: no link followed, regular files only.
+    pub fn open_regular(&self, name: &OsStr) -> Result<File, Refusal> {
+        // Stat before opening so a device or FIFO is never opened at all.
+        let pre = rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|e| refusal_for(&self.fd, name, e))?;
+        match FileType::from_raw_mode(pre.st_mode) {
+            FileType::RegularFile => {}
+            FileType::Symlink => return Err(Refusal::Symlink),
+            _ => return Err(Refusal::NotRegular),
+        }
+        // Swapped between the stat and the open: `O_NOFOLLOW` refuses a
+        // link, `O_NONBLOCK` keeps a FIFO from blocking, the `fstat` below
+        // refuses anything that is not a regular file.
+        let fd = rustix::fs::openat(
+            &self.fd,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| refusal_for(&self.fd, name, e))?;
+        let st = rustix::fs::fstat(&fd).map_err(|e| Refusal::Io(e.into()))?;
+        if !FileType::from_raw_mode(st.st_mode).is_file() {
+            return Err(Refusal::NotRegular);
+        }
+        Ok(File::from(fd))
+    }
+
+    /// Create `name` as a new file, read-write. Exclusive (`O_EXCL`) and
+    /// `O_NOFOLLOW`: anything already at the name, a link included, makes
+    /// it fail instead of being opened or followed.
+    pub fn create_new(&self, name: &OsStr) -> std::io::Result<File> {
+        let fd = rustix::fs::openat(
+            &self.fd,
+            name,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o666),
+        )?;
+        Ok(File::from(fd))
+    }
+
+    /// Rename `from` to `to`, both in this directory. Neither name is
+    /// followed; an entry at `to` is replaced atomically.
+    pub fn rename(&self, from: &OsStr, to: &OsStr) -> std::io::Result<()> {
+        rustix::fs::renameat(&self.fd, from, &self.fd, to)?;
+        Ok(())
+    }
+
+    /// Make `to` a second name for the file at `from`, both in this
+    /// directory. Without `AT_SYMLINK_FOLLOW`, so a link at `from` is
+    /// never followed.
+    pub fn hard_link(&self, from: &OsStr, to: &OsStr) -> std::io::Result<()> {
+        rustix::fs::linkat(&self.fd, from, &self.fd, to, AtFlags::empty())?;
+        Ok(())
+    }
+
+    /// Remove the entry `name` (never a directory, never through a link).
+    pub fn remove_file(&self, name: &OsStr) -> std::io::Result<()> {
+        rustix::fs::unlinkat(&self.fd, name, AtFlags::empty())?;
+        Ok(())
+    }
+
+    /// fsync the directory, making renames and links in it durable.
+    pub fn sync(&self) -> std::io::Result<()> {
+        rustix::fs::fsync(&self.fd)?;
+        Ok(())
+    }
+}
+
+/// Remove the file at `path` below `root`, through the no-follow walk: the
+/// parent folders may not be links and the entry must be a regular file
+/// (a link at the name is refused, not removed). Blocking.
+pub fn remove_library_file(root: &Path, path: &Path) -> Result<(), Refusal> {
+    let (dir, name) = open_library_parent(root, path)?;
+    match dir.kind(&name).map_err(Refusal::Io)? {
+        EntryKind::Regular => {}
+        EntryKind::Missing => return Err(Refusal::Missing),
+        EntryKind::Symlink => return Err(Refusal::Symlink),
+        EntryKind::Other => return Err(Refusal::NotRegular),
+    }
+    dir.remove_file(&name).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            Refusal::Missing
+        } else {
+            Refusal::Io(e)
+        }
+    })
 }
 
 /// A library's root as configured and as resolved (its own links followed).
@@ -230,8 +429,11 @@ impl LibraryRoots {
 /// Open an issue's stored file through [`open_below_roots`]. A refusal
 /// (symbolic link, outside the root, not a regular file) is logged at WARN
 /// with the issue id and the reason, never anything read from the file; a
-/// missing file only at DEBUG (the route has its own missing-file answer).
-async fn try_open_issue(state: &AppState, row: &entity::issue::Model) -> Result<File, Refusal> {
+/// missing file only at DEBUG (the caller has its own missing-file answer).
+pub async fn open_issue_checked(
+    state: &AppState,
+    row: &entity::issue::Model,
+) -> Result<File, Refusal> {
     let issue_id = row.id.as_str();
     let Some(root) = state.library_roots.get(&state.db, row.library_id).await else {
         tracing::debug!(issue_id, "issue file not opened: library not found");
@@ -266,19 +468,55 @@ async fn try_open_issue(state: &AppState, row: &entity::issue::Model) -> Result<
 /// Open an issue's stored file for a reader. `None` means the route answers
 /// not-found (missing file included).
 pub async fn open_issue(state: &AppState, row: &entity::issue::Model) -> Option<File> {
-    try_open_issue(state, row).await.ok()
+    open_issue_checked(state, row).await.ok()
 }
 
-/// Check an issue's stored path with the same rules, for a caller that must
-/// hand the *path* to the archive crate (which opens it again itself). The
-/// handle is dropped; the path can still change between this check and the
-/// archive crate's own open. A file that is simply missing is not refused
-/// here: the route keeps its own missing-archive answer.
-pub async fn issue_path_ok(state: &AppState, row: &entity::issue::Model) -> bool {
-    matches!(
-        try_open_issue(state, row).await,
-        Ok(_) | Err(Refusal::Missing)
-    )
+/// [`open_issue_checked`] wrapped for the archive crate: the handle plus
+/// the stored path to show in messages. Readers built from it (directly or
+/// through `zip_lru`) read only through this handle.
+pub async fn open_issue_archive(
+    state: &AppState,
+    row: &entity::issue::Model,
+) -> Result<archive::ArchiveFile, Refusal> {
+    let f = open_issue_checked(state, row).await?;
+    Ok(archive::ArchiveFile::new(f, PathBuf::from(&row.file_path)))
+}
+
+/// The library root of `library_id` as configured and resolved, for a
+/// blocking caller that opens or writes a library file itself (writers,
+/// background jobs). `None` when the library does not exist.
+pub async fn library_root(state: &AppState, library_id: Uuid) -> Option<Arc<LibraryRoot>> {
+    state.library_roots.get(&state.db, library_id).await
+}
+
+impl LibraryRoot {
+    /// A root resolved now, for callers outside the request path (the
+    /// scanner, tests). Blocking (one `canonicalize`).
+    pub fn resolve(configured: impl Into<PathBuf>) -> Self {
+        let configured = configured.into();
+        let canonical = std::fs::canonicalize(&configured).ok();
+        Self {
+            configured,
+            canonical,
+            loaded_at: Instant::now(),
+        }
+    }
+
+    /// [`open_below_roots`] under this root.
+    pub fn open_file(&self, path: &Path) -> Result<File, Refusal> {
+        open_below_roots(&self.configured, self.canonical.as_deref(), path)
+    }
+
+    /// [`open_parent_below_roots`] under this root.
+    pub fn open_parent(&self, path: &Path) -> Result<(LibraryDir, OsString), Refusal> {
+        open_parent_below_roots(&self.configured, self.canonical.as_deref(), path)
+    }
+
+    /// The file at `path` as an [`archive::ArchiveFile`], opened under this
+    /// root.
+    pub fn open_archive(&self, path: &Path) -> Result<archive::ArchiveFile, Refusal> {
+        Ok(archive::ArchiveFile::new(self.open_file(path)?, path))
+    }
 }
 
 /// Read a small sidecar (`series.json`) that sits in a folder the scan
@@ -455,5 +693,55 @@ mod tests {
         std::fs::remove_file(&link).unwrap();
         std::fs::write(&link, b"{}").unwrap();
         assert_eq!(read_sidecar(&link).unwrap(), b"{}");
+    }
+
+    #[test]
+    fn remove_refuses_links_and_linked_folders() {
+        let (tmp, root) = lib();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("a.cbz.bak"), b"keep").unwrap();
+        // A link at the name: refused, neither the link nor its target goes.
+        let link = root.join("Series").join("a.cbz.bak");
+        symlink(outside.join("a.cbz.bak"), &link).unwrap();
+        assert!(matches!(
+            remove_library_file(&root, &link),
+            Err(Refusal::Symlink)
+        ));
+        assert!(std::fs::symlink_metadata(&link).is_ok());
+        // A folder that became a link: refused, the outside file stays.
+        symlink(&outside, root.join("Linked")).unwrap();
+        assert!(matches!(
+            remove_library_file(&root, &root.join("Linked").join("a.cbz.bak")),
+            Err(Refusal::Symlink)
+        ));
+        assert_eq!(std::fs::read(outside.join("a.cbz.bak")).unwrap(), b"keep");
+        // A regular file goes.
+        let real = root.join("Series").join("b.cbz.bak");
+        std::fs::write(&real, b"x").unwrap();
+        remove_library_file(&root, &real).unwrap();
+        assert!(!real.exists());
+    }
+
+    /// The parent handle stays on the folder that was checked: a folder
+    /// swapped for a link after the walk does not redirect a later open.
+    #[test]
+    fn parent_handle_survives_a_folder_swap() {
+        use std::io::Read;
+        let (tmp, root) = lib();
+        let (dir, name) =
+            open_parent_below_roots(&root, None, &root.join("Series").join("a.cbz")).unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("a.cbz"), b"other").unwrap();
+        std::fs::rename(root.join("Series"), root.join("Moved")).unwrap();
+        symlink(&outside, root.join("Series")).unwrap();
+        let mut s = String::new();
+        dir.open_regular(&name)
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
+        assert_eq!(s, "PK-data");
+        assert_eq!(dir.kind(OsStr::new("missing")).unwrap(), EntryKind::Missing);
     }
 }

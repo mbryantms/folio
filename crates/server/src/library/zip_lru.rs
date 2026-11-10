@@ -16,10 +16,26 @@
 //! All access goes through a short critical section on the cache mutex; the
 //! per-entry `Mutex<CachedReader>` is held for the duration of a locked
 //! read. Reads are I/O-bound and brief; the brief mutex hold is fine for v1.
+//!
+//! ## Handles, not paths
+//!
+//! The cache never opens a path. Every lookup passes the archive file the
+//! caller just opened through the no-follow check
+//! ([`crate::library::no_follow`]), as an [`ArchiveFile`]. On a miss the
+//! reader is built from that handle and keeps reading through it (the
+//! archive crate never reopens by name). On a hit the cached reader is
+//! reused only when it was opened from the same file as the caller's
+//! handle (device and inode, one `fstat`); otherwise the entry is dropped
+//! and rebuilt from the caller's handle. So a path that has since been
+//! replaced by a link is refused before the cache is consulted, and a path
+//! now naming a different file never serves the old reader. A file
+//! rewritten in place keeps its inode; the writers invalidate the entry
+//! explicitly, and [`ZipLru::get_or_open_entry`] is the seam where a size
+//! and modification-time check would go.
 
 use archive::cbt::Cbt;
 use archive::cbz::{Cbz, PreadIndex};
-use archive::{ArchiveEntry, ArchiveError, ArchiveLimits, ComicArchive, SkippedEntry};
+use archive::{ArchiveEntry, ArchiveError, ArchiveFile, ArchiveLimits, ComicArchive, SkippedEntry};
 use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -31,6 +47,21 @@ use std::sync::{Arc, Mutex};
 /// plus the immutable lock-free read index for its stored entries (PERF-3),
 /// both produced once at open. Cloning is two `Arc` bumps.
 pub type CachedArchive = (Arc<Mutex<CachedReader>>, Arc<PreadIndex>);
+
+/// `(device, inode)` of an open archive file.
+type FileIdentity = (u64, u64);
+
+fn identity_of(file: &ArchiveFile) -> Result<FileIdentity, ArchiveError> {
+    file.identity()
+        .map_err(|e| ArchiveError::Io(format!("archive stat failed: {e}")))
+}
+
+/// A cache slot: the reader and the identity of the file it reads.
+#[derive(Clone)]
+struct Slot {
+    archive: CachedArchive,
+    identity: FileIdentity,
+}
 
 const HITS: &str = "folio_zip_lru_hits_total";
 const MISSES: &str = "folio_zip_lru_misses_total";
@@ -53,21 +84,24 @@ pub enum CachedReader {
 }
 
 impl CachedReader {
-    /// Open the reader matching `path`'s container (sniffed), falling back
-    /// to its extension (case-insensitive) when the bytes carry no magic.
-    pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
+    /// Open the reader matching the file's container (sniffed through the
+    /// handle), falling back to the display path's extension
+    /// (case-insensitive) when the bytes carry no magic. Reads only
+    /// through `src`.
+    pub fn open(src: ArchiveFile, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
         use archive::container::{Container, detect_container};
-        let ext = path
+        let ext = src
+            .display_path()
             .extension()
             .and_then(|s| s.to_str())
             .map(str::to_ascii_lowercase);
-        let format = match detect_container(path)? {
+        let format = match detect_container(&src)? {
             Container::Unknown => ext.clone().unwrap_or_default(),
             known => known.comic_ext().unwrap_or_default().to_owned(),
         };
         match format.as_str() {
-            "cbz" => Cbz::open(path, limits).map(Self::Cbz),
-            "cbt" => Cbt::open(path, limits).map(Self::Cbt),
+            "cbz" => Cbz::open_file(src, limits).map(Self::Cbz),
+            "cbt" => Cbt::open_file(src, limits).map(Self::Cbt),
             other => Err(ArchiveError::Malformed(format!(
                 "no page reader for archive format: {other:?} (extension {ext:?})"
             ))),
@@ -169,7 +203,7 @@ impl ComicArchive for CachedReader {
 }
 
 pub struct ZipLru {
-    inner: Mutex<LruCache<String, CachedArchive>>,
+    inner: Mutex<LruCache<String, Slot>>,
     /// Post-audit T3.3: one gate per issue being opened. Concurrent misses
     /// for the same issue (a page strip's N parallel requests, a thumb job
     /// racing the reader) wait on the gate and reuse the winner's handle
@@ -204,20 +238,22 @@ impl ZipLru {
         me
     }
 
-    /// Acquire a handle to the issue's reader, opening (and inserting) on
-    /// miss. The returned `Arc<Mutex<CachedReader>>` lives at least as long
-    /// as the caller holds it, even if the LRU evicts it in the meantime.
+    /// Acquire a handle to the issue's reader, building it from `file` (the
+    /// archive the caller opened through the no-follow check) on a miss, or
+    /// when the cached reader was opened from a different file. The
+    /// returned `Arc<Mutex<CachedReader>>` lives at least as long as the
+    /// caller holds it, even if the LRU evicts it in the meantime.
     ///
-    /// Async since post-audit T3.3: a miss opens and indexes the archive
-    /// on the blocking pool (it reads the central directory and every
-    /// stored entry's local header — milliseconds to hundreds of ms on a
-    /// cold NAS), and concurrent misses for one issue open it once.
+    /// Async since post-audit T3.3: a miss indexes the archive on the
+    /// blocking pool (it reads the central directory and every stored
+    /// entry's local header — milliseconds to hundreds of ms on a cold
+    /// NAS), and concurrent misses for one issue open it once.
     pub async fn get_or_open(
         &self,
         issue_id: &str,
-        path: &Path,
+        file: ArchiveFile,
     ) -> Result<Arc<Mutex<CachedReader>>, ArchiveError> {
-        Ok(self.get_or_open_entry(issue_id, path).await?.0.0)
+        Ok(self.get_or_open_entry(issue_id, file).await?.0.0)
     }
 
     /// Archives opened from disk so far (not served from the cache).
@@ -231,9 +267,9 @@ impl ZipLru {
     pub async fn get_or_open_indexed(
         &self,
         issue_id: &str,
-        path: &Path,
+        file: ArchiveFile,
     ) -> Result<CachedArchive, ArchiveError> {
-        Ok(self.get_or_open_entry(issue_id, path).await?.0)
+        Ok(self.get_or_open_entry(issue_id, file).await?.0)
     }
 
     /// Like [`Self::get_or_open_indexed`], plus whether this call opened
@@ -243,27 +279,40 @@ impl ZipLru {
     pub async fn get_or_open_indexed_tracked(
         &self,
         issue_id: &str,
-        path: &Path,
+        file: ArchiveFile,
     ) -> Result<(CachedArchive, bool), ArchiveError> {
-        self.get_or_open_entry(issue_id, path).await
+        self.get_or_open_entry(issue_id, file).await
     }
 
-    /// Cache fast path: a hit bumps the LRU and the `HITS` counter.
-    fn cached(&self, issue_id: &str) -> Option<CachedArchive> {
+    /// Cache fast path: a hit bumps the LRU and the `HITS` counter. A
+    /// cached reader opened from a different file than `identity` is not a
+    /// hit: the slot is dropped so the caller's handle replaces it.
+    fn cached(&self, issue_id: &str, identity: FileIdentity) -> Option<CachedArchive> {
         let mut cache = self.inner.lock().unwrap();
-        let hit = cache.get(issue_id).cloned();
-        if hit.is_some() {
-            metrics::counter!(HITS).increment(1);
+        match cache.get(issue_id) {
+            Some(slot) if slot.identity == identity => {
+                metrics::counter!(HITS).increment(1);
+                Some(slot.archive.clone())
+            }
+            Some(_) => {
+                cache.pop(issue_id);
+                metrics::gauge!(OPEN_FDS).set(cache.len() as f64);
+                None
+            }
+            None => None,
         }
-        hit
     }
 
+    /// The one lookup path. Revalidation seam: a hit is checked against the
+    /// caller's freshly opened handle by device and inode only; a size and
+    /// modification-time comparison would also belong here.
     async fn get_or_open_entry(
         &self,
         issue_id: &str,
-        path: &Path,
+        file: ArchiveFile,
     ) -> Result<(CachedArchive, bool), ArchiveError> {
-        if let Some(existing) = self.cached(issue_id) {
+        let identity = identity_of(&file)?;
+        if let Some(existing) = self.cached(issue_id, identity) {
             return Ok((existing, false));
         }
 
@@ -281,10 +330,10 @@ impl ZipLru {
         };
         let result = {
             let _held = gate.lock().await;
-            if let Some(existing) = self.cached(issue_id) {
+            if let Some(existing) = self.cached(issue_id, identity) {
                 Ok((existing, false))
             } else {
-                self.open_and_insert(issue_id, path).await
+                self.open_and_insert(issue_id, file, identity).await
             }
         };
         // Drop the gate once no open is in flight for this issue. Another
@@ -306,15 +355,15 @@ impl ZipLru {
     async fn open_and_insert(
         &self,
         issue_id: &str,
-        path: &Path,
+        file: ArchiveFile,
+        identity: FileIdentity,
     ) -> Result<(CachedArchive, bool), ArchiveError> {
         let limits = self.limits;
-        let path = path.to_path_buf();
         // CBZ open parses the central directory, CBT walks the tar headers;
         // building the pread index reads each Stored entry's local header
         // for CBZ. All synchronous file I/O — keep it off the async runtime.
         let entry: CachedArchive = tokio::task::spawn_blocking(move || {
-            let reader = CachedReader::open(&path, limits)?;
+            let reader = CachedReader::open(file, limits)?;
             let pread = Arc::new(reader.build_pread_index());
             Ok::<_, ArchiveError>((Arc::new(Mutex::new(reader)), pread))
         })
@@ -323,7 +372,13 @@ impl ZipLru {
         self.opens.fetch_add(1, Ordering::Relaxed);
 
         let mut cache = self.inner.lock().unwrap();
-        let evicted = cache.push(issue_id.to_owned(), entry.clone());
+        let evicted = cache.push(
+            issue_id.to_owned(),
+            Slot {
+                archive: entry.clone(),
+                identity,
+            },
+        );
         if evicted.is_some() {
             metrics::counter!(EVICTIONS).increment(1);
         }
@@ -375,9 +430,9 @@ mod tests {
         let mut tasks = Vec::new();
         for _ in 0..16 {
             let lru = Arc::clone(&lru);
-            let path = path.clone();
+            let file = ArchiveFile::open_path_unchecked(&path).unwrap();
             tasks.push(tokio::spawn(async move {
-                lru.get_or_open_indexed_tracked("issue-a", &path).await
+                lru.get_or_open_indexed_tracked("issue-a", file).await
             }));
         }
         let mut opened_flags = 0;
@@ -405,22 +460,61 @@ mod tests {
         write_cbz(&a, 2);
         write_cbz(&b, 2);
         let lru = ZipLru::new(8, ArchiveLimits::default());
-        lru.get_or_open("a", &a).await.unwrap();
-        lru.get_or_open("b", &b).await.unwrap();
-        lru.get_or_open("a", &a).await.unwrap();
+        let open = |p: &Path| ArchiveFile::open_path_unchecked(p).unwrap();
+        lru.get_or_open("a", open(&a)).await.unwrap();
+        lru.get_or_open("b", open(&b)).await.unwrap();
+        lru.get_or_open("a", open(&a)).await.unwrap();
         assert_eq!(lru.opens(), 2);
         lru.invalidate("a");
-        lru.get_or_open("a", &a).await.unwrap();
+        lru.get_or_open("a", open(&a)).await.unwrap();
         assert_eq!(lru.opens(), 3);
     }
 
     #[tokio::test]
     async fn a_failed_open_releases_the_gate() {
         let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("missing.cbz");
+        let junk = dir.path().join("junk.cbz");
+        std::fs::write(&junk, b"not an archive").unwrap();
         let lru = ZipLru::new(8, ArchiveLimits::default());
-        assert!(lru.get_or_open("x", &missing).await.is_err());
+        let file = ArchiveFile::open_path_unchecked(&junk).unwrap();
+        assert!(lru.get_or_open("x", file).await.is_err());
         assert!(lru.in_flight.lock().unwrap().is_empty());
         assert_eq!(lru.opens(), 0);
+    }
+
+    /// A cached reader serves only the file it was opened from: when the
+    /// issue's path now names a different file, the caller's fresh handle
+    /// replaces the entry and its pages are what is read.
+    #[tokio::test]
+    async fn a_hit_for_a_different_file_rebuilds_from_the_callers_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.cbz");
+        write_cbz(&path, 2);
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        let first = lru
+            .get_or_open("a", ArchiveFile::open_path_unchecked(&path).unwrap())
+            .await
+            .unwrap();
+        // Same file again: a hit.
+        let again = lru
+            .get_or_open("a", ArchiveFile::open_path_unchecked(&path).unwrap())
+            .await
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+        assert_eq!(lru.opens(), 1);
+
+        // The name now holds a different file (5 pages).
+        let replacement = dir.path().join("b.cbz");
+        write_cbz(&replacement, 5);
+        std::fs::rename(&replacement, &path).unwrap();
+        let swapped = lru
+            .get_or_open("a", ArchiveFile::open_path_unchecked(&path).unwrap())
+            .await
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first, &swapped), "not the stale reader");
+        assert_eq!(lru.opens(), 2);
+        assert_eq!(swapped.lock().unwrap().pages().len(), 5);
+        // The old reader still reads the file it was opened from.
+        assert_eq!(first.lock().unwrap().pages().len(), 2);
     }
 }

@@ -137,9 +137,17 @@ pub async fn stream(
     // than refactored into a shared helper because page_bytes also wires
     // up Cache-Control and If-Range against the `CurrentUser` etag, both
     // of which don't apply here verbatim.
+    // The reader is built from (or must match) the handle just opened.
+    let archive_file = match file.try_clone() {
+        Ok(dup) => archive::ArchiveFile::new(dup, &issue_row.file_path),
+        Err(e) => {
+            tracing::warn!(error = %e, issue_id = %issue_row.id, "pse: handle dup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");
+        }
+    };
     let (arc, pread) = match app
         .zip_lru
-        .get_or_open_indexed_tracked(&issue_row.id, std::path::Path::new(&issue_row.file_path))
+        .get_or_open_indexed_tracked(&issue_row.id, archive_file)
         .await
     {
         Ok((pair, opened)) => {

@@ -327,6 +327,8 @@ const GONE3: [StatusCode; 3] = [StatusCode::NOT_FOUND; 3];
 struct ServedLibrary {
     _tmp: tempfile::TempDir,
     tmp: PathBuf,
+    lib_id: Uuid,
+    root: PathBuf,
     series_dir: PathBuf,
     archive: PathBuf,
     issue_id: String,
@@ -342,7 +344,10 @@ async fn served_library(app: &TestApp) -> ServedLibrary {
     std::fs::create_dir_all(&series_dir).unwrap();
     let archive = series_dir.join("Saga 001.cbz");
     write_cbz(&archive, "Saga", 1);
-    let lib_id = LibrarySeed::new(&root).insert(&app.state().db).await;
+    let lib_id = LibrarySeed::new(&root)
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
     scanner::scan_library(&app.state(), lib_id).await.unwrap();
     let issue_id = issue::Entity::find()
         .filter(issue::Column::LibraryId.eq(lib_id))
@@ -358,6 +363,8 @@ async fn served_library(app: &TestApp) -> ServedLibrary {
     ServedLibrary {
         _tmp: tmp_dir,
         tmp,
+        lib_id,
+        root,
         series_dir,
         archive,
         issue_id,
@@ -496,8 +503,8 @@ async fn get_status(app: &TestApp, user: &User, uri: String) -> StatusCode {
 }
 
 /// The inline thumbnail, the OCR route and the `?w=` page variant refuse
-/// an archive replaced by a link (each checks the path before the archive
-/// reader opens it).
+/// an archive replaced by a link (each opens the archive through the
+/// no-follow opener and hands the reader that handle).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn thumbnail_ocr_and_variant_refuse_a_link() {
     let app = TestApp::spawn().await;
@@ -750,4 +757,310 @@ async fn series_rescan_refuses_a_linked_folder() {
     assert!(res.is_err(), "linked folder refused");
     assert_eq!(live_series_folders(&app, lib_id).await, vec![s(&saga)]);
     assert_eq!(live_issue_paths(&app, lib_id).await.len(), 1);
+}
+
+// ───────── handles, not names (reads) ─────────
+
+/// A CBZ whose one page is a real, decodable PNG (so a reader that
+/// followed a link to it would succeed: decode, thumbnail, hash).
+fn write_decodable_cbz(path: &Path) {
+    let img = image::RgbaImage::from_pixel(16, 24, image::Rgba([10, 120, 200, 255]));
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zw.start_file("page-001.png", opts).unwrap();
+    zw.write_all(&png).unwrap();
+    zw.finish().unwrap();
+}
+
+/// Swap the served archive for a link to a decodable archive outside the
+/// library.
+fn swap_for_link(l: &ServedLibrary) {
+    let other = l.tmp.join("other.cbz");
+    write_decodable_cbz(&other);
+    std::fs::rename(&l.archive, l.tmp.join("kept.cbz")).unwrap();
+    symlink(&other, &l.archive).unwrap();
+}
+
+/// The background and helper readers refuse an archive replaced by a
+/// link after its row exists: thumbnail generation (post-scan job), deep
+/// validation, cover hashing (phash backfill), page-hash capture and the
+/// whole-archive page hash. Each would read the link's (decodable) target
+/// if it opened the stored path by name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn background_readers_refuse_an_archive_swapped_for_a_link() {
+    use sea_orm::ActiveModelTrait;
+    use server::jobs::post_scan::{ThumbsJob, handle_thumbs};
+    use server::library::thumbnails;
+    let app = TestApp::spawn().await;
+    let l = served_library(&app).await;
+    let state = app.state();
+    let row = issue::Entity::find_by_id(l.issue_id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        server::reading::page_hash::capture(&state, &row, 0)
+            .await
+            .is_some(),
+        "the real archive hashes"
+    );
+    swap_for_link(&l);
+
+    // Page-hash capture (anchors) and the whole-archive page hash.
+    assert!(
+        server::reading::page_hash::capture(&state, &row, 0)
+            .await
+            .is_none()
+    );
+    assert!(
+        server::reading::page_hash::hash_all_pages(&state, &l.root, l.archive.clone())
+            .await
+            .is_none()
+    );
+
+    // Thumbnail generation.
+    thumbnails::wipe_issue_thumbs(&state.cfg().data_path, &l.issue_id);
+    handle_thumbs(
+        ThumbsJob::cover_and_strip(l.issue_id.clone()),
+        apalis::prelude::Data::new(state.clone()),
+    )
+    .await
+    .unwrap();
+    let after = issue::Entity::find_by_id(l.issue_id.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let err = after.thumbnails_error.expect("the job failed");
+    assert!(err.contains("symbolic link"), "{err}");
+    assert!(
+        !thumbnails::cover_path(
+            &state.cfg().data_path,
+            &l.issue_id,
+            thumbnails::ThumbFormat::Webp
+        )
+        .exists()
+    );
+
+    // Deep validation counts it as unopenable.
+    let stats = server::library::deep_validate::run(&state, l.lib_id)
+        .await
+        .unwrap();
+    assert_eq!(stats.issues_probed, 0, "{stats:?}");
+    assert_eq!(stats.issues_unopenable, 1, "{stats:?}");
+
+    // Cover hashing skips it.
+    entity::issue_cover::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        issue_id: Set(l.issue_id.clone()),
+        kind: Set(entity::issue_cover::IssueCoverKind::Primary),
+        ordinal: Set(0),
+        source_provider: Set(Some("archive_extracted".into())),
+        source_external_id: Set(None),
+        source_url: Set(None),
+        variant_label: Set(None),
+        variant_artist_person_id: Set(None),
+        local_path: Set(String::new()),
+        width: Set(None),
+        height: Set(None),
+        phash: Set(None),
+        dhash: Set(None),
+        ahash: Set(None),
+        fetched_at: Set(chrono::Utc::now().fixed_offset()),
+        is_active: Set(false),
+    }
+    .insert(&state.db)
+    .await
+    .unwrap();
+    let outcome = server::metadata::phash::run_backfill(
+        &state.db,
+        state.cfg().archive_limits(),
+        server::metadata::phash::BACKFILL_BATCH_CAP as u64,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.hashed, 0, "{outcome:?}");
+    assert_eq!(outcome.skipped, 1, "{outcome:?}");
+}
+
+/// A CBZ with a junk entry ahead of the page, so its page sits at a
+/// different offset than [`write_cbz`]'s.
+fn write_shifted_cbz(path: &Path, marker: u32) -> Vec<u8> {
+    let mut page = PNG.to_vec();
+    page.extend_from_slice(&marker.to_le_bytes());
+    page.extend(std::iter::repeat_n(7u8, 300));
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    zw.start_file("aaa-notes.txt", opts).unwrap();
+    zw.write_all(&[b'n'; 500]).unwrap();
+    zw.start_file("page-001.png", opts).unwrap();
+    zw.write_all(&page).unwrap();
+    zw.finish().unwrap();
+    page
+}
+
+async fn page_bytes(app: &TestApp, user: &User, issue_id: &str) -> (StatusCode, Vec<u8>) {
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{issue_id}/pages/0"))
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={}", user.session),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (status, body.to_vec())
+}
+
+/// The archive is replaced by a different regular file (same path, new
+/// inode, different layout) while its reader is cached: the next page
+/// request reads the new file whole, never the cached reader's offsets
+/// applied to the new file or the old file's bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_file_replaced_by_another_is_read_consistently() {
+    let app = TestApp::spawn().await;
+    let l = served_library(&app).await;
+    let (status, first) = page_bytes(&app, &l.reader, &l.issue_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(first.starts_with(PNG));
+
+    let replacement = l.series_dir.join("incoming.tmp");
+    let new_page = write_shifted_cbz(&replacement, 77);
+    std::fs::rename(&replacement, &l.archive).unwrap();
+    let (status, second) = page_bytes(&app, &l.reader, &l.issue_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second, new_page, "the replacement's page, read whole");
+}
+
+// ───────── handles, not names (writes) ─────────
+
+fn edit_job(issue_id: &str) -> server::jobs::archive_edit::ArchiveEditJob {
+    server::jobs::archive_edit::ArchiveEditJob {
+        issue_id: issue_id.to_owned(),
+        ops: vec![server::jobs::archive_edit::PageOp::Remove { ordinal: 0 }],
+        bulk_op: None,
+        actor_id: None,
+        actor_ip: None,
+        actor_ua: None,
+        attempt: 0,
+    }
+}
+
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+/// The page editor (single issue and each issue of a bulk edit run through
+/// `edit_one_issue`) refuses an archive that is a link: nothing is written,
+/// the link stays and its target is untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_editor_refuses_an_archive_replaced_by_a_link() {
+    let app = TestApp::spawn().await;
+    let l = served_library(&app).await;
+    swap_for_link(&l);
+    let other = l.tmp.join("other.cbz");
+    let other_bytes = std::fs::read(&other).unwrap();
+    let res =
+        server::jobs::archive_edit::edit_one_issue(&app.state(), &edit_job(&l.issue_id)).await;
+    let err = res.err().expect("refused");
+    assert!(err.to_string().contains("symbolic link"), "{err}");
+    assert_eq!(std::fs::read(&other).unwrap(), other_bytes);
+    assert!(
+        std::fs::symlink_metadata(&l.archive)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        names_in(&l.series_dir),
+        ["Saga 001.cbz"],
+        "no staging file, no .bak"
+    );
+}
+
+/// The page editor refuses when the archive's folder was replaced by a
+/// link to a folder outside the library: nothing is created outside.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_editor_refuses_a_folder_replaced_by_a_link() {
+    let app = TestApp::spawn().await;
+    let l = served_library(&app).await;
+    let outside = l.tmp.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    write_decodable_cbz(&outside.join("Saga 001.cbz"));
+    let outside_bytes = std::fs::read(outside.join("Saga 001.cbz")).unwrap();
+    std::fs::rename(&l.series_dir, l.tmp.join("real-series")).unwrap();
+    symlink(&outside, &l.series_dir).unwrap();
+    let res =
+        server::jobs::archive_edit::edit_one_issue(&app.state(), &edit_job(&l.issue_id)).await;
+    let err = res.err().expect("refused");
+    assert!(err.to_string().contains("symbolic link"), "{err}");
+    assert_eq!(
+        names_in(&outside),
+        ["Saga 001.cbz"],
+        "nothing created outside"
+    );
+    assert_eq!(
+        std::fs::read(outside.join("Saga 001.cbz")).unwrap(),
+        outside_bytes
+    );
+}
+
+/// Restoring from `.bak` through the API refuses a backup that is a link
+/// (answered as "no backup") and leaves the archive and the link's target
+/// alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_refuses_a_backup_that_is_a_link() {
+    let app = TestApp::spawn().await;
+    let l = served_library(&app).await;
+    let before = std::fs::read(&l.archive).unwrap();
+    let victim = l.tmp.join("victim.cbz");
+    write_decodable_cbz(&victim);
+    let victim_bytes = std::fs::read(&victim).unwrap();
+    symlink(&victim, l.series_dir.join("Saga 001.cbz.bak")).unwrap();
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/issues/{}/archive/restore", l.issue_id))
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={}; __Host-comic_csrf={}",
+                        l.admin.session, l.admin.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &l.admin.csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(std::fs::read(&l.archive).unwrap(), before);
+    assert_eq!(std::fs::read(&victim).unwrap(), victim_bytes);
 }

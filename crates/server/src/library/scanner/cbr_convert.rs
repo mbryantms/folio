@@ -35,10 +35,17 @@
 //! Detection itself lives in [`archive::container`] so this converter, the
 //! archive reader dispatch and the page-server cache can never disagree.
 //!
+//! Every file operation goes through the library root's no-follow walk
+//! (`library::no_follow`): the source is read through the handle
+//! [`archive_rewrite::convert_atomic`] opens, the move-into-place and the
+//! swap are relative to the folder handle, and a source or destination
+//! that is a symbolic link is refused (`RewriteError::Refused`).
+//!
 //! The RAR path mirrors the page editor's CBR branch
 //! ([`crate::jobs::archive_edit::edit_one_issue`]) minus the page ops.
 
 use crate::archive_rewrite::{self, RewriteError};
+use crate::library::no_follow::{EntryKind, LibraryRoot};
 use archive::cb7::Cb7;
 use archive::cbr::Cbr;
 use archive::comic_archive::ComicArchive;
@@ -65,51 +72,68 @@ pub enum CbrConvertError {
 /// path on success. A ZIP-disguised-as-CBR is renamed in place; a real RAR
 /// (or 7z) is decompressed and repacked (keeping the original as
 /// `<src>.bak`).
-pub fn convert_cbr_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, CbrConvertError> {
-    convert_to_cbz(src, limits)
+pub fn convert_cbr_to_cbz(
+    root: &LibraryRoot,
+    src: &Path,
+    limits: ArchiveLimits,
+) -> Result<PathBuf, CbrConvertError> {
+    convert_to_cbz(root, src, limits)
 }
 
 /// Convert `src` (a `.cb7`) into a sibling `.cbz` (WP-6.5). Same contract as
 /// [`convert_cbr_to_cbz`]; the original is kept as `<src>.bak`
 /// (`foo.cb7.bak`) unless it was a renamed ZIP.
-pub fn convert_cb7_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, CbrConvertError> {
-    convert_to_cbz(src, limits)
+pub fn convert_cb7_to_cbz(
+    root: &LibraryRoot,
+    src: &Path,
+    limits: ArchiveLimits,
+) -> Result<PathBuf, CbrConvertError> {
+    convert_to_cbz(root, src, limits)
 }
 
-fn convert_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, CbrConvertError> {
+fn convert_to_cbz(
+    root: &LibraryRoot,
+    src: &Path,
+    limits: ArchiveLimits,
+) -> Result<PathBuf, CbrConvertError> {
     let dst = src.with_extension("cbz");
     // A RAR / 7z already *named* `.cbz` (the extension lied) converts in
     // place: the destination is the source path itself, so the twin check
     // doesn't apply and `convert_atomic` parks the original at
     // `<name>.cbz.bak` before the fresh ZIP takes its name.
     let in_place = dst == src;
-    if !in_place && dst.exists() {
+    // Sniff through a handle from the no-follow walk (a link is refused).
+    let (dir, dst_name) = root.open_parent(&dst).map_err(RewriteError::from)?;
+    if !in_place && dir.kind(&dst_name).map_err(RewriteError::Io)? != EntryKind::Missing {
         return Err(CbrConvertError::DestinationExists(dst));
     }
-    match detect_container(src).map_err(RewriteError::Io)? {
+    let source = root.open_archive(src).map_err(RewriteError::from)?;
+    match detect_container(&source).map_err(RewriteError::Io)? {
         Container::Zip => {
             // Already a valid CBZ wearing another extension — move it into
             // place byte-for-byte. The rename is atomic on the same
             // directory/filesystem, so a crash can't leave a half-file. No
             // `.bak`: the identical bytes now live at `dst`, nothing to roll
             // back to. (In place there is nothing to do at all.)
-            if !in_place {
-                std::fs::rename(src, &dst).map_err(RewriteError::Io)?;
+            if !in_place && !archive_rewrite::rename_into_place(root, src, &dst)? {
+                return Err(CbrConvertError::DestinationExists(dst));
             }
         }
         Container::Rar => {
-            archive_rewrite::convert_atomic(src, &dst, |tmp| {
-                let mut cbr = Cbr::open(src, limits).map_err(RewriteError::ArchiveErr)?;
-                repack(&mut cbr, tmp, limits)
+            archive_rewrite::convert_atomic(root, src, &dst, |io| {
+                let mut cbr =
+                    Cbr::open_file(io.source()?, limits).map_err(RewriteError::ArchiveErr)?;
+                repack(&mut cbr, io.staging_file()?, limits)
             })?;
         }
         Container::SevenZ => {
-            archive_rewrite::convert_atomic(src, &dst, |tmp| {
-                let mut cb7 = Cb7::open(src, limits).map_err(RewriteError::ArchiveErr)?;
+            archive_rewrite::convert_atomic(root, src, &dst, |io| {
+                let mut cb7 =
+                    Cb7::open_file(io.source()?, limits).map_err(RewriteError::ArchiveErr)?;
                 // One decode pass for the whole archive; the reads below are
                 // then served from memory (solid 7z can't seek per entry).
                 cb7.preload_all().map_err(RewriteError::ArchiveErr)?;
-                repack(&mut cb7, tmp, limits)
+                repack(&mut cb7, io.staging_file()?, limits)
             })?;
         }
         // A tar has its own reader and writer (`.cbt`); it is not something
@@ -123,7 +147,7 @@ fn convert_to_cbz(src: &Path, limits: ArchiveLimits) -> Result<PathBuf, CbrConve
 /// entries the rewrite policy keeps, and write them as a CBZ at `tmp`.
 fn repack(
     src: &mut dyn ComicArchive,
-    tmp: &Path,
+    tmp: std::fs::File,
     limits: ArchiveLimits,
 ) -> Result<(), RewriteError> {
     let page_names: Vec<String> = src.pages().iter().map(|e| e.name.clone()).collect();
@@ -193,11 +217,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let src = cbr_fixture(tmp.path(), "issue.cbz");
         let original = std::fs::read(&src).unwrap();
-        assert!(matches!(detect_container(&src).unwrap(), Container::Rar));
+        assert!(matches!(
+            archive::container::detect_container_path_unchecked(&src).unwrap(),
+            Container::Rar
+        ));
 
-        let dst = convert_cbr_to_cbz(&src, ArchiveLimits::default()).unwrap();
+        let dst = convert_cbr_to_cbz(
+            &LibraryRoot::resolve(tmp.path()),
+            &src,
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         assert_eq!(dst, src, "in-place conversion keeps the path");
-        assert!(matches!(detect_container(&dst).unwrap(), Container::Zip));
+        assert!(matches!(
+            archive::container::detect_container_path_unchecked(&dst).unwrap(),
+            Container::Zip
+        ));
         let bak = tmp.path().join("issue.cbz.bak");
         assert_eq!(
             std::fs::read(&bak).unwrap(),
@@ -205,7 +240,7 @@ mod tests {
             "original parked as .bak"
         );
 
-        let cbz = archive::cbz::Cbz::open(&dst, ArchiveLimits::default()).unwrap();
+        let cbz = archive::cbz::Cbz::open_path_unchecked(&dst, ArchiveLimits::default()).unwrap();
         assert_eq!(cbz.pages().len(), 3);
     }
 
@@ -225,7 +260,12 @@ mod tests {
             zw.finish().unwrap();
         }
         let original = std::fs::read(&src).unwrap();
-        let dst = convert_cbr_to_cbz(&src, ArchiveLimits::default()).unwrap();
+        let dst = convert_cbr_to_cbz(
+            &LibraryRoot::resolve(tmp.path()),
+            &src,
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         assert_eq!(dst, src);
         assert_eq!(std::fs::read(&dst).unwrap(), original);
         assert!(!tmp.path().join("issue.cbz.bak").exists());
@@ -248,7 +288,12 @@ mod tests {
         }
         let original = std::fs::read(&cbr).unwrap();
 
-        let dst = convert_cbr_to_cbz(&cbr, ArchiveLimits::default()).unwrap();
+        let dst = convert_cbr_to_cbz(
+            &LibraryRoot::resolve(tmp.path()),
+            &cbr,
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         assert_eq!(dst, tmp.path().join("issue.cbz"));
         assert!(dst.exists(), "renamed .cbz exists");
         assert!(!cbr.exists(), "original .cbr renamed away");
@@ -257,7 +302,7 @@ mod tests {
         // Byte-for-byte identical.
         assert_eq!(std::fs::read(&dst).unwrap(), original);
         // And it's a readable CBZ.
-        let cbz = archive::cbz::Cbz::open(&dst, ArchiveLimits::default()).unwrap();
+        let cbz = archive::cbz::Cbz::open_path_unchecked(&dst, ArchiveLimits::default()).unwrap();
         assert_eq!(cbz.pages().len(), 1);
     }
 
@@ -267,7 +312,11 @@ mod tests {
         let cbr = write(tmp.path(), "dup.cbr", b"PK\x03\x04");
         std::fs::write(tmp.path().join("dup.cbz"), b"existing").unwrap();
         assert!(matches!(
-            convert_cbr_to_cbz(&cbr, ArchiveLimits::default()),
+            convert_cbr_to_cbz(
+                &LibraryRoot::resolve(tmp.path()),
+                &cbr,
+                ArchiveLimits::default()
+            ),
             Err(CbrConvertError::DestinationExists(_))
         ));
         // Original left untouched.
@@ -279,7 +328,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cbr = write(tmp.path(), "junk.cbr", b"\x00\x01\x02\x03not-an-archive");
         assert!(matches!(
-            convert_cbr_to_cbz(&cbr, ArchiveLimits::default()),
+            convert_cbr_to_cbz(
+                &LibraryRoot::resolve(tmp.path()),
+                &cbr,
+                ArchiveLimits::default()
+            ),
             Err(CbrConvertError::UnknownContainer)
         ));
     }
@@ -301,7 +354,8 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             let src = cb7_fixture(tmp.path(), fixture, "issue.cb7");
             let original = std::fs::read(&src).unwrap();
-            let mut expected = archive::cb7::Cb7::open(&src, ArchiveLimits::default()).unwrap();
+            let mut expected =
+                archive::cb7::Cb7::open_path_unchecked(&src, ArchiveLimits::default()).unwrap();
             let want_pages: Vec<Vec<u8>> = ["page-001.jpg", "page-002.jpg", "page-003.jpg"]
                 .iter()
                 .map(|n| expected.read_entry_bytes(n).unwrap())
@@ -309,14 +363,20 @@ mod tests {
             let want_notes = expected.read_entry_bytes("notes.txt").unwrap();
             let want_xml = expected.read_entry_bytes("ComicInfo.xml").unwrap();
 
-            let dst = convert_cb7_to_cbz(&src, ArchiveLimits::default()).expect(fixture);
+            let dst = convert_cb7_to_cbz(
+                &LibraryRoot::resolve(tmp.path()),
+                &src,
+                ArchiveLimits::default(),
+            )
+            .expect(fixture);
             assert_eq!(dst, tmp.path().join("issue.cbz"));
             assert!(!src.exists(), "{fixture}: original moved away");
             // The original survives byte-for-byte as the single `.bak` slot.
             let bak = tmp.path().join("issue.cb7.bak");
             assert_eq!(std::fs::read(&bak).unwrap(), original, "{fixture}: .bak");
 
-            let mut cbz = archive::cbz::Cbz::open(&dst, ArchiveLimits::default()).unwrap();
+            let mut cbz =
+                archive::cbz::Cbz::open_path_unchecked(&dst, ArchiveLimits::default()).unwrap();
             let pages: Vec<String> = cbz.pages().iter().map(|e| e.name.clone()).collect();
             assert_eq!(pages.len(), 3, "{fixture}: page count");
             for (name, want) in pages.iter().zip(&want_pages) {
@@ -337,7 +397,12 @@ mod tests {
     fn encrypted_cb7_conversion_fails_and_leaves_original() {
         let tmp = tempfile::tempdir().unwrap();
         let src = cb7_fixture(tmp.path(), "synthetic-3page-encrypted.cb7", "locked.cb7");
-        let err = convert_cb7_to_cbz(&src, ArchiveLimits::default()).unwrap_err();
+        let err = convert_cb7_to_cbz(
+            &LibraryRoot::resolve(tmp.path()),
+            &src,
+            ArchiveLimits::default(),
+        )
+        .unwrap_err();
         assert!(
             matches!(
                 err,
@@ -366,8 +431,58 @@ mod tests {
             zw.finish().unwrap();
         }
         let original = std::fs::read(&cb7).unwrap();
-        let dst = convert_cb7_to_cbz(&cb7, ArchiveLimits::default()).unwrap();
+        let dst = convert_cb7_to_cbz(
+            &LibraryRoot::resolve(tmp.path()),
+            &cb7,
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         assert_eq!(std::fs::read(&dst).unwrap(), original);
         assert!(!tmp.path().join("issue.cb7.bak").exists());
+    }
+
+    /// A source that is a link, or one whose folder is a link, is refused
+    /// and nothing is written; the link's target is untouched.
+    #[test]
+    fn conversion_refuses_a_linked_source_or_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lib = tmp.path().join("library");
+        let series = lib.join("Series");
+        std::fs::create_dir_all(&series).unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let victim = cbr_fixture(&outside, "victim.cbr");
+        let victim_bytes = std::fs::read(&victim).unwrap();
+        let root = LibraryRoot::resolve(&lib);
+
+        let link = series.join("issue.cbr");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        let err = convert_cbr_to_cbz(&root, &link, ArchiveLimits::default()).unwrap_err();
+        assert!(
+            matches!(err, CbrConvertError::Rewrite(RewriteError::Refused(_))),
+            "{err:?}"
+        );
+        assert!(!series.join("issue.cbz").exists());
+        assert!(!series.join("issue.cbr.bak").exists());
+
+        let linked_folder = lib.join("Linked");
+        std::os::unix::fs::symlink(&outside, &linked_folder).unwrap();
+        let err = convert_cbr_to_cbz(
+            &root,
+            &linked_folder.join("victim.cbr"),
+            ArchiveLimits::default(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, CbrConvertError::Rewrite(RewriteError::Refused(_))),
+            "{err:?}"
+        );
+        assert_eq!(std::fs::read(&victim).unwrap(), victim_bytes);
+        let mut names: Vec<_> = std::fs::read_dir(&outside)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["victim.cbr"], "nothing created outside the root");
     }
 }

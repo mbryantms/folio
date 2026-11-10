@@ -2654,6 +2654,7 @@ async fn process_planned_folder(
         // threads (PERF-7).
         let mut hint = {
             let path = archives[0].clone();
+            let root = PathBuf::from(&lib.root_path);
             let limits = state.cfg().archive_limits();
             let opts = process::filename_opts(lib);
             let _permit = state
@@ -2662,9 +2663,11 @@ async fn process_planned_folder(
                 .acquire_owned()
                 .await
                 .ok();
-            tokio::task::spawn_blocking(move || process::peek_identity_hint(&path, limits, opts))
-                .await
-                .map_err(|e| anyhow::anyhow!("identity peek task failed: {e}"))?
+            tokio::task::spawn_blocking(move || {
+                process::peek_identity_hint(&root, &path, limits, opts)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("identity peek task failed: {e}"))?
         };
 
         // Folder-leaf `V<N>` fallback. Filename inference rejects

@@ -43,14 +43,14 @@ pub fn hash_page(reader: &mut CachedReader, index: usize) -> Result<Option<Strin
     Ok(Some(hasher.finalize().to_hex().to_string()))
 }
 
-/// Hash every page of the archive at `path`, in page order. Opens a
+/// Hash every page of the open archive `src`, in page order. Builds a
 /// fresh reader (never the cached one) so a rescan always sees the bytes
 /// currently on disk. Blocking; call from `spawn_blocking`.
 pub fn hash_all_pages_blocking(
-    path: &Path,
+    src: archive::ArchiveFile,
     limits: ArchiveLimits,
 ) -> Result<Vec<String>, ArchiveError> {
-    let mut reader = CachedReader::open(path, limits)?;
+    let mut reader = CachedReader::open(src, limits)?;
     let count = reader.pages().len();
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
@@ -65,7 +65,15 @@ pub fn hash_all_pages_blocking(
 /// Async wrapper over [`hash_all_pages_blocking`] that takes an
 /// `archive_work_semaphore` permit like every other archive-wide read.
 /// `None` (logged) on any failure.
-pub async fn hash_all_pages(state: &AppState, path: PathBuf) -> Option<Vec<String>> {
+///
+/// `path` is a file below the library root `library_root`; it is opened
+/// through the no-follow walk (`library::no_follow`), and a refusal is
+/// logged like any unreadable archive.
+pub async fn hash_all_pages(
+    state: &AppState,
+    library_root: &Path,
+    path: PathBuf,
+) -> Option<Vec<String>> {
     let limits = state.cfg().archive_limits();
     let _permit = state
         .archive_work_semaphore
@@ -74,7 +82,14 @@ pub async fn hash_all_pages(state: &AppState, path: PathBuf) -> Option<Vec<Strin
         .await
         .ok()?;
     let shown = path.clone();
-    match tokio::task::spawn_blocking(move || hash_all_pages_blocking(&path, limits)).await {
+    let root = library_root.to_path_buf();
+    match tokio::task::spawn_blocking(move || {
+        let file = crate::library::no_follow::open_library_file(&root, &path)
+            .map_err(|r| ArchiveError::Io(format!("archive not opened: {r}")))?;
+        hash_all_pages_blocking(archive::ArchiveFile::new(file, &path), limits)
+    })
+    .await
+    {
         Ok(Ok(hashes)) => Some(hashes),
         Ok(Err(e)) => {
             tracing::warn!(path = %shown.display(), error = %e, "page hash: archive unreadable; anchors fall back to ordinals");
@@ -93,15 +108,12 @@ pub async fn hash_all_pages(state: &AppState, path: PathBuf) -> Option<Vec<Strin
 /// just without a hash.
 pub async fn capture(state: &AppState, row: &issue::Model, page: i32) -> Option<String> {
     let index = usize::try_from(page).ok()?;
-    // Same no-symlink rule as the page routes; the reader is cached.
-    if !crate::library::no_follow::issue_path_ok(state, row).await {
-        return None;
-    }
-    let arc = match state
-        .zip_lru
-        .get_or_open(&row.id, Path::new(&row.file_path))
+    // Same no-symlink rule as the page routes; the cached reader is built
+    // from (or must match) this handle.
+    let archive_file = crate::library::no_follow::open_issue_archive(state, row)
         .await
-    {
+        .ok()?;
+    let arc = match state.zip_lru.get_or_open(&row.id, archive_file).await {
         Ok(a) => a,
         Err(e) => {
             tracing::debug!(issue_id = %row.id, error = %e, "page hash: no page reader; capturing without hash");

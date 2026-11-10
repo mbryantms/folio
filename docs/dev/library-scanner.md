@@ -190,19 +190,29 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     finding names yet (the open findings' paths are loaded once per
     scan), so rows indexed through it are reconciled and the finding is
     recorded; with the finding open the folder is skipped again as usual.
-  - **Still opened by name after a check, or with none** (closing these
-    is the next part of the work): the archive reader behind the page
-    routes, thumbnails, OCR and page hashes (`zip_lru`, which reopens the
-    path the check just proved); the issue rescan's ingest
-    (`process::ingest_one`, after its own `open_below_roots` check); the
-    scanner's ingest and hashing of walked files (`process.rs`,
-    `library/hash.rs`); the writeback read and rewrite of the archive
-    (`jobs/rewrite_sidecars.rs`); thumbnail generation
-    (`jobs/post_scan.rs`); deep validation
-    (`library/deep_validate.rs`); cover hashing (`metadata/phash.rs`); and
-    the admin archive editor (`api/archive_edit.rs`). Each would need
-    someone with write access to the library folder to swap a file for a
-    link in the window between the walk or check and the open.
+  - **Every open is a checked handle.** No library file is opened by
+    name after a check, and none without one. Reads open the file once
+    through the no-follow walk and read only through that handle: the
+    page routes, thumbnails, OCR and page hashes hand it to the archive
+    reader cache (`zip_lru`, which builds the reader from the handle and
+    reuses a cached reader only when it was built from the same file,
+    by device and inode); scanner ingest sniffs, hashes and parses one
+    handle (`process::prepare_ingest`, also after the issue rescan's own
+    check), as do the identity peek, the hash backfill job, thumbnail
+    generation (`jobs/post_scan.rs`), deep validation
+    (`library/deep_validate.rs`), cover hashing (`metadata/phash.rs`) and
+    the page editor's live page count (`api/archive_edit.rs`). The
+    archive crate reads from the handle it is given (see its module
+    docs). Writers open the archive's folder through the same walk and
+    work relative to that folder handle (`archive_rewrite`, see
+    [archive-writes.md](archive-writes.md)); deletes of backups and
+    staging files go through it too. A refusal in a background path is
+    logged and leaves the file alone: ingest skips a link without a
+    finding (as the issue rescan does) and reports a non-regular file or
+    a path outside the root as `UnreadableFile`; thumbnail generation
+    records the refusal as the job's error; deep validation counts the
+    file as unopenable; cover hashing skips it; a writeback job ends as
+    a refusal.
   - **Hard links** cannot be told apart from ordinary files and are
     deliberately not refused: download tools commonly hard-link finished
     files into a library.

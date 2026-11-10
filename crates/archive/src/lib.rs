@@ -5,6 +5,22 @@
 //! are enforced by **every** reader. A bad archive is rejected with a typed error
 //! and the file is marked `state='malformed'` (or `'encrypted'` for §4.6 hits)
 //! by the caller.
+//!
+//! ## Handles, not names
+//!
+//! Every reader reads from a file handle the caller opened
+//! ([`source::ArchiveFile`]): [`open_file`] and the per-format `open_file`
+//! constructors take one, and no reader opens its path again. CBZ, CBT and
+//! CB7 read the handle with positioned reads (independent cursors over one
+//! descriptor); CBR goes through the UnRAR library, which opens by name,
+//! so it is given `/proc/self/fd/<n>` for the handle on Linux and otherwise
+//! checks the name's device and inode against the handle around each pass
+//! (see [`source::ArchiveFile::rar_name`]). The writers take an open
+//! `File` to write into. The path-taking constructors (`open_path_unchecked`)
+//! open by name and follow links: they exist for files outside any library
+//! root (tests, temp files) and must not be given a library path; the
+//! server opens library files through its no-follow opener and passes the
+//! handle.
 
 use std::path::Path;
 use std::time::Duration;
@@ -20,22 +36,24 @@ pub mod container;
 pub mod entry_name;
 pub mod image_sniff;
 pub mod rewrite_policy;
+pub mod source;
 
 pub use comic_archive::ComicArchive;
+pub use source::ArchiveFile;
 
-/// Open a comic archive of any supported format.
+/// Open a comic archive of any supported format from an open file.
 ///
 /// Dispatch is by **container**, not extension: the leading bytes are
 /// sniffed ([`container::detect_container`]) and the matching reader is
 /// chosen, so a RAR named `.cbz` opens through the RAR reader exactly as
 /// YACreader / ComicRack / Komga would open it. Only when the bytes carry
 /// no recognizable magic (a v7 tar, a truncated file, junk) does the
-/// extension decide, which also keeps the old typed error messages for
-/// genuinely corrupt `.cbz` files. A file with neither a recognizable
-/// container nor a known extension is `Malformed`.
+/// extension of the display path decide, which also keeps the old typed
+/// error messages for genuinely corrupt `.cbz` files. A file with neither a
+/// recognizable container nor a known extension is `Malformed`.
 ///
 /// Returns the boxed reader as `dyn ComicArchive` so the scanner doesn't
-/// branch on format.
+/// branch on format. Every read goes through `src`'s handle.
 ///
 /// Supported today:
 ///   - `.cbz` — full (random-access reader + writer)
@@ -45,12 +63,16 @@ pub use comic_archive::ComicArchive;
 ///   - `.cb7` — read-only (`sevenz-rust2`-backed; WP-6.5). Like CBR there
 ///     is no writer: the scanner converts CB7 → CBZ on scan when the
 ///     library opts in (`auto_convert_cb7_on_scan`).
-pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Box<dyn ComicArchive>, ArchiveError> {
-    let ext = path
+pub fn open_file(
+    src: source::ArchiveFile,
+    limits: ArchiveLimits,
+) -> Result<Box<dyn ComicArchive>, ArchiveError> {
+    let ext = src
+        .display_path()
         .extension()
         .and_then(|s| s.to_str())
         .map(str::to_ascii_lowercase);
-    let format = match container::detect_container(path)? {
+    let format = match container::detect_container(&src)? {
         container::Container::Zip => "cbz",
         container::Container::Rar => "cbr",
         container::Container::SevenZ => "cb7",
@@ -59,15 +81,15 @@ pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Box<dyn ComicArchive>,
     };
     match format {
         "cbz" => {
-            let c = cbz::Cbz::open(path, limits)?;
+            let c = cbz::Cbz::open_file(src, limits)?;
             Ok(Box::new(c) as Box<dyn ComicArchive>)
         }
         "cbt" => {
-            let c = cbt::Cbt::open(path, limits)?;
+            let c = cbt::Cbt::open_file(src, limits)?;
             Ok(Box::new(c) as Box<dyn ComicArchive>)
         }
-        "cbr" => cbr::Cbr::open(path, limits).map(|c| Box::new(c) as _),
-        "cb7" => cb7::Cb7::open(path, limits).map(|c| Box::new(c) as _),
+        "cbr" => cbr::Cbr::open_file(src, limits).map(|c| Box::new(c) as _),
+        "cb7" => cb7::Cb7::open_file(src, limits).map(|c| Box::new(c) as _),
         _ => Err(ArchiveError::Malformed(format!(
             "unsupported archive extension: {:?}",
             ext
@@ -75,7 +97,18 @@ pub fn open(path: &Path, limits: ArchiveLimits) -> Result<Box<dyn ComicArchive>,
     }
 }
 
-/// `ComicArchive` impl on the existing `Cbz` so `open()` can box it directly.
+/// [`open_file`] for a file outside any library root, opened by name with
+/// an ordinary open (links followed). Tests and temp files only; a library
+/// file is opened by the caller's checked opener and passed to
+/// [`open_file`].
+pub fn open_path_unchecked(
+    path: &Path,
+    limits: ArchiveLimits,
+) -> Result<Box<dyn ComicArchive>, ArchiveError> {
+    open_file(source::ArchiveFile::open_path_unchecked(path)?, limits)
+}
+
+/// `ComicArchive` impl on the existing `Cbz` so `open_file()` can box it directly.
 impl ComicArchive for cbz::Cbz {
     fn entries(&self) -> &[ArchiveEntry] {
         self.entries()

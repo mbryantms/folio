@@ -30,6 +30,76 @@ the scanner and is documented in
 | `.bak` retention prune | `jobs::backup_prune` (daily) | Deletes only under libraries with `allow_archive_writeback = true` and `archive_backup_retain_days > 0`. Every library is walked read-only for the health page's backup tally (`library_backup_stats`, see [`library::backup_stats`](../../crates/server/src/library/backup_stats.rs)); the walk under a non-writeback library counts and never removes | `backup_prune.rs::libraries_without_archive_writeback_are_skipped`, `::sweep_stores_a_backup_tally_for_every_library` |
 | Startup staging-file cleanup | `archive_rewrite::spawn_startup_cleanup` → `startup_cleanup`, started once at boot after the HTTP listener is bound, walking on the blocking pool in the background | Walks only libraries with `allow_archive_writeback = true`. Deletes only names `archive_rewrite::is_staging_name` matches — exactly what the stager (`temp_staging`) produces: a recognized archive file name (`.cbz` / `.cbt` / `.cbr` / `.cb7`), a dot, 32 lowercase hex characters, `.tmp` — and only when older than `STARTUP_CLEANUP_TTL` (10 min, cutoff fixed when the walk starts, so a rewrite that begins during the walk is never touched). Any other `.tmp` (`notes.tmp`, another tool's `x.cbz.tmp`) and every `.bak` are left alone | `archive_edit.rs::startup_cleanup_removes_only_own_staging_in_writeback_libraries`, `archive_rewrite/mod.rs` unit tests (`is_staging_name_matches_only_folio_staging_files`, `startup_cleanup_leaves_other_tmp_files`) |
 
+## How every writer touches the library: through a folder handle
+
+No writer creates, renames, links or deletes a file under a library root
+by a name the kernel resolves again. Each opens the archive's folder once
+through the no-follow walk from the library root
+([`library::no_follow`](../../crates/server/src/library/no_follow.rs):
+one `openat(…, O_NOFOLLOW | O_DIRECTORY)` per folder, the root itself may
+be a link) and does every later step relative to that folder handle
+(`LibraryDir`: `openat`, `renameat`, `linkat` without
+`AT_SYMLINK_FOLLOW`, `unlinkat`, `fsync` of the handle). A folder swapped
+for a link after the walk cannot redirect a step, and no step follows a
+link in the final name. The write sequence
+([`archive_rewrite::rewrite_atomic`](../../crates/server/src/archive_rewrite/mod.rs)),
+all relative to the folder handle:
+
+1. Open the archive by name in the folder: no link followed, a regular
+   file only. A link or anything else is refused (`RewriteError::Refused`)
+   before anything is written; a missing archive is the additions path.
+2. Create the staging file `<name>.<32 hex>.tmp` with `O_CREAT | O_EXCL |
+   O_NOFOLLOW` (an unpredictable name; anything already there, a link
+   included, fails the rewrite).
+3. The writer reads the original through the handle from step 1 and
+   writes into the staging handle; validation re-opens the staging handle
+   (never the name).
+4. fsync the staging file (its handle) and the folder.
+5. Confirm the archive name still holds the file read in step 1 (device
+   and inode, not a link); otherwise stop with nothing replaced. Rotate
+   the older `.bak.N` slots, then hard-link the archive into `.bak`
+   (`linkat`; when links are refused, copy from the original's handle
+   into a `.bak` created exclusively).
+6. Confirm again, then rename the staging file over the archive
+   (`renameat`): the target is never missing.
+7. fsync the folder.
+
+A failure at any step leaves the original intact (at worst an orphan
+staging file, reaped by the startup cleanup). Per writer:
+
+- **Page editor** (single and bulk, `jobs::archive_edit::edit_one_issue`):
+  CBZ / CBT through `rewrite_atomic`; CBR through `convert_atomic`
+  (same folder handle; the original is renamed to `.bak`, then the
+  staging file to the `.cbz` name). A link at the archive or on its
+  folder path fails the edit (`EditError::Rewrite(Refused)`).
+- **Restore from `.bak`** (`archive_rewrite::restore_latest_backup`):
+  `renameat(.bak → archive)` in the folder handle; a `.bak` or archive
+  that is a link is refused, answered as "no backup" (404).
+- **Sidecar rewrite** (`jobs::rewrite_sidecars`, also behind manual
+  edits, drift flush and re-emit): `rewrite_atomic`, with CBR / CB7
+  conversion first through `convert_atomic`. A refusal is a
+  `WritebackError::is_refusal()`: the job completes without retry, the
+  run is left as it is and an error event says "refused".
+- **CBR / CB7 → CBZ conversion at scan**
+  (`scanner::cbr_convert`): the destination check, the move-into-place of
+  a renamed ZIP (`archive_rewrite::rename_into_place`) and the repack
+  (`convert_atomic`) all work in the folder handle; the source is read
+  through the handle `convert_atomic` opened.
+- **`.bak` retention prune** and **startup staging cleanup**: the walk
+  only finds candidates (it never descends into a link); each delete
+  goes through `no_follow::remove_library_file`, which re-walks from the
+  root and refuses a link at the name or on the folder path.
+
+Tests: `archive_rewrite` unit tests (`rewrite_refuses_*`,
+`rewrite_stays_in_the_checked_folder_when_it_is_swapped_mid_way`,
+`staging_create_fails_closed_on_existing_file_or_link`,
+`restore_refuses_a_backup_or_target_that_is_a_link`,
+`convert_refuses_an_original_or_destination_that_is_a_link`,
+`startup_cleanup_never_removes_through_a_link`),
+`cbr_convert.rs::conversion_refuses_a_linked_source_or_folder`,
+`symlinks.rs::page_editor_refuses_*` / `::restore_refuses_a_backup_that_is_a_link`,
+and `writeback_job_retry.rs::sidecar_rewrite_*_is_a_refusal`.
+
 ## Paths that read but never write
 
 Verified read-only (no `remove_file`, `create_dir`, `rename`, or `write`

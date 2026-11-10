@@ -417,6 +417,12 @@ pub async fn edit_one_issue(
         src_path.clone()
     };
     let dst_for_closure = dst_path.clone();
+    // Every read and write of the archive goes through the library root's
+    // no-follow walk (`library::no_follow`, `archive_rewrite`): a link (the
+    // archive or a folder on its path) is refused.
+    let root = crate::library::no_follow::library_root(state, lib.id)
+        .await
+        .ok_or_else(|| EditError::IssueGone(format!("library missing for {}", row.id)))?;
 
     let (backup, before, after) = tokio::task::spawn_blocking(
         move || -> Result<(Option<PathBuf>, usize, usize), EditError> {
@@ -425,9 +431,9 @@ pub async fn edit_one_issue(
             let backup = match format {
                 EditFormat::Cbz => {
                     let outcome =
-                        archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
-                            let mut src =
-                                Cbz::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
+                        archive_rewrite::rewrite_atomic(&root, &src_path, retain_count, |io| {
+                            let mut src = Cbz::open_file(io.source()?, limits)
+                                .map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
                             let ops = resolve_ops(before);
@@ -439,17 +445,23 @@ pub async fn edit_one_issue(
                             after = output.len();
                             let extras =
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
-                            cbz_write::rebuild_pages(&mut src, output, extras, tmp, limits)
-                                .map_err(RewriteError::ArchiveErr)?;
+                            cbz_write::rebuild_pages(
+                                &mut src,
+                                output,
+                                extras,
+                                io.staging_file()?,
+                                limits,
+                            )
+                            .map_err(RewriteError::ArchiveErr)?;
                             Ok(())
                         })?;
                     outcome.backup
                 }
                 EditFormat::Cbt => {
                     let outcome =
-                        archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
-                            let mut src =
-                                Cbt::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
+                        archive_rewrite::rewrite_atomic(&root, &src_path, retain_count, |io| {
+                            let mut src = Cbt::open_file(io.source()?, limits)
+                                .map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
                             let ops = resolve_ops(before);
@@ -460,17 +472,20 @@ pub async fn edit_one_issue(
                             after = mats.len();
                             let extras =
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
-                            cbt_write::write_pages(mats, extras, tmp, limits)
+                            cbt_write::write_pages(mats, extras, io.staging_file()?, limits)
                                 .map_err(RewriteError::ArchiveErr)?;
                             Ok(())
                         })?;
                     outcome.backup
                 }
                 EditFormat::Cbr => {
-                    let outcome =
-                        archive_rewrite::convert_atomic(&src_path, &dst_for_closure, |tmp| {
-                            let mut src =
-                                Cbr::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
+                    let outcome = archive_rewrite::convert_atomic(
+                        &root,
+                        &src_path,
+                        &dst_for_closure,
+                        |io| {
+                            let mut src = Cbr::open_file(io.source()?, limits)
+                                .map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
                             let ops = resolve_ops(before);
@@ -483,10 +498,11 @@ pub async fn edit_one_issue(
                             after = mats.len();
                             let extras =
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
-                            cbz_write::write_pages(mats, extras, tmp, limits)
+                            cbz_write::write_pages(mats, extras, io.staging_file()?, limits)
                                 .map_err(RewriteError::ArchiveErr)?;
                             Ok(())
-                        })?;
+                        },
+                    )?;
                     outcome.backup
                 }
             };
@@ -576,7 +592,12 @@ pub async fn edit_one_issue(
         Some(PageMap::truncation(before, after))
     };
     let new_hashes = if map.is_some() && issue_has_anchors(&state.db, &row.id).await? {
-        crate::reading::page_hash::hash_all_pages(state, dst_path.clone()).await
+        crate::reading::page_hash::hash_all_pages(
+            state,
+            Path::new(&lib.root_path),
+            dst_path.clone(),
+        )
+        .await
     } else {
         None
     };

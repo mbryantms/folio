@@ -88,24 +88,35 @@ pub async fn page_count(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    let file_path = row.file_path.clone();
-    let limits = app.cfg().archive_limits();
-    match tokio::task::spawn_blocking(move || {
-        archive::open(std::path::Path::new(&file_path), limits).map(|c| c.pages().len())
-    })
-    .await
-    {
+    match live_page_count(&app, &row).await {
         Ok(Ok(n)) => (StatusCode::OK, Json(PageCountResponse { page_count: n })).into_response(),
-        Ok(Err(e)) => error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "archive.unreadable",
-            &e.to_string(),
-        ),
+        Ok(Err(e)) => error(StatusCode::UNPROCESSABLE_ENTITY, "archive.unreadable", &e),
         Err(e) => {
             tracing::error!(error = %e, "archive page-count: join failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
     }
+}
+
+/// The archive's live page count, read through a handle from the
+/// no-follow walk (`library::no_follow`). A refused file (a link, not a
+/// regular file, outside the root) answers like an unreadable archive.
+/// The outer `Err` is a join failure.
+async fn live_page_count(
+    app: &AppState,
+    row: &entity::issue::Model,
+) -> Result<Result<usize, String>, tokio::task::JoinError> {
+    let source = match crate::library::no_follow::open_issue_archive(app, row).await {
+        Ok(s) => s,
+        Err(r) => return Ok(Err(format!("archive not opened: {r}"))),
+    };
+    let limits = app.cfg().archive_limits();
+    tokio::task::spawn_blocking(move || {
+        archive::open_file(source, limits)
+            .map(|c| c.pages().len())
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Upper bound on a single bulk request. A large but bounded fan-out keeps
@@ -229,21 +240,11 @@ pub async fn edit(
     };
 
     // Open the archive off-thread to count pages, then validate the ops.
-    // `archive::open` dispatches by extension (cbz/cbt/cbr).
-    let file_path = row.file_path.clone();
-    let limits = app.cfg().archive_limits();
-    let page_count = match tokio::task::spawn_blocking(move || {
-        archive::open(std::path::Path::new(&file_path), limits).map(|c| c.pages().len())
-    })
-    .await
-    {
+    // `archive::open_file` dispatches by container (cbz/cbt/cbr).
+    let page_count = match live_page_count(&app, &row).await {
         Ok(Ok(n)) => n,
         Ok(Err(e)) => {
-            return error(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "archive.unreadable",
-                &e.to_string(),
-            );
+            return error(StatusCode::UNPROCESSABLE_ENTITY, "archive.unreadable", &e);
         }
         Err(e) => {
             tracing::error!(error = %e, "archive edit: page-count join failed");
@@ -529,9 +530,21 @@ pub async fn restore(
         }
     };
 
+    // Relative to the folder handle from the no-follow walk; a link at the
+    // backup or the archive (or on the folder path) is refused.
     let target = std::path::PathBuf::from(&row.file_path);
-    let restore_res =
-        tokio::task::spawn_blocking(move || archive_rewrite::restore_latest_backup(&target)).await;
+    let restore_res = match crate::library::no_follow::library_root(&app, row.library_id).await {
+        Some(root) => {
+            tokio::task::spawn_blocking(move || {
+                archive_rewrite::restore_latest_backup(&root, &target)
+            })
+            .await
+        }
+        None => Ok(Err(archive_rewrite::RewriteError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "library not found",
+        )))),
+    };
 
     // Always release the mutex regardless of outcome.
     let mut redis = app.jobs.redis.clone();
@@ -542,6 +555,14 @@ pub async fn restore(
         Ok(Err(archive_rewrite::RewriteError::Io(e)))
             if e.kind() == std::io::ErrorKind::NotFound =>
         {
+            return error(
+                StatusCode::NOT_FOUND,
+                "archive.no_backup",
+                "no backup is available to restore",
+            );
+        }
+        Ok(Err(e @ archive_rewrite::RewriteError::Refused(_))) => {
+            tracing::warn!(issue_id = %row.id, error = %e, "archive restore: refused");
             return error(
                 StatusCode::NOT_FOUND,
                 "archive.no_backup",
@@ -654,9 +675,13 @@ pub async fn backups(
     let mut out = Vec::new();
     for slot in 0..=5 {
         let p = archive_rewrite::backup_slot(&target, slot);
-        let Ok(meta) = tokio::fs::metadata(&p).await else {
+        // Listed without following links: only a regular file is a backup.
+        let Ok(meta) = tokio::fs::symlink_metadata(&p).await else {
             continue;
         };
+        if !meta.is_file() {
+            continue;
+        }
         let modified_at = meta
             .modified()
             .ok()

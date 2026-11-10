@@ -36,7 +36,6 @@ use crate::reading::page_remap::PAGE_REMOVED_TAG;
 use crate::state::AppState;
 use entity::issue;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
-use std::path::Path;
 
 /// Most distinct pages hashed per archive open.
 pub const MAX_PAGES_PER_OPEN: usize = 32;
@@ -132,15 +131,12 @@ pub async fn backfill_issue(
         return Ok(outcome);
     }
     // The reader this opens is cached in `zip_lru` for the page routes:
-    // same no-symlink rule as they apply (`library::no_follow`).
-    if !crate::library::no_follow::issue_path_ok(state, row).await {
+    // same no-symlink rule as they apply (`library::no_follow`), built from
+    // this handle.
+    let Ok(archive_file) = crate::library::no_follow::open_issue_archive(state, row).await else {
         return Ok(outcome);
-    }
-    let Ok(arc) = state
-        .zip_lru
-        .get_or_open(&row.id, Path::new(&row.file_path))
-        .await
-    else {
+    };
+    let Ok(arc) = state.zip_lru.get_or_open(&row.id, archive_file).await else {
         return Ok(outcome);
     };
     for page in pages {

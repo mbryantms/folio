@@ -174,7 +174,6 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
 
     let data_dir = app.cfg().data_path.clone();
     let issue_id = row.id.clone();
-    let file_path = row.file_path.clone();
     let kind = job.kind;
     // M6: capture the per-issue cover page from the row. Pre-M6 the
     // post-scan worker always read page 0; now it reads whatever the
@@ -204,11 +203,20 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
         None
     };
 
+    // The archive is read through a handle opened by the no-follow walk
+    // (`library::no_follow`): a link, a non-regular file or a path outside
+    // the root fails the job like an unreadable archive.
+    let opened = crate::library::no_follow::open_issue_archive(&app, &row).await;
     let outcome = match app.archive_work_semaphore.clone().acquire_owned().await {
         Ok(permit) => {
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                let mut archive = archive::open(std::path::Path::new(&file_path), archive_limits)?;
+                let source = opened.map_err(|r| {
+                    thumbnails::ThumbError::Archive(archive::ArchiveError::Io(format!(
+                        "archive not opened: {r}"
+                    )))
+                })?;
+                let mut archive = archive::open_file(source, archive_limits)?;
                 // For cover jobs: decode the cover page once and use
                 // the same `DynamicImage` for both perceptual hashing
                 // (matcher.rs constants are calibrated against

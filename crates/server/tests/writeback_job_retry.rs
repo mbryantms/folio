@@ -333,7 +333,7 @@ async fn transient_rewrite_failure_is_retried_and_succeeds_once_the_fault_clears
     .await
     .expect("retry succeeds once the directory is writable");
     assert_ne!(std::fs::read(&f.cbz).unwrap(), before, "archive rewritten");
-    let mut a = archive::open(&f.cbz, archive::ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(&f.cbz, archive::ArchiveLimits::default()).unwrap();
     assert!(
         String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap())
             .unwrap()
@@ -477,6 +477,145 @@ async fn sidecar_refusal_returns_ok_and_is_not_retried() {
         "{}",
         events[0].summary
     );
+}
+
+/// Runs the sidecar job on its last budgeted attempt and checks it ended as
+/// a refusal: `Ok` (never an `Err` to retry), nothing requeued, the run not
+/// failed, one error event that says "refused".
+async fn assert_refused_without_retry(app: &TestApp, issue_id: &str, run_id: Uuid) {
+    let mut worker = with_retry_budget_attempt(rewrite_sidecars::handle);
+    worker(
+        sidecar_job(issue_id, run_id),
+        Data::new(app.state()),
+        Attempt::new_with_value(JOB_MAX_ATTEMPTS),
+    )
+    .await
+    .expect("a refusal is Ok, never an Err to retry");
+    let queued = drain::<RewriteIssueSidecarsJob>(app, rewrite_hash(app)).await;
+    assert!(queued.is_empty(), "nothing requeued: {queued:?}");
+    assert_eq!(
+        run_row(app, run_id).await.status,
+        "completed",
+        "a refusal does not fail the run"
+    );
+    let events = events_for(app, issue_id).await;
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].severity, "error");
+    assert!(
+        events[0].summary.contains("refused"),
+        "{}",
+        events[0].summary
+    );
+}
+
+/// The issue's archive was replaced by a symbolic link to a file outside
+/// the library after the row was written: the rewrite is refused (not
+/// retried), the link stays a link and its target is untouched. Pre-change
+/// the job read through the link and replaced it with a regular file.
+#[tokio::test]
+async fn sidecar_rewrite_of_an_archive_replaced_by_a_link_is_a_refusal() {
+    let f = writeback_issue().await;
+    let outside = tempdir().unwrap();
+    let victim = outside.path().join("victim.cbz");
+    std::fs::write(&victim, build_cbz_bytes("victim")).unwrap();
+    let victim_bytes = std::fs::read(&victim).unwrap();
+    std::fs::remove_file(&f.cbz).unwrap();
+    std::os::unix::fs::symlink(&victim, &f.cbz).unwrap();
+
+    assert_refused_without_retry(&f.app, &f.issue_id, f.run_id).await;
+    assert!(
+        std::fs::symlink_metadata(&f.cbz)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link was not replaced"
+    );
+    assert_eq!(std::fs::read(&victim).unwrap(), victim_bytes);
+    let names: Vec<_> = std::fs::read_dir(f.dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "no staging file or .bak: {names:?}");
+}
+
+/// The archive's folder was replaced by a link to a folder outside the
+/// library: refused, and nothing is created in (or changed under) the
+/// outside folder. Pre-change the staging file and the swap landed there.
+#[tokio::test]
+async fn sidecar_rewrite_through_a_folder_replaced_by_a_link_is_a_refusal() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let series_dir = dir.path().join("Saga");
+    std::fs::create_dir(&series_dir).unwrap();
+    let cbz = series_dir.join("saga-1.cbz");
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbz, &build_cbz_bytes("saga-1"), 1.0)
+        .insert(&app.state().db)
+        .await;
+    let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+
+    let outside = tempdir().unwrap();
+    std::fs::write(
+        outside.path().join("saga-1.cbz"),
+        build_cbz_bytes("outside"),
+    )
+    .unwrap();
+    let outside_bytes = std::fs::read(outside.path().join("saga-1.cbz")).unwrap();
+    std::fs::rename(&series_dir, dir.path().join("Saga.real")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &series_dir).unwrap();
+
+    assert_refused_without_retry(&app, &issue_id, run_id).await;
+    let names: Vec<_> = std::fs::read_dir(outside.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        names.len(),
+        1,
+        "nothing created outside the root: {names:?}"
+    );
+    assert_eq!(
+        std::fs::read(outside.path().join("saga-1.cbz")).unwrap(),
+        outside_bytes
+    );
+}
+
+/// A CBR in a library that allows conversion, replaced by a link: the
+/// conversion before the rewrite refuses it the same way.
+#[tokio::test]
+async fn sidecar_rewrite_converting_a_linked_cbr_is_a_refusal() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbr = dir.path().join("saga-1.cbr");
+    let cbr_bytes = std::fs::read(cbr_fixture()).unwrap();
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbr, &cbr_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+    let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+    let outside = tempdir().unwrap();
+    let victim = outside.path().join("victim.cbr");
+    std::fs::write(&victim, &cbr_bytes).unwrap();
+    std::fs::remove_file(&cbr).unwrap();
+    std::os::unix::fs::symlink(&victim, &cbr).unwrap();
+
+    assert_refused_without_retry(&app, &issue_id, run_id).await;
+    assert!(!cbr.with_extension("cbz").exists(), "no conversion");
+    assert!(!dir.path().join("saga-1.cbr.bak").exists());
+    assert_eq!(std::fs::read(&victim).unwrap(), cbr_bytes);
 }
 
 /// The busy-lock requeue budget is spent: the write is dropped loudly and,
