@@ -24,6 +24,46 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// What an open file is and which version of it: `(device, inode)` plus
+/// the size, modification time and status-change time from the same
+/// `fstat`. Two stamps are equal only when they describe the same file with
+/// no write, truncation or metadata change between them, so a cache keyed
+/// on it notices a file rewritten in place (same inode) as well as one
+/// replaced by a rename (new inode).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileStamp {
+    pub dev: u64,
+    pub ino: u64,
+    pub size: u64,
+    /// Modification time, nanoseconds since the epoch.
+    pub mtime_ns: i128,
+    /// Status-change time, nanoseconds since the epoch. Changes on every
+    /// write and on a metadata change, and cannot be set back by a tool
+    /// that restores the modification time.
+    pub ctime_ns: i128,
+}
+
+impl FileStamp {
+    /// The stamp of `meta` (from an `fstat` of an open handle).
+    #[cfg(unix)]
+    pub fn from_metadata(meta: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        let ns = |secs: i64, nsec: i64| i128::from(secs) * 1_000_000_000 + i128::from(nsec);
+        Self {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            size: meta.size(),
+            mtime_ns: ns(meta.mtime(), meta.mtime_nsec()),
+            ctime_ns: ns(meta.ctime(), meta.ctime_nsec()),
+        }
+    }
+
+    /// `(device, inode)`.
+    pub fn identity(&self) -> (u64, u64) {
+        (self.dev, self.ino)
+    }
+}
+
 /// An open archive file and the path it is shown as. Cheap to clone (an
 /// `Arc` bump); clones share the descriptor.
 #[derive(Debug, Clone)]
@@ -34,6 +74,9 @@ pub struct ArchiveFile {
     /// ([`ArchiveFile::with_identity`]), so [`ArchiveFile::identity`] need
     /// not `fstat` again.
     known_identity: Option<(u64, u64)>,
+    /// The full [`FileStamp`] the caller took from this handle
+    /// ([`ArchiveFile::with_stamp`]).
+    known_stamp: Option<FileStamp>,
     /// Whether [`ArchiveFile::rar_name`] may use `/proc/self/fd/<n>`.
     proc_fd: bool,
 }
@@ -47,6 +90,7 @@ impl ArchiveFile {
             file: Arc::new(file),
             display: display_path.into(),
             known_identity: None,
+            known_stamp: None,
             proc_fd: true,
         }
     }
@@ -58,6 +102,24 @@ impl ArchiveFile {
     pub fn with_identity(mut self, identity: (u64, u64)) -> Self {
         self.known_identity = Some(identity);
         self
+    }
+
+    /// Record the [`FileStamp`] the caller took from this same handle
+    /// (the `fstat` its opener already made). Sets the identity too.
+    pub fn with_stamp(mut self, stamp: FileStamp) -> Self {
+        self.known_identity = Some(stamp.identity());
+        self.known_stamp = Some(stamp);
+        self
+    }
+
+    /// The handle's [`FileStamp`]: the one recorded with
+    /// [`ArchiveFile::with_stamp`], else from the handle (`fstat`).
+    #[cfg(unix)]
+    pub fn stamp(&self) -> io::Result<FileStamp> {
+        if let Some(known) = self.known_stamp {
+            return Ok(known);
+        }
+        Ok(FileStamp::from_metadata(&self.file.metadata()?))
     }
 
     /// Never hand UnRAR `/proc/self/fd/<n>`; use the checked display path

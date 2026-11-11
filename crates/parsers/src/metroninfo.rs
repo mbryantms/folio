@@ -38,7 +38,8 @@ use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const MAX_INPUT_BYTES: usize = 1024 * 1024;
+/// Largest input [`parse`] accepts; callers read at most one byte more.
+pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
 
 /// The schema version the serializer targets; the `xsi:noNamespaceSchemaLocation`
 /// hint on the root points at this file in the upstream repository.
