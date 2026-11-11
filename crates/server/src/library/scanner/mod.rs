@@ -2111,7 +2111,6 @@ async fn run_issue_phase(
     let process_started = Instant::now();
     let manifest =
         process::IssueManifest::for_paths(&state.db, std::slice::from_ref(&path)).await?;
-    let txn = state.db.begin().await?;
     // Series folder is needed so the path-derived special_type rule
     // (M2.5) can tell a `Specials/Artbook.cbz` from a main-run issue,
     // and so the series-named-marker rule compares against the series
@@ -2137,6 +2136,7 @@ async fn run_issue_phase(
                 _ => parent,
             }
         });
+    let hashed_anchors = tokio::sync::OnceCell::new();
     let ctx = process::IngestCtx {
         state,
         lib,
@@ -2144,29 +2144,33 @@ async fn run_issue_phase(
         series_folder: &series_folder,
         manifest: Some(&manifest),
         force,
+        hashed_anchors: &hashed_anchors,
     };
     let mut outputs = process::IngestOutputs {
         stats,
         health,
         events,
     };
-    let ingest = process::ingest_one(
-        &ctx,
-        &txn,
-        &path,
-        // Single-archive scan: no need to pre-fetch; the per-call DB
+    // The same two phases as a folder batch (B10): everything that reads
+    // the archive — conversion, content hash, parse, probes, page hashes —
+    // runs before the transaction opens, so it holds database statements
+    // only. This is the path every post-rewrite and post-edit rescan
+    // takes, where the archive has just changed.
+    let (size, mtime) = process::file_fingerprint(&path)?;
+    let prepared =
+        process::prepare_ingest(&ctx, &state.db, &path, size, mtime, &mut outputs).await?;
+    if let Some(prepared) = prepared {
+        let txn = state.db.begin().await?;
+        // Single-archive scan: no need to pre-fetch slugs; the per-call DB
         // allocator's one COUNT query is fine.
-        None,
-        &mut outputs,
-    )
-    .await;
-    match ingest {
-        Ok(()) => txn.commit().await?,
-        Err(e) => {
-            if let Err(rollback) = txn.rollback().await {
-                tracing::warn!(error = %rollback, "scanner: issue transaction rollback failed");
+        match process::persist_prepared(&ctx, &txn, prepared, None, &mut outputs).await {
+            Ok(()) => txn.commit().await?,
+            Err(e) => {
+                if let Err(rollback) = txn.rollback().await {
+                    tracing::warn!(error = %rollback, "scanner: issue transaction rollback failed");
+                }
+                return Err(e);
             }
-            return Err(e);
         }
     }
     stats.record_phase("process", process_started.elapsed());
@@ -3132,6 +3136,7 @@ async fn process_planned_folder(
     let folder_mutated = !candidates.is_empty();
 
     let db_write_started = Instant::now();
+    let hashed_anchors = tokio::sync::OnceCell::new();
     let ctx = process::IngestCtx {
         state,
         lib,
@@ -3139,6 +3144,7 @@ async fn process_planned_folder(
         series_folder: &folder,
         manifest: Some(&manifest),
         force,
+        hashed_anchors: &hashed_anchors,
     };
     // Post-audit T1.5 + T1.2: a batch runs in two phases and either kind of
     // failure leaves the folder *dirty* — no `last_scanned_at` stamp (so the
@@ -3147,12 +3153,15 @@ async fn process_planned_folder(
     // absent) — with a health row naming the file.
     //
     //  1. `prepare` does the slow, DB-free work for every file — fingerprint,
-    //     CBR/CB7 conversion, full-file hash, archive parse, page probes —
-    //     against the pool (one short read at most) and under
-    //     `archive_work_semaphore`. A file that cannot be read fails here,
-    //     alone: it is skipped this scan, the rest of the batch goes on.
+    //     CBR/CB7 conversion, full-file hash, archive parse, page probes,
+    //     and the per-page hashes a content change re-anchors markers and
+    //     progress with (B10) — against the pool (short reads only) and
+    //     under `archive_work_semaphore`. A file that cannot be read fails
+    //     here, alone: it is skipped this scan, the rest of the batch goes
+    //     on. What it keeps for persist is metadata and hashes, no handle.
     //  2. Only then is the transaction opened, so no connection is pinned
-    //     while archives are being read; with `scan_worker_count` jobs ×
+    //     while archives are being read, and the transaction itself runs
+    //     database statements only; with `scan_worker_count` jobs ×
     //     `scan_folder_concurrency` folders that used to exhaust the pool.
     //     A persist failure rolls the batch back and reverts the batch's
     //     counters and queued events (nothing persisted).

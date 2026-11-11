@@ -17,7 +17,9 @@
 //!   same bytes the page server just streamed.
 //! - [`hash_all_pages`] — the whole page list of an archive on disk, when
 //!   a rescan or archive edit re-resolves anchors
-//!   ([`super::page_remap::reanchor_issue`]).
+//!   ([`super::page_remap::reanchor_issue`]). The scanner computes it in
+//!   its prepare phase, on the handle it ingests, before the batch
+//!   transaction opens (`scanner::process::prepare_ingest`).
 //!
 //! Every failure is soft: an unreadable page or a format without a page
 //! reader (`.cbr` / `.cb7`, which the page server cannot serve either)
@@ -30,7 +32,6 @@ use crate::library::zip_lru::CachedReader;
 use crate::state::AppState;
 use archive::{ArchiveError, ArchiveLimits};
 use entity::issue;
-use std::path::{Path, PathBuf};
 
 /// Hex BLAKE3 of the page at `index` in `reader`'s page order. `None`
 /// when the index is past the end.
@@ -66,14 +67,12 @@ pub fn hash_all_pages_blocking(
 /// `archive_work_semaphore` permit like every other archive-wide read.
 /// `None` (logged) on any failure.
 ///
-/// `path` is a file below the library root `library_root`; it is opened
-/// through the no-follow walk (`library::no_follow`), and a refusal is
-/// logged like any unreadable archive.
-pub async fn hash_all_pages(
-    state: &AppState,
-    library_root: &Path,
-    path: PathBuf,
-) -> Option<Vec<String>> {
+/// `src` is a handle the caller already opened through the no-follow walk
+/// (`library::no_follow`): the scanner passes the one handle it took the
+/// file's size, modification time and content hash from, so the page
+/// hashes describe the same file version as the row it writes. Never
+/// reopens by name.
+pub async fn hash_all_pages(state: &AppState, src: archive::ArchiveFile) -> Option<Vec<String>> {
     let limits = state.cfg().archive_limits();
     let _permit = state
         .archive_work_semaphore
@@ -81,15 +80,8 @@ pub async fn hash_all_pages(
         .acquire_owned()
         .await
         .ok()?;
-    let shown = path.clone();
-    let root = library_root.to_path_buf();
-    match tokio::task::spawn_blocking(move || {
-        let file = crate::library::no_follow::open_library_file(&root, &path)
-            .map_err(|r| ArchiveError::Io(format!("archive not opened: {r}")))?;
-        hash_all_pages_blocking(archive::ArchiveFile::new(file, &path), limits)
-    })
-    .await
-    {
+    let shown = src.display_path().to_path_buf();
+    match tokio::task::spawn_blocking(move || hash_all_pages_blocking(src, limits)).await {
         Ok(Ok(hashes)) => Some(hashes),
         Ok(Err(e)) => {
             tracing::warn!(path = %shown.display(), error = %e, "page hash: archive unreadable; anchors fall back to ordinals");

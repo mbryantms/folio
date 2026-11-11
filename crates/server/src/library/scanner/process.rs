@@ -223,6 +223,12 @@ pub struct IngestCtx<'a> {
     /// where the user explicitly asked for a fresh ingest (e.g. to pick up
     /// new parser fields without touching every file's mtime).
     pub force: bool,
+    /// Whether any issue of this library has a marker or progress row
+    /// that carries a page hash. Asked at most once per context, lazily,
+    /// by [`prepare_ingest`] for a new file (the move-detection case of
+    /// the page-hash pre-read, B10); start each context with an empty
+    /// cell.
+    pub hashed_anchors: &'a tokio::sync::OnceCell<bool>,
 }
 
 /// Mutable per-batch outputs. Bundled into one struct so the call site
@@ -825,9 +831,10 @@ async fn dedupe_by_content_hash<C: ConnectionTrait>(
 }
 
 /// One archive, end to end: [`prepare_ingest`] then [`persist_prepared`]
-/// on the same connection. The library scanner calls the two halves
-/// itself so a batch transaction opens only after every file in the
-/// batch is prepared (post-audit T1.2); narrow callers use this.
+/// on the same connection. The scanner calls the two halves itself (the
+/// folder batches since post-audit T1.2, the issue rescan since B10) so a
+/// transaction opens only after the archive was read; do not pass a
+/// transaction here, or it stays open through the whole archive read.
 pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
@@ -845,8 +852,11 @@ pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
 
 /// Everything [`ingest_one_with_fingerprint`] knows about an archive
 /// before it writes a row: the slow, DB-free half (fingerprint fast path,
-/// CBR/CB7 conversion, full-file hash, archive parse, page probes) has
-/// run. Opaque to callers; hand it to [`persist_prepared`].
+/// CBR/CB7 conversion, full-file hash, archive parse, page probes, and
+/// the per-page hashes an anchor re-resolve needs) has run. Holds no file
+/// handle and no page bytes: the size, mtime, content hash and page
+/// hashes were all read from one handle, closed before this is returned.
+/// Opaque to callers; hand it to [`persist_prepared`].
 pub struct PreparedIngest {
     path: PathBuf,
     path_str: String,
@@ -856,6 +866,10 @@ pub struct PreparedIngest {
     hash: String,
     hash_pending: bool,
     parsed: ParsedArchive,
+    /// Hex BLAKE3 of every page, in page order, when a content change may
+    /// re-anchor hashed markers / progress (see [`prepare_page_hashes`]).
+    /// ~90 bytes per page; `None` for the common case.
+    page_hashes: Option<Vec<String>>,
 }
 
 impl PreparedIngest {
@@ -884,6 +898,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         series_folder,
         manifest,
         force,
+        hashed_anchors: _,
     } = *ctx;
     // Reborrow the mutable outputs once at the top so the function body
     // can keep referring to `stats` / `health` directly instead of
@@ -1066,6 +1081,9 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
     // hash so `content_hash` stays truthful for them.
     let defer_hash = existing.is_none() && lazy_hash_eligible(lib);
 
+    // The page hashes below read this same handle (an `Arc` clone, no
+    // reopen); it closes when this function returns.
+    let page_source = source.clone();
     let Some(parsed) = parse_archive_for_ingest(
         state,
         lib,
@@ -1089,6 +1107,16 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         Some(h) => (h, false),
         None => (lazy_fingerprint(&path_str, size, mtime), true),
     };
+    let page_hashes = prepare_page_hashes(
+        ctx,
+        db,
+        page_source,
+        existing.as_ref(),
+        (size, mtime),
+        (&hash, hash_pending),
+        resolved_page_count(&parsed),
+    )
+    .await?;
     // `series_id` / `series_folder` are persist-phase inputs.
     let _ = (series_id, series_folder);
     Ok(Some(PreparedIngest {
@@ -1100,7 +1128,129 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         hash,
         hash_pending,
         parsed,
+        page_hashes,
     }))
+}
+
+/// The issue's page count as ingest records it: the image entries found
+/// in the archive, else ComicInfo's `<PageCount>` (unreadable / encrypted
+/// / malformed archives find none). See the comment at its use in
+/// [`persist_prepared`].
+fn resolved_page_count(parsed: &ParsedArchive) -> Option<i32> {
+    if parsed.actual_pages > 0 {
+        Some(parsed.actual_pages as i32)
+    } else {
+        parsed.info.page_count
+    }
+}
+
+/// The per-page hashes [`persist_prepared`] hands to
+/// `page_remap::reanchor_issue` when new bytes land under an issue whose
+/// markers or progress carry a page hash (WP-6.2). Computed here, in the
+/// prepare phase, on `src` — the handle the row's size, mtime and content
+/// hash were read from — so the batch transaction holds no archive read
+/// (B10) and the hashes always describe the file version the row records.
+///
+/// `None` when no anchor can need them, by the same tests persist applies:
+/// no pages; an existing row whose size+mtime still match (no content
+/// change); a pending (lazy-hash) file, which skips move detection; or no
+/// hashed anchor on the issue. A new file is hashed only when a row of
+/// this library with the same content hash and a different size+mtime has
+/// hashed anchors — the moved-file case where persist adopts that row and
+/// sees a content change. Persist re-checks the
+/// anchors inside its transaction; one written after this check falls
+/// back to the ordinal map, as a failed page read always has.
+async fn prepare_page_hashes<C: ConnectionTrait>(
+    ctx: &IngestCtx<'_>,
+    db: &C,
+    src: archive::ArchiveFile,
+    existing: Option<&issue::Model>,
+    (size, mtime): Fingerprint,
+    (hash, hash_pending): (&str, bool),
+    page_count: Option<i32>,
+) -> anyhow::Result<Option<Vec<String>>> {
+    if !page_count.is_some_and(|n| n > 0) {
+        return Ok(None);
+    }
+    let needed = match existing {
+        Some(row) => {
+            !row_matches_file(row, size, mtime)
+                && crate::reading::page_remap::issue_has_hashed_anchors(db, &row.id).await?
+        }
+        None if hash_pending => false,
+        None => {
+            library_has_hashed_anchors(ctx, db).await?
+                && moved_row_needs_page_hashes(db, ctx.lib.id, hash, (size, mtime)).await?
+        }
+    };
+    if !needed {
+        return Ok(None);
+    }
+    Ok(crate::reading::page_hash::hash_all_pages(ctx.state, src).await)
+}
+
+/// [`IngestCtx::hashed_anchors`], asked on first use.
+async fn library_has_hashed_anchors<C: ConnectionTrait>(
+    ctx: &IngestCtx<'_>,
+    db: &C,
+) -> Result<bool, sea_orm::DbErr> {
+    let library_id = ctx.lib.id;
+    ctx.hashed_anchors
+        .get_or_try_init(|| async move {
+            let row = db
+                .query_one_raw(Statement::from_sql_and_values(
+                    db.get_database_backend(),
+                    "SELECT (EXISTS (SELECT 1 FROM markers m JOIN issues i ON i.id = m.issue_id \
+                                      WHERE i.library_id = $1 AND m.page_hash IS NOT NULL) \
+                          OR EXISTS (SELECT 1 FROM progress_records p JOIN issues i ON i.id = p.issue_id \
+                                      WHERE i.library_id = $1 AND p.page_hash IS NOT NULL)) AS hashed",
+                    [library_id.into()],
+                ))
+                .await?;
+            Ok(match row {
+                Some(r) => r.try_get::<bool>("", "hashed")?,
+                None => false,
+            })
+        })
+        .await
+        .copied()
+}
+
+/// Whether a row of `library_id` with this content hash, whose recorded
+/// size + mtime differ from this file's, has a marker or progress row
+/// carrying a page hash. Such a row is the one persist may adopt for a
+/// moved file; when its size + mtime match (a plain rename keeps both),
+/// persist sees no content change and re-anchors nothing, so the pages
+/// are not read for it.
+async fn moved_row_needs_page_hashes<C: ConnectionTrait>(
+    db: &C,
+    library_id: Uuid,
+    content_hash: &str,
+    (size, mtime): Fingerprint,
+) -> Result<bool, sea_orm::DbErr> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            db.get_database_backend(),
+            "SELECT EXISTS (SELECT 1 FROM issues i \
+                             WHERE i.library_id = $1 AND i.content_hash = $2 \
+                               AND NOT (i.file_size = $3 AND i.file_mtime = $4) \
+                               AND (EXISTS (SELECT 1 FROM markers m \
+                                             WHERE m.issue_id = i.id AND m.page_hash IS NOT NULL) \
+                                 OR EXISTS (SELECT 1 FROM progress_records p \
+                                             WHERE p.issue_id = i.id AND p.page_hash IS NOT NULL))) \
+             AS hashed",
+            [
+                library_id.into(),
+                content_hash.into(),
+                size.into(),
+                mtime.fixed_offset().into(),
+            ],
+        ))
+        .await?;
+    Ok(match row {
+        Some(r) => r.try_get::<bool>("", "hashed")?,
+        None => false,
+    })
 }
 
 // Filename inference fills gaps. M7: honor per-library
@@ -1126,6 +1276,7 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         series_folder,
         manifest: _,
         force,
+        hashed_anchors: _,
     } = *ctx;
     let stats: &mut ScanStats = &mut *outputs.stats;
     let health: &mut HealthCollector = &mut *outputs.health;
@@ -1138,6 +1289,7 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         existing,
         hash,
         hash_pending,
+        page_hashes,
         parsed:
             ParsedArchive {
                 hash: _,
@@ -1220,6 +1372,7 @@ pub async fn persist_prepared<C: ConnectionTrait>(
     // value is still preserved verbatim in `comic_info_raw` for reference.
     // For unreadable / encrypted / malformed archives `actual_pages == 0`,
     // and we fall back to whatever ComicInfo claimed (likely also missing).
+    // (`resolved_page_count` mirrors this for the prepare phase.)
     let resolved_page_count = if actual_pages > 0 {
         Some(actual_pages as i32)
     } else {
@@ -1530,8 +1683,10 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         //      to the ordinal guess — identity, or a truncation when the
         //      page count shrank (WP-1.2) — with `page-removed` /
         //      `page-drift` tags on markers so the change is visible.
-        // The archive is hashed only when some anchor has a hash to
-        // match. DB-only; never touches the archive.
+        // The page hashes were read in the prepare phase, from the same
+        // handle as the size, mtime and content hash this row records,
+        // and only when some anchor had a hash to match
+        // (`prepare_page_hashes`). DB-only; never touches the archive.
         //
         // Drop any cached open handle first: it still points at the old
         // inode (or a stale central directory), so the page server — and
@@ -1545,23 +1700,21 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             let prev = prev_page_count.filter(|p| *p > 0).unwrap_or(now_pages);
             let map = remap::PageMap::truncation(prev as usize, now_pages as usize);
             let new_hashes = if remap::issue_has_hashed_anchors(db, &row_id).await? {
-                crate::reading::page_hash::hash_all_pages(
-                    state,
-                    Path::new(&lib.root_path),
-                    path.to_path_buf(),
-                )
-                .await
+                if page_hashes.is_none() {
+                    // A hashed anchor written after the prepare-phase check,
+                    // or a page read that failed there: the ordinal map
+                    // places it, as for an anchor without a hash.
+                    tracing::debug!(
+                        issue_id = %row_id,
+                        "scan: no prepared page hashes; anchors use the ordinal map",
+                    );
+                }
+                page_hashes.as_deref()
             } else {
                 None
             };
-            let o = remap::reanchor_issue(
-                db,
-                &row_id,
-                &map,
-                new_hashes.as_deref(),
-                remap::Authority::Hash,
-            )
-            .await?;
+            let o = remap::reanchor_issue(db, &row_id, &map, new_hashes, remap::Authority::Hash)
+                .await?;
             if o.markers_moved + o.progress_moved + o.markers_drifted > 0 {
                 tracing::info!(
                     issue_id = %row_id,
