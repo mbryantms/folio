@@ -117,9 +117,8 @@ pub struct SeriesFilesState {
     pub cvinfo_present: bool,
     /// `.bak` backups in the folder; `None` when the folder can't be read.
     pub backups: Option<i64>,
-    /// The series folder on the server. Admins only; absent for every
-    /// other caller (and when the series has no folder).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The series folder on the server. Admins only; `null` for every
+    /// other caller and when the series has no folder.
     pub folder_path: Option<String>,
     /// Issues per tagging tool ([`tag_tool`] keys), largest first.
     pub tagged_by: Vec<TagToolCount>,

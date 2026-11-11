@@ -7519,6 +7519,10 @@ export interface components {
         };
         CandidatesResp: {
             candidates: components["schemas"]["CandidateView"][];
+            /**
+             * @description Why the run failed. Admins get the job's error text; any other
+             *     caller gets a fixed sentence whenever a failure was recorded.
+             */
             error_summary?: string | null;
             finished_at?: string | null;
             /** Format: int32 */
@@ -13031,7 +13035,10 @@ export interface components {
              *     Meaningful once `answered`.
              */
             candidates?: number;
-            /** @description `failed` only: the provider error, for the run detail. */
+            /**
+             * @description `failed` only: the provider error, for the run detail. Admin
+             *     responses only; a non-admin's view leaves it out.
+             */
             error?: string | null;
             /**
              * Format: int64
@@ -14642,8 +14649,8 @@ export interface components {
             /** @description A Mylar `cvinfo` file sits in the folder. */
             cvinfo_present: boolean;
             /**
-             * @description The series folder on the server. Admins only; absent for every
-             *     other caller (and when the series has no folder).
+             * @description The series folder on the server. Admins only; `null` for every
+             *     other caller and when the series has no folder.
              */
             folder_path?: string | null;
             /** @description When the scanner last walked this series' folder. */

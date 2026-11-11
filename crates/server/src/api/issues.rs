@@ -1052,8 +1052,10 @@ pub async fn update(
 
     if !touched {
         let row_id = row.id.clone();
+        let library_id = row.library_id;
         let mut view = IssueDetailView::from_model(row, &series_slug);
         crate::api::series::enrich_issue_detail(&app.db, &mut view, &row_id).await;
+        fill_admin_library_flags(&app.db, &mut view, library_id).await;
         return Json(view).into_response();
     }
 
@@ -1157,9 +1159,30 @@ pub async fn update(
     .await;
 
     let updated_id = updated.id.clone();
+    let library_id = updated.library_id;
     let mut view = IssueDetailView::from_model(updated, &series_slug);
     crate::api::series::enrich_issue_detail(&app.db, &mut view, &updated_id).await;
+    fill_admin_library_flags(&app.db, &mut view, library_id).await;
     Json(view).into_response()
+}
+
+/// The two library flags an admin's issue detail carries, read from the
+/// library row so the PATCH response matches GET.
+async fn fill_admin_library_flags(
+    db: &sea_orm::DatabaseConnection,
+    view: &mut IssueDetailView,
+    library_id: Uuid,
+) {
+    let lib = library::Entity::find_by_id(library_id)
+        .one(db)
+        .await
+        .ok()
+        .flatten();
+    view.allow_archive_writeback = Some(lib.as_ref().is_some_and(|l| l.allow_archive_writeback));
+    view.library_cbr_convert_confirmed = Some(
+        lib.as_ref()
+            .is_some_and(|l| l.cbr_convert_confirmed_at.is_some()),
+    );
 }
 
 // ───── POST /issues/{id}/scan ─────

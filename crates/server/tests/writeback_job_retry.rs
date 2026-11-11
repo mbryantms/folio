@@ -407,6 +407,55 @@ async fn rewrite_failure_on_the_last_attempt_marks_the_run_failed_and_aborts() {
     assert!(run.error_summary.is_none(), "stale error cleared");
 }
 
+/// The stored run error names the file, never the directory it lives in:
+/// a CBR whose `.cbz` twin already exists fails conversion on every
+/// attempt, and the summary the last attempt stores carries the twin's
+/// file name only.
+#[tokio::test]
+async fn stored_run_error_names_the_file_not_its_directory() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbr = dir.path().join("saga-7.cbr");
+    let issue_id = IssueSeed::new(
+        lib_id,
+        series_id,
+        &cbr,
+        &std::fs::read(cbr_fixture()).unwrap(),
+        7.0,
+    )
+    .insert(&app.state().db)
+    .await;
+    std::fs::write(dir.path().join("saga-7.cbz"), build_cbz_bytes("twin")).unwrap();
+    let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+
+    let mut worker = with_retry_budget_attempt(rewrite_sidecars::handle);
+    worker(
+        sidecar_job(&issue_id, run_id),
+        Data::new(app.state()),
+        Attempt::new_with_value(JOB_MAX_ATTEMPTS),
+    )
+    .await
+    .expect_err("the conversion cannot overwrite the twin");
+
+    let run = run_row(&app, run_id).await;
+    assert_eq!(run.status, "failed", "run marked failed: {run:?}");
+    let summary = run.error_summary.expect("error_summary set");
+    assert!(
+        summary.contains("destination already exists: saga-7.cbz"),
+        "{summary}"
+    );
+    let dir_text = dir.path().to_string_lossy().into_owned();
+    assert!(!summary.contains(&dir_text), "no directory: {summary}");
+}
+
 /// A run whose `error_summary` the rewrite job did not write — a search
 /// failure — is never flipped back to `completed` by a rewrite that lands.
 #[tokio::test]

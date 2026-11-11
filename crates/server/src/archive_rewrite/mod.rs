@@ -77,7 +77,9 @@ pub enum RewriteError {
     ArchiveErr(#[from] ArchiveError),
     #[error("retain_count {0} out of allowed range 0..=5")]
     InvalidRetainCount(i32),
-    #[error("target path has no parent directory: {0}")]
+    /// The message names the file only; [`RewriteError::no_parent`] logs
+    /// the full path.
+    #[error("target path has no parent directory: {}", file_label(.0))]
     NoParent(PathBuf),
     /// The freshly-written archive failed post-write validation (an
     /// expected entry went missing, a sidecar is absent, or the archive
@@ -86,6 +88,23 @@ pub enum RewriteError {
     /// intact even when `retain_count = 0`.
     #[error("rewrite validation failed: {0}")]
     ValidationFailed(String),
+}
+
+/// The file name of `p`, for error text. An error message can end up
+/// stored on a run or shown to a user, so it names the file and never
+/// the directory it lives in; the full path goes to the log.
+pub(crate) fn file_label(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "(no file name)".to_owned())
+}
+
+impl RewriteError {
+    /// [`RewriteError::NoParent`] for `target`, logging the full path.
+    fn no_parent(target: &Path) -> Self {
+        tracing::warn!(path = %target.display(), "archive rewrite: target has no parent directory");
+        Self::NoParent(target.to_path_buf())
+    }
 }
 
 /// Atomically replace `target` with the result of `write_into(temp_path)`.
@@ -171,7 +190,7 @@ where
     }
     let parent = target
         .parent()
-        .ok_or_else(|| RewriteError::NoParent(target.to_path_buf()))?;
+        .ok_or_else(|| RewriteError::no_parent(target))?;
     let tmp = temp_staging(target);
     claim_staging_path(&tmp)?;
 
@@ -382,9 +401,7 @@ pub fn convert_atomic<F>(
 where
     F: FnOnce(&Path) -> Result<(), RewriteError>,
 {
-    let parent = dst
-        .parent()
-        .ok_or_else(|| RewriteError::NoParent(dst.to_path_buf()))?;
+    let parent = dst.parent().ok_or_else(|| RewriteError::no_parent(dst))?;
     let tmp = temp_staging(dst);
     claim_staging_path(&tmp)?;
 
@@ -444,7 +461,7 @@ pub fn restore_latest_backup(target: &Path) -> Result<(), RewriteError> {
     }
     let parent = target
         .parent()
-        .ok_or_else(|| RewriteError::NoParent(target.to_path_buf()))?;
+        .ok_or_else(|| RewriteError::no_parent(target))?;
     fs::rename(&bak, target)?;
     fsync_dir(parent)?;
     Ok(())

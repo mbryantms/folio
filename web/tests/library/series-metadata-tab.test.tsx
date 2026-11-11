@@ -323,10 +323,12 @@ describe("<SeriesMetadataTab>", () => {
     expect(html).toContain("Wonder Woman (1987)");
   });
 
-  it("renders the files card without a folder row when the path is absent (reader response)", () => {
-    // A non-admin's overview carries no `folder_path` key at all.
-    const { folder_path: _omitted, ...files } = overview.files;
-    overviewData = { ...overview, files };
+  it("renders the files card without a folder row when the path is null (reader response)", () => {
+    // A non-admin's overview carries `folder_path: null`.
+    overviewData = {
+      ...overview,
+      files: { ...overview.files, folder_path: null },
+    };
     role = "user";
     let html: string;
     try {

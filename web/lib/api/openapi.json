@@ -17363,7 +17363,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Why the run failed. Admins get the job's error text; any other\ncaller gets a fixed sentence whenever a failure was recorded."
           },
           "finished_at": {
             "type": [
@@ -30549,7 +30550,7 @@
               "string",
               "null"
             ],
-            "description": "`failed` only: the provider error, for the run detail."
+            "description": "`failed` only: the provider error, for the run detail. Admin\nresponses only; a non-admin's view leaves it out."
           },
           "retry_after_secs": {
             "type": [
@@ -34402,7 +34403,7 @@
               "string",
               "null"
             ],
-            "description": "The series folder on the server. Admins only; absent for every\nother caller (and when the series has no folder)."
+            "description": "The series folder on the server. Admins only; `null` for every\nother caller and when the series has no folder."
           },
           "last_scanned_at": {
             "type": [
