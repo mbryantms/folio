@@ -207,37 +207,45 @@ pub async fn scan_series(
 /// segment (validated unique across all series). `status` and the external
 /// IDs are surfaced in the issue drawer so editors can correct
 /// continuing/ended state and database links without leaving the issue page.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct UpdateSeriesReq {
     /// `null` clears the override; an empty/whitespace string is treated as null.
     #[serde(default)]
+    #[garde(skip)]
     pub match_key: Option<String>,
     /// Admin override for the URL slug. Slugified server-side; rejected on
     /// collision.
     #[serde(default)]
+    #[garde(skip)]
     pub slug: Option<String>,
     /// Publication status — one of `continuing`, `ended`, `cancelled`,
     /// `hiatus`, `limited`. Scanner defaults to `continuing` on create.
     #[serde(default)]
+    #[garde(skip)]
     pub status: Option<String>,
     #[serde(default, deserialize_with = "deserialize_some_i64")]
+    #[garde(skip)]
     pub comicvine_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "deserialize_some_i64")]
+    #[garde(skip)]
     pub metron_id: Option<Option<i64>>,
     /// Series-level summary. `null` clears (the API will fall back to the
     /// first issue's summary on read).
     #[serde(default, deserialize_with = "deserialize_some_string")]
+    #[garde(skip)]
     pub summary: Option<Option<String>>,
     /// Per-series reading-direction override. `"ltr"` / `"rtl"` /
     /// `"ttb"` (future-compat) or `null` for "Auto, inherit". Empty or
     /// whitespace-only strings are rejected — clients should send
     /// `null` explicitly to clear. See `manga-and-bulk-metadata-1.0` M2.
     #[serde(default, deserialize_with = "deserialize_some_string")]
+    #[garde(skip)]
     pub reading_direction: Option<Option<String>>,
     /// Per-series OCR language override. `"western"` / `"manga"` or
     /// `null` for "Auto — infer from reading direction". See OCR
     /// rework 1.0.
     #[serde(default, deserialize_with = "deserialize_some_string")]
+    #[garde(skip)]
     pub text_language: Option<Option<String>>,
     // ── Identity fields (roadmap WP-2.3) ──
     // Each is validated and, when present, written and pinned as a user
@@ -246,26 +254,37 @@ pub struct UpdateSeriesReq {
     // (identity.rs tier 2), so renaming never re-homes a folder.
     /// Display name. Non-empty; also refreshes `normalized_name`.
     #[serde(default)]
+    #[garde(skip)]
     pub name: Option<String>,
     /// Start year (1900..=2100) or `null` to clear.
     #[serde(default, deserialize_with = "deserialize_some_i32")]
+    #[garde(skip)]
     pub year: Option<Option<i32>>,
     /// Volume number (1..=9999) or `null` to clear.
     #[serde(default, deserialize_with = "deserialize_some_i32")]
+    #[garde(skip)]
     pub volume: Option<Option<i32>>,
     #[serde(default, deserialize_with = "deserialize_some_string")]
+    #[garde(skip)]
     pub publisher: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some_string")]
+    #[garde(skip)]
     pub imprint: Option<Option<String>>,
-    /// ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`.
     #[serde(default, deserialize_with = "deserialize_some_string")]
+    /// A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).
+    /// `null` (or blank) clears the pin: the series returns to its
+    /// derived rating.
+    /// `Unknown` / `Rating Pending` are refused here (422): clear instead.
+    #[garde(custom(crate::library::age_rating::garde_series_rating))]
     pub age_rating: Option<Option<String>>,
     /// Number of issues in the run (0..=10000) or `null` when unknown.
     #[serde(default, deserialize_with = "deserialize_some_i32")]
+    #[garde(skip)]
     pub total_issues: Option<Option<i32>>,
     /// ISO 639-1 language code (`en`, `ja`). The column is NOT NULL, so
     /// there is no clear.
     #[serde(default)]
+    #[garde(skip)]
     pub language_code: Option<String>,
 }
 
@@ -303,7 +322,10 @@ impl IdentityEdits {
         if self.imprint.is_some() {
             out.push(F::Imprint);
         }
-        if self.age_rating.is_some() {
+        // Clearing the rating releases the pin instead
+        // ([`Self::released_fields`]): the series returns to its derived
+        // rating.
+        if matches!(self.age_rating, Some(Some(_))) {
             out.push(F::AgeRating);
         }
         if self.total_issues.is_some() {
@@ -313,6 +335,18 @@ impl IdentityEdits {
             out.push(F::LanguageCode);
         }
         out
+    }
+
+    /// Fields whose `user` pin this edit removes: a cleared `age_rating`
+    /// (the series rating is derived again from its issues and its
+    /// `series.json`, which `update_series_with_user_pins` does in the
+    /// same transaction).
+    fn released_fields(&self) -> Vec<crate::metadata::MetadataField> {
+        if matches!(self.age_rating, Some(None)) {
+            vec![crate::metadata::MetadataField::AgeRating]
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -455,7 +489,7 @@ pub async fn update_series(
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
     AxPath(slug): AxPath<String>,
-    Json(req): Json<UpdateSeriesReq>,
+    crate::api::extractors::Validated(req): crate::api::extractors::Validated<UpdateSeriesReq>,
 ) -> impl IntoResponse {
     let row = match find_by_slug(&app.db, &slug).await {
         Ok(r) => r,
@@ -636,7 +670,8 @@ pub async fn update_series(
     if normalized_status.is_some() {
         pinned.push(crate::metadata::MetadataField::Status);
     }
-    match update_series_with_user_pins(&app.db, am, &pinned).await {
+    let released = identity.released_fields();
+    match update_series_with_user_pins(&app.db, am, &pinned, &released).await {
         Ok(updated) => {
             // Apply external-ID edits the user touched. Mirrors the
             // per-issue PATCH flow in api/issues.rs.
@@ -715,6 +750,7 @@ pub async fn update_series(
             // issue, then a single series-scoped rescan — the same shape
             // as a series-level provider apply). Never fails the request.
             let sidecar_rewrite = if identity.pinned_fields().is_empty()
+                && released.is_empty()
                 && pending_cv.is_none()
                 && pending_metron.is_none()
             {
@@ -793,18 +829,34 @@ pub async fn update_series(
 /// non-fatal (audit 2026-11 N-M6): a lost pin meant the next provider
 /// apply silently undid the edit. Now a pin that cannot be written rolls
 /// the edit back and the request fails.
+///
+/// `released` fields lose their `user` pin in the same transaction; a
+/// released `age_rating` is then re-derived there too, so the response
+/// and the row carry the derived rating, never a transient NULL.
 async fn update_series_with_user_pins(
     db: &sea_orm::DatabaseConnection,
     am: series::ActiveModel,
     pinned: &[crate::metadata::MetadataField],
+    released: &[crate::metadata::MetadataField],
 ) -> Result<series::Model, sea_orm::DbErr> {
-    use crate::metadata::writers::{SetBy, write_field_provenance};
+    use crate::metadata::writers::{SetBy, clear_user_pin, write_field_provenance};
     use sea_orm::TransactionTrait;
     let txn = db.begin().await?;
-    let updated = am.update(&txn).await?;
+    let mut updated = am.update(&txn).await?;
     let id = updated.id.to_string();
     for &field in pinned {
         write_field_provenance(&txn, "series", &id, field, SetBy::User, None).await?;
+    }
+    for &field in released {
+        clear_user_pin(&txn, "series", &id, &field.key()).await?;
+    }
+    if released.contains(&crate::metadata::MetadataField::AgeRating)
+        && crate::library::series_rating::recompute_series_age_rating(&txn, updated.id).await?
+    {
+        updated = series::Entity::find_by_id(updated.id)
+            .one(&txn)
+            .await?
+            .ok_or_else(|| sea_orm::DbErr::RecordNotFound("series".into()))?;
     }
     txn.commit().await?;
     Ok(updated)
@@ -1897,7 +1949,8 @@ pub fn apply_series_visibility(
         );
     }
     // WP-2.7: age-rating cap — hide series rated above the grant's cap
-    // (unrated rows pass, see `library::age_rating`).
+    // (unrated rows pass unless the grant hides them, see
+    // `library::access`).
     if let Some(cap) = visible.series_cap_condition() {
         select = select.filter(cap);
     }

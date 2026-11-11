@@ -60,6 +60,7 @@ import {
   summarizeOps,
   type PageSlot,
 } from "@/lib/archive-edit";
+import { RetryingImg } from "@/components/RetryingImg";
 import { cn } from "@/lib/utils";
 import type { IssueDetailView, TransformStep } from "@/lib/api/types";
 import {
@@ -411,8 +412,7 @@ function PageCard({
             tried first and failed: any counter/salt scheme eventually
             reuses a URL across SPA navigations, and the SW then paints
             the previous copy first. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <RetryingImg
           src={`/issues/${issueId}/pages/${slot.orig}/thumb?sw=bypass&t=${openStamp}`}
           alt={`Page ${position}`}
           className="h-full w-full object-contain transition-transform"

@@ -1756,7 +1756,8 @@ pub(crate) struct OpdsIssueRow {
     pub genre: Option<String>,
     pub tags: Option<String>,
     pub page_count: Option<i32>,
-    /// WP-2.7 age-rating cap checks (issue rating, series fallback).
+    /// WP-2.7 age-rating cap checks: the issue's own rating (its series'
+    /// rating is checked as well).
     pub age_rating: Option<String>,
     pub updated_at: DateTimeWithTimeZone,
 }

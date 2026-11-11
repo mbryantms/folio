@@ -42,6 +42,17 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
       ),
     [user.library_access],
   );
+  // No control for this yet: the saved value is sent back unchanged so a
+  // save here never turns it off.
+  const loadedHideUnrated = React.useMemo(
+    () =>
+      new Set(
+        user.library_access
+          .filter((g) => g.hide_unrated)
+          .map((g) => g.library_id),
+      ),
+    [user.library_access],
+  );
   const [selected, setSelected] = React.useState<Set<string>>(original);
   const [caps, setCaps] = React.useState<Map<string, string>>(originalCaps);
   // Reset local state when the upstream grants change (e.g. after a save
@@ -146,7 +157,11 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
           <Button
             size="sm"
             disabled={!dirty || update.isPending}
-            onClick={() => update.mutate(buildAccessRequest(selected, caps))}
+            onClick={() =>
+              update.mutate(
+                buildAccessRequest(selected, caps, loadedHideUnrated),
+              )
+            }
           >
             {update.isPending ? "Saving…" : "Save changes"}
           </Button>

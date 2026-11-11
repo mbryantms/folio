@@ -3858,7 +3858,8 @@ export interface paths {
          *     so if that was the only finished row the start moves to the re-read.
          *
          *     Excludes removed issues and series, issues outside the caller's
-         *     libraries or over their age cap (issue rating, series fallback), and
+         *     libraries or over their age cap (the issue's own rating and its series'
+         *     rating must both pass), and
          *     series the caller hid from the rails — with On deck's auto-restore: a
          *     series dismissal stops hiding once the caller reads in the series again.
          *
@@ -11142,9 +11143,17 @@ export interface components {
              * @description ComicInfo `AgeRating` cap for this grant (a rung of the ladder in
              *     `library::age_rating::LADDER`), or `null` for unrestricted.
              *     Series / issues rated above the cap are hidden from the user on
-             *     every read surface; unrated rows are shown (WP-2.7, D6).
+             *     every read surface; unrated rows are shown (WP-2.7, D6) unless
+             *     `hide_unrated` is on.
              */
             age_rating_max?: string | null;
+            /**
+             * @description Hide unrated content in this library from the user: a series with
+             *     no rating on the ladder is hidden as if it ranked above the cap,
+             *     and its issues with it. With no cap set it hides only unrated
+             *     content.
+             */
+            hide_unrated: boolean;
             library_id: string;
             library_name: string;
         };
@@ -11158,6 +11167,17 @@ export interface components {
              */
             age_rating_caps?: {
                 [key: string]: string;
+            };
+            /**
+             * @description Per-library "hide unrated content" switch, keyed by library id. A
+             *     library listed in `library_ids` but absent here (or `false`) shows
+             *     unrated content; keys for libraries not in `library_ids` are
+             *     ignored. Optional: omitting it turns the option off for every
+             *     granted library, so a client that saves grants should send back
+             *     the values it loaded.
+             */
+            hide_unrated?: {
+                [key: string]: boolean;
             };
             /**
              * @description Final set of library ids the user should be granted access to. The
@@ -16077,6 +16097,10 @@ export interface components {
         UpdateIssueReq: {
             /** @description Replace-all. Each link must have a non-empty `url`. */
             additional_links?: components["schemas"]["IssueLink"][] | null;
+            /**
+             * @description A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …);
+             *     blank or null clears it.
+             */
             age_rating?: string | null;
             alternate_series?: string | null;
             black_and_white?: boolean | null;
@@ -16319,7 +16343,12 @@ export interface components {
          *     continuing/ended state and database links without leaving the issue page.
          */
         UpdateSeriesReq: {
-            /** @description ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`. */
+            /**
+             * @description A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).
+             *     `null` (or blank) clears the pin: the series returns to its
+             *     derived rating.
+             *     `Unknown` / `Rating Pending` are refused here (422): clear instead.
+             */
             age_rating?: string | null;
             /** Format: int64 */
             comicvine_id?: number | null;

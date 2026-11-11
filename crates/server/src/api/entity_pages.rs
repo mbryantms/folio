@@ -28,9 +28,9 @@
 //! ## Visibility
 //!
 //! Every query is library-ACL + age-rating-cap filtered exactly like
-//! `/creators`: issue hits check the issue's effective rating
-//! (`COALESCE(i.age_rating, s.age_rating)`), series rows check the series
-//! rating. An entity with no visible appearance for the caller is a 404
+//! `/creators`: issue hits check the issue's own rating and its series'
+//! rating (`VisibleLibraries::issue_cap_sql_joined`), series rows check
+//! the series rating. An entity with no visible appearance for the caller is a 404
 //! on the detail route and absent from the browse index, so a restricted
 //! user can't learn names that only occur in hidden libraries.
 //!
@@ -376,7 +376,7 @@ fn acl_sql(visible: &VisibleLibraries, params: &mut Vec<Value>) -> Option<AclSql
     };
     // Entity surfaces: the issue's rating AND its series' own rating, so a
     // visible-rated issue of a hidden series never counts.
-    let issue_cap = visible.entity_issue_cap_sql("i", "s", params);
+    let issue_cap = visible.issue_cap_sql_joined("i", "s", params);
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", params);
     Some(AclSql {
         lib,

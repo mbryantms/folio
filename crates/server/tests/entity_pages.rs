@@ -204,6 +204,7 @@ async fn fixture(app: &TestApp) -> Fixture {
         library_id: Set(lib_a),
         user_id: Set(user.user_id),
         age_rating_max: Set(Some("Teen".into())),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -224,6 +225,16 @@ async fn fixture(app: &TestApp) -> Fixture {
         .with_publisher("DC Comics")
         .insert(&db)
         .await;
+    // An admin left series A unrated on purpose (a person-set rating), so
+    // the rollups below keep it visible while its Mature issue stays hidden
+    // on its own; otherwise the series would take its highest issue rating.
+    exec(
+        &db,
+        "INSERT INTO field_provenance (entity_type, entity_id, field, set_by, set_at) \
+         VALUES ('series', $1, 'age_rating', 'user', now())",
+        vec![series_a.to_string().into()],
+    )
+    .await;
     let series_b = SeriesSeed::new(lib_b, "Hidden Tales")
         .with_publisher("Secret Press")
         .insert(&db)

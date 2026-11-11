@@ -165,6 +165,7 @@ async fn seed_series(app: &TestApp, lib_id: Uuid, name: &str, summary: Option<&s
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(summary.map(str::to_owned)),
         language_code: Set("en".into()),
         sort_name: Set(None),

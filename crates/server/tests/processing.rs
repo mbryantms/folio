@@ -695,7 +695,7 @@ async fn series_json_fills_series_metadata() {
             "publisher": "Tau Press",
             "year_began": 2019,
             "total_issues": 12,
-            "age_rating": "All Ages"
+            "age_rating": "Everyone"
         }
     }"#;
     std::fs::write(folder.join("series.json"), series_json).unwrap();
@@ -713,7 +713,50 @@ async fn series_json_fills_series_metadata() {
     assert_eq!(series.publisher.as_deref(), Some("Tau Press"));
     assert_eq!(series.year, Some(2019));
     assert_eq!(series.total_issues, Some(12));
-    assert_eq!(series.age_rating.as_deref(), Some("All Ages"));
+    // The series rating is derived on the age-rating ladder: with no rated
+    // issue it is the rating series.json declares.
+    assert_eq!(series.age_rating.as_deref(), Some("Everyone"));
+}
+
+/// A series.json rating that is not on the ladder (and is no recognised
+/// alias) cannot be ranked, so it rates nothing: the series stays unrated,
+/// the way an unrecognised issue rating is treated by an age cap.
+#[tokio::test]
+async fn series_json_rating_off_the_ladder_leaves_the_series_unrated() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Upsilon");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz_with_xml(
+        &folder.join("Upsilon 001.cbz"),
+        1,
+        2,
+        Some(
+            r#"<?xml version="1.0"?><ComicInfo><Series>Upsilon</Series><Number>1</Number></ComicInfo>"#,
+        ),
+        None,
+    );
+    let series_json = r#"{
+        "metadata": {
+            "name": "Upsilon",
+            "publisher": "Upsilon Press",
+            "age_rating": "All Ages"
+        }
+    }"#;
+    std::fs::write(folder.join("series.json"), series_json).unwrap();
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+
+    let series = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(series.publisher.as_deref(), Some("Upsilon Press"));
+    assert_eq!(series.age_rating, None);
 }
 
 #[tokio::test]

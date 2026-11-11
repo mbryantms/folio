@@ -107,6 +107,7 @@ async fn grant_access(app: &TestApp, user_id: Uuid, lib_id: Uuid) {
         library_id: Set(lib_id),
         user_id: Set(user_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -202,6 +203,7 @@ async fn seed_series(app: &TestApp, lib_id: Uuid, name: &str) -> Uuid {
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
         sort_name: Set(None),

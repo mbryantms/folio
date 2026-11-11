@@ -2260,6 +2260,7 @@ async fn apply_issue_updates(
     let Some(row) = issue::Entity::find_by_id(issue_id).one(db).await? else {
         return Ok(());
     };
+    let series_id = row.series_id;
     let mut am: issue::ActiveModel = row.into();
     if let Some(v) = new.title.clone() {
         am.title = Set(Some(v));
@@ -2298,6 +2299,12 @@ async fn apply_issue_updates(
     }
     am.updated_at = Set(Utc::now().fixed_offset());
     am.update(db).await?;
+    // A provider rating on the issue can raise or lower its series' derived
+    // rating (`library::series_rating`); the caller drops the similar-series
+    // cache after every apply.
+    if new.age_rating.is_some() {
+        crate::library::series_rating::recompute_series_age_rating(db, series_id).await?;
+    }
     Ok(())
 }
 

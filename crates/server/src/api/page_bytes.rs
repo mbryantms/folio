@@ -50,6 +50,7 @@ use super::page_source::{PageUnavailable, issue_not_found, no_store, version_tag
 use crate::auth::CurrentUser;
 use crate::library::page_variants;
 use crate::library::zip_lru::lock_reader;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -68,7 +69,11 @@ pub struct PageQuery {
 const CREDENTIALS_VARY: &str = "Cookie, Authorization";
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/issues/{id}/pages/{n}", get(serve))
+    // Per-user `PAGES` bucket (A9). This router holds only the page route,
+    // so the `route_layer` covers nothing else.
+    Router::new()
+        .route("/issues/{id}/pages/{n}", get(serve))
+        .route_layer(rate_limit::PAGES.build_per_user())
 }
 
 #[handler]

@@ -170,6 +170,7 @@ async fn setup() -> Fixture {
         library_id: Set(lib_id),
         user_id: Set(reader.user_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

@@ -236,7 +236,7 @@ pub struct IngestOutputs<'a> {
     pub events: &'a mut EventCollector,
 }
 
-pub async fn ingest_one<C: ConnectionTrait>(
+pub async fn ingest_one<C: ConnectionTrait + sea_orm::TransactionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
     path: &Path,
@@ -829,7 +829,7 @@ async fn dedupe_by_content_hash<C: ConnectionTrait>(
 /// folder batches since post-audit T1.2, the issue rescan since B10) so a
 /// transaction opens only after the archive was read; do not pass a
 /// transaction here, or it stays open through the whole archive read.
-pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
+pub async fn ingest_one_with_fingerprint<C: ConnectionTrait + sea_orm::TransactionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
     path: &Path,
@@ -1304,7 +1304,7 @@ async fn reread_page_hashes(
 /// [`prepare_ingest`] — so the caller can run it inside a batch
 /// transaction opened *after* the whole batch was prepared (post-audit
 /// T1.2).
-pub async fn persist_prepared<C: ConnectionTrait>(
+pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
     prepared: PreparedIngest,
@@ -1543,6 +1543,10 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // `content_hash` carries the live fingerprint instead.
         let row_id = row.id.clone();
         let prev_page_count = row.page_count;
+        // A row re-homed to another series leaves its old one: that
+        // series' derived age rating is recomputed after the update (the
+        // new series' is, by its own rollup).
+        let left_series = (row.series_id != series_id).then_some(row.series_id);
         let mut am: IssueAM = row.into();
         am.library_id = Set(lib.id);
         am.series_id = Set(series_id);
@@ -1718,6 +1722,9 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             .await;
         }
         let updated = am.update(db).await?;
+        if let Some(old_series) = left_series {
+            crate::library::series_rating::recompute_series_age_rating(db, old_series).await?;
+        }
 
         // New bytes under a stable issue id — a retag, a sidecar
         // rewrite, an archive edit's follow-up rescan, or an external

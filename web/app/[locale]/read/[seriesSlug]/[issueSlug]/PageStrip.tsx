@@ -1,5 +1,6 @@
 "use client";
 
+import { RetryingImg } from "@/components/RetryingImg";
 import {
   useCallback,
   useEffect,
@@ -579,8 +580,7 @@ export function PageStrip({
                   }`}
                 >
                   {shouldLoad ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
+                    <RetryingImg
                       src={withContentVersion(
                         `/issues/${issueId}/pages/${i}/thumb?variant=strip`,
                         urlVersion,

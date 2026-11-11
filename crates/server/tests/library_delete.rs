@@ -188,6 +188,7 @@ async fn seed(app: &TestApp) -> (Uuid, String) {
         status: Set("ongoing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("eng".into()),
         sort_name: Set(None),
@@ -436,6 +437,7 @@ async fn delete_library_cascades_and_wipes_thumbs() {
         library_id: Set(lib_id),
         user_id: Set(actor_user_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(Utc::now().fixed_offset()),
         updated_at: Set(Utc::now().fixed_offset()),
     }

@@ -10,6 +10,7 @@ import {
 import { FileX, Loader2, RotateCw } from "lucide-react";
 import { READER_FILTER_VAR } from "@/lib/reader/filters";
 import { ensureFreshSession } from "@/lib/api/session-refresh";
+import { retryAfterMs } from "@/lib/api/retry-after";
 
 /** Show the "still loading…" hint after this long in flight (audit C3). */
 const SLOW_HINT_MS = 8000;
@@ -36,6 +37,17 @@ export function retryTopPx(
 /** A page failure no retry can fix (see `finalPageFailure`). */
 export type FinalPageFailure = "gone" | "needs_conversion";
 
+/** How many times one page waits and loads again after a transient
+ *  failure (see `probePageFailure`) before the failure is shown as a
+ *  plain one with Tap to retry. */
+export const MAX_PAGE_RATE_LIMIT_WAITS = 3;
+
+/** What the HEAD probe of a failed page found: a final failure, a
+ *  transient one with the wait before the next try, or nothing
+ *  actionable. */
+export type PageProbe =
+  { kind: FinalPageFailure } | { kind: "transient"; waitMs: number } | null;
+
 /**
  * Whether a page that failed to load failed for good
  * (`crates/server/src/api/page_source.rs`): 410 when the issue's file is
@@ -49,14 +61,38 @@ export type FinalPageFailure = "gone" | "needs_conversion";
 export async function finalPageFailure(
   url: string,
 ): Promise<FinalPageFailure | null> {
+  const probe = await probePageFailure(url);
+  return probe && probe.kind !== "transient" ? probe.kind : null;
+}
+
+/**
+ * [`finalPageFailure`] plus the transient cases, so the page can wait and
+ * load again instead of showing a failure:
+ *
+ * - a 429 from the page bucket (`docs/architecture/rate-limits.md`) waits
+ *   for its `Retry-After` (1–30 s);
+ * - a 2xx: the page answers now although the GET failed. The probe runs
+ *   after the failure, and the page bucket refills a token every 4 ms, so
+ *   a GET refused with 429 usually probes as 200. Waits the minimum (1 s).
+ *
+ * The caller bounds both, so a page whose bytes are served but never
+ * decode still ends in the error state.
+ */
+export async function probePageFailure(url: string): Promise<PageProbe> {
   try {
     const res = await fetch(url, {
       method: "HEAD",
       credentials: "same-origin",
       cache: "no-store",
     });
-    if (res.status === 410) return "gone";
-    if (res.status === 409) return "needs_conversion";
+    if (res.status === 410) return { kind: "gone" };
+    if (res.status === 409) return { kind: "needs_conversion" };
+    if (res.status === 429)
+      return {
+        kind: "transient",
+        waitMs: retryAfterMs(res.headers.get("retry-after")),
+      };
+    if (res.ok) return { kind: "transient", waitMs: retryAfterMs(null) };
     return null;
   } catch {
     return null;
@@ -147,6 +183,16 @@ export function PageImage({
   // when the scanner didn't record dimensions.
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
   const autoRetried = useRef(false);
+  // Transient-failure waits taken (bounded by MAX_PAGE_RATE_LIMIT_WAITS)
+  // and the pending wait's timer, cleared on unmount.
+  const rateLimitWaits = useRef(0);
+  const rateLimitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (rateLimitTimer.current) clearTimeout(rateLimitTimer.current);
+    },
+    [],
+  );
   const internalImgRef = useRef<HTMLImageElement>(null);
   const imgRef = externalImgRef ?? internalImgRef;
   const boxRef = useRef<HTMLSpanElement>(null);
@@ -166,8 +212,25 @@ export function PageImage({
       return;
     }
     setStatus("error");
-    void finalPageFailure(effectiveSrc).then((final) => {
-      if (final) setStatus((s) => (s === "error" ? final : s));
+    void probePageFailure(effectiveSrc).then((probe) => {
+      if (!probe) return;
+      if (probe.kind !== "transient") {
+        const final = probe.kind;
+        setStatus((s) => (s === "error" ? final : s));
+        return;
+      }
+      // A 429, or a page that answers now: not a failure yet. Go back to
+      // loading, wait and load again. The silent immediate retry is not
+      // handed back, so each wait cycle costs one GET and one HEAD while
+      // the bucket is empty. Bounded; past the bound the retry button
+      // stays (a page whose bytes never decode lands there too).
+      if (rateLimitWaits.current >= MAX_PAGE_RATE_LIMIT_WAITS) return;
+      rateLimitWaits.current += 1;
+      setStatus((s) => (s === "error" ? "loading" : s));
+      rateLimitTimer.current = setTimeout(() => {
+        rateLimitTimer.current = null;
+        setRetry((n) => n + 1);
+      }, probe.waitMs);
     });
   };
 
@@ -228,6 +291,7 @@ export function PageImage({
 
   const handleRetry = () => {
     autoRetried.current = false;
+    rateLimitWaits.current = 0;
     setSlow(false);
     setStatus("loading");
     void ensureFreshSession().then(() => setRetry((n) => n + 1));

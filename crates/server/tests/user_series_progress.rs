@@ -118,6 +118,7 @@ async fn seed_series_with_issues(
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
         sort_name: Set(None),
@@ -661,6 +662,7 @@ async fn list_surfaces_carry_the_viewers_progress_summary() {
             user_id: Set(bob),
             library_id: Set(lib),
             age_rating_max: Set(None),
+            hide_unrated: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
         }

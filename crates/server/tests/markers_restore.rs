@@ -301,6 +301,7 @@ async fn restore_never_takes_over_another_users_marker() {
         user_id: Set(other.user_id),
         library_id: Set(fx.lib),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

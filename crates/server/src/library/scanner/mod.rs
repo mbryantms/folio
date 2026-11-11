@@ -2113,6 +2113,7 @@ async fn run_issue_phase(
             am.removal_confirmed_at = Set(None);
             am.update(&state.db).await?;
             stats.issues_removed += 1;
+            crate::library::series_rating::recompute_best_effort(&state.db, &[row.series_id]).await;
             let ev = events
                 .build(
                     Category::Issue,
@@ -2221,7 +2222,18 @@ async fn run_issue_phase(
         // Single-archive scan: no need to pre-fetch slugs; the per-call DB
         // allocator's one COUNT query is fine.
         match process::persist_prepared(&ctx, &txn, prepared, None, &mut outputs).await {
-            Ok(()) => txn.commit().await?,
+            Ok(()) => {
+                if let Err(e) = txn.commit().await {
+                    // A failed commit may still have landed: re-derive the
+                    // series before the error returns.
+                    crate::library::series_rating::recompute_best_effort(
+                        &state.db,
+                        &[row.series_id],
+                    )
+                    .await;
+                    return Err(e.into());
+                }
+            }
             Err(e) => {
                 if let Err(rollback) = txn.rollback().await {
                     tracing::warn!(error = %rollback, "scanner: issue transaction rollback failed");
@@ -2230,6 +2242,9 @@ async fn run_issue_phase(
             }
         }
     }
+    // The ingested rating counts toward the series' derived rating now,
+    // whatever fails between here and the rollup below.
+    crate::library::series_rating::recompute_best_effort(&state.db, &[row.series_id]).await;
     stats.record_phase("process", process_started.elapsed());
 
     // A Duplicates-page soft-remove (WP-3.3) is sticky: skip the restore.
@@ -2243,7 +2258,15 @@ async fn run_issue_phase(
             let mut am: issue::ActiveModel = updated.clone().into();
             am.removed_at = Set(None);
             am.removal_confirmed_at = Set(None);
-            am.update(&state.db).await?;
+            let restored = am.update(&state.db).await;
+            // The restored issue counts toward its series' rating again;
+            // re-derived here (also when the write reported an error, which
+            // may still have committed), not only by the rollup below,
+            // which skips its remaining steps after a lost connection or
+            // aborted transaction.
+            crate::library::series_rating::recompute_best_effort(&state.db, &[updated.series_id])
+                .await;
+            restored?;
             stats.issues_restored += 1;
             crate::library::reconcile::restore_series_with_live_issues(
                 &state.db,
@@ -2264,19 +2287,25 @@ async fn run_issue_phase(
     let rollup_started = Instant::now();
     metadata_rollup::rollup_series_metadata_best_effort(&state.db, row.series_id).await;
     stats.record_phase("metadata_rollup", rollup_started.elapsed());
-    let sidecar = match series::Entity::find_by_id(row.series_id)
+    let parent_folder = series::Entity::find_by_id(row.series_id)
         .one(&state.db)
         .await?
-    {
-        Some(parent) => parent
-            .folder_path
-            .as_deref()
-            .map(std::path::Path::new)
-            .and_then(|folder| {
-                process::read_series_json(std::path::Path::new(&lib.root_path), folder)
-            }),
-        None => None,
-    };
+        .and_then(|parent| parent.folder_path)
+        .map(PathBuf::from);
+    let library_root = std::path::Path::new(&lib.root_path);
+    let sidecar = parent_folder
+        .as_deref()
+        .and_then(|folder| process::read_series_json(library_root, folder));
+    if let Some(folder) = parent_folder.as_deref() {
+        write_declared_rating(
+            &state.db,
+            row.series_id,
+            library_root,
+            folder,
+            sidecar.as_ref(),
+        )
+        .await;
+    }
     let reconcile_started = Instant::now();
     if let Err(e) =
         reconcile_status::reconcile_series_status(&state.db, row.series_id, sidecar.as_ref()).await
@@ -3014,6 +3043,51 @@ pub fn spawn_cbl_rematch_all(state: AppState) {
     });
 }
 
+/// Store the rating `series.json` declares as the series' floor
+/// (`series.declared_age_rating`) and re-derive the series rating. A
+/// sidecar parsed without a rating clears the floor. With no parsed
+/// sidecar the floor is cleared only when the file is really gone — the
+/// folder still opens as a directory through the no-follow walk from the
+/// library root and its `series.json` entry is not there; anything else (a
+/// sidecar that exists but did not parse, is over the size cap or is a
+/// link, a vanished folder or dropped network share, a permission or I/O
+/// error) leaves the floor alone, so a transient failure never lowers a
+/// rating. Best-effort: a failure is logged and the next scan retries.
+async fn write_declared_rating(
+    db: &sea_orm::DatabaseConnection,
+    series_id: Uuid,
+    library_root: &std::path::Path,
+    folder: &std::path::Path,
+    sidecar: Option<&parsers::series_json::SeriesMetadata>,
+) {
+    let declared = match sidecar {
+        Some(meta) => meta.age_rating.as_deref(),
+        None if !sidecar_really_absent(library_root, folder) => return,
+        None => None,
+    };
+    if let Err(e) =
+        crate::library::series_rating::apply_declared_age_rating(db, series_id, declared).await
+    {
+        tracing::warn!(%series_id, error = %e, "scanner: declared series rating write failed");
+    }
+}
+
+/// `true` only when `folder/series.json` is definitely not there: `folder`
+/// opens as a directory through the same no-follow walk from
+/// `library_root` that reads the sidecar
+/// ([`crate::library::no_follow::read_sidecar`]), and that directory has
+/// no `series.json` entry of any kind. See [`write_declared_rating`].
+pub(crate) fn sidecar_really_absent(
+    library_root: &std::path::Path,
+    folder: &std::path::Path,
+) -> bool {
+    use crate::library::no_follow::{EntryKind, open_library_parent};
+    match open_library_parent(library_root, &folder.join("series.json")) {
+        Ok((dir, name)) => matches!(dir.kind(&name), Ok(EntryKind::Missing)),
+        Err(_) => false,
+    }
+}
+
 #[expect(clippy::too_many_arguments)]
 async fn process_planned_folder(
     state: &AppState,
@@ -3061,7 +3135,20 @@ async fn process_planned_folder(
     // produce the same DB state. Without this, a sidecar that landed
     // (or shipped enriched) after the previous scan would never apply
     // to series rows whose folders haven't been touched since.
-    let series_json = process::read_series_json(std::path::Path::new(&lib.root_path), &folder);
+    let library_root = std::path::Path::new(&lib.root_path);
+    let series_json = process::read_series_json(library_root, &folder);
+    // The sidecar's rating is the series' declared floor; refreshed on
+    // every scan that reads the folder, skipped or not.
+    if let Some(series_id) = known_series_id {
+        write_declared_rating(
+            &state.db,
+            series_id,
+            library_root,
+            &folder,
+            series_json.as_ref(),
+        )
+        .await;
+    }
 
     if planned.skipped_unchanged {
         stats.series_skipped_unchanged += 1;
@@ -3232,6 +3319,16 @@ async fn process_planned_folder(
         resolved.id()
     };
     stats.record_phase_parallel("identity", identity_started.elapsed());
+    if known_series_id.is_none() {
+        write_declared_rating(
+            &state.db,
+            series_id,
+            std::path::Path::new(&lib.root_path),
+            &folder,
+            series_json.as_ref(),
+        )
+        .await;
+    }
 
     // metadata-providers-1.0 M8: detect identifier tags in the series
     // folder name (`[cv-12345]`, `[metron-67890]`, `[gcd-…]`) and
@@ -3428,7 +3525,12 @@ async fn process_planned_folder(
             }
         }
         if chunk_ok {
-            txn.commit().await?;
+            if let Err(e) = txn.commit().await {
+                // Earlier batches are committed (and this one may be): their
+                // ratings count toward the series' rating before the error.
+                crate::library::series_rating::recompute_best_effort(&state.db, &[series_id]).await;
+                return Err(e.into());
+            }
         } else {
             if let Err(e) = txn.rollback().await {
                 tracing::warn!(error = %e, "scanner: transaction rollback failed");
@@ -3464,15 +3566,22 @@ async fn process_planned_folder(
     // Stamp the series's last_scanned_at if we actually saw it — and only
     // when every batch committed. A stamped folder is mtime-skipped by the
     // next plain scan, which would bury the rolled-back files for good.
-    if !any_batch_failed
-        && let Some(s) = entity::series::Entity::find_by_id(series_id)
-            .one(&state.db)
-            .await?
-    {
-        let mut am: series::ActiveModel = s.into();
-        am.last_scanned_at = Set(Some(Utc::now().fixed_offset()));
-        am.update(&state.db).await?;
+    // A failure here is returned only after the rollup below: the batches
+    // are committed, and a retry scan fast-paths their files, so it would
+    // never roll them up (or re-derive the series rating) otherwise.
+    let stamped: anyhow::Result<()> = async {
+        if !any_batch_failed
+            && let Some(s) = entity::series::Entity::find_by_id(series_id)
+                .one(&state.db)
+                .await?
+        {
+            let mut am: series::ActiveModel = s.into();
+            am.last_scanned_at = Set(Some(Utc::now().fixed_offset()));
+            am.update(&state.db).await?;
+        }
+        Ok(())
     }
+    .await;
 
     // Roll up genre/tag/credit junctions from this series's active issues.
     // Best-effort — a stale rollup is cosmetic and the next scan retries.
@@ -3492,6 +3601,7 @@ async fn process_planned_folder(
         metadata_rollup::rollup_series_metadata_best_effort(&state.db, series_id).await;
         stats.record_phase_parallel("metadata_rollup", rollup_started.elapsed());
     }
+    stamped?;
 
     // WP-3.4: folder-name vs ComicInfo `<Series>` and mixed-series checks.
     // Deliberately NOT behind the PERF-2 `folder_mutated` gate: a folder
@@ -3578,4 +3688,41 @@ struct ProcessFolderOutcome {
     complete: bool,
     series_json: Option<parsers::series_json::SeriesMetadata>,
     seen_paths: Vec<String>,
+}
+
+#[cfg(test)]
+mod declared_rating_tests {
+    use super::sidecar_really_absent;
+
+    #[test]
+    fn only_a_sidecar_that_is_really_gone_clears_the_floor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let folder = root.join("Run (2020)");
+        std::fs::create_dir(&folder).unwrap();
+        // Present: never absent (even when it fails to parse).
+        std::fs::write(folder.join("series.json"), b"{ not json").unwrap();
+        assert!(!sidecar_really_absent(root, &folder));
+        // Removed from a folder that is still there: absent.
+        std::fs::remove_file(folder.join("series.json")).unwrap();
+        assert!(sidecar_really_absent(root, &folder));
+        // The folder itself is gone (an unmounted share looks like this):
+        // not proof the sidecar was removed.
+        assert!(!sidecar_really_absent(root, &root.join("Gone (2020)")));
+        // A lookup failing with anything but NotFound (here ENOTDIR: the
+        // "folder" is a file) keeps the floor too.
+        let file = root.join("not-a-dir");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(!sidecar_really_absent(root, &file));
+        // A sidecar that is a link is there (read refuses it): kept.
+        std::fs::write(root.join("elsewhere.json"), b"{}").unwrap();
+        std::os::unix::fs::symlink(root.join("elsewhere.json"), folder.join("series.json"))
+            .unwrap();
+        assert!(!sidecar_really_absent(root, &folder));
+        std::fs::remove_file(folder.join("series.json")).unwrap();
+        // A folder reached through a link is never looked at: kept.
+        let linked = root.join("Linked (2020)");
+        std::os::unix::fs::symlink(&folder, &linked).unwrap();
+        assert!(!sidecar_really_absent(root, &linked));
+    }
 }

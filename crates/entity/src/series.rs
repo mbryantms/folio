@@ -35,6 +35,12 @@ pub struct Model {
     pub total_issues: Option<i32>,
     #[sea_orm(nullable)]
     pub age_rating: Option<String>,
+    /// The rating the folder's `series.json` declares, as the scanner
+    /// last read it (NULL = no sidecar, or no rating in it; the upgrade
+    /// migration may seed a provisional value). A floor for the derived
+    /// `age_rating` (`server::library::series_rating`).
+    #[sea_orm(nullable)]
+    pub declared_age_rating: Option<String>,
     #[sea_orm(nullable)]
     pub summary: Option<String>,
     pub language_code: String,

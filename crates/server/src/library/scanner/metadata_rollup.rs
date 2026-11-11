@@ -12,6 +12,7 @@
 //!   - `rollup_series_metadata` — called once per series after a folder scan
 //!     completes. Recomputes `series_genres / series_tags / series_credits`
 //!     as the distinct union of the series's active issues' junctions.
+//!     Also re-derives `series.age_rating` (`library::series_rating`).
 //!
 //! Series-level rows are pure aggregations: there is no admin override path.
 //! Editing a series's surfaced genres means editing the underlying issues.
@@ -833,7 +834,7 @@ fn note_step_failure(
 /// 25P02), and a connection that is gone (`DbErr::Conn` /
 /// `ConnectionAcquire`) — every later statement would fail the same way
 /// and, for a saturated pool, pay the acquire timeout each time.
-pub async fn rollup_series_metadata<C: ConnectionTrait>(
+pub async fn rollup_series_metadata<C: ConnectionTrait + sea_orm::TransactionTrait>(
     db: &C,
     series_id: Uuid,
 ) -> Result<(), sea_orm::DbErr> {
@@ -898,6 +899,12 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     step!(
         "reading_direction",
         auto_set_reading_direction(db, series_id)
+    );
+    // The series' age rating is its highest-rated active issue's, unless a
+    // person or a provider set it (`library::series_rating`).
+    step!(
+        "age_rating",
+        crate::library::series_rating::recompute_series_age_rating(db, series_id)
     );
 
     // Junctions are the truth for every write path; the CSV read-cache
@@ -1243,13 +1250,21 @@ async fn link_series_entity_ids<C: ConnectionTrait>(
 
 /// Best-effort wrapper used by scan callers. Logs and swallows errors so a
 /// stale rollup never fails a scan run; the next series scan retries.
-pub async fn rollup_series_metadata_best_effort<C: ConnectionTrait>(db: &C, series_id: Uuid) {
+pub async fn rollup_series_metadata_best_effort<C: ConnectionTrait + sea_orm::TransactionTrait>(
+    db: &C,
+    series_id: Uuid,
+) {
     if let Err(e) = rollup_series_metadata(db, series_id).await {
         tracing::warn!(
             series_id = %series_id,
             error = %e,
             "metadata_rollup: series rollup failed; will retry on next scan",
         );
+        // A failed rollup may have stopped before its `age_rating` step (an
+        // aborted transaction or a lost connection skips the rest), so the
+        // series rating is re-derived on its own here: an issue the caller
+        // just ingested or restored must never leave it rated too low.
+        crate::library::series_rating::recompute_best_effort(db, &[series_id]).await;
     }
 }
 

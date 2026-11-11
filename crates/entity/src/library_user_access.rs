@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Per-user library access (§5.1.1). Membership grants read access to
 /// the library; `age_rating_max` caps what the member sees inside it
-/// (WP-2.7). The `role` column (`reader` plus a never-enforced editor value) was dropped in
+/// (WP-2.7), and `hide_unrated` also hides unrated content. The `role` column (`reader` plus a never-enforced editor value) was dropped in
 /// `m20270123_000001_drop_library_access_role` — nothing ever read it.
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "library_user_access")]
@@ -18,6 +18,12 @@ pub struct Model {
     /// Rows rated above the cap are hidden; unrated rows pass.
     #[sea_orm(nullable)]
     pub age_rating_max: Option<String>,
+
+    /// Hide unrated content in this library from the member: a series
+    /// whose rating is not on the ladder (NULL, `Unknown`, …) is hidden as
+    /// if it ranked above the cap, and its issues with it. Works with or
+    /// without a cap; without one it hides only unrated content.
+    pub hide_unrated: bool,
 
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
