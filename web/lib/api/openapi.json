@@ -24802,6 +24802,7 @@
           "AmbiguousFolder",
           "DuplicateExternalId",
           "SymlinkSkipped",
+          "LargeRemoval",
           "MetadataDriftFromXml"
         ]
       },

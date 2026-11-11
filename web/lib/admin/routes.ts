@@ -16,6 +16,11 @@ export function libraryScanHref(slug: string): string {
   return `/admin/libraries/${encodeURIComponent(slug)}/scan`;
 }
 
+/** One library's Removed tab (soft-removed series and issues). */
+export function libraryRemovedHref(slug: string): string {
+  return `/admin/libraries/${encodeURIComponent(slug)}/removed`;
+}
+
 /** Server activity → Log view. */
 export const SERVER_LOG_HREF = "/admin/activity?view=log";
 

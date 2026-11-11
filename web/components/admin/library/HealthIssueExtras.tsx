@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 
+import { libraryRemovedHref } from "@/lib/admin/routes";
 import {
   healthPayloadDetails,
   healthPayloadHint,
@@ -54,9 +55,12 @@ export function PayloadRefLinks({ payload }: { payload: unknown }) {
 export function HealthPayloadExtras({
   kind,
   payload,
+  librarySlug,
 }: {
   kind: string;
   payload: unknown;
+  /** The finding's library, for links to its other tabs. */
+  librarySlug?: string | null;
 }) {
   const hint = healthPayloadHint(kind, payload);
   const details = healthPayloadDetails(kind, payload);
@@ -65,6 +69,15 @@ export function HealthPayloadExtras({
     <span className="mt-1 block space-y-1">
       {hint ? (
         <span className="text-muted-foreground block text-xs">{hint}</span>
+      ) : null}
+      {kind === "LargeRemoval" && librarySlug ? (
+        <Link
+          href={libraryRemovedHref(librarySlug)}
+          className="text-foreground/80 hover:text-foreground inline-flex items-center gap-1 text-xs underline-offset-2 hover:underline"
+        >
+          <ExternalLink className="size-3" aria-hidden="true" />
+          Open the Removed tab
+        </Link>
       ) : null}
       {details ? (
         <details className="text-xs">

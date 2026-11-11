@@ -46,6 +46,12 @@ pub struct ScanStats {
     #[serde(skip)]
     pub created_series_ids: Vec<uuid::Uuid>,
     pub series_skipped_unchanged: u64,
+    /// The `removed_at` the library reconcile stamps on every issue and
+    /// series it soft-removes in one pass (all share it), so the rows one
+    /// scan removed can be counted again later
+    /// ([`crate::library::large_removal`]). In-process only.
+    #[serde(skip)]
+    pub removal_stamp: Option<chrono::DateTime<chrono::FixedOffset>>,
     pub series_removed: u64,
     pub issues_removed: u64,
     pub issues_restored: u64,
