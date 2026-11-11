@@ -1400,7 +1400,7 @@ dependencies = [
  "anyhow",
  "candle-transformers",
  "clap",
- "hf-hub",
+ "hf-hub 0.4.3",
  "image",
  "imageproc 0.25.1",
  "ndarray",
@@ -3208,6 +3208,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hf-hub"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aef3982638978efa195ff11b305f51f1f22f4f0a6cabee7af79b383ebee6a213"
+dependencies = [
+ "dirs",
+ "log",
+]
+
+[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4253,7 +4263,7 @@ checksum = "3e40c8fb0b36181ce15b4dc850a16b1274300d387425ab47e5ef783834df6364"
 dependencies = [
  "anyhow",
  "clap",
- "hf-hub",
+ "hf-hub 0.4.3",
  "image",
  "ndarray",
  "ort",
@@ -6922,7 +6932,7 @@ dependencies = [
  "garde",
  "globset",
  "governor",
- "hf-hub",
+ "hf-hub 0.5.0",
  "hmac 0.13.0",
  "hyper",
  "hyper-util",
