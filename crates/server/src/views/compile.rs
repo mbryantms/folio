@@ -22,6 +22,7 @@
 use super::dsl::{Condition, Field, FilterDsl, MatchMode, Op, SortField, SortOrder, ViewEntity};
 use super::registry::{self, FieldKind, Source};
 use crate::library::access::VisibleLibraries;
+use crate::library::age_rating;
 use crate::reading::series_progress;
 use crate::util::search::{contains_pattern, literal_like, prefix_pattern, suffix_pattern};
 use entity::marker::MarkerKind;
@@ -1117,7 +1118,7 @@ fn series_predicate(
     col: &'static str,
 ) -> Result<SeaCondition, CompileError> {
     let lhs: SimpleExpr = Expr::col((series::Entity, Alias::new(col)));
-    Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
+    Ok(SeaCondition::all().add(column_predicate(cond, kind, lhs)?))
 }
 
 fn issue_predicate(
@@ -1126,7 +1127,60 @@ fn issue_predicate(
     col: &'static str,
 ) -> Result<SeaCondition, CompileError> {
     let lhs: SimpleExpr = Expr::col((issue::Entity, Alias::new(col)));
-    Ok(SeaCondition::all().add(scalar_predicate(cond, kind, lhs)?))
+    Ok(SeaCondition::all().add(column_predicate(cond, kind, lhs)?))
+}
+
+/// [`scalar_predicate`], except that `age_rating` value comparisons go
+/// through [`rating_predicate`].
+fn column_predicate(
+    cond: &Condition,
+    kind: FieldKind,
+    lhs: SimpleExpr,
+) -> Result<SimpleExpr, CompileError> {
+    if cond.field == Field::AgeRating {
+        rating_predicate(cond, kind, lhs)
+    } else {
+        scalar_predicate(cond, kind, lhs)
+    }
+}
+
+/// `age_rating` `is` / `is_not` / `in` / `not_in`: a value that ranks on
+/// the ladder stands for its whole rung (every alias, case and spacing of
+/// it), an unranked value (`Unknown`, `Rating Pending`, off-ladder text)
+/// matches as written ([`age_rating::filter_match`]). Normalised here, at
+/// compile time, so a view stored with an alias or an odd spelling
+/// matches without being re-saved. `is_empty` / `is_not_empty` are the
+/// plain scalar forms. The negations keep excluding NULL ratings, as the
+/// plain `<>` / `NOT IN` did.
+fn rating_predicate(
+    cond: &Condition,
+    kind: FieldKind,
+    lhs: SimpleExpr,
+) -> Result<SimpleExpr, CompileError> {
+    let bad = |reason: &str| CompileError::BadValue {
+        field: cond.field,
+        op: cond.op,
+        reason: reason.to_owned(),
+    };
+    let values: Vec<String> = match cond.op {
+        Op::Is | Op::IsNot => vec![as_text(&cond.value, &bad)?],
+        Op::In | Op::NotIn => {
+            let arr = cond.value.as_array().ok_or_else(|| bad("expected array"))?;
+            if arr.is_empty() {
+                return Err(bad("array must be non-empty"));
+            }
+            arr.iter()
+                .map(|el| as_text(el, &bad))
+                .collect::<Result<_, _>>()?
+        }
+        _ => return scalar_predicate(cond, kind, lhs),
+    };
+    let matched = age_rating::filter_match(lhs, &values)
+        .ok_or_else(|| CompileError::Internal("empty age_rating filter".into()))?;
+    Ok(match cond.op {
+        Op::IsNot | Op::NotIn => matched.not(),
+        _ => matched,
+    })
 }
 
 /// The caller's own star rating for the root row — a scalar subquery so
@@ -2581,6 +2635,35 @@ mod tests {
     /// E9: every text op escapes `\` / `%` / `_` in the value, names the
     /// escape character, and binds the pattern — the user's string never
     /// lands in the SQL text. Plain values keep their old pattern.
+    #[test]
+    fn age_rating_conditions_fold_onto_the_ladder_at_compile_time() {
+        let series_sql = |op: Op, value: serde_json::Value| {
+            compile(&make(dsl_all(vec![cond(Field::AgeRating, op, value)])))
+                .unwrap()
+                .to_string(PostgresQueryBuilder)
+        };
+        // A stored alias names its whole rung.
+        let sql = series_sql(Op::Is, json!("Mature"));
+        assert!(
+            sql.contains(r#"LOWER(btrim("series"."age_rating", E' \t\n\r\f\013')) IN ('mature 17+', 'mature')"#),
+            "{sql}"
+        );
+        // Unranked text matches as written; a negation wraps the whole test.
+        let sql = series_sql(Op::NotIn, json!(["Unknown", "teen"]));
+        assert!(sql.contains(r#"NOT ("#), "{sql}");
+        assert!(
+            sql.contains(r#"OR "series"."age_rating" IN ('Unknown')"#),
+            "{sql}"
+        );
+        // Emptiness keeps the plain column test.
+        assert!(series_sql(Op::IsEmpty, json!(null)).contains(r#""series"."age_rating" IS NULL"#));
+        let sql = issues_sql(vec![cond(Field::AgeRating, Op::In, json!(["Adult"]))]).unwrap();
+        assert!(
+            sql.contains(r#"LOWER(btrim("issues"."age_rating", E' \t\n\r\f\013')) IN ('adults only 18+', 'adult')"#),
+            "{sql}"
+        );
+    }
+
     #[test]
     fn text_ops_escape_like_metacharacters_and_bind_the_pattern() {
         let cases = [

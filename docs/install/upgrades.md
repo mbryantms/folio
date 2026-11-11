@@ -197,11 +197,16 @@ docker compose -f compose.prod.yml up -d --no-deps app
   Issue edits also accept `Unknown` / `Rating Pending`; the series edit
   refuses them (clear the rating instead, which returns the series to
   its derived rating). Ratings already stored are not changed.
-- **Saved views may need re-saving.** Filters, facets and saved views
-  compare the rating text as stored, so a saved view that filters series
-  by a spelling the upgrade canonicalised (an alias such as `Mature`, or
-  odd case or spacing) may stop matching until it is re-saved with the
-  ladder spelling.
+- **Rating filters compare rungs, not spellings.** The library grid's
+  age-rating filter, its list of options and saved views treat every
+  spelling of a ladder rating as that rating: `Mature`, `MATURE 17+` and
+  ` Mature 17+ ` all match a filter on `Mature 17+` (or on `Mature`), and
+  the options list shows each rating once, in the ladder's spelling.
+  Saved views keep working without being re-saved, including one that
+  filters on a spelling the upgrade re-wrote. Text that is not a rating
+  (`Unknown`, `Rating Pending`, any other word) is still listed and
+  matched exactly as written. In the issue grid the options now come from
+  the issues' own ratings, which is what that filter compares.
 - **An issue of a hidden series no longer opens.** For a reader with an
   age-rating cap, an issue is visible only when its series is visible
   and its own rating is within the cap. An issue rated within the cap

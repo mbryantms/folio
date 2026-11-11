@@ -324,7 +324,11 @@ export function FilterSheet({
               title="Age rating"
               value={ageRatings}
               onChange={onAgeRatings}
-              endpoint={{ kind: "age_ratings" }}
+              endpoint={
+                mode === "issues"
+                  ? { kind: "age_ratings", entity: "issues" }
+                  : { kind: "age_ratings" }
+              }
               library={optsLibrary}
             />
             <FacetMultiSection

@@ -296,8 +296,9 @@ canonical spelling.
 
 **Aliases.** Metron rates with its own words. `Everyone` and `Teen` are
 already rungs; the others rank as a rung wherever ratings are compared
-(cap checks, the SQL lists, the series derivation), while the stored
-text is left as it is:
+(cap checks, the SQL lists, the series derivation, and the age-rating
+filters, filter options and saved views), while the stored text is left
+as it is:
 
 | Metron word | ranks as |
 |---|---|

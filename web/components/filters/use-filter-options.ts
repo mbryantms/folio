@@ -23,7 +23,6 @@ function endpointKey(endpoint: OptionsEndpoint): string {
     case "tags":
     case "publishers":
     case "languages":
-    case "age_ratings":
     case "characters":
     case "teams":
     case "locations":
@@ -32,6 +31,10 @@ function endpointKey(endpoint: OptionsEndpoint): string {
     case "concepts":
     case "objects":
       return endpoint.kind;
+    case "age_ratings":
+      return endpoint.entity === "issues"
+        ? "age_ratings/issues"
+        : "age_ratings";
     case "any_credit":
       return "credits";
     case "credits":
@@ -52,6 +55,9 @@ function endpointPath(endpoint: OptionsEndpoint, qs: string): string {
     case "languages":
       return `/filter-options/languages${qs}`;
     case "age_ratings":
+      if (endpoint.entity === "issues") {
+        return `/filter-options/age_ratings${qs ? `${qs}&` : "?"}entity=issues`;
+      }
       return `/filter-options/age_ratings${qs}`;
     case "characters":
       return `/filter-options/characters${qs}`;

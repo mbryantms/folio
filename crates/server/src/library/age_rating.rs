@@ -33,6 +33,8 @@
 //! whitespace ([`RATING_TRIM`], the same set the SQL [`sql_norm`] strips)
 //! so a sidecar that says `mature 17+` still ranks.
 
+use sea_orm::sea_query::{Alias, Expr, ExprTrait, Func, SimpleExpr};
+
 /// The ladder, ordered youngest-audience-first. Index = rank.
 pub const LADDER: [&str; 13] = [
     "Early Childhood",
@@ -203,6 +205,74 @@ pub fn highest<'a>(ratings: impl IntoIterator<Item = Option<&'a str>>) -> Option
         .filter_map(|r| r.and_then(rank))
         .max()
         .map(|r| LADDER[r as usize])
+}
+
+/// Filter values split the way filters compare a stored rating (the list
+/// `?age_rating=` parameters and saved-view `age_rating` conditions).
+///
+/// A value that ranks (a rung or an alias, any case, surrounding
+/// [`RATING_TRIM`]) stands for its whole rung: `spellings` holds every
+/// recognised spelling of every rung named, lowercased, for a
+/// `sql_norm(col) IN (...)` test. A value that does not rank (`Unknown`,
+/// `Rating Pending`, off-ladder text) is kept in `verbatim` and matches
+/// stored text exactly, as every rating filter did before ratings were
+/// folded onto the ladder.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FilterValues {
+    pub spellings: Vec<String>,
+    pub verbatim: Vec<String>,
+}
+
+/// Split filter `values` into [`FilterValues`].
+pub fn filter_values<S: AsRef<str>>(values: &[S]) -> FilterValues {
+    let mut ranks = Vec::new();
+    let mut verbatim = Vec::new();
+    for v in values {
+        match rank(v.as_ref()) {
+            Some(r) => ranks.push(r),
+            None => {
+                let v = v.as_ref().to_owned();
+                if !verbatim.contains(&v) {
+                    verbatim.push(v);
+                }
+            }
+        }
+    }
+    FilterValues {
+        spellings: spellings()
+            .filter(|(_, r)| ranks.contains(r))
+            .map(|(w, _)| w)
+            .collect(),
+        verbatim,
+    }
+}
+
+/// `sql_norm` over a sea-query expression.
+fn norm_expr(rating: SimpleExpr) -> SimpleExpr {
+    Func::lower(
+        Func::cust(Alias::new("btrim"))
+            .arg(rating)
+            .arg(Expr::cust(SQL_TRIM_CHARS)),
+    )
+    .into()
+}
+
+/// The filter predicate "`rating` is one of `values`" ([`filter_values`]):
+/// `sql_norm(rating) IN (<spellings of the named rungs>) OR rating IN
+/// (<unranked values as written>)`. A NULL rating matches nothing, and
+/// its negation (`NOT (...)`) is NULL too, so `is_not` / `not_in` keep
+/// excluding unrated rows exactly as the plain column comparison did.
+/// `None` when `values` is empty.
+pub fn filter_match<S: AsRef<str>>(rating: SimpleExpr, values: &[S]) -> Option<SimpleExpr> {
+    let f = filter_values(values);
+    let mut parts: Vec<SimpleExpr> = Vec::new();
+    if !f.spellings.is_empty() {
+        parts.push(norm_expr(rating.clone()).is_in(f.spellings));
+    }
+    if !f.verbatim.is_empty() {
+        parts.push(rating.is_in(f.verbatim));
+    }
+    parts.into_iter().reduce(|a, b| a.or(b))
 }
 
 /// True iff `cap` names a rung on the ladder (what the admin API accepts
@@ -378,6 +448,37 @@ mod tests {
             highest([Some("Everyone"), Some("Unknown")]),
             Some("Everyone")
         );
+    }
+
+    #[test]
+    fn filter_values_fold_ranked_values_and_keep_the_rest_verbatim() {
+        let f = filter_values(&[" mature ", "Unknown", "Teen", "Unknown", "Sixteen"]);
+        assert_eq!(f.spellings, vec!["teen", "mature 17+", "mature"]);
+        assert_eq!(f.verbatim, vec!["Unknown", "Sixteen"]);
+        assert_eq!(filter_values(&["X18+"]).spellings, vec!["x18+", "explicit"]);
+        assert_eq!(filter_values::<&str>(&[]), FilterValues::default());
+    }
+
+    #[test]
+    fn filter_match_renders_one_norm_test_and_one_verbatim_test() {
+        use sea_orm::sea_query::{PostgresQueryBuilder, Query};
+        let render = |values: &[&str]| {
+            let e = filter_match(Expr::col(Alias::new("age_rating")), values).unwrap();
+            Query::select()
+                .expr(Expr::val(1))
+                .and_where(e)
+                .to_string(PostgresQueryBuilder)
+        };
+        let sql = render(&["Mature", "Unknown"]);
+        assert!(
+            sql.contains(
+                "LOWER(btrim(\"age_rating\", E' \\t\\n\\r\\f\\013')) IN ('mature 17+', 'mature')"
+            ),
+            "{sql}"
+        );
+        assert!(sql.contains("OR \"age_rating\" IN ('Unknown')"), "{sql}");
+        assert!(!render(&["Teen"]).contains(" OR "));
+        assert!(filter_match::<&str>(Expr::val(1), &[]).is_none());
     }
 
     #[test]

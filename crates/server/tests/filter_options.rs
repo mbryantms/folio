@@ -1182,7 +1182,8 @@ async fn age_ratings_options_endpoint_excludes_null_and_empty() {
         .iter()
         .map(|v| v.as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(values, vec!["Mature".to_owned(), "Teen".to_owned()]);
+    // Metron's alias `Mature` is listed as its ladder rung.
+    assert_eq!(values, vec!["Mature 17+".to_owned(), "Teen".to_owned()]);
 }
 
 /// Insert a series with one issue carrying the supplied CSV cast/
