@@ -55,7 +55,7 @@ neither are lazy `next/dynamic` chunks.
 | 2026-11-04, Folio Flair 1.0 (drag-to-turn, page curl, cover morph into the reader, finishing moment) | 161.47 KB | 17 | 170 KB | 120 KB |
 | 2026-11-10, deferred drag-turn motion + peek, health toast, mutations-barrel import | 148.58 KB | 16 | 152 KB | 120 KB |
 | 2026-11-11, session refresh retries an unanswered refresh inside the grace window | 152.19 KB | 17 | 153 KB | 120 KB |
-| 2026-11-11, first load off the queries barrel, lazy sheet swipe, standalone check sharded | 139.57 KB (local build) | 17 | 143 KB | 120 KB |
+| 2026-11-11, first load off the queries barrel, lazy sheet swipe, standalone check sharded | 139.95 KB | 17 | 143 KB | 120 KB |
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
@@ -132,8 +132,8 @@ report has no per-module breakdown without source maps, so that work
 starts by producing one. A local build reads about 0.36 KB lower than
 CI's for the same tree, so only CI's number decides.
 
-The second 2026-11-11 row pays that back: 151.83 KB → 139.57 KB in a
-local build, 12.26 KB. The per-module view came from a local build with
+The second 2026-11-11 row pays that back: 152.19 KB → 139.95 KB in CI
+(151.83 KB → 139.57 KB in a local build), about 12.2 KB. The per-module view came from a local build with
 `productionBrowserSourceMaps: true` (not committed), attributing each
 first-load chunk's bytes to its sources through the maps and scaling to
 the chunk's gzip size. Do this rather than trust the report's analyzer
