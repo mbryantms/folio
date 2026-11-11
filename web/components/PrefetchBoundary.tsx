@@ -8,22 +8,40 @@ import {
 } from "@tanstack/react-query";
 import * as React from "react";
 
+import { snapshotRenderedAt } from "@/lib/saved-views/snapshot-id";
+
 /** A replayed snapshot older than this (first seen by this browser) is
  *  not hydrated: its data predates whatever happened since. */
 export const SNAPSHOT_FRESH_MS = 30_000;
 /** Snapshot ids remembered per tab; the oldest is forgotten first. */
 const MAX_REMEMBERED_SNAPSHOTS = 64;
 const firstSeen = new Map<string, number>();
+/** The latest server render time among the snapshots this tab has seen
+ *  (the server's clock, read from the ids). */
+let newestRenderedAt = 0;
 
 /**
  * When this browser first saw snapshot `id` (its own clock), recording
  * `now` on the first call. Module-level on purpose: it must outlive the
  * page's components, since a back/forward replays the same id into a new
- * mount. Bounded; ids are random per server render and carry no data.
+ * mount. Bounded; ids carry a server render time and a random part, no
+ * data.
+ *
+ * An id the tab has forgotten (pushed out at the cap) must not pass for a
+ * new render, or an old page replayed from history would hydrate as
+ * fresh. So an unknown id whose server render time is well behind the
+ * newest one seen is reported as seen long ago (`-Infinity`). That
+ * compares two server times, never a server time with the browser's.
  */
 export function snapshotFirstSeen(id: string, now: number): number {
   const seen = firstSeen.get(id);
   if (seen !== undefined) return seen;
+  const renderedAt = snapshotRenderedAt(id);
+  if (renderedAt !== null) {
+    if (renderedAt < newestRenderedAt - SNAPSHOT_FRESH_MS)
+      return Number.NEGATIVE_INFINITY;
+    if (renderedAt > newestRenderedAt) newestRenderedAt = renderedAt;
+  }
   firstSeen.set(id, now);
   if (firstSeen.size > MAX_REMEMBERED_SNAPSHOTS) {
     const oldest = firstSeen.keys().next().value;

@@ -29,6 +29,7 @@ import {
 } from "@/lib/api/query-options";
 
 import { prefetchRail } from "./rail-queries";
+import { newSnapshotId } from "@/lib/saved-views/snapshot-id";
 
 /** Default ceiling on the whole prefetch. A loopback round is ~10-30 ms;
  *  the chain here is two or three of them. */
@@ -142,7 +143,7 @@ export async function prefetchPageRails(
   // failed ones are left for the client.
   return {
     state: dehydrate(qc),
-    snapshotId: crypto.randomUUID(),
+    snapshotId: newSnapshotId(),
     // Over budget the settled rail may not be the one that shows; fall
     // back to the page's own first-rail rule.
     priorityViewId: finished ? priorityViewId : null,

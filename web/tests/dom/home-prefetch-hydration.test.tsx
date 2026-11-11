@@ -15,6 +15,7 @@
 import {
   QueryClient,
   QueryClientProvider,
+  dehydrate,
   type DehydratedState,
 } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
@@ -23,7 +24,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PrefetchBoundary,
   SNAPSHOT_FRESH_MS,
+  usableSnapshot,
 } from "@/components/PrefetchBoundary";
+import {
+  newSnapshotId,
+  snapshotRenderedAt,
+} from "@/lib/saved-views/snapshot-id";
 import { queryKeys } from "@/lib/api/query-keys";
 import {
   useCblListWindowInfinite,
@@ -330,6 +336,43 @@ describe("snapshot freshness (back/forward replays an old RSC payload)", () => {
       </QueryClientProvider>,
     );
     expect(screen.getByText("rail=2")).toBeTruthy();
+  });
+});
+
+describe("a snapshot id the tab has forgotten", () => {
+  function oneQuery(): DehydratedState {
+    const qc = new QueryClient();
+    qc.setQueryData(["forgotten-snapshot"], 1);
+    return dehydrate(qc);
+  }
+
+  it("ids carry the server render time", () => {
+    const id = newSnapshotId(1_900_000_000_123);
+    expect(snapshotRenderedAt(id)).toBe(1_900_000_000_123);
+    expect(newSnapshotId(1_900_000_000_123)).not.toBe(id);
+    expect(snapshotRenderedAt("snapshot-7")).toBeNull();
+    expect(snapshotRenderedAt(".abc")).toBeNull();
+    expect(snapshotRenderedAt("NOT-BASE36.abc")).toBeNull();
+  });
+
+  it("is not taken for a new render when an old page is replayed", () => {
+    // The tab remembers a bounded number of ids. Many Home renders later
+    // history replays the first page: its id is unknown again, but its
+    // server render time is far behind the newest one this tab has seen.
+    const server = 2_000_000_000_000;
+    const browser = 7_000_000;
+    const state = oneQuery();
+    const old = newSnapshotId(server);
+    expect(usableSnapshot(state, old, browser).queries).toHaveLength(1);
+    for (let i = 1; i <= 80; i++) {
+      usableSnapshot(state, newSnapshotId(server + i * 60_000), browser + i);
+    }
+    // Within the freshness window on the browser's clock, so only the
+    // server-time rule can refuse it.
+    expect(usableSnapshot(state, old, browser + 100).queries).toHaveLength(0);
+    // A new render is still hydrated.
+    const next = newSnapshotId(server + 81 * 60_000);
+    expect(usableSnapshot(state, next, browser + 101).queries).toHaveLength(1);
   });
 });
 

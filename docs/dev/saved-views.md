@@ -606,7 +606,11 @@ How to prefetch for a page:
   rail and returns its id (`priorityViewId`); `PageRails` renders that
   rail eagerly with priority covers and mounts the empty ones before it
   (they render nothing). Without a prefetched rail the first rail is the
-  priority one, as before.
+  priority one, as before. One degraded case is accepted: when the
+  browser holds newer data than the snapshot (or refuses a replayed
+  snapshot) and a rail the server judged empty now has cards, that rail
+  shows above the priority one with lazy covers. The layout is right; only
+  the eager covers sit one rail lower than they ideally would.
 - **Why `PrefetchBoundary`, not the bare boundary.** The topbar search
   (`useSearchActions`, `lib/search/use-search-actions.ts`) calls
   `useContinueReading({ enabled: active && !!me.data })`, so that cache
@@ -620,11 +624,15 @@ How to prefetch for a page:
   page renders; the prefetched copy only matters on client navigations.)
 - **Old snapshots are not hydrated.** Next replays a page's cached RSC
   payload on back/forward (the reader exits with `router.back()`). Each
-  render carries a random `snapshotId`; the browser remembers when it
+  render carries a `snapshotId` (`lib/saved-views/snapshot-id.ts`: the
+  server's render time plus a random part); the browser remembers when it
   first saw each id (its own clock, a bounded module-level map) and a
   snapshot first seen more than `SNAPSHOT_FRESH_MS` (30 s) ago hydrates
   nothing, so the hooks fetch as they did before the prefetch existed
-  instead of painting the pre-reading Continue reading.
+  instead of painting the pre-reading Continue reading. An id the tab has
+  forgotten is refused too when its render time is well behind the newest
+  render the tab has seen (server time against server time), so an old
+  page replayed from history can never pass for a new one.
 - **One clock.** A fresh snapshot's queries are restamped to the moment
   this browser first saw it, so staleness and TanStack's newer-than-cache
   test never compare the server's clock with the browser's. An optimistic
