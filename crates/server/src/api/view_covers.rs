@@ -99,10 +99,13 @@ async fn build(app: &AppState, user: &CurrentUser) -> Result<ViewCoversView, sea
                FROM saved_views v \
                JOIN cbl_entries e ON e.cbl_list_id = v.cbl_list_id \
                JOIN issues i ON i.id = e.matched_issue_id \
+               JOIN cbl_lists l ON l.id = v.cbl_list_id \
                WHERE v.kind = 'cbl' AND (v.user_id = $1 OR v.user_id IS NULL) \
+                 AND {usable} \
                  AND i.state = 'active'{vis} \
              ) \
-             SELECT view_id, issue_id FROM ranked WHERE rn <= $2 ORDER BY view_id, rn"
+             SELECT view_id, issue_id FROM ranked WHERE rn <= $2 ORDER BY view_id, rn",
+            usable = crate::api::saved_views::cbl_list_usable_sql("l", "$1"),
         ),
         params,
     ))

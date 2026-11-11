@@ -172,8 +172,8 @@ async fn put_progression(
             );
         }
     };
-    let visible = access::for_user(&app, &user.0).await;
-    if !access::issue_allowed(&app, &visible, &issue_row).await {
+    // Hidden or soft-removed: no new progress, answered like an unknown id.
+    if !access::issue_writable(&app, &user.0, &issue_row.id).await {
         return not_found();
     }
     // Stale-write detection (spec error `progression-date`). If a

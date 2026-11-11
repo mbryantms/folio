@@ -689,13 +689,28 @@ pub async fn list(
             .add(saved_view::Column::UserId.eq(user.id)),
     );
 
-    let rows = match select.all(&app.db).await {
+    let mut rows = match select.all(&app.db).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "saved_views: list views failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    let cbl_ids: Vec<Uuid> = rows
+        .iter()
+        .filter(|m| m.kind == KIND_CBL)
+        .filter_map(|m| m.cbl_list_id)
+        .collect();
+    let usable = match usable_cbl_lists(&app.db, user.id, &cbl_ids).await {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!(error = %e, "saved_views: cbl list lookup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    for m in &mut rows {
+        scrub_unusable_cbl(m, &usable);
+    }
 
     // Explicit `pinned_on=<page>` implies "show me pins on that page",
     // even when `pinned` was omitted. Folds the two filters into one.
@@ -760,7 +775,7 @@ pub async fn create(
     user: CurrentUser,
     Validated(req): Validated<CreateSavedViewReq>,
 ) -> impl IntoResponse {
-    create_inner(&app, user.id.into(), &req, false).await
+    create_inner(&app, user.id.into(), user.id, &req, false).await
 }
 
 #[utoipa::path(
@@ -779,7 +794,7 @@ pub async fn admin_create(
     Extension(ctx): Extension<RequestContext>,
     Validated(req): Validated<CreateSavedViewReq>,
 ) -> impl IntoResponse {
-    let resp = create_inner(&app, None, &req, true).await;
+    let resp = create_inner(&app, None, user.id, &req, true).await;
     crate::audit::record(
         &app.db,
         crate::audit::AuditEntry {
@@ -797,10 +812,12 @@ pub async fn admin_create(
 }
 
 /// `owner` is `Some(user_id)` for user-scoped creates; `None` for system
-/// views. The caller wraps with the appropriate auth + audit boilerplate.
+/// views. `caller` is the signed-in user either way. The caller wraps with
+/// the appropriate auth + audit boilerplate.
 async fn create_inner(
     app: &AppState,
     owner: Option<Uuid>,
+    caller: Uuid,
     req: &CreateSavedViewReq,
     is_admin_caller: bool,
 ) -> axum::response::Response {
@@ -830,6 +847,32 @@ async fn create_inner(
         return compile_error_response(e);
     }
     let is_filter = entity.is_some();
+
+    // A reading-list view may reference only a list the caller owns or a
+    // shared one; any other id, another user's list included, answers
+    // exactly like an id that does not exist.
+    if kind == KIND_CBL
+        && let Some(list_id) = req.cbl_list_id
+    {
+        match usable_cbl_lists(&app.db, caller, &[list_id]).await {
+            Ok(usable) if usable.contains(&list_id) => {}
+            Ok(_) => {
+                return super::respond_with_field_errors(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    shared::error::ApiErrorCode::Validation,
+                    "cbl_list_id: reading list not found",
+                    vec![shared::error::FieldError {
+                        field: "cbl_list_id".to_owned(),
+                        message: "reading list not found".to_owned(),
+                    }],
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "saved_views: cbl list lookup failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    }
 
     let id = Uuid::now_v7();
     let now = Utc::now().fixed_offset();
@@ -981,6 +1024,72 @@ async fn cbl_year_range(
     }
 }
 
+/// SQL predicate: the reading list aliased `list_alias` is one the user
+/// bound at `caller` (a `$n` placeholder or column) may use: their own or a
+/// shared list (`owner_user_id IS NULL`). The rule every surface that
+/// reads a list through a CBL saved view applies, so a view row that
+/// points at someone else's list (only possible for rows written before
+/// creation checked it) reads like a view whose list is gone.
+pub(crate) fn cbl_list_usable_sql(list_alias: &str, caller: &str) -> String {
+    format!("({list_alias}.owner_user_id IS NULL OR {list_alias}.owner_user_id = {caller})")
+}
+
+/// The ids among `list_ids` that `caller` may use (own or shared); an id
+/// with no row is simply absent.
+pub(crate) async fn usable_cbl_lists(
+    db: &sea_orm::DatabaseConnection,
+    caller: Uuid,
+    list_ids: &[Uuid],
+) -> Result<std::collections::HashSet<Uuid>, sea_orm::DbErr> {
+    if list_ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    Ok(cbl_list::Entity::find()
+        .select_only()
+        .column(cbl_list::Column::Id)
+        .filter(cbl_list::Column::Id.is_in(list_ids.to_vec()))
+        .filter(
+            sea_orm::Condition::any()
+                .add(cbl_list::Column::OwnerUserId.is_null())
+                .add(cbl_list::Column::OwnerUserId.eq(caller)),
+        )
+        .into_tuple::<Uuid>()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect())
+}
+
+/// The list a CBL view reads for `caller`: its `cbl_list_id` when that
+/// list is one the caller may use, else `None`, the "list is gone" path.
+pub(crate) async fn usable_cbl_list_id(
+    db: &sea_orm::DatabaseConnection,
+    view: &saved_view::Model,
+    caller: Uuid,
+) -> Result<Option<Uuid>, sea_orm::DbErr> {
+    let Some(list_id) = view.cbl_list_id else {
+        return Ok(None);
+    };
+    Ok(usable_cbl_lists(db, caller, &[list_id])
+        .await?
+        .contains(&list_id)
+        .then_some(list_id))
+}
+
+/// Drop the list reference and what a CBL view row copied from its list
+/// (the year range seeded at creation) when the caller may not use that
+/// list, so the response reads like a view whose list is gone.
+fn scrub_unusable_cbl(m: &mut saved_view::Model, usable: &std::collections::HashSet<Uuid>) {
+    if m.kind == KIND_CBL
+        && let Some(list_id) = m.cbl_list_id
+        && !usable.contains(&list_id)
+    {
+        m.cbl_list_id = None;
+        m.custom_year_start = None;
+        m.custom_year_end = None;
+    }
+}
+
 #[utoipa::path(
     operation_id = "saved_views_update",    patch,
     path = "/me/saved-views/{id}",
@@ -1007,9 +1116,14 @@ pub async fn update(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    // System views are read-only on this user-scoped path.
-    if row.user_id != Some(user.id) {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+    // Another user's view answers like an unknown id; a system view is
+    // visible to everyone but read-only on this user-scoped path.
+    match row.user_id {
+        Some(owner) if owner != user.id => {
+            return error(StatusCode::NOT_FOUND, "not_found", "view not found");
+        }
+        None => return error(StatusCode::FORBIDDEN, "forbidden", "not your view"),
+        Some(_) => {}
     }
     apply_update(&app, &row, &req).await
 }
@@ -1158,13 +1272,22 @@ async fn apply_update(
         }
     }
     am.updated_at = Set(Utc::now().fixed_offset());
-    let updated = match am.update(&app.db).await {
+    let mut updated = match am.update(&app.db).await {
         Ok(m) => m,
         Err(e) => {
             tracing::error!(error = %e, "saved_views: update failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    if updated.kind == KIND_CBL
+        && let Some(owner) = updated.user_id
+    {
+        let ids: Vec<Uuid> = updated.cbl_list_id.into_iter().collect();
+        let usable = usable_cbl_lists(&app.db, owner, &ids)
+            .await
+            .unwrap_or_default();
+        scrub_unusable_cbl(&mut updated, &usable);
+    }
     // Multi-page rails M6: the response decorates the saved view with
     // its full set of pinned pages so a rename + refresh on the detail
     // page keeps the multi-pin picker accurate without a separate query.
@@ -1220,8 +1343,14 @@ pub async fn delete_one(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    if row.user_id != Some(user.id) {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+    // Another user's view answers like an unknown id; a system view is
+    // visible to everyone but cannot be deleted here.
+    match row.user_id {
+        Some(owner) if owner != user.id => {
+            return error(StatusCode::NOT_FOUND, "not_found", "view not found");
+        }
+        None => return error(StatusCode::FORBIDDEN, "forbidden", "not your view"),
+        Some(_) => {}
     }
     // Want to Read is the per-user system collection — undeletable.
     // Same guard as the /me/collections/{id} delete handler so a
@@ -1413,7 +1542,8 @@ pub async fn pin(
     if let Some(owner) = view.user_id
         && owner != user.id
     {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+        // Another user's view answers like an unknown id.
+        return error(StatusCode::NOT_FOUND, "not_found", "view not found");
     }
 
     // Resolve target pages. Empty list → default to the system Home page,
@@ -1636,7 +1766,8 @@ pub async fn set_sidebar(
     if let Some(owner) = view.user_id
         && owner != user.id
     {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+        // Another user's view answers like an unknown id.
+        return error(StatusCode::NOT_FOUND, "not_found", "view not found");
     }
     let want = q.show.unwrap_or(true);
     let page_id = match crate::pages::system_page_id(&app.db, user.id).await {
@@ -1719,7 +1850,8 @@ pub async fn set_icon(
     if let Some(owner) = view.user_id
         && owner != user.id
     {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+        // Another user's view answers like an unknown id.
+        return error(StatusCode::NOT_FOUND, "not_found", "view not found");
     }
     // Light validation: trim, bound the length (the registry keys are
     // short), and treat empty as None so the client can "reset" without
@@ -1951,7 +2083,8 @@ pub async fn results(
     if let Some(owner) = view.user_id
         && owner != user.id
     {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+        // Another user's view answers like an unknown id.
+        return error(StatusCode::NOT_FOUND, "not_found", "view not found");
     }
 
     if view.kind == KIND_CBL {
@@ -2072,7 +2205,8 @@ pub async fn issue_results(
     if let Some(owner) = view.user_id
         && owner != user.id
     {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your view");
+        // Another user's view answers like an unknown id.
+        return error(StatusCode::NOT_FOUND, "not_found", "view not found");
     }
     if view.kind != KIND_FILTER_ISSUES {
         return error(
@@ -2431,7 +2565,7 @@ pub enum BatchTargets {
 /// Resolve a saved view to its metadata-fetch targets for the bulk-fetch batch
 /// endpoint. Filter views compile to matching series (capped at
 /// [`REFRESH_BATCH_CAP`]); CBL views enumerate their matched library issues.
-/// Returns an `Err(Response)` (404/403/422/500) the caller forwards verbatim.
+/// Returns an `Err(Response)` (404/422/500) the caller forwards verbatim.
 pub(crate) async fn resolve_metadata_batch_targets(
     app: &AppState,
     user: &CurrentUser,
@@ -2453,7 +2587,8 @@ pub(crate) async fn resolve_metadata_batch_targets(
     if let Some(owner) = view.user_id
         && owner != user.id
     {
-        return Err(error(StatusCode::FORBIDDEN, "forbidden", "not your view"));
+        // Another user's view answers like an unknown id.
+        return Err(error(StatusCode::NOT_FOUND, "not_found", "view not found"));
     }
 
     match view.kind {
@@ -2509,7 +2644,11 @@ pub(crate) async fn resolve_metadata_batch_targets(
             ))
         }
         KIND_CBL => {
-            let Some(list_id) = view.cbl_list_id else {
+            // A list the caller may not use reads like a missing one.
+            let usable = usable_cbl_list_id(&app.db, &view, user.id)
+                .await
+                .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"))?;
+            let Some(list_id) = usable else {
                 return Err(error(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "unsupported_view_kind",
