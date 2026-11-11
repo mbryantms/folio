@@ -419,10 +419,11 @@ async fn admin_patch_response_keeps_library_flags() {
 
 /// A failed metadata run whose stored error names a server path, for
 /// `scope` (`"series"` / `"issue"`) and `entity_id`.
-async fn seed_failed_run(app: &TestApp, scope: &str, entity_id: &str, secret: &str) {
+async fn seed_failed_run(app: &TestApp, scope: &str, entity_id: &str, secret: &str) -> Uuid {
     let now = Utc::now().fixed_offset();
+    let id = Uuid::now_v7();
     entity::metadata_run::ActiveModel {
-        id: Set(Uuid::now_v7()),
+        id: Set(id),
         scope: Set(scope.into()),
         scope_entity_id: Set(Some(entity_id.into())),
         library_id: Set(None),
@@ -455,6 +456,7 @@ async fn seed_failed_run(app: &TestApp, scope: &str, entity_id: &str, secret: &s
     .insert(&app.state().db)
     .await
     .unwrap();
+    id
 }
 
 /// A run's stored error is the job's own text: a reader learns only that
@@ -504,4 +506,55 @@ async fn candidates_hide_job_errors_from_reader() {
             json!(format!("could not read {}", f.issue_path))
         );
     }
+}
+
+/// A batch's child rows carry each provider's state; the provider error is
+/// the job's own text and is left out of a reader's batch status.
+#[tokio::test]
+async fn batch_status_hides_provider_errors_from_reader() {
+    let f = setup().await;
+    let db = &f.app.state().db;
+    let now = Utc::now().fixed_offset();
+    let batch_id = Uuid::now_v7();
+    entity::metadata_batch::ActiveModel {
+        id: Set(batch_id),
+        library_id: Set(Some(f.lib_id)),
+        scope: Set("series".into()),
+        trigger_kind: Set("manual".into()),
+        status: Set("failed".into()),
+        items_total: Set(1),
+        created_by: Set(Some(f.admin.user_id)),
+        created_at: Set(now),
+        ended_at: Set(Some(now)),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    let run_id = seed_failed_run(&f.app, "series", &f.series_slug, &f.issue_path).await;
+    entity::metadata_run::ActiveModel {
+        id: Unchanged(run_id),
+        batch_id: Set(Some(batch_id)),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .unwrap();
+
+    let path = format!("/api/metadata/batch/{batch_id}");
+    let reader = get_json(&f.app, &f.reader, &path).await;
+    let providers = &reader["children"][0]["providers"];
+    assert_eq!(providers[0]["state"], json!("failed"), "{reader}");
+    assert!(
+        providers[0].get("error").is_none_or(Value::is_null),
+        "{reader}"
+    );
+    let text = reader.to_string();
+    assert!(!text.contains(&f.issue_path), "{text}");
+    assert!(!text.contains("could not read"), "{text}");
+
+    let admin = get_json(&f.app, &f.admin, &path).await;
+    assert_eq!(
+        admin["children"][0]["providers"][0]["error"],
+        json!(format!("could not read {}", f.issue_path))
+    );
 }

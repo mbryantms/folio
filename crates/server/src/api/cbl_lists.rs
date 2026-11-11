@@ -1663,7 +1663,10 @@ async fn create_from_catalog(
                 &format!("blob exceeds limit {limit} bytes"),
             );
         }
-        Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
+        Err(e) => {
+            tracing::warn!(error = %e, "cbl_lists: catalog fetch failed");
+            return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.public_message());
+        }
     };
     let xml = String::from_utf8_lossy(&blob.bytes).into_owned();
     let parsed = match parsers::cbl::parse(xml.as_bytes()) {
@@ -1986,7 +1989,11 @@ pub async fn refresh_one(
         ),
         Err(e) => {
             tracing::warn!(error = %e, "cbl_lists: refresh failed");
-            error(StatusCode::BAD_GATEWAY, "refresh_failed", &e.to_string())
+            error(
+                StatusCode::BAD_GATEWAY,
+                "refresh_failed",
+                &e.public_message(),
+            )
         }
     }
 }
@@ -2176,7 +2183,7 @@ pub async fn check_one(
         ),
         Err(e) => {
             tracing::warn!(error = %e, "cbl_lists: check failed");
-            error(StatusCode::BAD_GATEWAY, "check_failed", &e.to_string())
+            error(StatusCode::BAD_GATEWAY, "check_failed", &e.public_message())
         }
     }
 }
@@ -2218,7 +2225,7 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
             Ok(o) => item_from_check(list, &o),
             Err(e) => {
                 tracing::warn!(error = %e, list_id = %list.id, "cbl_lists: check-all item failed");
-                item_error(list, false, e.to_string())
+                item_error(list, false, e.public_message())
             }
         };
         slots[idx] = Some(item);
@@ -2291,7 +2298,7 @@ pub async fn refresh_all(
             }
             Err(e) => {
                 tracing::warn!(error = %e, list_id = %list.id, "cbl_lists: refresh-all item failed");
-                item_error(list, true, e.to_string())
+                item_error(list, true, e.public_message())
             }
         };
         slots[idx] = Some(item);
@@ -2734,7 +2741,10 @@ pub async fn list_catalog_entries(
                 "GitHub rate-limited",
             );
         }
-        Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
+        Err(e) => {
+            tracing::warn!(error = %e, "cbl_lists: catalog fetch failed");
+            return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.public_message());
+        }
     };
     let items = index
         .entries
@@ -2773,7 +2783,10 @@ pub async fn refresh_catalog_index(
     };
     let index = match catalog::refresh_index(&app.db, &source, true).await {
         Ok(i) => i,
-        Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
+        Err(e) => {
+            tracing::warn!(error = %e, "cbl_lists: catalog fetch failed");
+            return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.public_message());
+        }
     };
     let items = index
         .entries

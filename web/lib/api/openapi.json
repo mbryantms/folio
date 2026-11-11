@@ -22429,7 +22429,7 @@
               "string",
               "null"
             ],
-            "description": "Last fetch failure (`enrichment = failed`)."
+            "description": "Last fetch failure (`enrichment = failed`).\nAdmins get the provider's error text; any other caller gets\n[`READER_PROFILE_ERROR`] whenever a failure is recorded."
           },
           "founded_year": {
             "type": [

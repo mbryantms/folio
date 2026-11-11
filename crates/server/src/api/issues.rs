@@ -2011,7 +2011,7 @@ pub async fn bulk_metadata(
                 // Post-audit T3.7: a failed write is reported as such, not
                 // disguised as an ACL filter.
                 failed += 1;
-                first_error.get_or_insert_with(|| e.to_string());
+                first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
             }
         }
     }

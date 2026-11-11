@@ -9573,7 +9573,11 @@ export interface components {
             description?: string | null;
             /** @description Where the profile fetch stands. */
             enrichment: components["schemas"]["EnrichmentStatus"];
-            /** @description Last fetch failure (`enrichment = failed`). */
+            /**
+             * @description Last fetch failure (`enrichment = failed`).
+             *     Admins get the provider's error text; any other caller gets
+             *     [`READER_PROFILE_ERROR`] whenever a failure is recorded.
+             */
             enrichment_error?: string | null;
             /**
              * Format: int32
