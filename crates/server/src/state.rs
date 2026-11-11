@@ -223,10 +223,13 @@ impl AppState {
         // from Next is forwarded to the originating client unchanged.
         // `pool_idle_timeout` keeps keepalive connections warm for
         // chained SSR requests (Next's RSC pipeline often emits several
-        // sub-requests for a single page load).
+        // sub-requests for a single page load). `tcp_nodelay(true)` is
+        // reqwest 0.12's default; it is stated here so the proxied hop
+        // never picks up Nagle's delay on small writes if that changes.
         let web_proxy_client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .tcp_nodelay(true)
             .build()
             .expect("build proxy client");
         Self(Arc::new(Inner {

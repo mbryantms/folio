@@ -756,6 +756,14 @@ builds on production-like storage). The one hard invariant is the
 endpoints. The k6 soak and Automerge sync-stress items in spec §16.5 are
 not covered here.
 
+**Socket setup.** The public listener sets `TCP_NODELAY` on every accepted
+connection (`app::tuned_listener`), and the reverse-proxy client to the
+Next.js upstream does the same (`tcp_nodelay(true)` in `AppState::new`).
+With Nagle's algorithm on, a response whose last write is small (a cached
+page variant, a short JSON body) waited for the client's delayed ACK,
+which showed up as a steady extra ~40 ms on cached page requests. A p50
+near 40 ms on the cached page-turn recipe means this setting is missing.
+
 ## Observations from the stress scan
 
 - About 100 files/s for 50,000 rich-metadata CBZs, debug build, thumbnails
