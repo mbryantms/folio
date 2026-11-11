@@ -7,6 +7,9 @@
 //! the `governor` crate's keyed-state store — fine for a single-replica
 //! deployment, which is the Folio target. Multi-replica deploys would
 //! require a Redis backend; that's tracked as a post-1.0 enhancement.
+//! governor keeps one entry per key, so every built store is registered
+//! (weakly) in a process-wide [`LimiterRegistry`] that [`spawn_pruner`]
+//! sweeps once a minute, dropping keys whose bucket is full again.
 //!
 //! The failed-auth lockout (10/min/IP → 15-min lockout after threshold) is
 //! Redis-backed and lives in [`crate::auth::failed_auth`] — it spans process
@@ -18,8 +21,13 @@
 
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
+use governor::RateLimiter;
+use governor::clock::{Clock, DefaultClock};
+use governor::middleware::RateLimitingMiddleware;
+use governor::state::keyed::DefaultKeyedStateStore;
+use std::hash::Hash;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError, Weak};
 use std::time::Duration;
 use tower_governor::governor::{GovernorConfig, GovernorConfigBuilder};
 use tower_governor::key_extractor::KeyExtractor;
@@ -122,19 +130,127 @@ impl Bucket {
         self.build_keyed(UserKey)
     }
 
-    fn build_keyed<K: KeyExtractor>(
-        &self,
-        key: K,
-    ) -> GovernorLayer<K, governor::middleware::NoOpMiddleware, Body> {
+    fn build_keyed<K>(&self, key: K) -> GovernorLayer<K, governor::middleware::NoOpMiddleware, Body>
+    where
+        K: KeyExtractor,
+        K::Key: Send + Sync + 'static,
+    {
         let mut default = GovernorConfigBuilder::default();
         let mut builder = default.key_extractor(key);
         builder.period(self.period).burst_size(self.burst);
         let config: GovernorConfig<K, governor::middleware::NoOpMiddleware> =
             builder.finish().expect("non-zero period + burst");
+        LIMITERS.register(config.limiter().clone());
         let name = self.name;
         GovernorLayer::new(Arc::new(config))
             .error_handler(move |err| handle_governor_error(name, err))
     }
+}
+
+// ───────── key-store pruning ─────────
+
+/// How often [`spawn_pruner`] sweeps every registered limiter.
+pub const PRUNE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// A keyed limiter whose store can drop the keys it no longer needs.
+trait Prunable: Send + Sync {
+    /// Drop every key whose bucket is back to full (governor's
+    /// `retain_recent`), then release the freed capacity.
+    fn prune(&self);
+    /// Keys currently held.
+    fn key_count(&self) -> usize;
+}
+
+impl<Key, M> Prunable for RateLimiter<Key, DefaultKeyedStateStore<Key>, DefaultClock, M>
+where
+    Key: Hash + Eq + Clone + Send + Sync,
+    M: RateLimitingMiddleware<<DefaultClock as Clock>::Instant> + Send + Sync,
+{
+    fn prune(&self) {
+        self.retain_recent();
+        self.shrink_to_fit();
+    }
+
+    fn key_count(&self) -> usize {
+        self.len()
+    }
+}
+
+/// Every keyed store built by [`Bucket::build`] / [`Bucket::build_per_user`].
+///
+/// governor keeps one entry per key forever, so without a sweep a client
+/// that rotates addresses grows a per-IP store without bound. Entries are
+/// weak: the router owns its limiter, and a dropped router (the integration
+/// tests build many apps per process) frees its store; the registry only
+/// forgets the dead handle on its next touch.
+#[derive(Default)]
+pub struct LimiterRegistry {
+    limiters: Mutex<Vec<Weak<dyn Prunable>>>,
+}
+
+/// The process-wide registry [`Bucket::build`] registers into.
+static LIMITERS: LazyLock<LimiterRegistry> = LazyLock::new(LimiterRegistry::default);
+
+/// What one [`LimiterRegistry::prune`] pass saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneReport {
+    /// Limiters still alive after the pass.
+    pub limiters: usize,
+    /// Keys left across them.
+    pub keys: usize,
+}
+
+impl LimiterRegistry {
+    fn register<L: Prunable + 'static>(&self, limiter: Arc<L>) {
+        let limiter: Arc<dyn Prunable> = limiter;
+        let mut list = self.limiters.lock().unwrap_or_else(PoisonError::into_inner);
+        // Forget dropped routers here as well, so a process that builds
+        // routers but never runs the sweep (the test harness) keeps a
+        // registry the size of its live routers.
+        list.retain(|w| w.strong_count() > 0);
+        list.push(Arc::downgrade(&limiter));
+    }
+
+    /// Prune every live limiter and forget the dropped ones. The lock is
+    /// held only to copy the live handles, never while a store is swept.
+    pub fn prune(&self) -> PruneReport {
+        let live: Vec<Arc<dyn Prunable>> = {
+            let mut list = self.limiters.lock().unwrap_or_else(PoisonError::into_inner);
+            list.retain(|w| w.strong_count() > 0);
+            list.iter().filter_map(Weak::upgrade).collect()
+        };
+        let mut keys = 0;
+        for limiter in &live {
+            limiter.prune();
+            keys += limiter.key_count();
+        }
+        PruneReport {
+            limiters: live.len(),
+            keys,
+        }
+    }
+}
+
+/// Sweep the process-wide registry every [`PRUNE_INTERVAL`] until
+/// `shutdown` fires. Started once, from `app::serve`, next to the other
+/// background upkeep tasks; the test harness never calls it.
+pub fn spawn_pruner(shutdown: tokio_util::sync::CancellationToken) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(PRUNE_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                _ = tick.tick() => {}
+            }
+            let report = LIMITERS.prune();
+            tracing::debug!(
+                limiters = report.limiters,
+                keys = report.keys,
+                "rate-limit stores pruned"
+            );
+        }
+    })
 }
 
 // ───────── bucket catalog ─────────
@@ -498,4 +614,68 @@ fn envelope_response(
         }
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use governor::Quota;
+    use std::num::NonZeroU32;
+
+    type TestLimiter = RateLimiter<u32, DefaultKeyedStateStore<u32>, DefaultClock>;
+
+    fn limiter(period: Duration) -> Arc<TestLimiter> {
+        let quota = Quota::with_period(period)
+            .expect("non-zero period")
+            .allow_burst(NonZeroU32::MIN);
+        Arc::new(RateLimiter::keyed(quota))
+    }
+
+    #[test]
+    fn prune_drops_stale_keys_and_keeps_live_ones() {
+        let registry = LimiterRegistry::default();
+        let lim = limiter(Duration::from_millis(100));
+        registry.register(lim.clone());
+
+        assert!(lim.check_key(&1).is_ok());
+        // Key 1's bucket refills after one period; wait well past it.
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(lim.check_key(&2).is_ok());
+        assert_eq!(lim.len(), 2);
+
+        let report = registry.prune();
+        assert_eq!(
+            report,
+            PruneReport {
+                limiters: 1,
+                keys: 1
+            }
+        );
+        assert_eq!(lim.len(), 1);
+        // Key 2 kept its spent token: pruning never refills a live bucket.
+        assert!(lim.check_key(&2).is_err());
+    }
+
+    #[test]
+    fn a_dropped_limiter_is_forgotten_not_kept_alive() {
+        let registry = LimiterRegistry::default();
+        let kept = limiter(Duration::from_secs(1));
+        let dropped = limiter(Duration::from_secs(1));
+        let weak = Arc::downgrade(&dropped);
+        registry.register(kept.clone());
+        registry.register(dropped);
+
+        // The registry holds no strong reference: the store is freed as soon
+        // as its owner (the router, here the test) lets go.
+        assert_eq!(weak.strong_count(), 0);
+        assert_eq!(registry.prune().limiters, 1);
+        assert_eq!(
+            registry
+                .limiters
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .len(),
+            1
+        );
+    }
 }
