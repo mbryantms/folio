@@ -26,6 +26,23 @@ import { usePathname } from "next/navigation";
 
 import { apiFetch, getCsrfToken } from "./auth-refresh";
 import { apiPath } from "./path";
+import { buildQuery } from "./build-query";
+import {
+  cblListWindowInfiniteOptions,
+  collectionEntriesOptions,
+  continueReadingOptions,
+  libraryListOptions,
+  mePagesOptions,
+  newInSeriesInfiniteOptions,
+  onDeckOptions,
+  randomPicksOptions,
+  recentHistoryOptions,
+  recentIssuesOptions,
+  savedViewIssueResultsOptions,
+  savedViewResultsOptions,
+  savedViewsOptions,
+  similarRailInfiniteOptions,
+} from "./query-options";
 // Query-key registry extracted to ./query-keys (audit H1a) so the
 // check-query-keys gate whitelists exactly one file. Imported for the
 // hooks below; re-exported (where the object used to live) so the
@@ -65,7 +82,6 @@ import type {
   CblDetailView,
   CblEntryListView,
   CblListListView,
-  CblWindowPageView,
   CblWindowView,
   ViewGroupListView,
   ViewGroupScope,
@@ -83,16 +99,11 @@ import type {
   NextUpView,
   PageCountResponse,
   OnDeckView,
-  PageListView,
   ViewCoversView,
   PreviewReq,
-  RecentIssuesView,
   RecentHistoryView,
-  RandomPicksView,
   OnThisDayView,
-  NewInSeriesView,
   SimilarSeriesListView,
-  SimilarSeriesRailView,
   RefreshLogListView,
   IssueListView,
   IssueSearchView,
@@ -486,11 +497,7 @@ export function useAppPasswords() {
 }
 
 export function useLibraryList({ enabled = true }: { enabled?: boolean } = {}) {
-  return useQuery({
-    queryKey: queryKeys.libraries,
-    queryFn: () => jsonFetch<LibraryView[]>("/libraries"),
-    enabled,
-  });
+  return useQuery({ ...libraryListOptions(jsonFetch), enabled });
 }
 
 export function useLibrary(id: string) {
@@ -1258,18 +1265,6 @@ export function useThumbnailsSettings(libraryId: string) {
 
 // ---------- Admin users + audit (M3) ----------
 
-function buildQuery(
-  params: Record<string, string | number | undefined>,
-): string {
-  const sp = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v === undefined || v === "" || v === null) continue;
-    sp.set(k, String(v));
-  }
-  const s = sp.toString();
-  return s ? `?${s}` : "";
-}
-
 export function useUserList(filters: UserListFilters = {}) {
   return useQuery({
     queryKey: queryKeys.users(filters),
@@ -1935,17 +1930,8 @@ export function useViewGroups(scope: ViewGroupScope) {
 // ---------- Saved views (M5) ----------
 
 export function useSavedViews(filters: SavedViewListFilters = {}) {
-  const params: Record<string, string> = {};
-  if (typeof filters.pinned === "boolean") {
-    params.pinned = String(filters.pinned);
-  }
-  if (filters.pinnedOn) {
-    params.pinned_on = filters.pinnedOn;
-  }
   return useQuery({
-    queryKey: queryKeys.savedViews(filters),
-    queryFn: () =>
-      jsonFetch<SavedViewListView>(`/me/saved-views${buildQuery(params)}`),
+    ...savedViewsOptions(jsonFetch, filters),
     placeholderData: keepPreviousData,
     // pinnedOn is gated on resolving the system page id; skip the
     // request until the caller has it.
@@ -1959,16 +1945,12 @@ export function useSavedViews(filters: SavedViewListFilters = {}) {
  *  without coordination. */
 export function useMePages() {
   return useQuery({
-    queryKey: queryKeys.mePages,
     // Server returns `CursorPage<PageView>` (audit-remediation M4 uniform
     // envelope); pages are bounded per-user so `next_cursor` is always
-    // null. Unwrap to `PageView[]` here so call sites keep their
+    // null. The options unwrap to `PageView[]` so call sites keep their
     // `.map(...)` shape. When the cap eventually lifts and pagination
     // kicks in, swap to `useInfiniteQuery`.
-    queryFn: async () => {
-      const page = await jsonFetch<PageListView>("/me/pages");
-      return page.items;
-    },
+    ...mePagesOptions(jsonFetch),
     placeholderData: keepPreviousData,
   });
 }
@@ -1990,11 +1972,8 @@ export function useSavedView(id: string) {
  *  to an empty series list; M6 will move CBL results to a dedicated
  *  endpoint. */
 export function useSavedViewResults(id: string, cursor?: string) {
-  const qs = buildQuery(cursor ? { cursor } : {});
   return useQuery({
-    queryKey: queryKeys.savedViewResults(id, cursor),
-    queryFn: () =>
-      jsonFetch<SeriesListView>(apiPath`/me/saved-views/${id}/results` + qs),
+    ...savedViewResultsOptions(jsonFetch, id, cursor),
     enabled: !!id,
   });
 }
@@ -2025,9 +2004,7 @@ export function useSavedViewResultsInfinite(id: string) {
  *  page (WP-5.4). */
 export function useSavedViewIssueResults(id: string) {
   return useQuery({
-    queryKey: queryKeys.savedViewIssueResults(id),
-    queryFn: () =>
-      jsonFetch<IssueListView>(apiPath`/me/saved-views/${id}/issue-results`),
+    ...savedViewIssueResultsOptions(jsonFetch, id),
     enabled: !!id,
   });
 }
@@ -2172,14 +2149,6 @@ export function useCblListWindow(
   });
 }
 
-/** Page param shape for `useCblListWindowInfinite`. The initial fetch
- *  carries no cursor; subsequent forward/backward pages carry the
- *  position cursor returned by the previous edge page. */
-type CblWindowPageParam =
-  | { direction: "initial" }
-  | { direction: "after"; cursor: number }
-  | { direction: "before"; cursor: number };
-
 /** Bidirectional infinite-scroll variant of `useCblListWindow`. The
  *  initial page anchors on the user's next-unfinished entry (same
  *  `before` / `after` defaults as `useCblListWindow`); subsequent
@@ -2190,35 +2159,9 @@ export function useCblListWindowInfinite(
   id: string,
   opts?: { before?: number; after?: number; limit?: number },
 ) {
-  const initialParams: Record<string, number> = {};
-  if (opts?.before != null) initialParams.before = opts.before;
-  if (opts?.after != null) initialParams.after = opts.after;
-  const pageLimit = opts?.limit ?? 24;
   return useInfiniteQuery({
-    queryKey: queryKeys.cblListWindowInfinite(id, opts),
+    ...cblListWindowInfiniteOptions(jsonFetch, id, opts),
     enabled: !!id,
-    initialPageParam: { direction: "initial" } as CblWindowPageParam,
-    queryFn: ({ pageParam }) => {
-      const params: Record<string, string | number> = {};
-      if (pageParam.direction === "initial") {
-        Object.assign(params, initialParams);
-      } else {
-        params.direction = pageParam.direction;
-        params.cursor = pageParam.cursor;
-        params.limit = pageLimit;
-      }
-      return jsonFetch<CblWindowPageView>(
-        apiPath`/me/cbl-lists/${id}/window-paginated` + buildQuery(params),
-      );
-    },
-    getNextPageParam: (last) =>
-      last.has_more_after && last.max_position != null
-        ? ({ direction: "after", cursor: last.max_position } as const)
-        : undefined,
-    getPreviousPageParam: (first) =>
-      first.has_more_before && first.min_position != null
-        ? ({ direction: "before", cursor: first.min_position } as const)
-        : undefined,
   });
 }
 
@@ -2495,15 +2438,8 @@ export function useCollectionEntries(
   id: string,
   opts?: { cursor?: string; limit?: number },
 ) {
-  const params: Record<string, string> = {};
-  if (opts?.cursor) params.cursor = opts.cursor;
-  if (opts?.limit) params.limit = String(opts.limit);
   return useQuery({
-    queryKey: queryKeys.collectionEntries(id, opts),
-    queryFn: () =>
-      jsonFetch<CollectionEntriesView>(
-        apiPath`/me/collections/${id}/entries` + buildQuery(params),
-      ),
+    ...collectionEntriesOptions(jsonFetch, id, opts),
     enabled: !!id,
   });
 }
@@ -2593,8 +2529,7 @@ const PROGRESS_RAIL_PAGE_SIZE = 48;
  *  Drives the Continue Reading rail on the home page. */
 export function useContinueReading(opts?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: queryKeys.continueReading,
-    queryFn: () => jsonFetch<ContinueReadingView>("/me/continue-reading"),
+    ...continueReadingOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
   });
 }
@@ -2603,10 +2538,8 @@ export function useContinueReading(opts?: { enabled?: boolean }) {
  *  through. Drives the On Deck rail on the home page. */
 export function useOnDeck(opts?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: queryKeys.onDeck,
-    queryFn: () => jsonFetch<OnDeckView>("/me/on-deck"),
+    ...onDeckOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
-    staleTime: 60_000,
   });
 }
 
@@ -2682,10 +2615,8 @@ export function useRailDismissals() {
  *  uncapped list via `useIssuesCrossListInfinite`. */
 export function useRecentIssues(opts?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: queryKeys.recentIssues,
-    queryFn: () => jsonFetch<RecentIssuesView>("/me/recent-issues"),
+    ...recentIssuesOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
-    staleTime: 60_000,
   });
 }
 
@@ -2694,8 +2625,7 @@ export function useRecentIssues(opts?: { enabled?: boolean }) {
  *  invalidated with it. */
 export function useRecentHistory(opts?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: queryKeys.recentHistory,
-    queryFn: () => jsonFetch<RecentHistoryView>("/me/recent-history"),
+    ...recentHistoryOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
   });
 }
@@ -2705,10 +2635,8 @@ export function useRecentHistory(opts?: { enabled?: boolean }) {
  *  the same picks. */
 export function useRandomPicks(opts?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: queryKeys.randomPicks,
-    queryFn: () => jsonFetch<RandomPicksView>("/me/random-picks"),
+    ...randomPicksOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
-    staleTime: 5 * 60_000,
   });
 }
 
@@ -2734,15 +2662,8 @@ export function useOnThisDay(opts?: { enabled?: boolean }) {
  *  for both. */
 export function useNewInSeriesInfinite(opts?: { enabled?: boolean }) {
   return useInfiniteQuery({
-    queryKey: queryKeys.newInSeries,
+    ...newInSeriesInfiniteOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      jsonFetch<NewInSeriesView>(
-        `/me/new-in-series${buildQuery({ limit: 24, cursor: pageParam })}`,
-      ),
-    getNextPageParam: cursorNextPage,
-    staleTime: 60_000,
   });
 }
 
@@ -2774,15 +2695,8 @@ export function useSimilarSeriesInfinite(
  *  names the seed (`seed`) so the rail can say "Because you read …". */
 export function useSimilarRailInfinite(opts?: { enabled?: boolean }) {
   return useInfiniteQuery({
-    queryKey: queryKeys.similarRail,
+    ...similarRailInfiniteOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      jsonFetch<SimilarSeriesRailView>(
-        `/me/similar-series${buildQuery({ limit: 20, cursor: pageParam })}`,
-      ),
-    getNextPageParam: (last) => last.next_cursor ?? undefined,
-    staleTime: 60_000,
   });
 }
 
