@@ -14,6 +14,16 @@
 # deletes dex. (The dev data itself survives: it is a bind mount.)
 name: folio-smoke
 
+# The same hardening compose.prod.yml gives app and web (read-only root,
+# every capability dropped, no-new-privileges, the same tmpfs), so this
+# smoke run proves the images start and serve that way. Duplicated rather
+# than shared because compose.prod.yml must stay one self-contained file an
+# operator can copy to a host; change both together.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
 services:
   # See `compose.prod.yml` for rationale — distroless nonroot can't write
   # a freshly-created named volume without this fixup.
@@ -29,6 +39,11 @@ services:
 
   app:
     image: folio:dev
+    <<: *hardening
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    # Same split as compose.prod.yml: postgres/redis only on `backend`.
+    networks: [default, backend]
     depends_on:
       app-init:
         condition: service_completed_successfully
@@ -77,6 +92,7 @@ services:
 
   web:
     image: folio-web:dev
+    <<: *hardening
     depends_on:
       app:
         condition: service_healthy
@@ -102,6 +118,7 @@ services:
       POSTGRES_USER: comic
       POSTGRES_PASSWORD: smoke
       POSTGRES_DB: comic_reader
+    networks: [backend]
     # 18+ images refuse to start with anything mounted at the pre-18
     # /var/lib/postgresql/data path; the tmpfs goes on the parent instead.
     tmpfs: ["/var/lib/postgresql"]
@@ -114,6 +131,7 @@ services:
   redis:
     image: mirror.gcr.io/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     tmpfs: ["/data"]
+    networks: [backend]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -141,6 +159,11 @@ services:
         curl -fsS -H 'Accept: text/html' http://app:8080/sign-in | grep -q '<form'
         echo "==> smoke OK"
     restart: "no"
+
+networks:
+  default:
+  backend:
+    internal: true
 
 volumes:
   smoke_data:

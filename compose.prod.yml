@@ -43,6 +43,21 @@
 # Optional:
 #   TAG                       — image tag to pull (default: latest)
 #   COMIC_APP_BIND            — host interface for the API port (default: 127.0.0.1)
+#   REDIS_PASSWORD            — require a password on Redis (default: none).
+#                               Letters, digits and - . _ ~ only; read
+#                               docs/install/upgrades.md before turning it on
+#                               for an existing install.
+#
+# Hardening (every service): all Linux capabilities dropped and only the
+# ones a service's own entrypoint needs added back, `no-new-privileges`,
+# and a read-only root filesystem, with writes confined to the named
+# volumes plus small tmpfs mounts. Two networks: `default` (app + web;
+# carries the published port and the app's outbound access to metadata
+# providers) and `backend` (app + postgres + redis; `internal`, so it has
+# no route out and the web container cannot reach the databases). Bind
+# mounts you add stay writable as declared (`:ro` or not); only the
+# image's own filesystem is read-only. compose.test.yml (CI's docker-smoke
+# job) applies the same flags to app and web; keep the two in step.
 
 # Bounded container logs for every service. Docker's default json-file
 # driver never rotates, so a long-running app container (or a chatty
@@ -54,6 +69,12 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+# Baseline for every service; each adds back (cap_add) only what it needs.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
 services:
   # One-shot: makes sure the `comic_data` volume is writable by the
   # distroless nonroot user (UID 65532). On a fresh deploy the named
@@ -64,6 +85,12 @@ services:
     image: alpine:3@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a
     restart: "no"
     logging: *default-logging
+    <<: *hardening
+    # Runs as root to fix ownership: CHOWN for the chown, DAC_READ_SEARCH
+    # to walk a /data the server already owns (mode 0700), FOWNER for the
+    # chmod of a directory root does not own.
+    cap_add: [CHOWN, DAC_READ_SEARCH, FOWNER]
+    network_mode: none
     command:
       - sh
       - -c
@@ -80,6 +107,15 @@ services:
     # Docker's default grace period is 10 s, after which it SIGKILLs the
     # process mid-drain; 35 s leaves the drain room to finish.
     stop_grace_period: 35s
+    # Runs as the image's nonroot user (UID 65532) and needs no capability.
+    # Its writes go to the `comic_data` volume (secrets, thumbnails, search
+    # index, OCR model cache under HOME=/data) and, for writeback libraries,
+    # beside the archives in the library mount. /tmp stays writable as the
+    # system temp directory for libraries that fall back to one (SQLite can
+    # spill a large sort over a local metadata database there).
+    <<: *hardening
+    tmpfs:
+      - /tmp:size=256m,mode=1777
     depends_on:
       app-init:
         condition: service_completed_successfully
@@ -89,9 +125,10 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      # Internal service names — postgres/redis are on the same compose network.
+      # Internal service names — postgres/redis are on the `backend` network.
       COMIC_DATABASE_URL: postgres://comic:${POSTGRES_PASSWORD:?required}@postgres:5432/comic_reader
-      COMIC_REDIS_URL: redis://redis:6379
+      # Carries `:<password>@` only when REDIS_PASSWORD is set.
+      COMIC_REDIS_URL: redis://${REDIS_PASSWORD:+:${REDIS_PASSWORD}@}redis:6379
       # SSR fallback upstream. The Rust binary reverse-proxies any path
       # no explicit route handled (HTML pages, `/_next/*` assets, etc.)
       # to Next.js over the compose bridge. `web` is the service name
@@ -114,6 +151,7 @@ services:
       - comic_data:/data
     ports:
       - "${COMIC_APP_BIND:-127.0.0.1}:8080:8080"
+    networks: [default, backend]
     healthcheck:
       test: ["CMD", "/app/server", "--healthcheck"]
       interval: 30s
@@ -125,6 +163,14 @@ services:
     image: ghcr.io/${REPO_OWNER:?REPO_OWNER is required (see .env.prod.example)}/folio-web:${TAG:-latest}
     restart: unless-stopped
     logging: *default-logging
+    # Runs as the image's nonroot user (UID 65532) and needs no capability,
+    # and writes nothing at runtime: images are served unoptimized and no
+    # page is regenerated (ISR), so Next never fills `.next/cache`. If a
+    # customised build does use that cache, add
+    # `tmpfs: ["/app/web/.next/cache:uid=65532,gid=65532"]`.
+    <<: *hardening
+    # Only the `default` network: web talks to `app` and nothing else.
+    networks: [default]
     depends_on:
       app:
         condition: service_healthy
@@ -169,6 +215,17 @@ services:
     # at 50,000 issues Postgres returned "could not resize shared memory
     # segment ... No space left on device" with the default.
     shm_size: 256mb
+    # The official entrypoint starts as root, makes sure the data and socket
+    # directories belong to `postgres`, then switches to that user:
+    # SETUID/SETGID for the switch, CHOWN + FOWNER for the ownership and
+    # mode fixes, DAC_READ_SEARCH to walk the data directory (mode 0700,
+    # owned by `postgres`) as root. The tmpfs holds the socket and lock
+    # file; everything else (temp files included) lives in the data volume.
+    <<: *hardening
+    cap_add: [CHOWN, DAC_READ_SEARCH, FOWNER, SETUID, SETGID]
+    tmpfs:
+      - /var/run/postgresql:size=1m
+    networks: [backend]
     environment:
       POSTGRES_USER: comic
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
@@ -192,14 +249,57 @@ services:
     image: redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     restart: unless-stopped
     logging: *default-logging
-    command: ["redis-server", "--save", "60", "1000", "--appendonly", "yes"]
+    # The image entrypoint starts as root and switches to the `redis` user
+    # with setpriv: SETUID/SETGID for that switch. SKIP_FIX_PERMS turns off
+    # its ownership repair of /data, which would need CHOWN and
+    # DAC_READ_SEARCH; the volume is owned by `redis` already (a fresh
+    # volume inherits the image's /data, and earlier versions of this file
+    # ran the repair on every start).
+    <<: *hardening
+    cap_add: [SETUID, SETGID]
+    networks: [backend]
+    environment:
+      SKIP_FIX_PERMS: "1"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    # With REDIS_PASSWORD set, `requirepass` reaches redis-server as a
+    # config file on stdin, so the password is not on its command line
+    # (`docker ps`, `ps`). `$$` stops compose substituting the value into
+    # this command; the container's shell expands it at start.
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        pw="$${REDIS_PASSWORD:-}"
+        unset REDIS_PASSWORD
+        if [ -z "$$pw" ]; then
+          exec docker-entrypoint.sh redis-server --save 60 1000 --appendonly yes
+        fi
+        case "$$pw" in
+          *[!A-Za-z0-9._~-]*)
+            echo "REDIS_PASSWORD may contain only letters, digits and - . _ ~" >&2
+            exit 1 ;;
+        esac
+        exec docker-entrypoint.sh redis-server - --save 60 1000 --appendonly yes <<EOF
+        requirepass $$pw
+        EOF
     volumes:
       - comic_redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # REDISCLI_AUTH keeps the password off redis-cli's command line.
+      test:
+        - "CMD-SHELL"
+        - '[ -z "$$REDIS_PASSWORD" ] || export REDISCLI_AUTH="$$REDIS_PASSWORD"; redis-cli ping | grep -q PONG'
       interval: 5s
       timeout: 3s
       retries: 10
+
+networks:
+  default:
+  # No route off the host, and `web` is not attached: only app, postgres
+  # and redis can connect to each other here.
+  backend:
+    internal: true
 
 volumes:
   comic_data:

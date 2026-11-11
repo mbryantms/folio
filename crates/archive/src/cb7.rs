@@ -41,8 +41,8 @@
 //!     inside `sevenz-rust2`'s own `Archive::read` before we can inspect it;
 //!     7-Zip writes headers with LZMA, whose dictionary the decoder clamps
 //!     to the header's declared unpack size, but that size is itself
-//!     attacker-controlled. Same class as the inert `subprocess_rss_bytes`
-//!     limit — there is no RSS cap on in-process archive work.
+//!     attacker-controlled. There is no RSS cap on in-process archive
+//!     work.
 //!   - **Encryption.** The `aes256` feature is off. An archive with an AES
 //!     coder (or encrypted headers) is refused as [`ArchiveError::Encrypted`].
 //!   - **Names** go through [`crate::entry_name::validate`] like every other

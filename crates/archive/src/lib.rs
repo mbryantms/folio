@@ -25,7 +25,6 @@
 //! handle.
 
 use std::path::Path;
-use std::time::Duration;
 
 pub mod cb7;
 pub mod cbr;
@@ -145,14 +144,10 @@ pub struct ArchiveLimits {
     pub max_entry_bytes: u64,
     pub max_compression_ratio: u32,
     pub max_nesting_depth: u8,
-    // NOTE (audit ARC-4): the two `subprocess_*` limits below are currently
-    // INERT. CBR handling is in-process FFI (`unrar` reads to memory) — no child
-    // process is ever spawned, so there is nothing to bound.
-    // They are retained as the contract for a future out-of-process extractor;
-    // until such a path exists, do not assume archive work is wall-clock/RSS
-    // capped (per-entry/total byte caps above are the live defenses).
-    pub subprocess_wall_timeout: Duration,
-    pub subprocess_rss_bytes: u64,
+    // Every reader runs in process (CBR through the UnRAR library), so there
+    // is no wall-clock or memory (RSS) cap on archive work; the byte and
+    // entry caps above are the defenses. (The unused `subprocess_*` limits
+    // were removed, audit ARC-15.)
 }
 
 impl Default for ArchiveLimits {
@@ -164,8 +159,6 @@ impl Default for ArchiveLimits {
             max_entry_bytes: 512 * 1024 * 1024,
             max_compression_ratio: 200,
             max_nesting_depth: 1,
-            subprocess_wall_timeout: Duration::from_secs(60),
-            subprocess_rss_bytes: 1024 * 1024 * 1024,
         }
     }
 }
