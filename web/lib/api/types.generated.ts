@@ -9054,6 +9054,15 @@ export interface components {
             items: {
                 ended_at?: string | null;
                 error?: string | null;
+                /**
+                 * Format: int64
+                 * @description Open health findings (neither resolved nor dismissed) whose latest
+                 *     sighting was this run: the rows `GET /admin/health-issues?scan_id=`
+                 *     returns by default. A finding a later scan sees again moves to that
+                 *     later run, so an older run's count can drop; findings are written
+                 *     when a run finishes, so a running scan reads 0.
+                 */
+                health_issue_count: number;
                 id: string;
                 /** @description Originating issue id for `issue` kinds. `null` otherwise. */
                 issue_id?: string | null;
@@ -10463,7 +10472,7 @@ export interface components {
          *     one of these.
          * @enum {string}
          */
-        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "MetadataDriftFromXml";
+        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "ArchiveSafetyRefusal" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "MetadataDriftFromXml";
         /**
          * @description One kind-facet tally within the current status+severity scope (drives the
          *     per-kind filter pills).
@@ -14428,6 +14437,15 @@ export interface components {
         ScanRunView: {
             ended_at?: string | null;
             error?: string | null;
+            /**
+             * Format: int64
+             * @description Open health findings (neither resolved nor dismissed) whose latest
+             *     sighting was this run: the rows `GET /admin/health-issues?scan_id=`
+             *     returns by default. A finding a later scan sees again moves to that
+             *     later run, so an older run's count can drop; findings are written
+             *     when a run finishes, so a running scan reads 0.
+             */
+            health_issue_count: number;
             id: string;
             /** @description Originating issue id for `issue` kinds. `null` otherwise. */
             issue_id?: string | null;
@@ -17090,6 +17108,8 @@ export interface operations {
                 severity?: string;
                 include_resolved?: boolean;
                 include_dismissed?: boolean;
+                /** @description Only findings last recorded by this scan run */
+                scan_id?: string;
                 limit?: number;
                 cursor?: string;
             };
@@ -17107,6 +17127,13 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_CrossLibHealthIssueView"];
                 };
             };
+            /** @description malformed cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description admin only */
             403: {
                 headers: {
@@ -17114,7 +17141,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description invalid filter value */
+            /** @description invalid filter value, including a scan_id or library_id that is not a UUID */
             422: {
                 headers: {
                     [name: string]: unknown;

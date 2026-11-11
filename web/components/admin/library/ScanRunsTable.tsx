@@ -135,16 +135,15 @@ export function ScanRunsTable({ libraryId }: { libraryId: string }) {
         cell: ({ row }) => (
           <div className="flex flex-col gap-1">
             <ResultsCell run={row.original} />
-            {/* `libraryId` is the library slug on this route. */}
             <ScanRunFindingsLink
-              stats={row.original.stats}
-              href={`/admin/libraries/${encodeURIComponent(libraryId)}/health`}
+              scanId={row.original.id}
+              count={row.original.health_issue_count}
             />
           </div>
         ),
       },
     ],
-    [libraryId],
+    [],
   );
 
   if (isLoading && !data) return <ScanRunsSkeleton />;

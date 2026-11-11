@@ -439,6 +439,16 @@
             }
           },
           {
+            "name": "scan_id",
+            "in": "query",
+            "description": "Only findings last recorded by this scan run",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -467,11 +477,14 @@
               }
             }
           },
+          "400": {
+            "description": "malformed cursor"
+          },
           "403": {
             "description": "admin only"
           },
           "422": {
-            "description": "invalid filter value"
+            "description": "invalid filter value, including a scan_id or library_id that is not a UUID"
           }
         }
       }
@@ -21019,7 +21032,8 @@
                 "state",
                 "started_at",
                 "stats",
-                "kind"
+                "kind",
+                "health_issue_count"
               ],
               "properties": {
                 "ended_at": {
@@ -21033,6 +21047,12 @@
                     "string",
                     "null"
                   ]
+                },
+                "health_issue_count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Open health findings (neither resolved nor dismissed) whose latest\nsighting was this run: the rows `GET /admin/health-issues?scan_id=`\nreturns by default. A finding a later scan sees again moves to that\nlater run, so an older run's count can drop; findings are written\nwhen a run finishes, so a running scan reads 0.",
+                  "minimum": 0
                 },
                 "id": {
                   "type": "string"
@@ -24750,6 +24770,7 @@
           "MissingComicInfo",
           "MalformedComicInfo",
           "MalformedArchive",
+          "ArchiveSafetyRefusal",
           "EncryptedArchive",
           "FolderNameMismatch",
           "MixedSeriesInFolder",
@@ -33743,7 +33764,8 @@
           "state",
           "started_at",
           "stats",
-          "kind"
+          "kind",
+          "health_issue_count"
         ],
         "properties": {
           "ended_at": {
@@ -33757,6 +33779,12 @@
               "string",
               "null"
             ]
+          },
+          "health_issue_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open health findings (neither resolved nor dismissed) whose latest\nsighting was this run: the rows `GET /admin/health-issues?scan_id=`\nreturns by default. A finding a later scan sees again moves to that\nlater run, so an older run's count can drop; findings are written\nwhen a run finishes, so a running scan reads 0.",
+            "minimum": 0
           },
           "id": {
             "type": "string"
