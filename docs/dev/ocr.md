@@ -88,8 +88,10 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 | 404 | `not_found` | `page` index out of range for the archive |
 | 415 | `decode_failed` | Page entry isn't a decodable image |
 | 429 | `rate_limited` | `ocr` bucket (60/min/IP, burst 60) on the POST; `ocr.detect` (15/min/IP, burst 10) on the GET |
-| 500 | `archive_unreadable` | `zip_lru.get_or_open` failed |
+| 410 | `archive_missing` | The issue's file is gone (shared mapping in `api/page_source.rs`) |
+| 410 | `archive_unreadable` | The scanner marked the issue malformed / encrypted, or the file no longer opens as an archive |
 | 500 | `ocr_failed` | Detector or recognizer threw |
+| 503 | `service_unavailable` | Every OCR permit busy for 10 s (`OCR_MAX_CONCURRENT` = 2, process-wide; cache hits take none), or an I/O error reading the file; carries `Retry-After` |
 
 ## Pipeline stages
 

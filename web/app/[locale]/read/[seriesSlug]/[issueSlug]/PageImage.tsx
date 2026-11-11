@@ -7,7 +7,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { Loader2, RotateCw } from "lucide-react";
+import { FileX, Loader2, RotateCw } from "lucide-react";
 import { READER_FILTER_VAR } from "@/lib/reader/filters";
 import { ensureFreshSession } from "@/lib/api/session-refresh";
 
@@ -31,6 +31,27 @@ export function retryTopPx(
   const bottom = Math.min(box.bottom, viewportHeight);
   const middle = bottom > top ? (top + bottom) / 2 : (box.top + box.bottom) / 2;
   return (middle - box.top) / (scale > 0 ? scale : 1);
+}
+
+/**
+ * Whether a page that failed to load is gone for good: the server answers
+ * 410 when the issue's file is missing or no longer a readable archive
+ * (`crates/server/src/api/page_source.rs`), and retrying cannot help until
+ * the file is replaced. An `<img>` error carries no status, so this asks
+ * once with a HEAD request. Anything else (a network failure, a 5xx, a
+ * lapsed session) is not "gone" and keeps the retry.
+ */
+export async function pageIsGone(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    return res.status === 410;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -106,7 +127,8 @@ export function PageImage({
   // Load lifecycle (audit C3): loading → loaded | error. A failed load
   // auto-retries once silently (transient blips), then surfaces a
   // tap-to-retry state; a slow load shows a "still loading…" hint.
-  const [status, setStatus] = useState<"loading" | "loaded" | "error">(
+  // "gone": the failure is final (410, see `pageIsGone`) — no retry.
+  const [status, setStatus] = useState<"loading" | "loaded" | "error" | "gone">(
     "loading",
   );
   const [retry, setRetry] = useState(0);
@@ -134,6 +156,9 @@ export function PageImage({
       return;
     }
     setStatus("error");
+    void pageIsGone(effectiveSrc).then((gone) => {
+      if (gone) setStatus((s) => (s === "error" ? "gone" : s));
+    });
   };
 
   useLayoutEffect(() => {
@@ -256,6 +281,21 @@ export function PageImage({
           <RotateCw aria-hidden="true" className="size-6" />
           <span>Couldn&apos;t load this page. Tap to retry.</span>
         </button>
+      ) : null}
+      {status === "gone" ? (
+        // Final: the issue's file is missing or damaged, so a retry would
+        // fail the same way. Same placement and attribute as the retry.
+        <span
+          role="status"
+          data-page-load-error=""
+          className="bg-background/85 text-foreground absolute top-[min(50%,50dvh)] left-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2 rounded-md px-4 py-3 text-center text-sm"
+        >
+          <FileX aria-hidden="true" className="size-6" />
+          <span>
+            This page is no longer available. The issue&apos;s file is missing
+            or damaged.
+          </span>
+        </span>
       ) : null}
       {thumbSrc ? (
         // Blur-up placeholder: same grid cell + `fitClass` as the real

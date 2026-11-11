@@ -41,7 +41,7 @@ pub mod rewrite_policy;
 pub mod source;
 
 pub use comic_archive::ComicArchive;
-pub use source::ArchiveFile;
+pub use source::{ArchiveFile, FileStamp};
 
 /// Open a comic archive of any supported format from an open file.
 ///
@@ -170,7 +170,7 @@ impl Default for ArchiveLimits {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ArchiveError {
     #[error("archive entry rejected (zip-slip / invalid path): {0}")]
     UnsafeEntry(String),

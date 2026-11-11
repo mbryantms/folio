@@ -272,9 +272,13 @@ impl LibraryDir {
         Ok(self.open_regular_identified(name)?.0)
     }
 
-    /// [`LibraryDir::open_regular`], plus the `(device, inode)` of the
-    /// opened file from the `fstat` the check already makes.
-    pub fn open_regular_identified(&self, name: &OsStr) -> Result<(File, (u64, u64)), Refusal> {
+    /// [`LibraryDir::open_regular`], plus the opened file's
+    /// [`archive::FileStamp`] (device, inode, size, modification and
+    /// status-change times) from the `fstat` the check already makes.
+    pub fn open_regular_identified(
+        &self,
+        name: &OsStr,
+    ) -> Result<(File, archive::FileStamp), Refusal> {
         // Stat before opening so a device or FIFO is never opened at all.
         let pre = rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|e| refusal_for(&self.fd, name, e))?;
@@ -293,11 +297,12 @@ impl LibraryDir {
             Mode::empty(),
         )
         .map_err(|e| refusal_for(&self.fd, name, e))?;
-        let st = rustix::fs::fstat(&fd).map_err(|e| Refusal::Io(e.into()))?;
-        if !FileType::from_raw_mode(st.st_mode).is_file() {
+        let file = File::from(fd);
+        let meta = file.metadata().map_err(Refusal::Io)?;
+        if !meta.file_type().is_file() {
             return Err(Refusal::NotRegular);
         }
-        Ok((File::from(fd), (st.st_dev, st.st_ino)))
+        Ok((file, archive::FileStamp::from_metadata(&meta)))
     }
 
     /// Create `name` as a new file, read-write. Exclusive (`O_EXCL`) and
@@ -494,9 +499,9 @@ impl LibraryRoots {
 }
 
 /// Open an issue's stored file through [`open_below_roots`], as an
-/// [`archive::ArchiveFile`] that carries the file's `(device, inode)` from
-/// the open (so the page cache's identity check costs no further system
-/// call). Readers built from it (directly or through `zip_lru`) read only
+/// [`archive::ArchiveFile`] that carries the file's [`archive::FileStamp`]
+/// from the open (so the page cache's identity and version check costs no
+/// further system call). Readers built from it (directly or through `zip_lru`) read only
 /// through this handle. A refusal (symbolic link, outside the root, not a
 /// regular file) is logged at WARN with the issue id and the reason, never
 /// anything read from the file; a missing file only at DEBUG (the caller
@@ -529,8 +534,8 @@ pub async fn open_issue_archive(
     })
     .await;
     match opened {
-        Ok(Ok((f, identity))) => {
-            Ok(archive::ArchiveFile::new(f, PathBuf::from(&row.file_path)).with_identity(identity))
+        Ok(Ok((f, stamp))) => {
+            Ok(archive::ArchiveFile::new(f, PathBuf::from(&row.file_path)).with_stamp(stamp))
         }
         Ok(Err(Refusal::Missing)) => {
             tracing::debug!(issue_id, "issue file missing");

@@ -1577,11 +1577,17 @@ pub(crate) async fn download(
     };
     // Never through a symbolic link, and only a regular file below the
     // library root; the response streams from this handle. A failed library
-    // lookup is a server error, not not-found.
+    // lookup is a server error, not not-found; a missing file is 410
+    // `archive_missing` (`api::page_source`), a refused path 404.
     let f = match crate::library::no_follow::open_issue_archive(&app, &row).await {
         Ok(f) => f,
         Err(crate::library::no_follow::Refusal::Lookup(e)) => return server_error(e),
-        Err(_) => return not_found(),
+        Err(refusal) => {
+            return match super::page_source::PageUnavailable::from_refusal(&refusal) {
+                super::page_source::PageUnavailable::NotFound => not_found(),
+                other => other.response(),
+            };
+        }
     };
     let f = match f.file().try_clone() {
         Ok(f) => f,

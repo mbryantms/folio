@@ -1027,3 +1027,235 @@ async fn cbt_variant_renders_webp() {
     let resp = get_variant(&app.router, &session, &id, 0, 480, Some(&etag)).await;
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Missing, malformed and changed archives (audit S-23 / R-05 / R-06a);
+// the mapping lives in `api::page_source`.
+// ─────────────────────────────────────────────────────────────────
+
+async fn set_issue(app: &TestApp, id: &str, edit: impl FnOnce(&mut IssueAM)) {
+    use sea_orm::EntityTrait;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let row = entity::issue::Entity::find_by_id(id.to_owned())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: IssueAM = row.into();
+    edit(&mut am);
+    am.update(&db).await.unwrap();
+}
+
+async fn error_json(resp: axum::response::Response) -> (StatusCode, String, serde_json::Value) {
+    let status = resp.status();
+    let cache = resp
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .map(|v| v.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    let body = body_bytes(resp.into_body()).await;
+    (status, cache, serde_json::from_slice(&body).unwrap())
+}
+
+fn etag_of(resp: &axum::response::Response) -> String {
+    resp.headers()
+        .get(header::ETAG)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn a_missing_file_answers_410_not_cacheable_without_a_path() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("gone.cbz");
+    build_cbz(&cbz, &page_payload());
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+    std::fs::remove_file(&cbz).unwrap();
+
+    let (status, cache, body) =
+        error_json(get_page(&app.router, &session, &id, 0, None).await).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"]["code"], "archive_missing");
+    assert_eq!(cache, "no-store");
+    assert!(
+        !body.to_string().contains("gone.cbz"),
+        "no server path: {body}"
+    );
+
+    // Soft-removed with the file gone: the same honest answer. (Removed
+    // content keeps its reads while the file is there; see the next test.)
+    set_issue(&app, &id, |am| {
+        am.removed_at = Set(Some(Utc::now().fixed_offset()))
+    })
+    .await;
+    let (status, _, body) = error_json(get_page(&app.router, &session, &id, 0, None).await).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"]["code"], "archive_missing");
+}
+
+#[tokio::test]
+async fn a_soft_removed_issue_with_its_file_still_serves() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("removed.cbz");
+    build_cbz(&cbz, &page_payload());
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+    set_issue(&app, &id, |am| {
+        am.removed_at = Set(Some(Utc::now().fixed_offset()))
+    })
+    .await;
+    let resp = get_page(&app.router, &session, &id, 0, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_row_marked_malformed_answers_410_without_reading_the_file() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("malformed.cbz");
+    build_cbz(&cbz, &page_payload());
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+    set_issue(&app, &id, |am| {
+        am.state = Set(entity::issue::IssueState::Malformed)
+    })
+    .await;
+
+    let before = app.state().zip_lru.open_attempts();
+    let (status, cache, body) =
+        error_json(get_page(&app.router, &session, &id, 0, None).await).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"]["code"], "archive_unreadable");
+    assert_eq!(cache, "no-store");
+    assert_eq!(
+        app.state().zip_lru.open_attempts(),
+        before,
+        "no archive open"
+    );
+}
+
+/// Audit S-23: a file that is not (or no longer) a readable archive answers
+/// 410, and repeated requests read it once per failed-open window, not once
+/// per request. A truncated CBZ is the audit's case.
+#[tokio::test]
+async fn an_unreadable_archive_answers_410_and_is_read_once() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("truncated.cbz");
+    let pages: Vec<Vec<u8>> = (0..8).map(|i| distinct_payload(64 * 1024, i)).collect();
+    let refs: Vec<(String, &[u8])> = pages
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (format!("page-{i:03}.png"), p.as_slice()))
+        .collect();
+    let refs: Vec<(&str, &[u8])> = refs.iter().map(|(n, p)| (n.as_str(), *p)).collect();
+    build_cbz_pages(&cbz, &refs, true);
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+    // Cut the file in half: the central directory is gone.
+    let bytes = std::fs::read(&cbz).unwrap();
+    std::fs::write(&cbz, &bytes[..bytes.len() / 2]).unwrap();
+
+    let lru = &app.state().zip_lru;
+    let before = lru.open_attempts();
+    for _ in 0..10 {
+        let (status, cache, body) =
+            error_json(get_page(&app.router, &session, &id, 0, None).await).await;
+        assert_eq!(status, StatusCode::GONE);
+        assert_eq!(body["error"]["code"], "archive_unreadable");
+        assert_eq!(cache, "no-store");
+    }
+    assert_eq!(
+        lru.open_attempts() - before,
+        1,
+        "ten requests, one read of the broken file"
+    );
+
+    // Repaired: served at once, not after the window.
+    std::fs::write(&cbz, &bytes).unwrap();
+    let resp = get_page(&app.router, &session, &id, 0, None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_bytes(resp.into_body()).await, pages[0]);
+}
+
+/// Audit R-05: a cached CBZ rewritten with different content at the same
+/// path, by rename-over (new inode) and by truncate-and-rewrite (same
+/// inode), serves the new bytes with a new ETag, and a page the new file
+/// no longer has is 404.
+#[tokio::test]
+async fn a_rewritten_archive_serves_its_new_bytes_with_a_new_etag() {
+    use std::os::unix::fs::MetadataExt;
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("changing.cbz");
+    let v1: Vec<Vec<u8>> = (0..3).map(|i| distinct_payload(4096, i)).collect();
+    build_cbz_pages(
+        &cbz,
+        &[("p0.png", &v1[0]), ("p1.png", &v1[1]), ("p2.png", &v1[2])],
+        true,
+    );
+    let size = std::fs::metadata(&cbz).unwrap().len() as i64;
+    let id = seed_issue(&app, &cbz, size).await;
+
+    let first = get_page(&app.router, &session, &id, 1, None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let etag1 = etag_of(&first);
+    assert_eq!(body_bytes(first.into_body()).await, v1[1]);
+
+    // 1. Rename-over: a new file (new inode), different page sizes so every
+    //    entry offset moves.
+    let v2: Vec<Vec<u8>> = (0..2).map(|i| distinct_payload(9000, 100 + i)).collect();
+    let staged = dir.path().join("staged.cbz");
+    build_cbz_pages(&staged, &[("p0.png", &v2[0]), ("p1.png", &v2[1])], true);
+    std::fs::rename(&staged, &cbz).unwrap();
+    let second = get_page(&app.router, &session, &id, 1, None).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let etag2 = etag_of(&second);
+    assert_ne!(etag1, etag2, "ETag follows the file");
+    assert_eq!(body_bytes(second.into_body()).await, v2[1]);
+    // Page 2 no longer exists.
+    let (status, cache, _) = error_json(get_page(&app.router, &session, &id, 2, None).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(cache, "no-store");
+
+    // 2. Truncate-and-rewrite in place: same inode, new content.
+    let ino = std::fs::metadata(&cbz).unwrap().ino();
+    let v3: Vec<Vec<u8>> = (0..2).map(|i| distinct_payload(5000, 200 + i)).collect();
+    build_cbz_pages(&cbz, &[("p0.png", &v3[0]), ("p1.png", &v3[1])], true);
+    assert_eq!(std::fs::metadata(&cbz).unwrap().ino(), ino, "same inode");
+    let third = get_page(&app.router, &session, &id, 1, None).await;
+    assert_eq!(third.status(), StatusCode::OK);
+    let etag3 = etag_of(&third);
+    assert_ne!(etag2, etag3, "ETag follows an in-place rewrite too");
+    assert_eq!(body_bytes(third.into_body()).await, v3[1]);
+    // A Range read goes through the same check.
+    let ranged = get_page(&app.router, &session, &id, 0, Some("bytes=0-99")).await;
+    assert_eq!(ranged.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(body_bytes(ranged.into_body()).await, v3[0][..100]);
+    // The old ETag no longer revalidates.
+    let reval = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/issues/{id}/pages/1"))
+                .header(header::COOKIE, format!("__Host-comic_session={session}"))
+                .header(header::IF_NONE_MATCH, &etag2)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reval.status(), StatusCode::OK);
+}

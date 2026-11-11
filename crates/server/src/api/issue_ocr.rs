@@ -20,27 +20,80 @@
 //! [`visible`]. Rate limits: the POST sits on the `OCR` bucket, the
 //! GET on the stricter `OCR_DETECT` bucket (a detect-cache miss is
 //! the most expensive single operation the server exposes).
+//!
+//! Concurrency (audit S-23): rate limits are per caller, so the heavy
+//! part of both routes (page decode, detection, recognition, and the
+//! first-use model load inside them) also runs under one process-wide
+//! semaphore of [`OCR_MAX_CONCURRENT`] permits. A request that waits
+//! longer than [`OCR_PERMIT_WAIT`] for one gets 503
+//! `service_unavailable` with `Retry-After`, like the thumbnail
+//! backlog answer. Cache hits never take a permit.
+//!
+//! An issue whose page cannot be read answers by the shared mapping in
+//! [`super::page_source`] (410 for a missing or unreadable archive, 404
+//! for a refused path or a page past the end, 503 for an I/O error).
 
 use axum::{
     Json,
     extract::{Path as AxPath, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use entity::{issue, series};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::error;
+use super::page_source::{PageUnavailable, no_store};
 use crate::auth::CurrentUser;
+use crate::library::zip_lru::lock_reader;
 use crate::middleware::rate_limit;
 use crate::ocr::cache::{self, CachedDetection};
 use crate::ocr::pipeline::{OcrInput, Rect, detect_and_cache_regions, run_ocr};
 use crate::ocr::recognizer::Language;
 use crate::state::AppState;
 use server_macros::handler;
+
+/// OCR / detection runs allowed at once, process-wide. A constant, not a
+/// setting: each run can hold a full decoded page plus model buffers, and
+/// two keep a small host responsive while a reader works through a page.
+pub const OCR_MAX_CONCURRENT: usize = 2;
+
+/// How long a request waits for an OCR permit before it is told to retry.
+pub const OCR_PERMIT_WAIT: Duration = Duration::from_secs(10);
+
+static OCR_PERMITS: Semaphore = Semaphore::const_new(OCR_MAX_CONCURRENT);
+
+/// Seconds a request turned away by a full OCR semaphore should wait.
+const OCR_RETRY_AFTER_SECS: &str = "2";
+
+/// Take an OCR permit from `permits`, waiting up to `wait`. Over the limit
+/// the answer is 503 `service_unavailable` with `Retry-After` (the
+/// thumbnail-backlog convention), never a 500.
+async fn ocr_permit(
+    permits: &Semaphore,
+    wait: Duration,
+) -> Result<SemaphorePermit<'_>, Box<Response>> {
+    match tokio::time::timeout(wait, permits.acquire()).await {
+        Ok(Ok(permit)) => Ok(permit),
+        Ok(Err(_)) | Err(_) => {
+            let mut resp = super::respond(
+                StatusCode::SERVICE_UNAVAILABLE,
+                shared::error::ApiErrorCode::ServiceUnavailable,
+                "OCR is busy; retry shortly",
+            );
+            resp.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from_static(OCR_RETRY_AFTER_SECS),
+            );
+            Err(Box::new(no_store(resp)))
+        }
+    }
+}
 
 pub fn routes() -> OpenApiRouter<AppState> {
     // Two sub-routers so each endpoint gets its own rate bucket
@@ -215,8 +268,10 @@ impl From<CachedDetection> for TextRegionsView {
     responses(
         (status = 200, body = OcrResponse),
         (status = 400, description = "invalid request body"),
-        (status = 404, description = "issue not found"),
+        (status = 404, description = "issue or page not found"),
+        (status = 410, description = "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"),
         (status = 500, description = "ocr pipeline failure"),
+        (status = 503, description = "OCR busy, or the file could not be read; carries Retry-After"),
     )
 )]
 #[handler]
@@ -292,7 +347,11 @@ pub async fn serve(
         return Json(hit).into_response();
     }
 
-    // ─── Load + decode page ──────────────────────────────────────
+    // ─── Load + decode page (under the OCR permit) ───────────────
+    let _permit = match ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await {
+        Ok(p) => p,
+        Err(resp) => return *resp,
+    };
     let decoded = match load_page_image(&app, &row, req.page).await {
         Ok(img) => img,
         Err(resp) => return *resp,
@@ -375,8 +434,10 @@ pub async fn serve(
     responses(
         (status = 200, body = TextRegionsView),
         (status = 404, description = "issue or page not found"),
+        (status = 410, description = "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"),
         (status = 415, description = "page is not a decodable image"),
         (status = 500, description = "detector failure"),
+        (status = 503, description = "OCR busy, or the file could not be read; carries Retry-After"),
     )
 )]
 #[handler]
@@ -401,7 +462,11 @@ pub async fn text_regions(
         return Json(TextRegionsView::from(hit)).into_response();
     }
 
-    // ─── Decode + detect ─────────────────────────────────────────
+    // ─── Decode + detect (under the OCR permit) ──────────────────
+    let _permit = match ocr_permit(&OCR_PERMITS, OCR_PERMIT_WAIT).await {
+        Ok(p) => p,
+        Err(resp) => return *resp,
+    };
     let decoded = match load_page_image(&app, &row, page).await {
         Ok(img) => img,
         Err(resp) => return *resp,
@@ -428,93 +493,54 @@ async fn load_page_image(
     row: &issue::Model,
     page: u32,
 ) -> Result<image::DynamicImage, Box<Response>> {
-    // Same rules as the page routes (`library::no_follow`). What OCR
-    // answers for each refusal:
-    //   - a link, a non-regular file, a path outside the root, or an I/O
-    //     error opening it: 404 not_found (as before handles were used);
-    //   - a missing file: 500 archive_unreadable, the answer it always gave
-    //     when the reader could not open the archive;
-    //   - a failed library lookup: 500 (a server fault, never not-found).
-    // The reader is built from this handle (or reused only for the same
-    // file).
-    use crate::library::no_follow::Refusal;
+    // Same rules as the page routes (`library::no_follow`); every refusal
+    // and archive failure answers by the shared `page_source` mapping. The
+    // reader is built from this handle (or reused only for the same
+    // version of the same file).
+    PageUnavailable::check_row(row).map_err(|why| Box::new(why.response()))?;
     let archive_file = match crate::library::no_follow::open_issue_archive(app, row).await {
-        Ok(f) => Ok(f),
-        Err(Refusal::Missing | Refusal::Lookup(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Err(Refusal::Symlink | Refusal::NotRegular | Refusal::OutsideRoot | Refusal::Io(_)) => {
-            Err(StatusCode::NOT_FOUND)
-        }
-    };
-    let archive_file = match archive_file {
         Ok(f) => f,
-        Err(StatusCode::NOT_FOUND) => {
-            return Err(Box::new(error(
-                StatusCode::NOT_FOUND,
-                "not_found",
-                "issue not found",
-            )));
-        }
-        Err(_) => {
-            tracing::warn!(issue_id = %row.id, "ocr: archive missing or unreadable");
-            return Err(Box::new(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "archive_unreadable",
-                "archive unreadable",
-            )));
+        Err(refusal) => {
+            return Err(Box::new(PageUnavailable::from_refusal(&refusal).response()));
         }
     };
     let arc = match app.zip_lru.get_or_open(&row.id, archive_file).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "ocr: zip_lru open failed");
-            return Err(Box::new(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "archive_unreadable",
-                "archive unreadable",
-            )));
+            return Err(Box::new(PageUnavailable::from_archive_error(&e).response()));
         }
     };
     let page_index = page as usize;
     let arc_clone = arc.clone();
-    let bytes_result = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let mut cbz = arc_clone
-            .lock()
-            .map_err(|_| "cbz mutex poisoned".to_string())?;
-        let pages = cbz.pages();
-        let entry = pages
-            .get(page_index)
-            .copied()
-            .cloned()
-            .ok_or_else(|| "page not found".to_string())?;
-        let total = entry.uncompressed_size;
-        cbz.read_entry_range(&entry, 0, total)
-            .map_err(|e| e.to_string())
-    })
-    .await;
+    // `Ok(None)`: no page at that index.
+    let bytes_result =
+        tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>, archive::ArchiveError> {
+            let mut cbz = lock_reader(&arc_clone)?;
+            let pages = cbz.pages();
+            let Some(entry) = pages.get(page_index).copied().cloned() else {
+                return Ok(None);
+            };
+            let total = entry.uncompressed_size;
+            cbz.read_entry_range(&entry, 0, total).map(Some)
+        })
+        .await;
     let bytes = match bytes_result {
-        Ok(Ok(b)) => b,
-        Ok(Err(e)) if e == "page not found" => {
-            return Err(Box::new(error(
+        Ok(Ok(Some(b))) => b,
+        Ok(Ok(None)) => {
+            return Err(Box::new(no_store(error(
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "page not found",
-            )));
+            ))));
         }
         Ok(Err(e)) => {
             tracing::warn!(error = %e, "ocr: page read failed");
-            return Err(Box::new(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            )));
+            return Err(Box::new(PageUnavailable::from_archive_error(&e).response()));
         }
         Err(e) => {
             tracing::error!(error = %e, "ocr: page read task panicked");
-            return Err(Box::new(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            )));
+            return Err(Box::new(PageUnavailable::Internal.response()));
         }
     };
     // `decode_limited` (security M0) caps decoded dimensions so a
@@ -560,5 +586,31 @@ async fn resolve_series_language(app: &AppState, series_id: uuid::Uuid) -> Langu
                 Language::Western
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Over the limit a request waits, then gets 503 + Retry-After, not a
+    /// 500; a permit freed in time is taken.
+    #[tokio::test]
+    async fn ocr_permits_cap_concurrency_and_answer_busy() {
+        let permits = Semaphore::new(1);
+        let held = ocr_permit(&permits, Duration::from_millis(10))
+            .await
+            .expect("first permit");
+        let busy = ocr_permit(&permits, Duration::from_millis(20))
+            .await
+            .expect_err("over the limit");
+        assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(busy.headers()[header::RETRY_AFTER], "2");
+        drop(held);
+        assert!(
+            ocr_permit(&permits, Duration::from_millis(20))
+                .await
+                .is_ok()
+        );
     }
 }

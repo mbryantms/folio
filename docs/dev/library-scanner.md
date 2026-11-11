@@ -262,6 +262,22 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     costs no database query. The OPDS download also refuses soft-removed
     issues, for every role (OPDS is a list surface); page bytes and the
     page stream go by `issue_visible` and do not.
+  - **When the pages cannot be served** every route that opens the
+    archive (page bytes and variants, thumbnails, the OPDS page stream,
+    OCR and text regions) answers by one mapping,
+    [`api::page_source`](../../crates/server/src/api/page_source.rs):
+    404 `not_found` for an unknown or hidden issue or a refused path; 410
+    `archive_missing` when the row exists but its file is gone (a
+    soft-removed row included; while its file is there it still serves);
+    410 `archive_unreadable` when the scanner marked the row `malformed` /
+    `encrypted` (refused right after the lookup, no I/O) or the file no
+    longer opens as an archive; 503 `service_unavailable` with
+    `Retry-After` for an I/O error. These answers are `no-store` and name
+    no path. The OPDS download uses the same 410 for a missing file. Page
+    ETags fold in a digest of the open file's stamp, so they change the
+    moment the file does, before a rescan updates `content_hash`; width
+    variants are cached on disk under `content_hash` and keep serving the
+    previous render until that rescan.
   - **Issue rescans** ("Scan issue", and the per-issue rescan writeback
     queues) check the stored path the same way before ingesting: a link
     is logged and nothing is ingested; the row is left for the next
@@ -278,8 +294,11 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     through the no-follow walk and read only through that handle: the
     page routes, thumbnails, OCR and page hashes hand it to the archive
     reader cache (`zip_lru`, which builds the reader from the handle and
-    reuses a cached reader only when it was built from the same file,
-    by device and inode); scanner ingest sniffs, hashes and parses one
+    reuses a cached reader only when it was built from the same version
+    of the same file: device, inode, size, modification and status-change
+    time, all from the open's one `fstat`, so a file rewritten in place
+    is reopened too; a failed open is remembered for 10 s per file
+    version, and a reader poisoned by a panic is rebuilt); scanner ingest sniffs, hashes and parses one
     handle (`process::prepare_ingest`, also after the issue rescan's own
     check), as do the identity peek, the hash backfill job, thumbnail
     generation (`jobs/post_scan.rs`), deep validation

@@ -734,3 +734,29 @@ async fn inline_cover_thumb_crops_wraparound_but_strip_keeps_spread() {
         "strip keeps the whole spread"
     );
 }
+
+/// Audit R-06a: with no thumbnail on disk, a missing archive or one that no
+/// longer opens answers 410 (`api::page_source`), not cacheable.
+#[tokio::test]
+async fn thumb_for_a_missing_or_broken_archive_answers_410() {
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let dir = tempfile::tempdir().unwrap();
+    let cbz = dir.path().join("gone.cbz");
+    build_cbz(&cbz, 3);
+    let id = seed_issue(&app, &cbz).await;
+
+    std::fs::remove_file(&cbz).unwrap();
+    let resp = fetch_thumb_response(&app, &session, &id, 1, Some("strip"), None).await;
+    assert_eq!(resp.status(), StatusCode::GONE);
+    assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+
+    std::fs::write(&cbz, b"not an archive").unwrap();
+    let resp = fetch_thumb_response(&app, &session, &id, 1, Some("strip"), None).await;
+    assert_eq!(resp.status(), StatusCode::GONE);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["error"]["code"], "archive_unreadable");
+}

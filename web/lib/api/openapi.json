@@ -7752,10 +7752,16 @@
             "description": "invalid request body"
           },
           "404": {
-            "description": "issue not found"
+            "description": "issue or page not found"
+          },
+          "410": {
+            "description": "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"
           },
           "500": {
             "description": "ocr pipeline failure"
+          },
+          "503": {
+            "description": "OCR busy, or the file could not be read; carries Retry-After"
           }
         }
       }
@@ -7798,11 +7804,17 @@
           "404": {
             "description": "issue or page not found"
           },
+          "410": {
+            "description": "the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`)"
+          },
           "415": {
             "description": "page is not a decodable image"
           },
           "500": {
             "description": "detector failure"
+          },
+          "503": {
+            "description": "OCR busy, or the file could not be read; carries Retry-After"
           }
         }
       }

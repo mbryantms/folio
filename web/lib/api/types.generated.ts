@@ -23972,8 +23972,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description issue not found */
+            /** @description issue or page not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23981,6 +23988,13 @@ export interface operations {
             };
             /** @description ocr pipeline failure */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OCR busy, or the file could not be read; carries Retry-After */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -24017,6 +24031,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description page is not a decodable image */
             415: {
                 headers: {
@@ -24026,6 +24047,13 @@ export interface operations {
             };
             /** @description detector failure */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description OCR busy, or the file could not be read; carries Retry-After */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2046,24 +2046,35 @@ fn parse_archive_timed_with(
 
     // ComicInfo (primary) — its absence isn't fatal; we'll fall back to
     // filename inference and MetronInfo if present.
+    // Both sidecars are read through `read_sidecar_entry`, which applies
+    // the parser's 1 MiB cap before the bytes are loaded (audit ARC-10).
     let info_result = if archive.find("ComicInfo.xml").is_some() {
-        match archive.read_entry_bytes("ComicInfo.xml") {
+        match read_sidecar_entry(
+            archive.as_mut(),
+            "ComicInfo.xml",
+            parsers::comicinfo::MAX_INPUT_BYTES,
+        ) {
             Ok(bytes) => match parsers::comicinfo::parse(&bytes) {
                 Ok(info) => Some(Ok(info)),
                 Err(e) => Some(Err(format!("ComicInfo.xml parse: {e}"))),
             },
-            Err(e) => Some(Err(format!("ComicInfo.xml read: {e}"))),
+            Err(SidecarReadError::TooLarge(e)) => Some(Err(format!("ComicInfo.xml parse: {e}"))),
+            Err(SidecarReadError::Read(e)) => Some(Err(format!("ComicInfo.xml read: {e}"))),
         }
     } else {
         None
     };
 
-    // MetronInfo (sidecar) — best-effort.
+    // MetronInfo (sidecar) — best-effort: an oversized or unreadable one
+    // is ignored, as a parse failure always was.
     let metron = if archive.find("MetronInfo.xml").is_some() {
-        archive
-            .read_entry_bytes("MetronInfo.xml")
-            .ok()
-            .and_then(|bytes| parsers::metroninfo::parse(&bytes).ok())
+        read_sidecar_entry(
+            archive.as_mut(),
+            "MetronInfo.xml",
+            parsers::metroninfo::MAX_INPUT_BYTES,
+        )
+        .ok()
+        .and_then(|bytes| parsers::metroninfo::parse(&bytes).ok())
     } else {
         None
     };
@@ -2828,6 +2839,50 @@ pub fn special_type_from_format(format: &str) -> Option<&'static str> {
         | "collectededition" | "collection" => Some("TPB"),
         _ => None,
     }
+}
+
+/// Why [`read_sidecar_entry`] returned no bytes.
+#[derive(Debug)]
+pub(crate) enum SidecarReadError {
+    /// The entry is larger than the parser accepts. Carries the parser's
+    /// own error ([`parsers::ParseError::TooLarge`]) so it is reported
+    /// exactly as an oversized sidecar the parser rejected.
+    TooLarge(parsers::ParseError),
+    /// The archive could not read the entry.
+    Read(ArchiveError),
+}
+
+/// Read a metadata sidecar entry (`ComicInfo.xml`, `MetronInfo.xml`) with
+/// `cap` applied before the bytes are loaded (audit ARC-10): an entry whose
+/// listed size is over the cap is refused without reading it, and every
+/// other entry is read as a prefix of at most `cap + 1` bytes, so an entry
+/// that lies about its size reaches the parser one byte over the cap and is
+/// refused there with the same [`parsers::ParseError::TooLarge`]. Never
+/// silently truncated and parsed.
+pub(crate) fn read_sidecar_entry(
+    archive: &mut dyn archive::ComicArchive,
+    name: &str,
+    cap: usize,
+) -> Result<Vec<u8>, SidecarReadError> {
+    let declared = archive.find(name).map(|e| e.uncompressed_size);
+    if let Some(size) = declared
+        && size > cap as u64
+    {
+        return Err(SidecarReadError::TooLarge(parsers::ParseError::TooLarge {
+            actual: usize::try_from(size).unwrap_or(usize::MAX),
+            limit: cap,
+        }));
+    }
+    let bytes = archive
+        .read_entry_prefix(name, cap.saturating_add(1))
+        .map_err(SidecarReadError::Read)?;
+    if bytes.len() > cap {
+        return Err(SidecarReadError::TooLarge(parsers::ParseError::TooLarge {
+            actual: bytes.len(),
+            limit: cap,
+        }));
+    }
+    Ok(bytes)
 }
 
 /// Read `series.json` from the folder root, if present. Returns `None`
@@ -3798,5 +3853,70 @@ mod tests {
         // keeps the write loop quiet.
         let pairs = tag_pair("Saga [cv-1] [cv-2]");
         assert_eq!(pairs, vec![("comicvine".into(), "1".into())]);
+    }
+
+    fn cbz_with(dir: &Path, entries: &[(&str, &[u8])]) -> PathBuf {
+        use std::io::Write;
+        let path = dir.join("sidecar.cbz");
+        let mut zw = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        // Stored: a highly compressible sidecar would otherwise trip the
+        // compression-ratio cap and be dropped from the entry list.
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, bytes) in entries {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(bytes).unwrap();
+        }
+        zw.finish().unwrap();
+        path
+    }
+
+    /// Audit ARC-10: an oversized sidecar is refused from its listed size,
+    /// before its bytes are loaded, with the parser's own `TooLarge`; a
+    /// small one reads whole.
+    #[test]
+    fn sidecar_reads_apply_the_cap_before_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = b"\x89PNG\r\n\x1a\n0000";
+        // 2 MiB, over the 1 MiB cap.
+        let big = vec![b' '; 2 * 1024 * 1024];
+        let path = cbz_with(
+            dir.path(),
+            &[
+                ("p1.png", png),
+                ("ComicInfo.xml", &big),
+                ("MetronInfo.xml", b"<MetronInfo/>"),
+            ],
+        );
+        let mut a = archive::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
+        let cap = parsers::comicinfo::MAX_INPUT_BYTES;
+        match read_sidecar_entry(a.as_mut(), "ComicInfo.xml", cap) {
+            Err(SidecarReadError::TooLarge(e)) => {
+                assert_eq!(
+                    e.to_string(),
+                    format!("input too large: {} > {cap} bytes", big.len())
+                );
+            }
+            other => panic!("expected TooLarge, got {other:?}"),
+        }
+        let small = read_sidecar_entry(a.as_mut(), "MetronInfo.xml", cap).unwrap();
+        assert_eq!(small, b"<MetronInfo/>");
+
+        // The scan reports it the way an oversized sidecar always was: a
+        // malformed ComicInfo with the parser's message.
+        let (outcome, _, _) = parse_archive_timed(
+            archive::ArchiveFile::open_path_unchecked(&path).unwrap(),
+            ArchiveLimits::default(),
+            false,
+        );
+        match outcome {
+            ArchiveOutcome::Malformed(msg) => {
+                assert!(
+                    msg.starts_with("ComicInfo.xml parse: input too large"),
+                    "{msg}"
+                );
+            }
+            _ => panic!("expected a malformed-ComicInfo outcome"),
+        }
     }
 }
