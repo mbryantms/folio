@@ -7,6 +7,7 @@ import { getLocale, getMessages } from "next-intl/server";
 import { cookies, headers } from "next/headers";
 import { GlobalHotkeys } from "@/components/GlobalHotkeys";
 import { HydrateAuthCache } from "@/components/HydrateAuthCache";
+import { SessionRefresher } from "@/components/SessionRefresher";
 import { getMe, SESSION_COOKIE } from "@/lib/api/me";
 import { SearchModalProvider } from "@/lib/search/use-search-modal";
 import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
@@ -191,6 +192,7 @@ export default async function RootLayout({
           <NextIntlClientProvider messages={messages}>
             <QueryProvider key={me?.id ?? "anonymous"} userId={me?.id}>
               {me ? <HydrateAuthCache me={me} /> : null}
+              {me ? <SessionRefresher /> : null}
               <SearchModalProvider>
                 <ScanResultListener />
                 <GlobalHotkeys />

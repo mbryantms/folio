@@ -77,6 +77,7 @@ function manager(
     api?: (path: string) => Promise<Response>;
     concurrency?: number;
     online?: () => boolean;
+    freshSession?: () => Promise<void>;
   } = {},
 ): DownloadManager {
   return createDownloadManager({
@@ -94,6 +95,7 @@ function manager(
           : new Response("{}", { status: 404 })),
     pageConcurrency: opts.concurrency ?? 1,
     online: opts.online ?? (() => true),
+    freshSession: opts.freshSession ?? (async () => {}),
     storage: {
       persisted: vi.fn().mockResolvedValue(false),
       persist: vi.fn().mockResolvedValue(true),
@@ -117,6 +119,47 @@ beforeEach(() => {
 });
 
 describe("issue download", () => {
+  it("renews the session before one retry of an asset that got 401", async () => {
+    const order: string[] = [];
+    const attempts = new Map<string, number>();
+    const freshSession = vi.fn(async () => {
+      order.push("fresh");
+    });
+    const m = manager({
+      freshSession,
+      fetch: async (url) => {
+        const n = (attempts.get(url) ?? 0) + 1;
+        attempts.set(url, n);
+        order.push(`fetch ${url} #${n}`);
+        // The access cookie lapsed: each asset's first try is refused.
+        return n === 1 ? new Response("", { status: 401 }) : image();
+      },
+    });
+    await m.setAccount("alice");
+    await m.downloadIssue(issue("r1", 1), 1080);
+    const record = await settled(m, "r1");
+    expect(record.status).toBe("complete");
+    const page = "/issues/r1/pages/0?w=1080";
+    expect(attempts.get(page)).toBe(2);
+    const i = order.indexOf(`fetch ${page} #1`);
+    expect(order[i + 1]).toBe("fresh");
+    expect(order[i + 2]).toBe(`fetch ${page} #2`);
+  });
+
+  it("retries a 401 asset only once", async () => {
+    const freshSession = vi.fn(async () => {});
+    const m = manager({
+      freshSession,
+      fetch: async () => new Response("", { status: 401 }),
+    });
+    await m.setAccount("alice");
+    await m.downloadIssue(issue("r2", 1), 1080);
+    const record = await settled(m, "r2");
+    expect(record.status).not.toBe("complete");
+    const page = "/issues/r2/pages/0?w=1080";
+    expect(fetched.filter((u) => u === page)).toHaveLength(2);
+  });
+
   it("stores every page at the chosen tier under canonical keys", async () => {
     const m = manager();
     await m.setAccount("alice");

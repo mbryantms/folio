@@ -327,6 +327,9 @@ pub enum PasswordCheck {
     Ok,
     /// Wrong password; the failure was counted on both axes.
     Wrong,
+    /// The hashing task failed; nothing was verified or counted. The
+    /// caller answers 500.
+    Internal,
     /// The IP or the account is locked out; nothing was verified. Carries
     /// the remaining lockout in seconds (for [`lockout_response`]).
     LockedOut(u64),
@@ -361,9 +364,19 @@ pub async fn verify_password_counted(
         return PasswordCheck::LockedOut(retry);
     }
     let stored = row.password_hash.as_deref().unwrap_or_default();
-    let ok = !stored.is_empty()
-        && crate::auth::password::verify_rotating(stored, given, app.secrets.peppers())
-            .is_ok_and(|v| v.ok());
+    use crate::auth::password::{PasswordError, verify_rotating_blocking};
+    let ok = if stored.is_empty() {
+        false
+    } else {
+        match verify_rotating_blocking(stored, given, app.secrets.peppers()).await {
+            Ok(v) => v.ok(),
+            Err(PasswordError::InvalidHash) => false,
+            Err(e) => {
+                tracing::error!(error = %e, "password re-check failed");
+                return PasswordCheck::Internal;
+            }
+        }
+    };
     if ok {
         return PasswordCheck::Ok;
     }

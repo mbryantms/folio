@@ -146,6 +146,29 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — 1 h access tokens by default; sessions end after 90 days
+
+- **The built-in access-token lifetime is now 1 hour** (was 24 hours).
+  An existing install does not change: its first boot saved the access
+  TTL in the database (`auth.jwt.access_ttl`, normally `24h`), and the
+  saved value wins. `/admin/auth` → *Tokens* shows what is in effect; set
+  *Access TTL* to `1h` there to adopt the new default. A shorter access
+  token limits how long a copied session cookie keeps working after
+  sign-out; the web app renews it silently, including on a full page load
+  after the access cookie expired. A fresh install gets `1h` (and
+  `.env.example` no longer sets `24h`; if your `.env` still carries
+  `COMIC_JWT_ACCESS_TTL=24h` it only matters on a fresh database).
+- **Sessions have a maximum age, 90 days by default** (new setting
+  `auth.session.max_age`, `/admin/auth` → *Tokens* → *Maximum session
+  age*, at least `1d`). A sign-in can be refreshed until 90 days after
+  it was made, however often it is used; then the user signs in again.
+  It applies to existing sessions at once: anyone who last signed in
+  more than 90 days before the upgrade is asked to sign in again at the
+  next token refresh. Raise the setting first if that is unwelcome.
+- **The CSRF cookie lives as long as the refresh cookie** (it used to
+  expire with the access cookie, which made the silent refresh fail once
+  the access cookie had expired).
+
 ### Unreleased — app passwords are looked up by digest
 
 - **App passwords gain a lookup digest** (migration

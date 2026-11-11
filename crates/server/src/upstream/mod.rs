@@ -360,7 +360,10 @@ fn valid_host(v: &str) -> bool {
 /// inbound `Host` and `http`: the Rust server only listens on a plain TCP
 /// socket (`axum::serve` over `TcpListener` in `app::serve`) and never
 /// terminates TLS itself, so the scheme it received is always `http`.
-fn forwarded_host_proto(inbound: &HeaderMap, peer_trusted: bool) -> (&str, Option<&str>) {
+pub(crate) fn forwarded_host_proto(
+    inbound: &HeaderMap,
+    peer_trusted: bool,
+) -> (&str, Option<&str>) {
     let from_proxy = |name| {
         if peer_trusted {
             single_value(inbound, name)

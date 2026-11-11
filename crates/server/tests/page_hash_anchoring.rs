@@ -445,3 +445,126 @@ async fn archive_edit_restamps_hashes_so_the_rescan_sees_no_drift() {
     assert_eq!(markers(&app, &issue_id).await, rows);
     assert_eq!(progress(&app, auth.user_id, &issue_id).await.last_page, 0);
 }
+
+/// One `POST /api/progress` from a cold archive cache; returns how many
+/// archives it opened (a page read for the hash is exactly one open).
+async fn progress_opens(
+    app: &TestApp,
+    auth: &Authed,
+    issue_id: &str,
+    body: serde_json::Value,
+) -> u64 {
+    let state = app.state();
+    state.zip_lru.invalidate(issue_id);
+    let before = state.zip_lru.opens();
+    let mut body = body;
+    body["issue_id"] = serde_json::json!(issue_id);
+    assert_eq!(post(app, auth, "/api/progress", body).await, StatusCode::OK);
+    state.zip_lru.opens() - before
+}
+
+/// Audit 2026-11 P-08: a progress write reads the page only when the hash
+/// it would store is in fact stored, and every stored row matches what
+/// the single statement wrote when every write read the page.
+#[tokio::test]
+async fn progress_write_reads_the_page_only_when_its_hash_is_stored() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let (_lib, issue_id, _path) = scanned_issue(&app, dir.path(), false).await;
+    let auth = register(&app).await;
+    let state = app.state();
+    let row = |p: progress_record::Model| (p.run, p.last_page, p.page_hash);
+
+    // First write: the row is inserted with the hash → one read.
+    let opens = progress_opens(&app, &auth, &issue_id, serde_json::json!({ "page": 2 })).await;
+    assert_eq!(opens, 1);
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (0, 2, Some(page_hash_of(BLUE))));
+
+    // Same page again: the stored hash is kept → no read.
+    let opens = progress_opens(&app, &auth, &issue_id, serde_json::json!({ "page": 2 })).await;
+    assert_eq!(opens, 0, "a repeated write of a hashed page reads nothing");
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (0, 2, Some(page_hash_of(BLUE))));
+
+    // Implicit write behind the furthest page: kept → no read.
+    let opens = progress_opens(&app, &auth, &issue_id, serde_json::json!({ "page": 0 })).await;
+    assert_eq!(opens, 0, "a backward implicit write reads nothing");
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (0, 2, Some(page_hash_of(BLUE))));
+
+    // Forward page turn: stored → one read.
+    let opens = progress_opens(&app, &auth, &issue_id, serde_json::json!({ "page": 3 })).await;
+    assert_eq!(opens, 1);
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (0, 3, Some(page_hash_of(YELLOW))));
+
+    // A restart opens run 1 at page 0 with that page's hash → one read.
+    let opens = progress_opens(
+        &app,
+        &auth,
+        &issue_id,
+        serde_json::json!({ "page": 0, "restart": true, "run": 0 }),
+    )
+    .await;
+    assert_eq!(opens, 1);
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (1, 0, Some(page_hash_of(RED))));
+
+    // A write tagged with the older run is ignored → no read, row unchanged.
+    let opens = progress_opens(
+        &app,
+        &auth,
+        &issue_id,
+        serde_json::json!({ "page": 3, "run": 0 }),
+    )
+    .await;
+    assert_eq!(opens, 0, "an ignored write reads nothing");
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (1, 0, Some(page_hash_of(RED))));
+
+    // Explicit write to an earlier page: stored → one read.
+    let opens = progress_opens(
+        &app,
+        &auth,
+        &issue_id,
+        serde_json::json!({ "page": 1, "finished": false }),
+    )
+    .await;
+    assert_eq!(opens, 1);
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (1, 1, Some(page_hash_of(GREEN))));
+
+    // Another writer clears the hash behind the server's back (a remap or
+    // a legacy row). The next same-page write predicted "kept", sees the
+    // hash was due, and reads and stores it.
+    let mut am: progress_record::ActiveModel = progress(&app, auth.user_id, &issue_id).await.into();
+    am.page_hash = Set(None);
+    am.update(&state.db).await.unwrap();
+    let opens = progress_opens(&app, &auth, &issue_id, serde_json::json!({ "page": 1 })).await;
+    assert_eq!(opens, 1);
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (1, 1, Some(page_hash_of(GREEN))));
+
+    // Another writer moves the page back: a write the hint thinks is
+    // behind the furthest page is in fact forward and stores the hash.
+    let mut am: progress_record::ActiveModel = progress(&app, auth.user_id, &issue_id).await.into();
+    am.last_page = Set(0);
+    am.page_hash = Set(Some(page_hash_of(RED)));
+    am.update(&state.db).await.unwrap();
+    let opens = progress_opens(&app, &auth, &issue_id, serde_json::json!({ "page": 1 })).await;
+    assert_eq!(opens, 1);
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (1, 1, Some(page_hash_of(GREEN))));
+
+    // The row is deleted (progress reset): the next write inserts with
+    // the hash even though the hint remembered a hashed row.
+    progress_record::Entity::delete_by_id((auth.user_id, issue_id.clone()))
+        .exec(&state.db)
+        .await
+        .unwrap();
+    let opens = progress_opens(&app, &auth, &issue_id, serde_json::json!({ "page": 1 })).await;
+    assert_eq!(opens, 1);
+    let p = progress(&app, auth.user_id, &issue_id).await;
+    assert_eq!(row(p), (0, 1, Some(page_hash_of(GREEN))));
+}
