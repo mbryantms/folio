@@ -33,6 +33,14 @@
 //! rating. An entity with no visible appearance for the caller is a 404
 //! on the detail route and absent from the browse index, so a restricted
 //! user can't learn names that only occur in hidden libraries.
+//!
+//! The series-level cast rows (`series_characters` / `series_teams` /
+//! `series_locations`) are a rollup of every issue in the series, so for
+//! a caller whose cap hides anything they are not read at all: membership
+//! and counts come from the issue junctions over the issues that caller
+//! can see. `series_arcs` and the series publisher describe the series
+//! itself and follow series visibility. Uncapped callers and admins keep
+//! the rollup arms (same SQL as before).
 
 use axum::{Json, http::StatusCode, response::IntoResponse, response::Response};
 use sea_orm::{
@@ -339,6 +347,11 @@ struct AclSql {
     lib: String,
     issue_cap: String,
     series_cap: String,
+    /// Some cap hides a rung ([`VisibleLibraries::hides_any`]): the
+    /// `series_characters` / `series_teams` / `series_locations` rollups
+    /// (the union of every issue in the series, hidden ones included) are
+    /// not consulted; the issue junctions over visible issues decide.
+    capped: bool,
 }
 
 /// `None` when the caller is restricted to an empty library set (no
@@ -361,16 +374,15 @@ fn acl_sql(visible: &VisibleLibraries, params: &mut Vec<Value>) -> Option<AclSql
             .collect();
         format!(" AND s.library_id IN ({})", placeholders.join(","))
     };
-    let issue_cap = visible.raw_cap_clause(
-        "s.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        params,
-    );
+    // Entity surfaces: the issue's rating AND its series' own rating, so a
+    // visible-rated issue of a hidden series never counts.
+    let issue_cap = visible.entity_issue_cap_sql("i", "s", params);
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", params);
     Some(AclSql {
         lib,
         issue_cap,
         series_cap,
+        capped: visible.hides_any(),
     })
 }
 
@@ -519,6 +531,9 @@ fn series_junction(kind: EntityKind) -> &'static str {
 fn series_members_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> String {
     let hits = issue_hits_one(kind, e, n, acl);
     let extra = match kind {
+        // Capped caller: the cast rollups would name issues it can't see;
+        // the issue hits above already cover every visible appearance.
+        EntityKind::Character | EntityKind::Team | EntityKind::Location if acl.capped => None,
         EntityKind::Character => Some(format!(
             "SELECT sj.series_id FROM series_characters sj \
               WHERE sj.character_id = ${e} \
@@ -558,15 +573,22 @@ fn hits_all(kind: EntityKind, acl: &AclSql) -> String {
     match kind {
         EntityKind::Character | EntityKind::Team | EntityKind::Location => {
             let (junction, fk, name) = junction_cols(kind);
-            let series_junction = series_junction(kind);
-            format!(
+            let issue_arm = format!(
                 "SELECT COALESCE(j.{fk}, e.id) AS eid, i.id AS issue_id, i.series_id AS series_id \
                    FROM {junction} j \
                    JOIN issues i ON i.id = j.issue_id \
                    JOIN series s ON s.id = i.series_id \
                    LEFT JOIN {table} e ON j.{fk} IS NULL \
                         AND e.normalized_name = btrim(lower(j.{name})) \
-                  WHERE {ivis} \
+                  WHERE {ivis}"
+            );
+            // Capped caller: issue hits only (see `AclSql::capped`).
+            if acl.capped {
+                return issue_arm;
+            }
+            let series_junction = series_junction(kind);
+            format!(
+                "{issue_arm} \
                  UNION ALL \
                  SELECT COALESCE(sj.{fk}, e.id), NULL::text, s.id \
                    FROM {series_junction} sj \

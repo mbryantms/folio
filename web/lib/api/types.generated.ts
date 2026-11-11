@@ -3830,6 +3830,53 @@ export interface paths {
         patch: operations["markers_update"];
         trace?: never;
     };
+    "/api/me/new-in-series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Issues added to the library in the last [`NEW_IN_SERIES_WINDOW_DAYS`]
+         *     days (`issues.created_at`, the scanner's ingest time — the same stamp
+         *     the New issues rail orders by) to a series the caller was already
+         *     reading when the issue arrived, minus issues the caller finished.
+         *     Newest addition first, tie-break on id; cursor-paginated on
+         *     `(created_at, id)`, `total` on the first page.
+         * @description "Already reading" means the issue was added after the caller started
+         *     the series. No start time is stored, so per series the start is
+         *     `MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading
+         *     rows (finished, or read past page 0): a finished row's `finished_at`
+         *     is stamped once when it flips to finished and kept while it stays
+         *     finished, so for anyone who finished an issue the start is when they
+         *     first finished one. A whole series added at once and then started is
+         *     therefore not "new". Known limits: when the caller's only reading row
+         *     in a series is one unfinished issue, its `updated_at` moves with every
+         *     read, so an issue added while they are still on that first issue can
+         *     be missed; and restarting a finished issue clears its `finished_at`,
+         *     so if that was the only finished row the start moves to the re-read.
+         *
+         *     Excludes removed issues and series, issues outside the caller's
+         *     libraries or over their age cap (issue rating, series fallback), and
+         *     series the caller hid from the rails — with On deck's auto-restore: a
+         *     series dismissal stops hiding once the caller reads in the series again.
+         *
+         *     One query: the started-series CTE reads the caller's progress rows
+         *     (`progress_records` primary key on `(user_id, issue_id)`), the issue
+         *     side walks `issues_active_created_idx` (`created_at DESC, id DESC`,
+         *     partial on active + not removed) inside the window, and the finished
+         *     check is a primary-key probe. The window bounds the scan.
+         */
+        get: operations["rails_new_in_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/on-deck": {
         parameters: {
             query?: never;
@@ -9374,7 +9421,7 @@ export interface components {
          *     Similar series rail, and the OPDS Continue reading feeds.
          * @enum {string}
          */
-        DismissalRail: "continue_reading" | "recent_history" | "on_deck" | "random_picks" | "similar_series" | "opds_continue_reading";
+        DismissalRail: "continue_reading" | "recent_history" | "on_deck" | "random_picks" | "similar_series" | "opds_continue_reading" | "new_in_series";
         DowHourCell: {
             /** Format: int64 */
             active_ms: number;
@@ -12113,6 +12160,22 @@ export interface components {
          * @enum {string}
          */
         Motion: "system" | "reduced";
+        /**
+         * @description "New in series you're reading" page: issues added in the last
+         *     `NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller was already
+         *     reading (added after they started it), that the caller has not
+         *     finished, newest addition first.
+         */
+        NewInSeriesView: {
+            items: components["schemas"]["IssueSummaryView"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching issues in total; first page only.
+             */
+            total?: number | null;
+        };
         NextInSeriesView: {
             items: components["schemas"]["IssueSummaryView"][];
         };
@@ -24579,6 +24642,37 @@ export interface operations {
             };
             /** @description marker write rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rails_new_in_series: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /** @description Page size; default 24, max 100. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewInSeriesView"];
+                };
+            };
+            /** @description invalid cursor */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

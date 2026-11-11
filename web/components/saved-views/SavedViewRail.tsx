@@ -15,6 +15,7 @@ import { CoverPriorityProvider } from "@/components/library/cover-priority";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { RailIconPicker } from "@/components/library/RailIconPicker";
 import { SurpriseMeButton } from "@/components/library/SurpriseMeButton";
+import { getCoverWidth } from "@/components/library/use-cover-size";
 import {
   useCblListWindowInfinite,
   useCollectionEntries,
@@ -23,9 +24,11 @@ import {
 } from "@/lib/api/queries";
 import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import type { SavedViewView } from "@/lib/api/types";
+import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 
 import {
   ContinueReadingRailBody,
+  NewInSeriesRailBody,
   OnDeckRailBody,
   OnThisDayRailBody,
   RandomPicksRailBody,
@@ -35,7 +38,6 @@ import {
   SimilarSeriesRailBody,
   useSystemRailIsEmpty,
 } from "./system-rails";
-import { cardWidth } from "@/lib/library/card-size";
 
 /** URL for the rail's "View all" affordance + header link.
  *
@@ -65,20 +67,15 @@ const RECENTLY_ADDED_VIEW_ID = "00000000-0000-0000-0000-000000000001";
  *  live on the management page (`/settings/views`); the home page is
  *  pure presentation.
  *
- *  `cardSize` is the home-page density slider value in pixels. Each
- *  card wrapper sets its width inline so the same toggle that drives
- *  the library grid also drives rail card widths. */
+ *  Every card wrapper takes the app-wide cover width
+ *  (`COVER_ITEM_STYLE`, lib/library/cover-size.ts): a rail card is as
+ *  wide as a cover in the library grid, and follows the one size
+ *  control without this component re-rendering. */
 export function SavedViewRail({
   view,
-  cardSize,
-  cardSizeKey,
   priority = false,
 }: {
   view: SavedViewView;
-  cardSize: number;
-  /** The page's card-size key: the stored size applies from the first
-   *  frame, before `cardSize` rehydrates (lib/library/card-size.ts). */
-  cardSizeKey?: string;
   /** First/above-the-fold rail: eager-load + high-priority its covers so
    *  the LCP image isn't deferred. Off for every other rail. */
   priority?: boolean;
@@ -90,13 +87,10 @@ export function SavedViewRail({
   const systemEmpty = useSystemRailIsEmpty(systemKey);
   if (view.kind === "system" && systemEmpty) return null;
 
-  const itemStyle: React.CSSProperties = {
-    width: cardWidth(cardSizeKey, cardSize),
-  };
   // "View all" trailing tile fires for surfaces that have a finite preview
   // but a deeper detail page. Suppressed when the rail body says it's
   // already showing everything (returns hasMore: false).
-  const railContent = renderRailBody(view, itemStyle);
+  const railContent = renderRailBody(view, COVER_ITEM_STYLE);
   return (
     <section
       className="flex flex-col"
@@ -109,7 +103,7 @@ export function SavedViewRail({
       <CoverPriorityProvider value={priority}>
         <HorizontalScrollRail
           viewAllHref={railContent.hasMore ? viewDetailHref(view) : undefined}
-          itemWidthPx={cardSize}
+          coverSized
         >
           {railContent.body}
         </HorizontalScrollRail>
@@ -164,6 +158,12 @@ function renderRailBody(
   if (view.kind === "system" && view.system_key === "on_this_day") {
     return {
       body: <OnThisDayRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "new_in_series") {
+    return {
+      body: <NewInSeriesRailBody itemStyle={itemStyle} />,
       hasMore: true,
     };
   }
@@ -443,8 +443,11 @@ function CblRailBody({
   // adding content past the right edge doesn't shift anything
   // currently visible. Lives in a `useLayoutEffect` so the fix
   // commits before the next paint — no perceptible jump.
+  //
+  // The card width is a CSS variable (`COVER_ITEM_STYLE`), so the px
+  // value is read from the cover-size store at the moment of the
+  // compensation rather than parsed out of `itemStyle`.
   const lowestPosRef = React.useRef<number | null>(null);
-  const cardSize = parseFloat(String(itemStyle.width ?? "0"));
   React.useLayoutEffect(() => {
     if (items.length === 0) return;
     const newLowest = items[0]!.position;
@@ -458,10 +461,12 @@ function CblRailBody({
     }
     if (prepended === 0) return;
     const scroller = railScrollRef.current;
-    if (!scroller || !Number.isFinite(cardSize) || cardSize <= 0) return;
+    if (!scroller) return;
+    const coverWidth = getCoverWidth();
+    if (!Number.isFinite(coverWidth) || coverWidth <= 0) return;
     // gap-3 = 12px between flex children inside HorizontalScrollRail.
-    scroller.scrollLeft += prepended * (cardSize + 12);
-  }, [items, cardSize]);
+    scroller.scrollLeft += prepended * (coverWidth + 12);
+  }, [items]);
 
   if (query.isLoading) {
     return (

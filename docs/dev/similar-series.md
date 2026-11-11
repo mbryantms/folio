@@ -202,6 +202,22 @@ Applied per request, never cached:
   The web's similar-series cards add "Hide from suggestions" to the
   cover menu, which writes that dismissal.
 - **Removed series** never enter the cached list.
+- **Reasons under an age cap**: the cached reasons come from the
+  `series_*` rollups, which hold every issue of a series. For a caller
+  whose cap hides anything, each reason of an issue-derived kind
+  (creator, character, team, genre, tag, an arc that is not a tie-in) is
+  kept only when an issue the caller can see carries that entity, on the
+  target and on the neighbour (checked in libraries where the cap hides a
+  rung; `series_arcs` rows count as series-level). A neighbour left with
+  no reason is dropped, and the others are scored by the sum of their
+  kept reasons' weights and reordered by that score before paging, so
+  the cursor and `total` follow the caller's own list. One extra query
+  per request over the cached list (at most 100 neighbours); the cache is
+  not re-keyed, and uncapped callers get the cached list unchanged. The
+  cache keeps only each neighbour's strongest reasons, so a neighbour
+  whose cached reasons are all hidden is dropped even if it shares a
+  weaker visible one: a capped caller can get fewer suggestions, never
+  a hidden name.
 - **Home rail only**: excludes every series the caller has started
   (progress with `last_page > 0` or `finished` on a live issue), and the seed. The seed
   is the most recently read visible, unhidden series; if its neighbours
@@ -251,10 +267,10 @@ The "Similar series" rail lives in the series page's **Related** tab
 and the "Same universe" section. The tab panel is unmounted while
 inactive, so `GET /series/{slug}/similar` fires only when the tab opens.
 
-Its cards are sized by the page's card-size slider (Issues panel → View
-options, key `folio.series.cardSize`) instead of a fixed 160 px:
-`SimilarSeriesRail` takes `itemWidthPx`, which the tab sets to the issue
-grid's effective column width (`useGridColumnWidth` over
+Its cards are sized by the app-wide cover size (View options → "Cover
+size", see `phone-layout.md` → "One cover size") instead of a fixed
+160 px: `SimilarSeriesRail` takes `itemWidthPx`, which the tab sets to the
+issue grid's effective column width (`useGridColumnWidth` over
 `effectiveColumnWidth`, see `series-relationships.md` → "Related tab"), so
-the covers match the grid exactly and follow the slider live. Without the
+the covers match the grid exactly and follow the control live. Without the
 prop the rail falls back to 160 px.

@@ -22,6 +22,9 @@ import { cn } from "@/lib/utils";
 export type SliderProps = React.ComponentProps<typeof SliderPrimitive.Root> & {
   /** Accessible name of the thumb; one per thumb for range sliders. */
   thumbLabel: string | string[];
+  /** What the thumb's value means, when the number alone does not say
+   *  (a slider over steps: "6 per row"). Sets `aria-valuetext`. */
+  thumbValueText?: string;
 };
 
 export function Slider({
@@ -31,6 +34,7 @@ export function Slider({
   min = 0,
   max = 100,
   thumbLabel,
+  thumbValueText,
   ...props
 }: SliderProps) {
   const _values = React.useMemo(
@@ -71,6 +75,7 @@ export function Slider({
           data-slot="slider-thumb"
           key={index}
           aria-label={labels[index] ?? labels[0]}
+          aria-valuetext={thumbValueText}
           className="border-primary ring-ring/50 block size-4 shrink-0 rounded-full border bg-white shadow-sm transition-[color,box-shadow] select-none hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
         />
       ))}

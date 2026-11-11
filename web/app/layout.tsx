@@ -1,12 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import { baseViewport, themeHeadMeta } from "@/lib/viewport";
 import { appleStartupImages } from "@/lib/pwa/apple-splash";
-import { CARD_SIZE_BOOTSTRAP } from "@/lib/library/card-size";
+import { COVER_SIZE_BOOTSTRAP } from "@/lib/library/cover-size";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { cookies, headers } from "next/headers";
 import { GlobalHotkeys } from "@/components/GlobalHotkeys";
 import { HydrateAuthCache } from "@/components/HydrateAuthCache";
+import { SessionRefresher } from "@/components/SessionRefresher";
 import { getMe, SESSION_COOKIE } from "@/lib/api/me";
 import { SearchModalProvider } from "@/lib/search/use-search-modal";
 import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
@@ -102,7 +103,7 @@ export default async function RootLayout({
   // Rust origin forwards its `Content-Security-Policy` header on the
   // proxy hop (upstream/mod.rs::forward); Next nonces its own framework
   // scripts from it automatically, but userland inline scripts —
-  // next-themes' theme bootstrap and the card-size script below — need the nonce
+  // next-themes' theme bootstrap and the cover-size script below — need the nonce
   // passed explicitly. A hash allowlist can't work here: the script
   // body serializes `defaultTheme`, which varies per user cookie.
   // Absent header (e.g. hitting :3000 directly) ⇒ no nonce attr, which
@@ -141,13 +142,14 @@ export default async function RootLayout({
           is the legacy (pre-16.4) standalone opt-in and what makes
           `navigator.standalone` true. */}
       <head>
-        {/* Card sizes → `--card-size-*` on <html> before first paint, so
-            cover grids and their route skeletons start at the reader's
-            size (lib/library/card-size.ts). Nonce'd like next-themes'
-            script; `<html>` already suppresses the attribute mismatch. */}
+        {/* Cover size → `--cover-min` / `--cover-w` on <html> before first
+            paint, so cover grids and their route skeletons start at the
+            reader's size (lib/library/cover-size.ts). Nonce'd like
+            next-themes' script; `<html>` already suppresses the attribute
+            mismatch. */}
         <script
           nonce={nonce}
-          dangerouslySetInnerHTML={{ __html: CARD_SIZE_BOOTSTRAP }}
+          dangerouslySetInnerHTML={{ __html: COVER_SIZE_BOOTSTRAP }}
         />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
@@ -191,6 +193,7 @@ export default async function RootLayout({
           <NextIntlClientProvider messages={messages}>
             <QueryProvider key={me?.id ?? "anonymous"} userId={me?.id}>
               {me ? <HydrateAuthCache me={me} /> : null}
+              {me ? <SessionRefresher /> : null}
               <SearchModalProvider>
                 <ScanResultListener />
                 <GlobalHotkeys />

@@ -8419,6 +8419,49 @@
         }
       }
     },
+    "/api/me/new-in-series": {
+      "get": {
+        "summary": "Issues added to the library in the last [`NEW_IN_SERIES_WINDOW_DAYS`]\ndays (`issues.created_at`, the scanner's ingest time — the same stamp\nthe New issues rail orders by) to a series the caller was already\nreading when the issue arrived, minus issues the caller finished.\nNewest addition first, tie-break on id; cursor-paginated on\n`(created_at, id)`, `total` on the first page.",
+        "description": "\"Already reading\" means the issue was added after the caller started\nthe series. No start time is stored, so per series the start is\n`MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading\nrows (finished, or read past page 0): a finished row's `finished_at`\nis stamped once when it flips to finished and kept while it stays\nfinished, so for anyone who finished an issue the start is when they\nfirst finished one. A whole series added at once and then started is\ntherefore not \"new\". Known limits: when the caller's only reading row\nin a series is one unfinished issue, its `updated_at` moves with every\nread, so an issue added while they are still on that first issue can\nbe missed; and restarting a finished issue clears its `finished_at`,\nso if that was the only finished row the start moves to the re-read.\n\nExcludes removed issues and series, issues outside the caller's\nlibraries or over their age cap (issue rating, series fallback), and\nseries the caller hid from the rails — with On deck's auto-restore: a\nseries dismissal stops hiding once the caller reads in the series again.\n\nOne query: the started-series CTE reads the caller's progress rows\n(`progress_records` primary key on `(user_id, issue_id)`), the issue\nside walks `issues_active_created_idx` (`created_at DESC, id DESC`,\npartial on active + not removed) inside the window, and the finished\ncheck is a primary-key probe. The window bounds the scan.",
+        "operationId": "rails_new_in_series",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous page's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size; default 24, max 100.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewInSeriesView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid cursor"
+          }
+        }
+      }
+    },
     "/api/me/on-deck": {
       "get": {
         "summary": "\"What's next\" suggestions for the home page. Returns a mix of\n`series_next` cards (next-unread issue in a series the user has read\nat least one finished issue of, with no in-progress issue blocking the\nqueue) and `cbl_next` cards (lowest-position unfinished matched entry\nin a CBL the user has any progress in). Series with an active in-\nprogress issue are skipped — they already surface in Continue Reading.",
@@ -21884,7 +21927,8 @@
           "on_deck",
           "random_picks",
           "similar_series",
-          "opds_continue_reading"
+          "opds_continue_reading",
+          "new_in_series"
         ]
       },
       "DowHourCell": {
@@ -28438,6 +28482,37 @@
           "system",
           "reduced"
         ]
+      },
+      "NewInSeriesView": {
+        "type": "object",
+        "description": "\"New in series you're reading\" page: issues added in the last\n`NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller was already\nreading (added after they started it), that the caller has not\nfinished, newest addition first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueSummaryView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor for the next page; `null` on the last page."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Matching issues in total; first page only.",
+            "minimum": 0
+          }
+        }
       },
       "NextInSeriesView": {
         "type": "object",

@@ -22,15 +22,14 @@ import {
   useRef,
   useState,
   type ComponentType,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import {
   BulkMarkReadDialog,
   BULK_BACKFILL_PROMPT_THRESHOLD,
@@ -46,7 +45,6 @@ import { IssueCard } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { SeriesCard } from "@/components/library/SeriesCard";
-import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -106,19 +104,9 @@ import {
   issueReadStatusToParam,
 } from "@/lib/search/issue-search-filters";
 import { FilterPill } from "@/components/folio/filter-pill";
-import {
-  CARD_SIZE_KEYS,
-  cardGridColumns,
-  cardWidth,
-} from "@/lib/library/card-size";
+import { COVER_GRID_STYLE, COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 
 const QUERY_DEBOUNCE_MS = 250;
-
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.search;
 
 /**
  * Full-page search experience. Two layouts share the same fetch + input
@@ -133,9 +121,9 @@ const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.search;
  *     all results" link. Mirrors the destination of the rail's top-results
  *     tile.
  *
- * Card-size slider drives the cover-card width on Series + Issues rails
- * / grids; people tiles use the same width so the rail stays visually
- * uniform.
+ * Every rail card and grid takes the app-wide cover size (the control in
+ * the header sets it); people tiles use the same width so the rail stays
+ * visually uniform.
  */
 export function SearchView({
   initialQuery,
@@ -170,12 +158,6 @@ export function SearchView({
     () => initialReadStatus ?? [],
   );
   const [issueFilterOpen, setIssueFilterOpen] = useState(false);
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(raw.trim()), QUERY_DEBOUNCE_MS);
@@ -279,35 +261,17 @@ export function SearchView({
                 onChange={setIssueReadStatus}
               />
             ) : null}
-            {/* Desktop: the card-size popover. Phones: the same fields
+            {/* Desktop: the cover-size popover. Phones: the same fields
              *  in a bottom sheet behind the same four-squares icon,
              *  inline in the header row (one row, no sticky band — the
              *  page's own search box is the input below). Matches the
              *  saved views' inline bar. */}
             <div className="max-sm:hidden">
-              <CardSizeOptions
-                cardSize={cardSize}
-                onCardSize={setCardSize}
-                min={CARD_SIZE_MIN}
-                max={CARD_SIZE_MAX}
-                step={CARD_SIZE_STEP}
-                defaultSize={CARD_SIZE_DEFAULT}
-                description="Adjust card size for Series, Issues, and People rails."
-              />
+              <CoverSizeOptions />
             </div>
             <PhoneControlsBar
               sticky={false}
-              menu={() => (
-                <CardSizeFields
-                  cardSize={cardSize}
-                  onCardSize={setCardSize}
-                  min={CARD_SIZE_MIN}
-                  max={CARD_SIZE_MAX}
-                  step={CARD_SIZE_STEP}
-                  defaultSize={CARD_SIZE_DEFAULT}
-                  fieldId="search-phone-card-size"
-                />
-              )}
+              menu={() => <CoverSizeFields fieldId="search-phone-card-size" />}
             />
           </div>
         </div>
@@ -353,7 +317,6 @@ export function SearchView({
           query={debounced}
           enabled={enabled}
           groups={groups}
-          cardSize={cardSize}
           seriesFilters={
             filtersActive ? seriesSearchFiltersToHook(filters) : {}
           }
@@ -399,7 +362,6 @@ export function SearchView({
               categoryTotals={categoryTotals}
               query={debounced}
               enabled={enabled}
-              cardSize={cardSize}
             />
           ))}
           {/* All-empty fallback. The per-rail null-returns above hide
@@ -544,7 +506,6 @@ function CategoryRail({
   categoryTotals,
   query,
   enabled,
-  cardSize,
 }: {
   def: SearchCategoryDef;
   hits: ReadonlyArray<SearchHit>;
@@ -552,7 +513,6 @@ function CategoryRail({
   categoryTotals: GlobalSearchTotals;
   query: string;
   enabled: boolean;
-  cardSize: number;
 }) {
   const count =
     categoryTotals[def.key] || categoryCountForRail(def.key, payloads, hits);
@@ -594,7 +554,6 @@ function CategoryRail({
         payloads={payloads}
         query={query}
         enabled={enabled}
-        cardSize={cardSize}
       />
     </section>
   );
@@ -616,14 +575,12 @@ function CategoryRailBody({
   payloads,
   query,
   enabled,
-  cardSize,
 }: {
   def: SearchCategoryDef;
   hits: ReadonlyArray<SearchHit>;
   payloads: GlobalSearchPayloads;
   query: string;
   enabled: boolean;
-  cardSize: number;
 }) {
   if (!enabled) {
     return (
@@ -642,12 +599,9 @@ function CategoryRailBody({
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
   }
   const viewAllHref = `/search?q=${encodeURIComponent(query)}&category=${def.key}`;
-  const itemStyle: CSSProperties = {
-    width: cardWidth(CARD_SIZE_STORAGE_KEY, cardSize),
-  };
   return (
-    <HorizontalScrollRail viewAllHref={viewAllHref} itemWidthPx={cardSize}>
-      {renderRailItems(def, payloads, hits, itemStyle)}
+    <HorizontalScrollRail viewAllHref={viewAllHref} coverSized>
+      {renderRailItems(def, payloads, hits)}
     </HorizontalScrollRail>
   );
 }
@@ -656,24 +610,23 @@ function renderRailItems(
   def: SearchCategoryDef,
   payloads: GlobalSearchPayloads,
   hits: ReadonlyArray<SearchHit>,
-  itemStyle: CSSProperties,
 ): ReactNode {
   if (def.key === "series") {
     return payloads.series.map((s) => (
-      <div key={s.id} style={itemStyle} className="shrink-0">
+      <div key={s.id} style={COVER_ITEM_STYLE} className="shrink-0">
         <SeriesCard series={s} size="md" />
       </div>
     ));
   }
   if (def.key === "issues") {
     return payloads.issues.map((i) => (
-      <div key={i.id} style={itemStyle} className="shrink-0">
+      <div key={i.id} style={COVER_ITEM_STYLE} className="shrink-0">
         <IssueCard issue={i} />
       </div>
     ));
   }
   return hits.map((hit) => (
-    <div key={hit.id} style={itemStyle} className="shrink-0">
+    <div key={hit.id} style={COVER_ITEM_STYLE} className="shrink-0">
       {def.key === "markers" ? (
         <MarkerSearchCard hit={hit} />
       ) : (
@@ -688,7 +641,6 @@ function CategoryGrid({
   query,
   enabled,
   groups,
-  cardSize,
   seriesFilters,
   issueReadStatusParam,
   activeFilterCount,
@@ -698,7 +650,6 @@ function CategoryGrid({
   query: string;
   enabled: boolean;
   groups: { [K in SearchCategory]: SearchHit[] };
-  cardSize: number;
   seriesFilters: Partial<SeriesListFilters>;
   issueReadStatusParam: string | undefined;
   /** Active facet count for the current category (series facets or the
@@ -714,9 +665,6 @@ function CategoryGrid({
       </p>
     );
   }
-  const gridStyle: CSSProperties = {
-    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
-  };
   const clearFilters = activeFilterCount > 0 ? onClearFilters : undefined;
   if (def.key === "series") {
     return (
@@ -724,7 +672,6 @@ function CategoryGrid({
         query={query}
         enabled={enabled}
         filters={seriesFilters}
-        gridStyle={gridStyle}
         onClearFilters={clearFilters}
       />
     );
@@ -734,7 +681,6 @@ function CategoryGrid({
       <IssuesCategoryGrid
         query={query}
         enabled={enabled}
-        gridStyle={gridStyle}
         readStatusParam={issueReadStatusParam}
         onClearFilters={clearFilters}
       />
@@ -744,27 +690,25 @@ function CategoryGrid({
     if (groups.markers.length === 0) {
       return <NoMatches query={query} labelPlural={def.labelPlural} />;
     }
-    return <MarkerGrid hits={groups.markers} gridStyle={gridStyle} />;
+    return <MarkerGrid hits={groups.markers} />;
   }
   // People + the saved-content categories (views / collections / pages)
   // all render as generic icon-hit tiles from their `groups[key]` slice.
   if (groups[def.key].length === 0) {
     return <NoMatches query={query} labelPlural={def.labelPlural} />;
   }
-  return <IconHitGrid hits={groups[def.key]} gridStyle={gridStyle} />;
+  return <IconHitGrid hits={groups[def.key]} />;
 }
 
 function SeriesCategoryGrid({
   query,
   enabled,
   filters,
-  gridStyle,
   onClearFilters,
 }: {
   query: string;
   enabled: boolean;
   filters: Partial<SeriesListFilters>;
-  gridStyle: CSSProperties;
   onClearFilters: (() => void) | undefined;
 }) {
   const results = useSeriesListInfinite(
@@ -790,12 +734,7 @@ function SeriesCategoryGrid({
   }
   return (
     <div className="space-y-4">
-      <SelectableResultGrid
-        kind="series"
-        items={series}
-        total={total}
-        gridStyle={gridStyle}
-      />
+      <SelectableResultGrid kind="series" items={series} total={total} />
       <LoadMoreButton
         hasNextPage={!!results.hasNextPage}
         isFetching={results.isFetchingNextPage}
@@ -808,13 +747,11 @@ function SeriesCategoryGrid({
 function IssuesCategoryGrid({
   query,
   enabled,
-  gridStyle,
   readStatusParam,
   onClearFilters,
 }: {
   query: string;
   enabled: boolean;
-  gridStyle: CSSProperties;
   readStatusParam: string | undefined;
   onClearFilters: (() => void) | undefined;
 }) {
@@ -841,12 +778,7 @@ function IssuesCategoryGrid({
   }
   return (
     <div className="space-y-4">
-      <SelectableResultGrid
-        kind="issue"
-        items={issues}
-        total={total}
-        gridStyle={gridStyle}
-      />
+      <SelectableResultGrid kind="issue" items={issues} total={total} />
       <LoadMoreButton
         hasNextPage={!!results.hasNextPage}
         isFetching={results.isFetchingNextPage}
@@ -909,15 +841,9 @@ function LoadMoreButton({
   );
 }
 
-function MarkerGrid({
-  hits,
-  gridStyle,
-}: {
-  hits: ReadonlyArray<SearchHit>;
-  gridStyle: CSSProperties;
-}) {
+function MarkerGrid({ hits }: { hits: ReadonlyArray<SearchHit> }) {
   return (
-    <ul role="list" className="grid gap-4" style={gridStyle}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {hits.map((hit) => (
         <li key={hit.id}>
           <MarkerSearchCard hit={hit} />
@@ -946,12 +872,10 @@ function SelectableResultGrid({
   kind,
   items,
   total,
-  gridStyle,
 }: {
   kind: "series" | "issue";
   items: SeriesView[] | IssueSummaryView[];
   total: number;
-  gridStyle: CSSProperties;
 }) {
   const isSeries = kind === "series";
   const selection = useSelection<{ id: string }>(items);
@@ -1086,15 +1010,10 @@ function SelectableResultGrid({
       />
 
       {isSeries ? (
-        <SeriesGrid
-          series={items as SeriesView[]}
-          gridStyle={gridStyle}
-          selection={selection}
-        />
+        <SeriesGrid series={items as SeriesView[]} selection={selection} />
       ) : (
         <IssuesGrid
           issues={items as IssueSummaryView[]}
-          gridStyle={gridStyle}
           selection={selection}
         />
       )}
@@ -1120,15 +1039,13 @@ function SelectableResultGrid({
 
 function SeriesGrid({
   series,
-  gridStyle,
   selection,
 }: {
   series: ReadonlyArray<SeriesView>;
-  gridStyle: CSSProperties;
   selection?: CardSelection;
 }) {
   return (
-    <ul role="list" className="grid gap-4" style={gridStyle}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {series.map((s) => (
         <li key={s.id}>
           <SeriesCard
@@ -1155,15 +1072,13 @@ function SeriesGrid({
 
 function IssuesGrid({
   issues,
-  gridStyle,
   selection,
 }: {
   issues: ReadonlyArray<IssueSummaryView>;
-  gridStyle: CSSProperties;
   selection?: CardSelection;
 }) {
   return (
-    <ul role="list" className="grid gap-4" style={gridStyle}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {issues.map((i) => (
         <li key={i.id}>
           <IssueCard
@@ -1187,15 +1102,9 @@ function IssuesGrid({
   );
 }
 
-function IconHitGrid({
-  hits,
-  gridStyle,
-}: {
-  hits: ReadonlyArray<SearchHit>;
-  gridStyle: CSSProperties;
-}) {
+function IconHitGrid({ hits }: { hits: ReadonlyArray<SearchHit> }) {
   return (
-    <ul role="list" className="grid gap-4" style={gridStyle}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {hits.map((hit) => (
         <li key={hit.id}>
           <IconHitCard hit={hit} />
@@ -1371,7 +1280,7 @@ function MarkerSearchThumbnail({
 /** Inline `<Select>` that surfaces the available series-search sort
  *  orders. "Best match" is the relevance default (no `sort=` param on
  *  the URL). The visible label is short so the trigger fits next to
- *  the card-size + filter buttons without wrapping. */
+ *  the cover-size + filter buttons without wrapping. */
 function SeriesSortDropdown({
   value,
   onChange,
@@ -1385,7 +1294,7 @@ function SeriesSortDropdown({
       onValueChange={(v) => onChange(v as SeriesSearchSort)}
     >
       <SelectTrigger
-        // Toolbar-row convention: h-9 to align with the CardSize +
+        // Toolbar-row convention: h-9 to align with the cover-size +
         // Filters sibling controls. See `docs/dev/search.md`. Below
         // `sm` the trigger collapses to an icon (the value stays in the
         // accessible name via `sr-only`) so the h1 + controls cluster

@@ -43,7 +43,7 @@ use entity::user::{self, ActiveModel as UserAM, Entity as UserEntity};
 use super::{error, respond_with_field_errors};
 use crate::api::form_or_json::{FormOrJson, ResponseFormat, redirect_with_error};
 use crate::audit::{self, AuditEntry};
-use crate::auth::cookies::{csrf_cookie, new_csrf_token, sha256_hex};
+use crate::auth::cookies::{csrf_cookie, sha256_hex};
 use crate::auth::email_token;
 use crate::auth::failed_auth::PasswordCheck;
 use crate::auth::local::{
@@ -58,9 +58,9 @@ use crate::state::AppState;
 use server_macros::handler;
 use shared::error::{ApiErrorCode, FieldError};
 
-// Access TTL flows from config; the CSRF cookie max-age must match the access
-// cookie's so JS doesn't think the form is signed-in after the access cookie
-// expires. Read at handler time via `app.cfg().access_ttl()`.
+// The CSRF cookie max-age is the refresh TTL (as at sign-in): the silent
+// `/auth/refresh` needs the cookie after the short-lived access cookie has
+// expired. Read at handler time via `app.cfg().refresh_ttl()`.
 
 pub fn routes() -> OpenApiRouter<AppState> {
     // PATCH is the JSON contract (XHR happy path); POST is the
@@ -249,6 +249,9 @@ pub async fn update(
                     locked_msg,
                 );
             }
+            PasswordCheck::Internal => {
+                return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
             PasswordCheck::Wrong => {
                 tracing::info!(reason = "bad_password", "email change rejected");
                 return fail_password(StatusCode::FORBIDDEN, ApiErrorCode::AuthInvalid, wrong_msg);
@@ -313,6 +316,9 @@ pub async fn update(
                         locked_msg,
                     );
                 }
+                PasswordCheck::Internal => {
+                    return fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+                }
                 PasswordCheck::Wrong => {
                     tracing::info!(reason = "bad_password", "password change rejected");
                     return fail_password(
@@ -339,11 +345,13 @@ pub async fn update(
     // Hash outside the transaction (argon2 is slow; the row lock is not
     // held for it).
     let new_hash = match new_pw.filter(|_| password_change) {
-        Some(new_pw) => match password::hash(
+        Some(new_pw) => match password::hash_blocking(
             new_pw,
             app.secrets.pepper.as_ref(),
             app.cfg().password_hash_cost,
-        ) {
+        )
+        .await
+        {
             Ok(h) => Some(h),
             Err(e) => {
                 tracing::error!(error = %e, "argon2 rehash failed");
@@ -471,9 +479,10 @@ pub async fn update(
 
     if changed.is_empty() && pending.is_none() && cancelled.is_none() {
         drop(txn);
-        let csrf = new_csrf_token();
+        // Keep the caller's CSRF value; only extend its lifetime.
+        let (csrf, _) = crate::auth::cookies::existing_or_new_csrf(&jar);
         let body = with_pending_email(&app.db, me_resp_from_row(&locked, csrf.clone())).await;
-        let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
+        let jar = jar.add(csrf_cookie(csrf, crate::auth::local::me_csrf_max_age(&app)));
         return match format {
             ResponseFormat::Json => (StatusCode::OK, jar, Json(body)).into_response(),
             ResponseFormat::Form => (jar, Redirect::to("/settings/account?ok=1")).into_response(),
@@ -593,9 +602,11 @@ pub async fn update(
         send_email_change_mail(&app, &updated, new_addr, tok).await;
     }
 
-    let csrf = new_csrf_token();
+    // Keep the caller's CSRF value (a new one would fail any request in
+    // flight with 403); only extend its lifetime.
+    let (csrf, _) = crate::auth::cookies::existing_or_new_csrf(&jar);
     let body = with_pending_email(&app.db, me_resp_from_row(&updated, csrf.clone())).await;
-    let jar = jar.add(csrf_cookie(csrf, app.cfg().access_ttl()));
+    let jar = jar.add(csrf_cookie(csrf, crate::auth::local::me_csrf_max_age(&app)));
     let form_target = if pending.is_some() {
         "/settings/account?email_change=sent"
     } else {

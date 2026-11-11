@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { ensureFreshSession, needsRefresh } from "@/lib/api/session-refresh";
 import type { ViewMode } from "@/lib/reader/detect";
 import type { SpreadGroup } from "@/lib/reader/spreads";
 import {
@@ -225,7 +226,11 @@ export function useReaderPrefetch(opts: {
       }
     };
     w.pump = pump;
-    pump();
+    // Page bytes are cookie-authed: a batch started as the access token
+    // lapses would fail. Near expiry, renew first; a superseded
+    // generation's pump then does nothing.
+    if (needsRefresh()) void ensureFreshSession().then(pump);
+    else pump();
     document.addEventListener("visibilitychange", pump);
     return () => {
       document.removeEventListener("visibilitychange", pump);

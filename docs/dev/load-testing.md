@@ -105,6 +105,66 @@ seed assumes the default 2,500 series).
 tree. The "before" numbers below came from an `origin/main` build run
 against the same database.
 
+### The weekly gate
+
+[`.github/workflows/perf-plans.yml`](../../.github/workflows/perf-plans.yml)
+runs the full harness against `main` every Monday at 05:23 UTC, and on
+demand from the Actions tab (**Query plans (weekly)** → **Run workflow**).
+It never runs on pull requests or pushes: a run takes too long for a
+per-PR check, and a plan regression is rarely urgent enough to block a
+merge.
+
+- **Scale.** The default library, 2,500 series × 20 issues (50,000
+  issues), with the default 5,000-row gate. The two are chosen together:
+  at a smaller scale the issue-scale junction tables (`series_characters`
+  is about 7,800 rows here) fall under the threshold and stop being gated,
+  and a lower threshold would gate `series` (2,500 rows), where a scan is
+  often the right plan. The full run fits a standard hosted runner (the
+  fixture is about 200 MB and the debug-build scan a few minutes); the
+  server build reuses the `rust-test` dependency cache.
+- **Where the result goes.** Every run uploads the report
+  (`summary.md`, `plans/`, the server and harness logs) as the
+  `perf-plans-<run id>` artifact, and the job summary shows `summary.md`.
+  A red run opens or rewrites one issue, **"Query-plan gate: attention
+  needed"** (label `performance`), listing the flagged endpoints. It is
+  commented on only when the set of flagged plans changes, and closed by
+  the first green run. A run where the harness itself failed (build,
+  container, scan) uses the same issue and says so.
+- **When a plan is flagged,** read `plans/<label>.txt` from the artifact.
+  If the scan is a regression, fix the query or the index. If a full scan
+  is the right plan, add a line to
+  [`expected_seqscans.txt`](../../scripts/perf/expected_seqscans.txt):
+  `label | table | reason`, where the reason says why no narrower plan
+  exists (a whole-table aggregate, or a filter that matches the whole
+  single-library fixture). An entry exempts that one label and table
+  only, so the same scan on any other endpoint still fails.
+- **By hand**, `just perf-explain` runs the same thing locally (the
+  section above); exit status 1 is the gate. To check a new expected entry
+  without a new scan, keep the containers from one run (`PERF_KEEP=1`)
+  and rerun against them.
+
+The reviewed exceptions added with the gate (audit 2026-11, P-06):
+`library-stats-all` and `library-stats-one` (one aggregate pass over the
+issue rows; `file_size` is in no index, and the one-library filter matches
+the whole single-library fixture) and `similar-large-cold |
+series_characters` (the same all-series candidate set as the existing
+`series_tags` entry).
+
+**Entity indexes, flagged and not fixed.** The same change put the A–Z
+indexes on the harness (`characters-*`, `teams-list`, `locations-list`,
+`creators-*`, `people-search` in `endpoints.txt`; `arcs-*` in
+`endpoints-m7.txt`). The characters and creators lists, and the `/people`
+search, seq-scan their whole junctions on every request, the second page
+and the `q` filter included: `issue_characters` (150,000 rows) plus
+`series_characters`, 240–310 ms of SQL per page; `issue_credits`
+(100,000 rows) plus `series_credits`, 150–210 ms. Each request aggregates
+every visible appearance (`WITH hits AS …` over the junction joined to
+`issues` and `series`) before the keyset picks one page, so the cost grows
+with the library rather than the page. That is a query design to change,
+not an expected scan, so the gate stays red on these labels until it is
+fixed. The arcs list (3,127 `issue_arcs` rows) and the empty team and
+location tables stay under the threshold.
+
 ### Dataset at stress scale
 
 | table | rows | size (heap + indexes) |
@@ -755,6 +815,14 @@ builds on production-like storage). The one hard invariant is the
 `perf-explain` gate: no seq scan on an issue-scale table among these
 endpoints. The k6 soak and Automerge sync-stress items in spec §16.5 are
 not covered here.
+
+**Socket setup.** The public listener sets `TCP_NODELAY` on every accepted
+connection (`app::tuned_listener`), and the reverse-proxy client to the
+Next.js upstream does the same (`tcp_nodelay(true)` in `AppState::new`).
+With Nagle's algorithm on, a response whose last write is small (a cached
+page variant, a short JSON body) waited for the client's delayed ACK,
+which showed up as a steady extra ~40 ms on cached page requests. A p50
+near 40 ms on the cached page-turn recipe means this setting is missing.
 
 ## Observations from the stress scan
 

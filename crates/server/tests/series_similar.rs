@@ -352,6 +352,23 @@ async fn respects_library_acl_and_age_cap() {
     for s in [target, visible, other_lib, mature] {
         credit(&db, s, "writer", "Shared Writer").await;
     }
+    // The capped reader's reasons are re-checked against issues it can
+    // see (the rollup holds every issue), so back the rows in library A
+    // with a visible issue carrying the credit.
+    for (n, s) in [(1u8, target), (2, visible), (3, mature)] {
+        let path = root_a.join(format!("issue-{n}.cbz"));
+        let payload = [b'P', b'K', n];
+        let issue = common::seed::IssueSeed::new(lib_a, s, &path, &payload, 1.0)
+            .insert(&db)
+            .await;
+        exec(
+            &db,
+            "INSERT INTO issue_credits (issue_id, role, person, ordinal) \
+             VALUES ($1, 'writer', 'Shared Writer', 0)",
+            vec![issue.into()],
+        )
+        .await;
+    }
 
     // Admin sees all three neighbours.
     let (status, body) = get(&app, &format!("/api/series/{target}/similar"), &admin).await;
