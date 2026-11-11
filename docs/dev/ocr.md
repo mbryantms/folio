@@ -303,16 +303,63 @@ key on `lang` to spot manga-OCR-bound vs western-OCR-bound boxes.
 
 The three model artifacts the pipeline depends on:
 
-| Component | Where | Auto-download source | Approx size |
+| Component | Where | Download source | Approx size |
 |---|---|---|---|
 | `comic-text-detector` ONNX | `${HF_HOME}/hub/models--mayocream--comic-text-detector-onnx/` | `mayocream/comic-text-detector-onnx` | ~95 MB |
-| `manga-ocr` ONNX (encoder + decoder + vocab) | `${HF_HOME}/hub/models--mayocream--manga-ocr-onnx/` | `mayocream/manga-ocr-onnx` | ~250 MB |
+| `manga-ocr` ONNX (encoder + decoder + vocab) | `${HF_HOME}/hub/models--mayocream--manga-ocr-onnx/` | `mayocream/manga-ocr-onnx` | ~440 MB |
 | Tesseract LSTM (`eng.traineddata`) | `${TESSDATA_PREFIX}` (default `${HOME}/.tesseract-rs/tessdata`) | tessdata_best (build script) | ~15 MB |
 
 `HF_HOME` defaults to `${HOME}/.cache/huggingface`. The first
 request that touches a model triggers download + ~1–2 s session
 build for ONNX, or a one-time cmake build for Tesseract (cached at
 `~/.tesseract-rs/`).
+
+### Pinned model files
+
+Every ONNX file is pinned to a commit of its Hugging Face repository
+and to a SHA-256 ([`ocr::models`](../../crates/server/src/ocr/models.rs)).
+Before `ComicTextDetector::new` / `MangaOCR::new` run, Folio itself
+fetches each missing file from
+`https://huggingface.co/<repo>/resolve/<commit>/<file>` (connect 20 s,
+per-read 60 s, 30 min overall, cut off past the published size),
+hashes it while it streams, and only then moves it to
+`hub/models--<org>--<repo>/snapshots/<commit>/<file>` and points
+`refs/main` at `<commit>`. The upstream constructor finds the file
+there and does not download anything. A digest mismatch deletes the
+download, logs the file and both digests, and fails the request with
+`500 ocr_model_unverified`; nothing unverified is loaded. A file
+already in the cache (from before the pin, or changed on disk) is
+hashed once per process; a mismatch deletes it and fetches it again
+from the pinned commit.
+
+| Repository | Commit | File | SHA-256 | Bytes |
+|---|---|---|---|---|
+| `mayocream/comic-text-detector-onnx` | `a5d67ec772adef819ef5b0e7aa701fcf4c8bf74a` | `comic-text-detector.onnx` | `1a86ace7…071d718f` | 94,669,756 |
+| `mayocream/manga-ocr-onnx` | `24b12778d85800835e2ca409236de281b8ab7b9f` | `encoder_model.onnx` | `15fa8155…d995def85f` | 343,454,249 |
+| | | `decoder_model.onnx` | `ef776526…fa61f5e8` | 117,480,262 |
+| | | `vocab.txt` | `5cb5c558…4d6a36a3` | 30,216 |
+
+(Full digests in `models.rs`; looked up 2026-11-11, both `main`
+branches last changed 2025-05-08.) There is no setting for another
+model source: the upstream crates hardcode the repositories and
+`Api::new()` ignores `HF_ENDPOINT`. For an air-gapped host, copy the
+files to `snapshots/<commit>/` under the cache above; they are
+verified like any cached file.
+
+**Updating the pin:** `curl -s
+"https://huggingface.co/api/models/<repo>/revision/main?blobs=true"`
+gives the commit (`sha`) and, per LFS file, `lfs.sha256` and `size`.
+For a non-LFS file (`vocab.txt`) download it from
+`/resolve/<commit>/vocab.txt` and run `sha256sum` (its `git
+hash-object` should equal the listing's `blobId`). Change `revision`,
+`sha256` and `size` in `models.rs` and this table together.
+
+**Tesseract data** is not fetched at runtime: the `tesseract-rs`
+build script downloads `eng` and `tur` from `tessdata_best`'s `main`
+branch while the image builds, and the Dockerfile checks both against
+pinned SHA-256s right after `cargo build` (a changed upstream file
+fails the image build). Local `cargo build` runs of the build script
+are not checked.
 
 In the Folio Docker image:
 

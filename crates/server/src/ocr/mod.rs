@@ -14,13 +14,15 @@
 //!   (confidence filtering, junk-token rules, whitespace shaping).
 //!   Runs inside the pipeline right after recognition.
 //!
-//! Models auto-download from Hugging Face on first use; cache lives
-//! at `${COMIC_DATA_DIR}/models/` (honors `HF_HOME`). The opt-in
+//! Models download from Hugging Face on first use, pinned to a commit
+//! and checked against a SHA-256 before they load ([`models`]); the
+//! cache is the hub cache under `$HOME/.cache/huggingface/hub`. The opt-in
 //! `cuda` Cargo feature on this crate forwards to
 //! `comic-text-detector/cuda` for GPU acceleration.
 
 pub mod cache;
 pub mod detector;
+pub mod models;
 pub mod pipeline;
 pub mod postprocess;
 pub mod recognizer;

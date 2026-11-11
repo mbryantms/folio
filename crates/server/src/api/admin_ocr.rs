@@ -126,7 +126,7 @@ pub async fn list(_admin: RequireAdmin) -> impl IntoResponse {
             cache_dir: manga_dir.to_string_lossy().into_owned(),
             present: manga_bytes > 0,
             bytes_on_disk: manga_bytes,
-            expected_bytes_approx: 250 * 1024 * 1024,
+            expected_bytes_approx: 440 * 1024 * 1024,
             source: "huggingface.co/mayocream/manga-ocr-onnx",
         },
         OcrModelView {

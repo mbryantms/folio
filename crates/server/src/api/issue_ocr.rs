@@ -356,11 +356,7 @@ pub async fn serve(
         }
         Err(e) => {
             tracing::error!(error = %e, "ocr: pipeline failure");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ocr_failed",
-                "ocr pipeline failed",
-            )
+            ocr_failure(&e, "ocr pipeline failed")
         }
     }
 }
@@ -410,12 +406,28 @@ pub async fn text_regions(
         Ok(detection) => Json(TextRegionsView::from(detection)).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "ocr: text-region detection failed");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ocr_failed",
-                "text-region detection failed",
-            )
+            ocr_failure(&e, "text-region detection failed")
         }
+    }
+}
+
+/// 500 for a failed OCR run. A model file that could not be fetched or
+/// failed its digest check (`ocr::models`) gets its own code so the
+/// client can say so; the file, repository and digests are in the server
+/// log, not the response.
+fn ocr_failure(e: &anyhow::Error, generic: &str) -> axum::response::Response {
+    let unverified = e.chain().any(|c| {
+        c.downcast_ref::<crate::ocr::models::ModelVerifyError>()
+            .is_some()
+    });
+    if unverified {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ocr_model_unverified",
+            "an OCR model could not be downloaded or failed its integrity check; see the server log",
+        )
+    } else {
+        error(StatusCode::INTERNAL_SERVER_ERROR, "ocr_failed", generic)
     }
 }
 
