@@ -727,8 +727,12 @@ drop the legacy DB-direct apply branch — flag a maintainer.
   until rotated out. The rewrite worker logs every successful swap
   with the source + tmp + final paths.
 - **Backups piling up on disk**: the daily 04:45 UTC sweep deletes
-  `.bak` files older than the library's `archive_backup_retain_days`
-  (default 30). Set it to `0` to keep backups forever; lower it, or
+  Folio's backups (`<archive>.bak` / `<archive>.bak.N`; other `.bak`
+  files are never touched) made more than the library's
+  `archive_backup_retain_days` ago (default 30). The age counts from when
+  Folio made the backup, not from the archive's own date, and a backup
+  whose age the filesystem cannot tell is kept; changing a backup's owner
+  or mode restarts its clock. Set it to `0` to keep backups forever; lower it, or
   lower `archive_backup_retain_count`, to reclaim space sooner. The
   library health page's backup-storage card shows the current
   footprint.

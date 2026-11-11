@@ -654,7 +654,10 @@ pub struct BackupView {
     /// Retention slot: 0 = most recent (`.bak`), 1 = `.bak.1`, …
     pub slot: i32,
     pub path: String,
-    /// RFC3339 modification time, or null if unavailable.
+    /// RFC3339 modification time of the backup file, or null if
+    /// unavailable. For a hard-linked backup (the usual kind) this is the
+    /// ORIGINAL archive's modification time, not when the backup was made;
+    /// the retention sweep ages backups by when they were made instead.
     pub modified_at: Option<String>,
     pub size_bytes: u64,
 }
@@ -686,7 +689,7 @@ pub async fn backups(
 
     let target = std::path::PathBuf::from(&row.file_path);
     let mut out = Vec::new();
-    for slot in 0..=5 {
+    for slot in 0..=archive_rewrite::MAX_BACKUP_SLOT {
         let p = archive_rewrite::backup_slot(&target, slot);
         // Listed without following links: only a regular file is a backup.
         let Ok(meta) = tokio::fs::symlink_metadata(&p).await else {

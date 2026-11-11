@@ -134,13 +134,18 @@ pub struct LibraryView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub metadata_writeback_enabled: Option<bool>,
-    /// How many `.bak` siblings to keep per archive after a rewrite.
-    /// 1..=5; default 1.
+    /// How many `.bak` slots a rewrite keeps per archive (`.bak`, then
+    /// `.bak.1` …). 0..=5; default 1. `0` keeps no backup (the rewrite is
+    /// validated before the swap).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub archive_backup_retain_count: Option<i32>,
-    /// Auto-prune `.bak` files older than this many days. Default 30;
-    /// `0` = keep forever.
+    /// Days a backup is kept before the daily sweep deletes it, counted
+    /// from when Folio made the backup (its inode change time), not from
+    /// the archive's own date; a backup whose age cannot be told is kept.
+    /// Only Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular
+    /// files) are deleted, and only in a library with archive writeback
+    /// on. `0` keeps backups forever. Default 30; non-negative.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub archive_backup_retain_days: Option<i32>,
@@ -416,8 +421,12 @@ pub struct UpdateLibraryReq {
     #[serde(default)]
     #[garde(inner(range(min = 0, max = 5)))]
     pub archive_backup_retain_count: Option<i32>,
-    /// Days a `.bak` file lives before the daily prune cron removes
-    /// it; `0` = keep forever. Non-negative.
+    /// Days a backup is kept before the daily sweep deletes it, counted
+    /// from when Folio made the backup (its inode change time), not from
+    /// the archive's own date; a backup whose age cannot be told is kept.
+    /// Only Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular
+    /// files) are deleted, and only in a library with archive writeback
+    /// on. `0` keeps backups forever. Default 30; non-negative.
     #[serde(default)]
     #[garde(inner(range(min = 0)))]
     pub archive_backup_retain_days: Option<i32>,
