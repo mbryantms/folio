@@ -170,10 +170,12 @@ impl ArchiveFile {
     /// narrows the window to the pass itself rather than closing it.
     ///
     /// Whether `/proc/self/fd` can be used is decided once per process,
-    /// independently of any archive: by reopening a descriptor through it
-    /// with an ordinary open ([`proc_fd_usable`]). A sandbox that mounts
-    /// `/proc` but forbids that reopen gets the fallback; a corrupt archive
-    /// never changes the choice.
+    /// independently of any archive: by reopening a descriptor of the
+    /// process's own (`/dev/null`) through it with an ordinary open
+    /// ([`proc_fd_usable`]). A sandbox that mounts `/proc` but forbids that
+    /// reopen gets the fallback; a corrupt, unreadable or re-permissioned
+    /// archive never changes the choice, and neither does a passing
+    /// shortage of descriptors.
     pub fn rar_name(&self) -> (PathBuf, bool) {
         #[cfg(target_os = "linux")]
         {
@@ -215,20 +217,81 @@ impl ArchiveFile {
     }
 }
 
+/// What one probe of `/proc/self/fd` says about this process.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcFdProbe {
+    /// The reopen worked: use `/proc/self/fd` from now on.
+    Usable,
+    /// `/proc/self/fd` is absent or forbidden here: stop asking.
+    Unusable,
+    /// The probe failed for a reason that says nothing about `/proc`
+    /// (out of descriptors, an interrupted call): ask again next time.
+    AskAgain,
+}
+
+/// Reads a probe's result. Only "no such path" and "not permitted" mean
+/// `/proc/self/fd` cannot reopen descriptors; anything else is passing.
+#[cfg(target_os = "linux")]
+fn classify_proc_fd_probe(reopened: &io::Result<File>) -> ProcFdProbe {
+    match reopened {
+        Ok(_) => ProcFdProbe::Usable,
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::NotFound
+                    | io::ErrorKind::NotADirectory
+                    | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            ProcFdProbe::Unusable
+        }
+        Err(_) => ProcFdProbe::AskAgain,
+    }
+}
+
 /// Whether reopening a descriptor through `/proc/self/fd/<n>` works in this
-/// process. Probed once, with `file`'s descriptor and an ordinary open,
-/// and cached for the life of the process.
+/// process.
+///
+/// The probe reopens a descriptor of the process's own (`/dev/null`), never
+/// the archive's, so one unreadable archive cannot decide the answer for
+/// every later one. A definite answer is cached for the life of the
+/// process; a passing failure ([`ProcFdProbe::AskAgain`]) answers "no" for
+/// this call only. `file` is used only where `/dev/null` cannot be opened,
+/// and then only a success is remembered.
 #[cfg(target_os = "linux")]
 fn proc_fd_usable(file: &File) -> bool {
     use std::os::fd::AsRawFd;
-    static USABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *USABLE.get_or_init(|| {
-        let usable = File::open(format!("/proc/self/fd/{}", file.as_raw_fd())).is_ok();
-        if !usable {
-            tracing::info!("/proc/self/fd cannot reopen descriptors here; RAR archives are read by checked path");
+    use std::sync::atomic::{AtomicU8, Ordering};
+    const UNDECIDED: u8 = 0;
+    const USABLE: u8 = 1;
+    const UNUSABLE: u8 = 2;
+    static STATE: AtomicU8 = AtomicU8::new(UNDECIDED);
+
+    match STATE.load(Ordering::Relaxed) {
+        USABLE => return true,
+        UNUSABLE => return false,
+        _ => {}
+    }
+    let own = File::open("/dev/null").ok();
+    let probe = own.as_ref().unwrap_or(file);
+    let reopened = File::open(format!("/proc/self/fd/{}", probe.as_raw_fd()));
+    match classify_proc_fd_probe(&reopened) {
+        ProcFdProbe::Usable => {
+            STATE.store(USABLE, Ordering::Relaxed);
+            true
         }
-        usable
-    })
+        // The archive's own descriptor says nothing certain about `/proc`.
+        ProcFdProbe::Unusable if own.is_some() => {
+            if STATE.swap(UNUSABLE, Ordering::Relaxed) != UNUSABLE {
+                tracing::info!(
+                    "/proc/self/fd cannot reopen descriptors here; RAR archives are read by checked path"
+                );
+            }
+            false
+        }
+        ProcFdProbe::Unusable | ProcFdProbe::AskAgain => false,
+    }
 }
 
 #[cfg(unix)]
@@ -313,5 +376,73 @@ mod tests {
         let mut tail = [0u8; 4];
         assert_eq!(f.read_up_to_at(&mut tail, 8).unwrap(), 2);
         assert_eq!(&tail[..2], b"89");
+    }
+
+    /// Only "no such path" and "not permitted" settle the question; running
+    /// out of descriptors (or anything else) must not switch every later
+    /// RAR in the process to the by-name fallback.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_passing_probe_failure_is_not_remembered() {
+        use ProcFdProbe::{AskAgain, Unusable, Usable};
+        let err = |kind: io::ErrorKind| -> io::Result<File> { Err(io::Error::from(kind)) };
+        // EMFILE (24) and ENFILE (23): the process or system is out of
+        // descriptors right now.
+        for errno in [24, 23] {
+            let r: io::Result<File> = Err(io::Error::from_raw_os_error(errno));
+            assert_eq!(classify_proc_fd_probe(&r), AskAgain, "errno {errno}");
+        }
+        assert_eq!(
+            classify_proc_fd_probe(&err(io::ErrorKind::Interrupted)),
+            AskAgain
+        );
+        assert_eq!(classify_proc_fd_probe(&err(io::ErrorKind::Other)), AskAgain);
+        assert_eq!(
+            classify_proc_fd_probe(&err(io::ErrorKind::NotFound)),
+            Unusable
+        );
+        assert_eq!(
+            classify_proc_fd_probe(&err(io::ErrorKind::NotADirectory)),
+            Unusable
+        );
+        assert_eq!(
+            classify_proc_fd_probe(&err(io::ErrorKind::PermissionDenied)),
+            Unusable
+        );
+        assert_eq!(classify_proc_fd_probe(&File::open("/dev/null")), Usable);
+    }
+
+    /// The answer does not depend on the archive: a file the process can no
+    /// longer reopen by `/proc` (mode 000 after the open) still gets the
+    /// `/proc/self/fd` name where `/proc` works, so UnRAR's own error is
+    /// what the caller sees, never a read by name.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unreadable_archive_does_not_decide_the_probe() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::PermissionsExt;
+        let null = File::open("/dev/null").unwrap();
+        if File::open(format!("/proc/self/fd/{}", null.as_raw_fd())).is_err() {
+            return; // `/proc/self/fd` cannot reopen here: nothing to assert
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.cbr");
+        std::fs::write(&p, b"not a rar").unwrap();
+        let f = ArchiveFile::open_path_unchecked(&p).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let (first, first_check) = f.rar_name();
+        let (again, again_check) = f.rar_name();
+        assert_eq!(first, again);
+        assert_eq!(first_check, again_check);
+        assert!(
+            first.starts_with("/proc/self/fd"),
+            "the unreadable archive switched the process to {first:?}"
+        );
+        assert!(!first_check);
+        // A readable archive opened afterwards gets the same treatment.
+        let q = dir.path().join("b.cbr");
+        std::fs::write(&q, b"not a rar").unwrap();
+        let g = ArchiveFile::open_path_unchecked(&q).unwrap();
+        assert!(g.rar_name().0.starts_with("/proc/self/fd"));
     }
 }
