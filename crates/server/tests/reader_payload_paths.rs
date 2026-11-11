@@ -509,7 +509,10 @@ async fn candidates_hide_job_errors_from_reader() {
 }
 
 /// A batch's child rows carry each provider's state; the provider error is
-/// the job's own text and is left out of a reader's batch status.
+/// the job's own text and is left out of a non-admin's batch status. A
+/// batch is readable by admins and by its creator only, so the reader here
+/// is the creator (someone who started it as an admin and has since lost
+/// the role).
 #[tokio::test]
 async fn batch_status_hides_provider_errors_from_reader() {
     let f = setup().await;
@@ -523,7 +526,7 @@ async fn batch_status_hides_provider_errors_from_reader() {
         trigger_kind: Set("manual".into()),
         status: Set("failed".into()),
         items_total: Set(1),
-        created_by: Set(Some(f.admin.user_id)),
+        created_by: Set(Some(f.reader.user_id)),
         created_at: Set(now),
         ended_at: Set(Some(now)),
     }
