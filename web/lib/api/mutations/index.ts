@@ -3132,22 +3132,25 @@ export function useApplyMetadataForIssue(
 
 /** Fan out a per-issue metadata search over a whole series → one batch.
  *  `scope: "incomplete"` restricts the fan-out to issues whose metadata is
- *  missing or partial; omit (or `"all"`) to search every active issue. */
+ *  missing or partial; omit (or `"all"`) to search every active issue.
+ *
+ *  No success toast here: the answer decides what to say. A batch of zero
+ *  issues queued nothing, and a real one is announced by the caller, with
+ *  its counts and a link to the results (the series Metadata tab) or by
+ *  moving on to the batch's progress (the refresh dialog). A toast on the
+ *  hook doubled the first and contradicted the second. */
 export function useCreateSeriesBatch(seriesSlug: string) {
   return useApiMutation<
     BatchCreatedResp,
     { scope?: "all" | "incomplete" } | void
-  >(
-    (input) => {
-      const scope = input?.scope;
-      const qs = scope && scope !== "all" ? `?scope=${scope}` : "";
-      return {
-        path: apiPath`/series/${seriesSlug}/metadata/batch` + qs,
-        method: "POST",
-      };
-    },
-    { successMessage: "Queued metadata search" },
-  );
+  >((input) => {
+    const scope = input?.scope;
+    const qs = scope && scope !== "all" ? `?scope=${scope}` : "";
+    return {
+      path: apiPath`/series/${seriesSlug}/metadata/batch` + qs,
+      method: "POST",
+    };
+  });
 }
 
 /** Fan out a per-issue metadata search over a hand-picked subset of a

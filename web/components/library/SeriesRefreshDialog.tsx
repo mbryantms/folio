@@ -1318,7 +1318,12 @@ function ReviewStep({
       { scope: "all" },
       {
         onSuccess: (resp) => {
-          if (resp && resp.items_total > 0) onStarted(resp.batch_id);
+          if (!resp) return;
+          if (resp.items_total === 0) {
+            toast.info("No issues left to search");
+            return;
+          }
+          onStarted(resp.batch_id);
         },
       },
     );

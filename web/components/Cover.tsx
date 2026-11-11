@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { useCoverPriority } from "@/components/library/cover-priority";
+import { RetryingImg } from "@/components/RetryingImg";
 import { applyTint, getTone, rememberTone } from "@/lib/ui/cover-tone";
 import { COVER_CARD_SIZES } from "@/lib/library/cover-size";
 import { coverThumbSrcSet } from "@/lib/urls";
@@ -105,8 +106,9 @@ export function Cover({
       // (sizing, hover brightness); the img fills it and fades in, so the
       // dark placeholder stays visible underneath until the cover decodes.
       <div ref={boxRef} className={`${BOX} ${className ?? ""}`}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        {/* A failed load re-requests twice after a back-off (a 429 from
+            the thumbnail bucket), then shows as failed. */}
+        <RetryingImg
           ref={ref}
           src={src}
           srcSet={srcSet}

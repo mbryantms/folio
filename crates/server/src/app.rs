@@ -737,6 +737,9 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // Prometheus recorder upkeep: drains histogram samples into their
     // buckets on a timer so their memory stays bounded between scrapes.
     crate::observability::spawn_metrics_upkeep(state.prometheus.clone(), shutdown.clone());
+    // Rate-limit key stores: drop the keys whose buckets are full again,
+    // once a minute, so a client rotating addresses can't grow them forever.
+    crate::middleware::rate_limit::spawn_pruner(shutdown.clone());
 
     // Cron scheduler — best-effort. Failure here doesn't block startup.
     match crate::jobs::scheduler::start(state.clone()).await {
