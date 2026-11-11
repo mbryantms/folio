@@ -464,23 +464,35 @@ without per-library configuration.
        case) — the per-page hashes the anchor re-resolve needs. All of
        it reads the one handle the row's size, mtime and content hash
        come from, so the page hashes always describe the file version
-       the row records; a file replaced after prepare is simply seen as
-       changed by the next scan. What prepare hands over is metadata and
-       hashes (about 90 bytes per hashed page), never a handle or page
-       bytes.
+       the row records. A file replaced after prepare is seen as changed
+       by the next scan only when its size or mtime differs from the
+       recorded ones (the scanner's general fast-path limit). The anchor
+       checks are made per file (no library-wide answer is cached); the
+       moved-file case mirrors `dedupe_by_content_hash` — the lowest-id
+       row with that content hash, at a path that no longer exists, with
+       a different size+mtime (a plain rename keeps both and re-anchors
+       nothing). A database error while deciding is logged and the pages
+       are read anyway. What prepare hands over is metadata and hashes
+       (about 90 bytes per hashed page), never a handle or page bytes.
      - **persist** (`BEGIN` + `persist_prepared` per file + `COMMIT`)
-       runs database statements only. Two small filesystem calls stay
-       inside on purpose: the thumbnail wipe for a content change (it
-       deletes files under the app data dir, not library storage, right
-       before the row update that clears the thumbnail stamps; done in
-       prepare, a request in between could regenerate the thumbnails
-       from the old bytes through the still-cached reader, and because
-       every generator skips existing files that old art would stay),
-       and one `exists()` stat
+       runs database statements, apart from two small filesystem calls
+       left inside on purpose and one rare read. The calls: the thumbnail wipe for a content change (it
+       deletes files under the app data dir, not library storage). It runs
+       right after the issue's cached reader (`zip_lru`) is dropped and
+       right before the row update that clears the thumbnail stamps, so
+       a cover or page request in between opens the new file. Done in
+       prepare, or before the cache drop, a request in between could
+       regenerate the thumbnails from the old bytes through the cached
+       reader, and because every generator skips existing files that
+       old art would stay. The other is one `exists()` stat
        on the prior path when a new file's content hash matches a row
-       (move vs. duplicate). If a hashed anchor appears between the two
-       phases, persist finds no prepared hashes and places it by the
-       ordinal map, as a failed page read always has.
+       (move vs. duplicate). The rare read: when
+       a hashed anchor was written between the two phases (prepare saw
+       none and read no hashes), persist reopens the file through the
+       no-follow walk and hashes it, but only if its size and mtime are
+       still the recorded ones; otherwise, or when a page cannot be read,
+       the anchors take the ordinal map, as for an unreadable page (a
+       later scan that sees the file change places them by hash).
 
      So no connection is pinned while archives are read. The single-issue
      rescan (`scan_issue_file` → `run_issue_phase`: the "Scan issue"

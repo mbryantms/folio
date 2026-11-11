@@ -2136,7 +2136,6 @@ async fn run_issue_phase(
                 _ => parent,
             }
         });
-    let hashed_anchors = tokio::sync::OnceCell::new();
     let ctx = process::IngestCtx {
         state,
         lib,
@@ -2144,7 +2143,6 @@ async fn run_issue_phase(
         series_folder: &series_folder,
         manifest: Some(&manifest),
         force,
-        hashed_anchors: &hashed_anchors,
     };
     let mut outputs = process::IngestOutputs {
         stats,
@@ -3136,7 +3134,6 @@ async fn process_planned_folder(
     let folder_mutated = !candidates.is_empty();
 
     let db_write_started = Instant::now();
-    let hashed_anchors = tokio::sync::OnceCell::new();
     let ctx = process::IngestCtx {
         state,
         lib,
@@ -3144,7 +3141,6 @@ async fn process_planned_folder(
         series_folder: &folder,
         manifest: Some(&manifest),
         force,
-        hashed_anchors: &hashed_anchors,
     };
     // Post-audit T1.5 + T1.2: a batch runs in two phases and either kind of
     // failure leaves the folder *dirty* — no `last_scanned_at` stamp (so the

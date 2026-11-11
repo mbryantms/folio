@@ -223,12 +223,6 @@ pub struct IngestCtx<'a> {
     /// where the user explicitly asked for a fresh ingest (e.g. to pick up
     /// new parser fields without touching every file's mtime).
     pub force: bool,
-    /// Whether any issue of this library has a marker or progress row
-    /// that carries a page hash. Asked at most once per context, lazily,
-    /// by [`prepare_ingest`] for a new file (the move-detection case of
-    /// the page-hash pre-read, B10); start each context with an empty
-    /// cell.
-    pub hashed_anchors: &'a tokio::sync::OnceCell<bool>,
 }
 
 /// Mutable per-batch outputs. Bundled into one struct so the call site
@@ -866,10 +860,10 @@ pub struct PreparedIngest {
     hash: String,
     hash_pending: bool,
     parsed: ParsedArchive,
-    /// Hex BLAKE3 of every page, in page order, when a content change may
-    /// re-anchor hashed markers / progress (see [`prepare_page_hashes`]).
-    /// ~90 bytes per page; `None` for the common case.
-    page_hashes: Option<Vec<String>>,
+    /// The per-page hashes a content change may re-anchor hashed markers
+    /// and progress with (see [`prepare_page_hashes`]); `NotNeeded` for
+    /// the common case.
+    page_hashes: PreparedPageHashes,
 }
 
 impl PreparedIngest {
@@ -898,7 +892,6 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         series_folder,
         manifest,
         force,
-        hashed_anchors: _,
     } = *ctx;
     // Reborrow the mutable outputs once at the top so the function body
     // can keep referring to `stats` / `health` directly instead of
@@ -1107,16 +1100,21 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
         Some(h) => (h, false),
         None => (lazy_fingerprint(&path_str, size, mtime), true),
     };
-    let page_hashes = prepare_page_hashes(
-        ctx,
-        db,
-        page_source,
-        existing.as_ref(),
-        (size, mtime),
-        (&hash, hash_pending),
-        resolved_page_count(&parsed),
-    )
-    .await?;
+    let page_hashes = if resolved_page_count(&parsed).is_some_and(|n| n > 0) {
+        prepare_page_hashes(
+            ctx,
+            db,
+            page_source,
+            (path, (size, mtime)),
+            existing.as_ref(),
+            (&hash, hash_pending),
+            stats,
+        )
+        .await
+    } else {
+        // No pages: nothing to re-anchor (persist applies the same test).
+        PreparedPageHashes::NotNeeded
+    };
     // `series_id` / `series_folder` are persist-phase inputs.
     let _ = (series_id, series_folder);
     Ok(Some(PreparedIngest {
@@ -1144,6 +1142,24 @@ fn resolved_page_count(parsed: &ParsedArchive) -> Option<i32> {
     }
 }
 
+/// What the prepare phase knows about the per-page hashes of the file it
+/// read (B10). Persist uses them to re-anchor hashed markers and progress
+/// when new bytes land under an issue (WP-6.2).
+#[derive(Debug)]
+enum PreparedPageHashes {
+    /// Prepare saw no anchor that could need them (see
+    /// [`prepare_page_hashes`]). If persist finds one anyway — it was
+    /// written between the two phases — it reads them itself
+    /// ([`reread_page_hashes`]).
+    NotNeeded,
+    /// Prepare tried and a page could not be read: anchors take the
+    /// ordinal map, as an unreadable page always has.
+    ReadFailed,
+    /// Hex BLAKE3 of every page, in page order (~90 bytes per page), read
+    /// from the handle the row's size, mtime and content hash came from.
+    Read(Vec<String>),
+}
+
 /// The per-page hashes [`persist_prepared`] hands to
 /// `page_remap::reanchor_issue` when new bytes land under an issue whose
 /// markers or progress carry a page hash (WP-6.2). Computed here, in the
@@ -1151,106 +1167,132 @@ fn resolved_page_count(parsed: &ParsedArchive) -> Option<i32> {
 /// hash were read from — so the batch transaction holds no archive read
 /// (B10) and the hashes always describe the file version the row records.
 ///
-/// `None` when no anchor can need them, by the same tests persist applies:
-/// no pages; an existing row whose size+mtime still match (no content
-/// change); a pending (lazy-hash) file, which skips move detection; or no
-/// hashed anchor on the issue. A new file is hashed only when a row of
-/// this library with the same content hash and a different size+mtime has
-/// hashed anchors — the moved-file case where persist adopts that row and
-/// sees a content change. Persist re-checks the
-/// anchors inside its transaction; one written after this check falls
-/// back to the ordinal map, as a failed page read always has.
+/// [`PreparedPageHashes::NotNeeded`] when no anchor can need them, by the
+/// same tests persist applies (the caller already skipped a file with no
+/// pages): an existing row whose size+mtime
+/// still match (no content change); a pending (lazy-hash) file, which
+/// skips move detection; or no hashed anchor on the issue. A new file is
+/// hashed only in the moved-file case ([`moved_row_needs_page_hashes`]).
+/// A database error while deciding is logged and the pages are read
+/// anyway: the file is not at fault, and reading is always safe.
 async fn prepare_page_hashes<C: ConnectionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
     src: archive::ArchiveFile,
+    (path, (size, mtime)): (&Path, Fingerprint),
     existing: Option<&issue::Model>,
-    (size, mtime): Fingerprint,
     (hash, hash_pending): (&str, bool),
-    page_count: Option<i32>,
-) -> anyhow::Result<Option<Vec<String>>> {
-    if !page_count.is_some_and(|n| n > 0) {
-        return Ok(None);
-    }
+    stats: &mut ScanStats,
+) -> PreparedPageHashes {
     let needed = match existing {
-        Some(row) => {
-            !row_matches_file(row, size, mtime)
-                && crate::reading::page_remap::issue_has_hashed_anchors(db, &row.id).await?
-        }
-        None if hash_pending => false,
-        None => {
-            library_has_hashed_anchors(ctx, db).await?
-                && moved_row_needs_page_hashes(db, ctx.lib.id, hash, (size, mtime)).await?
-        }
+        Some(row) if row_matches_file(row, size, mtime) => Ok(false),
+        Some(row) => crate::reading::page_remap::issue_has_hashed_anchors(db, &row.id).await,
+        None if hash_pending => Ok(false),
+        None => moved_row_needs_page_hashes(db, ctx.lib.id, hash, path, (size, mtime)).await,
     };
+    let needed = needed.unwrap_or_else(|e| {
+        tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "scan: could not tell whether page hashes are needed; reading them",
+        );
+        true
+    });
     if !needed {
-        return Ok(None);
+        return PreparedPageHashes::NotNeeded;
     }
-    Ok(crate::reading::page_hash::hash_all_pages(ctx.state, src).await)
+    stats.files_page_hashed += 1;
+    match crate::reading::page_hash::hash_all_pages(ctx.state, src).await {
+        Some(hashes) => PreparedPageHashes::Read(hashes),
+        None => PreparedPageHashes::ReadFailed,
+    }
 }
 
-/// [`IngestCtx::hashed_anchors`], asked on first use.
-async fn library_has_hashed_anchors<C: ConnectionTrait>(
-    ctx: &IngestCtx<'_>,
-    db: &C,
-) -> Result<bool, sea_orm::DbErr> {
-    let library_id = ctx.lib.id;
-    ctx.hashed_anchors
-        .get_or_try_init(|| async move {
-            let row = db
-                .query_one_raw(Statement::from_sql_and_values(
-                    db.get_database_backend(),
-                    "SELECT (EXISTS (SELECT 1 FROM markers m JOIN issues i ON i.id = m.issue_id \
-                                      WHERE i.library_id = $1 AND m.page_hash IS NOT NULL) \
-                          OR EXISTS (SELECT 1 FROM progress_records p JOIN issues i ON i.id = p.issue_id \
-                                      WHERE i.library_id = $1 AND p.page_hash IS NOT NULL)) AS hashed",
-                    [library_id.into()],
-                ))
-                .await?;
-            Ok(match row {
-                Some(r) => r.try_get::<bool>("", "hashed")?,
-                None => false,
-            })
-        })
-        .await
-        .copied()
-}
-
-/// Whether a row of `library_id` with this content hash, whose recorded
-/// size + mtime differ from this file's, has a marker or progress row
-/// carrying a page hash. Such a row is the one persist may adopt for a
-/// moved file; when its size + mtime match (a plain rename keeps both),
-/// persist sees no content change and re-anchors nothing, so the pages
-/// are not read for it.
+/// Whether a new file is the moved-file case persist will re-anchor: the
+/// row `dedupe_by_content_hash` would pick for this content hash (lowest
+/// id in the library) is at another path that no longer exists — so
+/// persist adopts it — its recorded size + mtime differ from this file's
+/// — so persist sees a content change (a plain rename keeps both) — and
+/// it has a marker or progress row carrying a page hash. One indexed
+/// query plus, only when such a row exists, one stat; a copy whose
+/// original is still on disk is never read.
 async fn moved_row_needs_page_hashes<C: ConnectionTrait>(
     db: &C,
     library_id: Uuid,
     content_hash: &str,
+    path: &Path,
     (size, mtime): Fingerprint,
 ) -> Result<bool, sea_orm::DbErr> {
     let row = db
         .query_one_raw(Statement::from_sql_and_values(
             db.get_database_backend(),
-            "SELECT EXISTS (SELECT 1 FROM issues i \
-                             WHERE i.library_id = $1 AND i.content_hash = $2 \
-                               AND NOT (i.file_size = $3 AND i.file_mtime = $4) \
-                               AND (EXISTS (SELECT 1 FROM markers m \
-                                             WHERE m.issue_id = i.id AND m.page_hash IS NOT NULL) \
-                                 OR EXISTS (SELECT 1 FROM progress_records p \
-                                             WHERE p.issue_id = i.id AND p.page_hash IS NOT NULL))) \
-             AS hashed",
-            [
-                library_id.into(),
-                content_hash.into(),
-                size.into(),
-                mtime.fixed_offset().into(),
-            ],
+            "SELECT i.file_path, i.file_size, i.file_mtime, \
+                    (EXISTS (SELECT 1 FROM markers m \
+                              WHERE m.issue_id = i.id AND m.page_hash IS NOT NULL) \
+                     OR EXISTS (SELECT 1 FROM progress_records p \
+                                 WHERE p.issue_id = i.id AND p.page_hash IS NOT NULL)) AS hashed \
+             FROM issues i \
+             WHERE i.library_id = $1 AND i.content_hash = $2 \
+             ORDER BY i.id LIMIT 1",
+            [library_id.into(), content_hash.into()],
         ))
         .await?;
-    Ok(match row {
-        Some(r) => r.try_get::<bool>("", "hashed")?,
-        None => false,
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    let prior_path: String = row.try_get("", "file_path")?;
+    let prior_size: i64 = row.try_get("", "file_size")?;
+    let prior_mtime: chrono::DateTime<chrono::FixedOffset> = row.try_get("", "file_mtime")?;
+    let hashed: bool = row.try_get("", "hashed")?;
+    if !hashed
+        || (prior_size == size && prior_mtime.to_utc() == mtime)
+        || prior_path == path.to_string_lossy()
+    {
+        return Ok(false);
+    }
+    let prior = PathBuf::from(prior_path);
+    let gone = tokio::task::spawn_blocking(move || !prior.exists())
+        .await
+        .unwrap_or(true);
+    Ok(gone)
+}
+
+/// The page hashes persist needs when a hashed anchor appeared after
+/// prepare decided none was needed (written between the two phases).
+/// Reopens the file through the no-follow walk and hashes it only when
+/// the handle's size and mtime are the ones the row records, so the
+/// hashes describe that file version; otherwise, or when a page cannot be
+/// read, `None` (the ordinal map places the anchors, as for an unreadable
+/// file). Runs inside the transaction, but only in this rare case.
+async fn reread_page_hashes(
+    state: &AppState,
+    lib: &library::Model,
+    path: &Path,
+    (size, mtime): Fingerprint,
+) -> Option<Vec<String>> {
+    let root = PathBuf::from(&lib.root_path);
+    let p = path.to_path_buf();
+    let opened = tokio::task::spawn_blocking(move || {
+        let f = crate::library::no_follow::open_library_file(&root, &p).ok()?;
+        let fp = fingerprint_of(&f.metadata().ok()?).ok()?;
+        Some((f, fp))
     })
+    .await
+    .ok()
+    .flatten();
+    match opened {
+        Some((f, fp)) if fp == (size, mtime) => {
+            crate::reading::page_hash::hash_all_pages(state, archive::ArchiveFile::new(f, path))
+                .await
+        }
+        _ => {
+            tracing::info!(
+                path = %path.display(),
+                "scan: file changed or unreadable since prepare; anchors use the ordinal map",
+            );
+            None
+        }
+    }
 }
 
 // Filename inference fills gaps. M7: honor per-library
@@ -1276,7 +1318,6 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         series_folder,
         manifest: _,
         force,
-        hashed_anchors: _,
     } = *ctx;
     let stats: &mut ScanStats = &mut *outputs.stats;
     let health: &mut HealthCollector = &mut *outputs.health;
@@ -1661,7 +1702,14 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // staleness bug; external retags hit the same path). Best-effort
         // + `spawn_blocking` so the async ingest path doesn't stall on
         // slow / network-mounted data dirs.
+        //
+        // Drop any cached open handle BEFORE the wipe: it still points at
+        // the old inode (or a stale central directory), so a cover or page
+        // request in between would rebuild the just-wiped art from the
+        // replaced bytes, and the skip-if-exists generators would keep it.
+        // The page server and the page-hash capture read through it too.
         if content_changed {
+            state.zip_lru.invalidate(&row_id);
             let data_dir = state.cfg().data_path.clone();
             let issue_id_owned = row_id.clone();
             let _ = tokio::task::spawn_blocking(move || {
@@ -1686,35 +1734,35 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // The page hashes were read in the prepare phase, from the same
         // handle as the size, mtime and content hash this row records,
         // and only when some anchor had a hash to match
-        // (`prepare_page_hashes`). DB-only; never touches the archive.
-        //
-        // Drop any cached open handle first: it still points at the old
-        // inode (or a stale central directory), so the page server — and
-        // the page-hash capture that reads through it — would keep
-        // serving the replaced bytes until LRU eviction.
-        if content_changed {
-            state.zip_lru.invalidate(&row_id);
-        }
+        // (`prepare_page_hashes`). If an anchor gained a hash after that
+        // check (written between the phases), the file is read here, once,
+        // and only if it is still the version this row records
+        // (`reread_page_hashes`). The cached handle was dropped above.
         if content_changed && let Some(now_pages) = resolved_page_count.filter(|n| *n > 0) {
             use crate::reading::page_remap as remap;
             let prev = prev_page_count.filter(|p| *p > 0).unwrap_or(now_pages);
             let map = remap::PageMap::truncation(prev as usize, now_pages as usize);
             let new_hashes = if remap::issue_has_hashed_anchors(db, &row_id).await? {
-                if page_hashes.is_none() {
-                    // A hashed anchor written after the prepare-phase check,
-                    // or a page read that failed there: the ordinal map
-                    // places it, as for an anchor without a hash.
-                    tracing::debug!(
-                        issue_id = %row_id,
-                        "scan: no prepared page hashes; anchors use the ordinal map",
-                    );
+                match page_hashes {
+                    PreparedPageHashes::Read(hashes) => Some(hashes),
+                    // A page read that failed: the ordinal map places the
+                    // anchors, as it always has for an unreadable page.
+                    PreparedPageHashes::ReadFailed => None,
+                    PreparedPageHashes::NotNeeded => {
+                        reread_page_hashes(state, lib, path, (size, mtime)).await
+                    }
                 }
-                page_hashes.as_deref()
             } else {
                 None
             };
-            let o = remap::reanchor_issue(db, &row_id, &map, new_hashes, remap::Authority::Hash)
-                .await?;
+            let o = remap::reanchor_issue(
+                db,
+                &row_id,
+                &map,
+                new_hashes.as_deref(),
+                remap::Authority::Hash,
+            )
+            .await?;
             if o.markers_moved + o.progress_moved + o.markers_drifted > 0 {
                 tracing::info!(
                     issue_id = %row_id,

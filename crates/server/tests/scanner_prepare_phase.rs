@@ -14,6 +14,10 @@
 //!    between the phases) writes nothing and leaves no partial row;
 //!  - the moved-file case (persist adopts a row by content hash) still
 //!    gets page hashes, read in prepare;
+//!  - a hashed anchor written between the phases still follows its image
+//!    (persist reads the pages itself, only from the recorded version);
+//!  - prepare reads no pages when no anchor can use them (unchanged file,
+//!    plain rename, a copy, no hashed anchor: `files_page_hashed`);
 //!  - a mixed batch (CBZ, CBT, a converting CBR, an archive with an
 //!    unreadable page, a byte-identical copy) ends with the rows, anchors and health
 //!    findings the scanner produced before the change;
@@ -308,8 +312,8 @@ impl Outputs {
 async fn prepare_then_persist(
     a: &Anchored,
     path: &Path,
-    between: impl FnOnce(),
-) -> anyhow::Result<()> {
+    between: impl std::future::Future<Output = ()>,
+) -> anyhow::Result<ScanStats> {
     let state = a.app.state();
     let lib = library::Entity::find_by_id(a.lib)
         .one(&state.db)
@@ -325,7 +329,6 @@ async fn prepare_then_persist(
     let manifest = process::IssueManifest::for_paths(&state.db, &[path.to_path_buf()])
         .await
         .unwrap();
-    let hashed_anchors = tokio::sync::OnceCell::new();
     let ctx = process::IngestCtx {
         state: &state,
         lib: &lib,
@@ -333,18 +336,17 @@ async fn prepare_then_persist(
         series_folder: &folder,
         manifest: Some(&manifest),
         force: false,
-        hashed_anchors: &hashed_anchors,
     };
     let mut out = Outputs::new(a.lib);
     let (size, mtime) = process::file_fingerprint(path).unwrap();
     let prepared = process::prepare_ingest(&ctx, &state.db, path, size, mtime, &mut out.borrow())
         .await?
         .expect("a changed file is prepared");
-    between();
+    between.await;
     let txn = state.db.begin().await.unwrap();
     process::persist_prepared(&ctx, &txn, prepared, None, &mut out.borrow()).await?;
     txn.commit().await.unwrap();
-    Ok(())
+    Ok(out.stats)
 }
 
 /// The page hashes persist re-anchors with come from prepare: with the
@@ -355,7 +357,7 @@ async fn persist_reanchors_from_prepared_hashes_with_the_file_gone() {
     // [RED, GREEN, BLUE, YELLOW] → [BLUE, YELLOW, RED, GREEN].
     replace(&a.path, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
     let gone = a.path.clone();
-    prepare_then_persist(&a, &a.path, || std::fs::remove_file(&gone).unwrap())
+    prepare_then_persist(&a, &a.path, async { std::fs::remove_file(&gone).unwrap() })
         .await
         .unwrap();
 
@@ -382,7 +384,7 @@ async fn file_changed_between_prepare_and_persist_records_the_prepared_version()
     replace(&a.path, &prepared_version, 60);
     let (size, mtime) = process::file_fingerprint(&a.path).unwrap();
     let later = a.path.clone();
-    prepare_then_persist(&a, &a.path, || {
+    prepare_then_persist(&a, &a.path, async {
         // [GREEN, RED, BLUE, PURPLE]: GREEN on 0, BLUE on 2.
         replace(&later, &cbz_bytes(&[GREEN, RED, BLUE, PURPLE]), 120);
     })
@@ -423,6 +425,165 @@ async fn file_changed_between_prepare_and_persist_records_the_prepared_version()
     );
 }
 
+/// Clear the page hash of every anchor on the issue, so prepare sees no
+/// hashed anchor and reads no page hashes.
+async fn unhash_anchors(a: &Anchored) {
+    let db = &a.app.state().db;
+    for m in marker::Entity::find()
+        .filter(marker::Column::IssueId.eq(a.issue_id.clone()))
+        .all(db)
+        .await
+        .unwrap()
+    {
+        let mut am: marker::ActiveModel = m.into();
+        am.page_hash = Set(None);
+        am.update(db).await.unwrap();
+    }
+    for p in progress_record::Entity::find()
+        .filter(progress_record::Column::IssueId.eq(a.issue_id.clone()))
+        .all(db)
+        .await
+        .unwrap()
+    {
+        let mut am: progress_record::ActiveModel = p.into();
+        am.page_hash = Set(None);
+        am.update(db).await.unwrap();
+    }
+}
+
+/// Give the issue's bookmark (page 1, GREEN before the replacement) its
+/// page hash back — what a reader bookmarking during the scan writes.
+async fn hash_bookmark(a: &Anchored) {
+    let db = &a.app.state().db;
+    let m = marker::Entity::find()
+        .filter(marker::Column::IssueId.eq(a.issue_id.clone()))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: marker::ActiveModel = m.into();
+    am.page_hash = Set(Some(page_hash_of(GREEN)));
+    am.update(db).await.unwrap();
+}
+
+/// A hashed anchor written between the phases (prepare saw none, so it
+/// read no page hashes): persist reads them itself, from the file version
+/// the row records, and the anchor follows its image — not left on its
+/// old index, now a different page, with no sign.
+#[tokio::test]
+async fn hashed_anchor_written_between_phases_follows_its_image() {
+    let a = anchored().await;
+    unhash_anchors(&a).await;
+    // Same page count, reordered: the ordinal map alone is the identity.
+    replace(&a.path, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
+    let stats = prepare_then_persist(&a, &a.path, hash_bookmark(&a))
+        .await
+        .unwrap();
+    assert_eq!(stats.files_page_hashed, 0, "prepare saw no hashed anchor");
+    assert_eq!(
+        markers(&a.app, &a.issue_id).await,
+        vec![(3, vec![], Some(page_hash_of(GREEN)))],
+        "the bookmark followed GREEN to page 3"
+    );
+}
+
+/// The same gap, but the file was replaced again before persist: the
+/// pages persist could read are not the version the row records, so it
+/// does not use them; the anchor keeps its ordinal (the fallback an
+/// unreadable page has always had at an unchanged page count), and the
+/// next scan, which sees the newer file, places it by its hash.
+#[tokio::test]
+async fn hashed_anchor_written_between_phases_with_the_file_replaced_again() {
+    let a = anchored().await;
+    unhash_anchors(&a).await;
+    replace(&a.path, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
+    let later = a.path.clone();
+    let between = async {
+        hash_bookmark(&a).await;
+        // GREEN on 0.
+        replace(&later, &cbz_bytes(&[GREEN, RED, BLUE, PURPLE]), 120);
+    };
+    prepare_then_persist(&a, &a.path, between).await.unwrap();
+    assert_eq!(
+        markers(&a.app, &a.issue_id).await,
+        vec![(1, vec![], Some(page_hash_of(GREEN)))],
+        "not placed by a file version the row does not record"
+    );
+
+    let stats = scanner::scan_library(&a.app.state(), a.lib).await.unwrap();
+    assert_eq!(
+        (stats.files_updated, stats.files_page_hashed),
+        (1, 1),
+        "{stats:?}"
+    );
+    assert_eq!(
+        markers(&a.app, &a.issue_id).await,
+        vec![(0, vec![], Some(page_hash_of(GREEN)))]
+    );
+}
+
+/// `files_page_hashed` pins the "do not read" side of the prepare gate.
+#[tokio::test]
+async fn page_hashes_are_read_only_when_an_anchor_can_use_them() {
+    let a = anchored().await;
+    let state = a.app.state();
+
+    // Unchanged file, forced scan (the file reaches prepare's gate).
+    let stats = scanner::scan_library_with(&state, a.lib, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        (stats.files_updated, stats.files_page_hashed),
+        (1, 0),
+        "{stats:?}"
+    );
+
+    // Plain rename: size and mtime kept, so persist sees no content
+    // change and re-anchors nothing.
+    let renamed = a.root.join("Anchors").join("Anchors 001 (renamed).cbz");
+    let before =
+        filetime::FileTime::from_last_modification_time(&std::fs::metadata(&a.path).unwrap());
+    std::fs::rename(&a.path, &renamed).unwrap();
+    filetime::set_file_mtime(&renamed, before).unwrap();
+    let stats = scanner::scan_library(&state, a.lib).await.unwrap();
+    assert_eq!(stats.files_page_hashed, 0, "{stats:?}");
+    assert_eq!(row_at(&a.app, &renamed).await.unwrap().id, a.issue_id);
+
+    // A copy with a new mtime while the original (hashed anchors) is still
+    // on disk: not a move (this library dedupes by content, so it is
+    // reported as a duplicate and never inserted), so its pages are not
+    // read.
+    let copy = a.root.join("Anchors").join("Anchors 001 (copy).cbz");
+    replace(&copy, &std::fs::read(&renamed).unwrap(), 60);
+    let stats = scanner::scan_library(&state, a.lib).await.unwrap();
+    assert_eq!(
+        (stats.files_duplicate, stats.files_page_hashed),
+        (1, 0),
+        "{stats:?}"
+    );
+    std::fs::remove_file(&copy).unwrap();
+
+    // A changed file whose anchors carry no hash.
+    unhash_anchors(&a).await;
+    replace(&renamed, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
+    let stats = scanner::scan_library(&state, a.lib).await.unwrap();
+    assert_eq!(
+        (stats.files_updated, stats.files_page_hashed),
+        (1, 0),
+        "{stats:?}"
+    );
+
+    // The same change with a hashed anchor is read.
+    hash_bookmark(&a).await;
+    replace(&renamed, &cbz_bytes(&[GREEN, RED, BLUE, PURPLE]), 120);
+    let stats = scanner::scan_library(&state, a.lib).await.unwrap();
+    assert_eq!(
+        (stats.files_updated, stats.files_page_hashed),
+        (1, 1),
+        "{stats:?}"
+    );
+}
+
 /// A scan aborted between the phases (the folder future dropped after
 /// prepare) writes nothing: no partial row, no anchor moved, and the next
 /// scan ingests the files normally.
@@ -445,7 +606,6 @@ async fn prepared_ingest_dropped_before_persist_writes_nothing() {
     let manifest = process::IssueManifest::for_paths(&state.db, &paths)
         .await
         .unwrap();
-    let hashed_anchors = tokio::sync::OnceCell::new();
     let ctx = process::IngestCtx {
         state: &state,
         lib: &lib,
@@ -453,7 +613,6 @@ async fn prepared_ingest_dropped_before_persist_writes_nothing() {
         series_folder: &folder,
         manifest: Some(&manifest),
         force: false,
-        hashed_anchors: &hashed_anchors,
     };
     let mut out = Outputs::new(a.lib);
     let mut prepared = Vec::new();
@@ -519,6 +678,10 @@ async fn moved_file_reanchors_with_page_hashes_read_in_prepare() {
     std::fs::remove_file(&a.path).unwrap();
     let stats = scanner::scan_library(&a.app.state(), a.lib).await.unwrap();
     assert_eq!(stats.files_added, 0, "adopted, not added: {stats:?}");
+    assert_eq!(
+        stats.files_page_hashed, 1,
+        "copy-and-delete with a new mtime: {stats:?}"
+    );
 
     let row = row_at(&a.app, &moved).await.expect("row follows the move");
     assert_eq!(row.id, a.issue_id);
@@ -604,9 +767,11 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
     bookmark(&app, &auth, &bad_id, 1).await; // PURPLE
 
     // The rescan batch: two reorders, a reorder whose new first page is
-    // unreadable, a byte-identical copy, and a CBR to convert. The default
-    // library does not dedupe by content, so the copy is ingested as its
-    // own issue (no `DuplicateContent` finding).
+    // unreadable, a byte-identical copy, and a CBR to convert. The copy
+    // sorts before the original, so it is persisted before the original's
+    // row takes the new content hash: no row matches it yet and it is
+    // ingested as its own issue, no `DuplicateContent` finding (the
+    // scanner did the same before the change).
     replace(&cbz, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
     replace(&cbt, &cbt_bytes(&[RED, PURPLE, GREEN, BLUE]), 60);
     replace(
