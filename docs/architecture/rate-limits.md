@@ -96,6 +96,8 @@ Verified against the code at `ed5d9019` on 2026-11-10 (per-user web-app buckets)
 
 Audit 2026-11 A9. Both buckets are per user with the IP fallback (`build_per_user`), as above. App-password and anonymous requests key by address, so a household whose reader apps use app passwords behind one NAT shares one budget; the numbers leave room for that. The governor runs before the handler: a conditional request that ends in 304 and a request refused for a missing session spend a token like a page read, and a limited request never opens an archive.
 
+The per-user key accepts any genuine access token whatever its age (expiry is checked by the handler, not the key), so someone holding an old leaked access token can spend that user's page and thumbnail budget; it cannot read anything with it. Without `COMIC_TRUSTED_PROXIES`, every anonymous and app-password request shares the proxy's address bucket, so an anonymous flood can starve app-password readers' thumbnails and pages; cookie and JWT users are not affected (see the required configuration under [Identity resolution](#identity-resolution)).
+
 | Bucket | Routes | Sustained | Burst | Why it is enough |
 |---|---|---|---|---|
 | `pages` | `GET /issues/{id}/pages/{n}` (every `?w=` variant, `HEAD` included) | 250 / s | 2,000 | The reader warms 3 pages ahead and 2 behind with at most 4 in flight (`web/lib/reader/use-prefetch.ts`); holding the next-page key turns about 30 pages a second at about 2 new URLs per turn, about 60/s, about 1,000 requests over a 500-page issue. 250/s is 4x that pace and the burst holds the whole sweep twice. The offline downloader keeps 3 fetches in flight with no pacing (`web/lib/pwa/downloads.ts`); its speed is estimated, not measured, at 75–150 pages a second on a LAN, more for small pages. It waits out a 429 instead of failing (below), so a downloader faster than the bucket is slowed, never stopped. |
@@ -103,14 +105,14 @@ Audit 2026-11 A9. Both buckets are per user with the IP fallback (`build_per_use
 
 What the clients do on a 429:
 
-- **Offline downloads** wait for `Retry-After` (at least 1 s, at most 30 s) and fetch the same asset again, with 3 fetches still in flight; after 8 consecutive 429s on one asset (`MAX_RATE_LIMIT_RETRIES`) that issue fails as a retryable error and the queue moves on to the next issue.
-- **The reader page** asks the server for the failure's status (a `HEAD` probe, as it does for 404 / 409 / 410); on a 429 it goes back to loading, waits for `Retry-After` and loads again, up to 3 times (`MAX_PAGE_RATE_LIMIT_WAITS`), and keeps its one silent immediate retry for other failures. Past that it shows Tap to retry.
+- **Offline downloads** release the refused response, wait for `Retry-After` (at least 1 s, at most 30 s) and fetch the same asset again, with 3 fetches still in flight. The bound is 8 consecutive 429s per asset (`MAX_RATE_LIMIT_RETRIES`), per round: a 401 renews the session and starts one more round, so an asset gets at most two rounds of 8. A page that runs out fails its issue as a retryable error and the queue moves on to the next issue; a strip thumbnail or the cover that runs out is skipped and counted as missing (`missingThumbs`), as any other thumbnail failure is.
+- **The reader page** retries a failed load once at once, silently. If that fails too it asks the server for the status (a `HEAD` probe, as it does for 410 / 409): a 429 means wait for `Retry-After`, and a 2xx means the page answers now although the load failed (the bucket refills every 4 ms, so a refused load usually probes as 200), so wait the minimum 1 s. Either way it goes back to loading and loads again, up to 3 waits per page (`MAX_PAGE_RATE_LIMIT_WAITS`); the silent retry is not re-armed, so each wait costs one load and one probe. Past the bound, or on 404, 503 or a network failure, it shows Tap to retry; 410 and 409 stay final. A page whose bytes arrive but never decode also probes as 200 and ends at Tap to retry after the 3 waits.
 - **Covers, strip thumbnails and the page editor's thumbnails** cannot read an `<img>` status, so every failed load is re-requested after 1 s and then 3 s (`components/RetryingImg.tsx`) before it shows as failed. A truly missing image costs two extra requests.
 - **The service worker** does not cache a 429: it stores only `ok` answers, so a limited revalidation leaves the cached copy in place and an uncached image gets the 429, which the retry above handles.
 
 Other routes that serve page bytes or covers keep their own buckets: OPDS PSE pages (`/opds/pse/{issue_id}/{n}`) and whole-archive downloads (`/opds/v1/issues/{id}/file`, `/opds/v2/issues/{id}/file`, `/opds/v1.2/books/{id}/file/{filename}`) are on `opds_stream`; OPDS feeds link covers to `/issues/{id}/pages/0/thumb`, which is the `thumbnails` bucket (keyed by address for app-password clients); OCR reads page bytes behind `ocr` and `ocr.detect`. The Komga shim (`/api/v1/books/*`) serves no page bytes.
 
-Verified against the code at `0cf46f56` on 2026-11-11 (page bytes and thumbnails).
+Verified against the code at `efc78e89` on 2026-11-11 (page bytes and thumbnails).
 
 ## Behavior on bucket exhaustion
 
