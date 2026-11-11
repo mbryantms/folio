@@ -189,11 +189,11 @@ function ScanRunsRail({
                         <ScrollText className="size-3.5" aria-hidden="true" />
                         Logs
                       </Link>
-                      {/* Findings the run flagged, into the open health
-                        issues of its library. */}
+                      {/* The run's open findings, on the findings page
+                        filtered to this run. */}
                       <ScanRunFindingsLink
-                        stats={row.stats}
-                        href={`/admin/findings?tab=health&library_id=${encodeURIComponent(row.library_id)}`}
+                        scanId={row.id}
+                        count={row.health_issue_count}
                       />
                     </div>
                   </TableCell>

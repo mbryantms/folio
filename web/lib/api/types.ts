@@ -50,6 +50,7 @@ export type SidecarReemitStatusView = Schemas["SidecarReemitStatusView"];
 export type SeriesView = Schemas["SeriesView"];
 export type SeriesProgressSummary = Schemas["SeriesProgressSummary"];
 export type SeriesListView = Schemas["SeriesListView"];
+export type SeriesNameSuggestion = Schemas["SeriesNameSuggestion"];
 export type SortOrder = Schemas["SortOrder"];
 export type UpdateSeriesReq = Schemas["UpdateSeriesReq"];
 export type IssueState = Schemas["IssueState"];

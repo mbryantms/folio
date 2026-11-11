@@ -4,44 +4,29 @@ import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { statusToneText } from "@/lib/ui/status-tone";
 
-/**
- * Files a scan run flagged as findings, read from the run's persisted
- * `stats` counters. Each malformed (archive or ComicInfo), encrypted and
- * duplicate file the scanner counts also opens one health finding
- * (`scanner/process.rs`), so a non-zero sum means the run produced
- * findings. It is a lower bound, not the run's findings total: kinds the
- * scanner records without a counter (empty folders, files at the root,
- * missing ComicInfo, …) are not in `stats`, and the list response has no
- * per-run findings count nor the findings endpoint a run filter.
- */
-export function scanRunFlaggedFiles(stats: unknown): number {
-  if (!stats || typeof stats !== "object") return 0;
-  const s = stats as Record<string, unknown>;
-  const num = (k: string): number =>
-    typeof s[k] === "number" && Number.isFinite(s[k]) ? (s[k] as number) : 0;
-  return (
-    num("files_malformed") + num("files_encrypted") + num("files_duplicate")
-  );
+/** The findings page filtered server-side to one scan run's findings. */
+export function scanRunFindingsHref(scanId: string): string {
+  return `/admin/findings?tab=health&scan_id=${encodeURIComponent(scanId)}`;
 }
 
-/** Compact "N flagged" link from a scan row to the findings it opened.
- *  Renders nothing when the run flagged no files. */
+/** Compact "N findings" link from a scan row to the open health findings
+ *  the run recorded (`health_issue_count`, counted by the server). Renders
+ *  nothing when the run has none, like the row's other empty cells. */
 export function ScanRunFindingsLink({
-  stats,
-  href,
+  scanId,
+  count,
   className,
 }: {
-  stats: unknown;
-  /** The findings view for the run's library. */
-  href: string;
+  scanId: string;
+  /** `ScanRunView.health_issue_count`. */
+  count: number;
   className?: string;
 }) {
-  const count = scanRunFlaggedFiles(stats);
-  if (count <= 0) return null;
-  const files = count === 1 ? "file" : "files";
+  if (!Number.isFinite(count) || count <= 0) return null;
+  const noun = count === 1 ? "finding" : "findings";
   return (
     <Link
-      href={href}
+      href={scanRunFindingsHref(scanId)}
       // Stop the bubble so an expandable row does not toggle as well.
       onClick={(e) => e.stopPropagation()}
       data-testid="scan-run-findings"
@@ -52,7 +37,7 @@ export function ScanRunFindingsLink({
       )}
     >
       <AlertTriangle className="size-3.5 shrink-0" aria-hidden="true" />
-      {count} {files} flagged
+      {count} {noun}
     </Link>
   );
 }

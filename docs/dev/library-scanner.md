@@ -504,7 +504,10 @@ without per-library configuration.
        `Encrypted` (password-protected → `EncryptedArchive` +
        `files_encrypted`) / `Malformed` (ComicInfo didn't parse →
        `MalformedComicInfo`) / `MalformedArchive` (the file isn't a
-       readable container → `MalformedArchive`) / `Unreadable`
+       readable container → `MalformedArchive`) / `Refused` (the reader
+       refused it on a protective limit or an unsafe entry name, per
+       `archive::ArchiveError::safety_check` → `ArchiveSafetyRefusal`;
+       counted in `files_malformed`, issue state `malformed`) / `Unreadable`
        ([process.rs `match archive_outcome`](../../crates/server/src/library/scanner/process.rs))
      - ComicInfo PageCount storage as metadata only; mismatches with
        archive image count are ignored because the tag is frequently
@@ -967,6 +970,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `UnsupportedArchiveFormat` | warning | `.cbr` / `.cb7`: only when the library has the format's flag off (`auto_convert_cbr_on_scan` / `auto_convert_cb7_on_scan`) **or** the conversion failed (not ZIP/RAR/7z by magic bytes, encrypted, an archive cap or the 7z decoder-memory cap exceeded, I/O error). With the flag on, the scanner converts the file to a sibling `.cbz` via [scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs) and ingests that instead — no health row. | [process.rs](../../crates/server/src/library/scanner/process.rs) (`ConvertibleFormat` branch) | `{ path, ext }` | Enable the matching conversion flag on the library (needs `allow_archive_writeback`), or convert to CBZ by hand. |
 | `SkippedArchiveEntries` | warning | The archive opened, but one or more entries were dropped from the page index by a soft defense in the archive crate. One row per `reason`: `compression ratio cap` (CBZ entry claiming >200× expansion) or `image extension but non-image content` (an image-named entry whose leading bytes carry no image signature — the "`ComicInfo.xml` saved as `-0001.jpg`" publisher bug; every reader content-sniffs page candidates at open via [`archive::image_sniff`](../../crates/archive/src/image_sniff.rs)). The issue ingests with the surviving pages, so cover thumbnails, the reader and OCR all agree on page 0. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `entries_skipped()`) | `{ path, dropped, total, reason }` | Repack the archive without the offending entry, or leave it — nothing downstream reads it. |
 | `MalformedArchive` | error | The file could not be opened as an archive at all: no reader recognises the container (magic bytes are not ZIP / RAR / 7z / TAR) or its structure is broken past the recovery branches. Distinct from `MalformedComicInfo` — the fix is to replace or rename the file, not re-tag it. The issue row is kept in the `malformed` parse state with no pages. | [process.rs `ArchiveOutcome::MalformedArchive`](../../crates/server/src/library/scanner/process.rs) | `{ path, error }` | Replace the file from a good source, or rename it to the format it really is. |
+| `ArchiveSafetyRefusal` | error | The archive reader refused the archive on a protective limit or an unsafe entry name, either when the scanner opened it or while scan-time CBR / CB7 conversion read it. `check` is the `archive::SafetyCheck` tag, taken from the typed `archive::Cap` the reader raised: `entry_count` (`COMIC_ARCHIVE_MAX_ENTRIES`), `entry_size` (`COMIC_ARCHIVE_MAX_ENTRY_BYTES`), `total_size` (`COMIC_ARCHIVE_MAX_TOTAL_BYTES`), `compression_ratio` (`COMIC_ARCHIVE_MAX_RATIO`; a hard refusal for 7z only, CBZ skips the entry as `SkippedArchiveEntries`), `decoder_memory` (fixed 7z cap) or `unsafe_entry_name` (an unsafe or non-portable name: empty, absolute, `..` past the root, an empty or `.` component, a backslash or a NUL; fixed). The refusal says nothing about damage either way, so it is not reported as `MalformedArchive`. On open: `malformed` parse state and `files_malformed`; during conversion: the source is left untouched, no issue row is written, and the file counts in `files_skipped`. Rows written before this kind existed keep their old kind until the file is read again, which for an unchanged file takes a content-verify scan. | [process.rs `ArchiveOutcome::Refused`, `classify_convert_error`](../../crates/server/src/library/scanner/process.rs) | `{ path, check, error }` | Raise the named env limit and restart for a file you trust, then run a **Content verify** scan (the library's *Scan* menu): an ordinary scan skips the unchanged file. Otherwise repack or replace it; a changed file is picked up by the next scan. |
 | `RecoveredArchive` | info | The CBZ only opened after a repair — `technique` is `unicode-path-crc-strip` (a bad Info-ZIP Unicode-Path extra was stripped) or `cdfh-offset-rebuild` (central-directory offsets pointed at garbage; the index was rebuilt by scanning the data area for each local header). Pages ingest normally; the row records that the file depends on a recovery branch. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `Cbz::recovery_used()`) | `{ path, technique }` | Nothing required; repack the archive if a strict reader must open it. |
 | `UnreadablePage` | warning | A page entry could not be read or decoded end-to-end. Emitted only by the opt-in deep validation (`POST /libraries/{slug}/validate-deeply`), which decodes every page of every issue; the scanner itself never decodes pages. The run owns a `scan_runs` row (`kind = deep_validate`) that every exit closes: `complete`, `failed` with the error, or `cancelled` (the scan-run cancel, from the Live scan page or Background work, stops the walk within a couple of seconds and stands). One run per library at a time (a second POST is 409). Only a complete run resolves an `UnreadablePage` it did not re-emit, and never for a file it could not open this time; it never resolves another kind (E11). A row a restart abandoned is closed `failed` at boot, and the daily History trim never deletes an unfinished row. | [deep_validate.rs](../../crates/server/src/library/deep_validate.rs) | `{ path, page_index, error }` | Replace the archive, or re-save the page and repack. |
 | `NoPages` | warning | A structurally valid archive with zero image entries after sniffing — it used to ingest as a silent 0-page issue that opened in the reader and never turned. Raised only for an `active` parse state (encrypted and malformed files have their own outcome). | [process.rs](../../crates/server/src/library/scanner/process.rs) (`actual_pages == 0`) | `{ path }` | Repack the archive with its pages, or remove it. |
@@ -1070,7 +1074,22 @@ durable side of the live channel. Fields:
 | `issue_id` | text? | For `kind = 'issue'` — links the History row back to the issue page. |
 
 History view: `GET /libraries/{slug}/scan-runs` reads this table; the
-admin "Scan history" tab paginates it.
+admin "Scan history" tab paginates it. Every scan-run response
+(`ScanRunView`, and `CrossLibScanRunView` on `/admin/scan-runs`,
+`/admin/scan-runs/latest-per-library` and batch detail) carries
+`health_issue_count`: the open findings (not resolved, not dismissed)
+whose `library_health_issues.scan_id` is the run, counted for the whole
+page in one grouped query (`scan_runs::finding_counts`, indexed by
+`library_health_issues_scan_idx`). A finding's `scan_id` moves to the
+latest run that sees it: the upsert when the run re-emits it, and the
+touch-on-skip update when the run skipped the unchanged file it names
+(only `first_seen_at` keeps the first sighting). One kind is the
+exception: a duplicate-external-id finding that is still true is kept
+alive by a settle step that runs on every scope and only refreshes
+`last_seen_at`, so it stays with the run that first recorded it. So the
+count is "open findings this run last recorded". The scan rows link to `/admin/findings?tab=health&scan_id=…`,
+which lists exactly those rows through the `scan_id` filter on
+`GET /admin/health-issues` (first-page `total` included).
 
 ## Adjacent systems triggered by a scan
 
