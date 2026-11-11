@@ -135,15 +135,25 @@ impl Bucket {
         K: KeyExtractor,
         K::Key: Send + Sync + 'static,
     {
-        let mut default = GovernorConfigBuilder::default();
-        let mut builder = default.key_extractor(key);
-        builder.period(self.period).burst_size(self.burst);
-        let config: GovernorConfig<K, governor::middleware::NoOpMiddleware> =
-            builder.finish().expect("non-zero period + burst");
+        let config = self.config(key);
         LIMITERS.register(config.limiter().clone());
         let name = self.name;
         GovernorLayer::new(Arc::new(config))
             .error_handler(move |err| handle_governor_error(name, err))
+    }
+}
+
+impl Bucket {
+    /// The governor config [`Bucket::build_keyed`] wraps: this bucket's
+    /// quota over `key`.
+    fn config<K: KeyExtractor>(
+        &self,
+        key: K,
+    ) -> GovernorConfig<K, governor::middleware::NoOpMiddleware> {
+        let mut default = GovernorConfigBuilder::default();
+        let mut builder = default.key_extractor(key);
+        builder.period(self.period).burst_size(self.burst);
+        builder.finish().expect("non-zero period + burst")
     }
 }
 
@@ -517,6 +527,55 @@ pub const COLLECTION_REORDER: Bucket = Bucket {
     burst: 30,
 };
 
+/// Page bytes — `GET /issues/{id}/pages/{n}` — per user (IP fallback for
+/// app-password and anonymous requests), 250/s sustained with a burst of
+/// 2,000. Sized from the web clients (A9, 2026-11):
+///
+/// - The reader warms 3 pages ahead and 2 behind, at most 4 in flight
+///   (`web/lib/reader/use-prefetch.ts`); holding the next-page key turns
+///   about 30 pages a second with about 2 new URLs per turn, so roughly
+///   60/s, about 1,000 requests across a 500-page issue.
+/// - The offline downloader keeps 3 fetches in flight with no pacing
+///   (`web/lib/pwa/downloads.ts`), so its rate is 3 over the round trip
+///   plus its cache and IndexedDB writes. Estimated, not measured: about
+///   75–150 pages a second on a LAN, more for small pages. It waits out a
+///   429 (`Retry-After`) and retries the same page, so outrunning the
+///   bucket slows a download and never fails it.
+///
+/// 250/s is 4x the reader's hold-to-turn pace; the burst covers that whole
+/// 500-page sweep twice. It caps a single token's request flood (error
+/// paths, conditional requests), not bandwidth.
+pub const PAGES: Bucket = Bucket {
+    name: "pages",
+    period: Duration::from_millis(4),
+    burst: 2_000,
+};
+
+/// Thumbnails and stored covers — `GET /issues/{id}/pages/{n}/thumb` and
+/// `GET /issues/{id}/covers/{cover_id}`, one shared store — per user (IP
+/// fallback), 500/s sustained with a burst of 4,000. Sized from:
+///
+/// - The page editor loads every page's thumbnail at once with a fresh
+///   URL per open: 500 requests for a 500-page issue, each time it opens.
+/// - The reader page strip warms 25 thumbnails when it opens and more per
+///   turn or strip scroll.
+/// - Cover grids are virtualized and lazy, and grow 60 cards per list
+///   page through the `search` bucket (10/s), so at most about 600 new
+///   covers a second by construction, a few hundred in a fast fling.
+///   Inside the installed app the service worker revalidates every paint,
+///   so revisited covers count too (a 304 still spends a token).
+/// - The offline downloader's strip-thumbnail phase (estimated about
+///   300/s on a LAN), which waits out a 429 like its page phase.
+///
+/// The burst absorbs eight page-editor opens of a 500-page issue
+/// back to back; the sustained rate sits above the grid's construction
+/// limit. Covers and strip thumbnails retry a 429 after a short back-off.
+pub const THUMBNAILS: Bucket = Bucket {
+    name: "thumbnails",
+    period: Duration::from_millis(2),
+    burst: 4_000,
+};
+
 // ───────── error handler ─────────
 
 fn handle_governor_error(bucket: &'static str, err: GovernorError) -> Response<Body> {
@@ -606,8 +665,11 @@ fn envelope_response(
     if let Some(extra) = extra_headers {
         for (k, v) in extra.into_iter().flat_map(|(k, v)| k.map(|k| (k, v))) {
             // Avoid clobbering Content-Type we just set; governor's headers
-            // are X-RateLimit-After + Retry-After only.
-            if k == header::CONTENT_TYPE {
+            // are X-RateLimit-After + Retry-After only. Its Retry-After is
+            // the unfloored wait, `0` whenever the next token is under a
+            // second away (every bucket refilling faster than 1/s), so it
+            // must not replace the floored value set above.
+            if k == header::CONTENT_TYPE || (k == header::RETRY_AFTER && retry_after_seconds > 0) {
                 continue;
             }
             resp.headers_mut().insert(k, v);
@@ -654,6 +716,46 @@ mod tests {
         assert_eq!(lim.len(), 1);
         // Key 2 kept its spent token: pruning never refills a live bucket.
         assert!(lim.check_key(&2).is_err());
+    }
+
+    /// The page and thumbnail buckets at their real constants: one user
+    /// spending the whole burst is refused, and another user keeps a full
+    /// budget (`UserKey` names the user of a verified token; the HTTP side
+    /// of that is `tests/rate_limits_per_user.rs`, and the routes'
+    /// anonymous floods are `tests/page_rate_limits.rs`).
+    #[test]
+    fn page_and_thumbnail_budgets_are_per_user() {
+        for bucket in [&PAGES, &THUMBNAILS] {
+            let config = bucket.config(UserKey);
+            let limiter = config.limiter();
+            let alice = UserOrIp::User(Uuid::now_v7());
+            let bob = UserOrIp::User(Uuid::now_v7());
+            let address = UserOrIp::Ip(IpAddr::from([192, 0, 2, 7]));
+            // Spend until refused: at least the burst gets through, and no
+            // more than the burst plus what refilled while the loop ran.
+            let started = std::time::Instant::now();
+            let mut allowed: u32 = 0;
+            while limiter.check_key(&alice).is_ok() {
+                allowed += 1;
+                assert!(
+                    allowed <= 10 * bucket.burst,
+                    "{} never refuses",
+                    bucket.name
+                );
+            }
+            let refilled = started.elapsed().as_nanos() / bucket.period.as_nanos() + 1;
+            assert!(allowed >= bucket.burst, "{}", bucket.name);
+            assert!(
+                u128::from(allowed) <= u128::from(bucket.burst) + refilled,
+                "{}: {allowed} allowed",
+                bucket.name
+            );
+            assert!(limiter.check_key(&alice).is_err() || started.elapsed() > bucket.period);
+            for _ in 0..bucket.burst {
+                assert!(limiter.check_key(&bob).is_ok(), "{}", bucket.name);
+            }
+            assert!(limiter.check_key(&address).is_ok(), "{}", bucket.name);
+        }
     }
 
     #[test]

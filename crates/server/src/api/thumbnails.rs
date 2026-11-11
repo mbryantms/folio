@@ -47,6 +47,7 @@ use super::page_source::{PageUnavailable, issue_not_found, no_store};
 use crate::auth::CurrentUser;
 use crate::library::thumbnails::{self, ThumbFormat, ThumbnailQuality, Variant};
 use crate::library::zip_lru::lock_reader;
+use crate::middleware::rate_limit;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -106,9 +107,13 @@ pub struct ThumbQuery {
 }
 
 pub fn routes() -> Router<AppState> {
+    // One per-user `THUMBNAILS` store for page thumbnails and stored covers
+    // (A9). This router holds only these two routes, so the `route_layer`
+    // covers nothing else.
     Router::new()
         .route("/issues/{id}/pages/{n}/thumb", get(thumb))
         .route("/issues/{id}/covers/{cover_id}", get(serve_issue_cover))
+        .route_layer(rate_limit::THUMBNAILS.build_per_user())
 }
 
 #[handler]
