@@ -3,10 +3,10 @@
 import { memo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
 
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { ProgressFill } from "@/components/library/ProgressFill";
+import { ReadCheck } from "@/components/library/ReadCheck";
 import { Cover } from "@/components/Cover";
 import { CoverTilt } from "@/components/library/CoverTilt";
 import { PageScrub } from "@/components/library/PageScrub";
@@ -258,14 +258,7 @@ function IssueCardImpl({
           </Badge>
         )}
         {issue.state === "active" && finished && (
-          <span
-            role="img"
-            aria-label="Read"
-            title="Read"
-            className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"
-          >
-            <Check aria-hidden="true" className="size-3.5" />
-          </span>
+          <ReadCheck className="absolute top-2 right-2" />
         )}
         {issue.state === "active" && inProgress && (
           <div
