@@ -855,6 +855,58 @@ pub mod folder_gate {
     }
 }
 
+/// Test seam: run a callback right after a library's reconcile returned and
+/// before the scan's lease / cancel check, so a test can lose the lease in
+/// exactly that window. Inert unless a test installed one (one relaxed
+/// atomic load per library scan).
+#[doc(hidden)]
+pub mod after_reconcile {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use uuid::Uuid;
+
+    type Hook = Arc<dyn Fn() + Send + Sync>;
+
+    static ANY: AtomicBool = AtomicBool::new(false);
+    static HOOKS: OnceLock<Mutex<HashMap<Uuid, Hook>>> = OnceLock::new();
+
+    fn hooks() -> &'static Mutex<HashMap<Uuid, Hook>> {
+        HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Run `hook` after every library reconcile of `library_id`.
+    pub fn install(library_id: Uuid, hook: impl Fn() + Send + Sync + 'static) {
+        hooks()
+            .lock()
+            .expect("after-reconcile hook mutex")
+            .insert(library_id, Arc::new(hook));
+        ANY.store(true, Ordering::Relaxed);
+    }
+
+    /// Drop `library_id`'s hook.
+    pub fn remove(library_id: Uuid) {
+        hooks()
+            .lock()
+            .expect("after-reconcile hook mutex")
+            .remove(&library_id);
+    }
+
+    pub(super) fn pass(library_id: Uuid) {
+        if !ANY.load(Ordering::Relaxed) {
+            return;
+        }
+        let hook = hooks()
+            .lock()
+            .expect("after-reconcile hook mutex")
+            .get(&library_id)
+            .cloned();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+}
+
 /// Why a run stopped early, for [`finalize_run`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CancelCause {
@@ -2702,7 +2754,6 @@ async fn run_phases(
     // This pass's own removals, for the large-removal check below.
     let removed_before = (stats.issues_removed, stats.series_removed);
     stats.removal_stamp = None;
-    let mut reconciled = false;
     match crate::library::reconcile::reconcile_library_seen_until(
         &state.db,
         lib.id,
@@ -2719,8 +2770,26 @@ async fn run_phases(
     .await
     {
         Ok(series_restored) => {
-            reconciled = true;
             invalidate_after_series_restore(state, lib.id, series_restored);
+            // Large-removal warning (R-01, D-5): only from a reconcile that
+            // completed, never from a cancelled, superseded or failed one.
+            // Reported here, before the lease / cancel check below: the
+            // rows are already removed, and a run that stops after this
+            // point still finalizes its health and events, while no later
+            // scan would report this removal.
+            if let Some(stamp) = stats.removal_stamp {
+                report_large_removal(
+                    state,
+                    lib,
+                    scan_id,
+                    stamp,
+                    stats.issues_removed.saturating_sub(removed_before.0),
+                    stats.series_removed.saturating_sub(removed_before.1),
+                    health,
+                    events,
+                )
+                .await;
+            }
         }
         Err(e) if lease_lost.load(Ordering::Relaxed) => {
             // Superseded: the reconcile stopped on purpose; the next
@@ -2731,24 +2800,10 @@ async fn run_phases(
             tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
         }
     }
+    after_reconcile::pass(lib.id);
     lease_check();
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
-    }
-    // Large-removal warning (R-01, D-5): only from a reconcile that
-    // completed, never from a cancelled, superseded or failed one.
-    if reconciled && let Some(stamp) = stats.removal_stamp {
-        report_large_removal(
-            state,
-            lib,
-            scan_id,
-            stamp,
-            stats.issues_removed.saturating_sub(removed_before.0),
-            stats.series_removed.saturating_sub(removed_before.1),
-            health,
-            events,
-        )
-        .await;
     }
     if let Err(e) =
         reconcile_status::reconcile_series_status_many(&state.db, &status_reconcile_entries).await

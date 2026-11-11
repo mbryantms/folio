@@ -257,7 +257,8 @@ pub enum IssueKind {
     /// series (at least `MIN_SERIES`). A warning only; nothing is held
     /// back. One row per library. Kept open across later scans while the
     /// rows this run removed (all stamped `removed_at`) would still cross
-    /// the threshold; resolves once enough of them are back or purged.
+    /// the threshold against `issues_total` / `series_total` as recorded
+    /// here; resolves once enough of them are back or purged.
     /// Carries no server path: `top_folders` names are relative to the
     /// library root.
     LargeRemoval {
@@ -640,7 +641,8 @@ impl HealthCollector {
     /// scan scope and outcome: the rows the removal run stamped are counted
     /// again, and the row stays open (its `last_seen_at` moves; `scan_id`
     /// stays on the removal run) while they would still cross the
-    /// threshold. Otherwise it resolves. A row this run re-emitted (a new
+    /// threshold against the totals recorded in the payload. Otherwise it
+    /// resolves. A row this run re-emitted (a new
     /// crossing) was refreshed by the upsert; its dismissal is cleared,
     /// because a new removal is new news.
     async fn settle_large_removals(
@@ -669,18 +671,29 @@ impl HealthCollector {
                 reopen.push(row.id);
                 continue;
             }
-            let stamp = row
-                .payload
-                .get("data")
+            let data = row.payload.get("data");
+            let stamp = data
                 .and_then(|d| d.get("removed_at"))
                 .and_then(|v| v.as_str())
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
-            let Some(stamp) = stamp else {
+            let total = |key: &str| data.and_then(|d| d.get(key)).and_then(|v| v.as_u64());
+            let (Some(stamp), Some(issues_total), Some(series_total)) =
+                (stamp, total("issues_total"), total("series_total"))
+            else {
                 resolve.push(row.id);
                 continue;
             };
-            let counts =
-                crate::library::large_removal::episode_counts(db, self.library_id, stamp).await?;
+            // Against the totals recorded when it was raised: new content
+            // imported meanwhile must not dilute the share and close it;
+            // only the removed rows coming back (or being purged) does.
+            let (issues_removed, series_removed) =
+                crate::library::large_removal::stamped_counts(db, self.library_id, stamp).await?;
+            let counts = crate::library::large_removal::RemovalCounts {
+                issues_removed,
+                issues_total,
+                series_removed,
+                series_total,
+            };
             if counts.crosses() {
                 keep.push(row.id);
             } else {

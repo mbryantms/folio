@@ -3,11 +3,16 @@
 //! When one library scan soft-removes an unusually large share of the
 //! library, the scan raises a `LargeRemoval` health finding and one
 //! `health` / `removed` library event. It is a warning only: the removal
-//! proceeds exactly as before (removed rows come back when their files do,
-//! and nothing is confirmed or purged while a file exists), there is no new
-//! state and no confirmation step. The usual cause is a nested mount or
-//! network share that was missing during the scan, or a folder moved aside
-//! while the library was being reorganised.
+//! proceeds exactly as before, there is no new state and no confirmation
+//! step. The usual cause is a nested mount or network share that was
+//! missing during the scan, or a folder moved aside while the library was
+//! being reorganised. That is why it is worth a warning: the confirm and
+//! purge sweeps only refuse a library whose *root* fails
+//! `validate_library`, so the rows of a nested share that stays away are
+//! confirmed after `soft_delete_days` and hard-purged
+//! `soft_delete_days × library.hard_purge_multiplier` days later, taking
+//! progress, markers, ratings and collection entries with them; a file that
+//! returns after that is a new issue with no read state.
 //!
 //! **What is measured.** The library reconcile stamps one `removed_at` on
 //! every issue and series it soft-removes in a pass
@@ -21,19 +26,28 @@
 //! where a mass removal happens, measured against the whole library. A
 //! per-series or single-issue scan never raises it: it walks one folder the
 //! admin pointed at, so the removal it reports is local and expected. A
-//! cancelled or superseded scan, a scan whose reconcile failed or stopped,
-//! and a scan refused by the unavailable-root guard never reach the check.
+//! scan cancelled or superseded before its reconcile, a scan whose
+//! reconcile failed or stopped, and a scan refused by the unavailable-root
+//! guard never reach the check. It runs as soon as the reconcile returns
+//! Ok, before the scan's next lease / cancel check: the rows are removed
+//! by then, and no later scan would report them.
 //!
 //! **Cost.** Nothing on an ordinary scan: the check queries only when the
 //! run's own counters reach a floor ([`MIN_ISSUES`] / [`MIN_SERIES`]); then
 //! it runs one counting statement and one grouped folder statement. The
 //! keep-alive / resolve step in `HealthCollector::finalize` adds one indexed
-//! lookup of the library's open `LargeRemoval` row per scan, and a counting
-//! statement only while such a row is open.
+//! lookup of the library's open `LargeRemoval` row per scan and, only while
+//! such a row is open (or dismissed and not yet resolved), one statement
+//! counting the rows that still carry the stamp ([`stamped_counts`]): two
+//! range reads of the partial `(library_id, removed_at)` indexes, bounded
+//! by the size of that removal. Active rows are never counted there: the
+//! totals come from the payload.
 //!
 //! **Resolution.** The finding stays open while the rows the run removed
-//! would still cross the threshold if they were removed now (same test,
-//! [`RemovalCounts::crosses`], over the rows still carrying the stamp). Each
+//! that still carry its stamp would cross the threshold against the totals
+//! recorded when it was raised (same test, [`RemovalCounts::crosses`]; the
+//! totals are fixed so that a library growing while the content is still
+//! away does not dilute the share and close it). Each
 //! scan that ends while it holds re-sights the row (`last_seen_at` moves,
 //! `scan_id` stays on the run that removed the content), so the full-scan
 //! auto-resolve sweep does not close it just because the next scan removed
@@ -161,6 +175,36 @@ pub async fn episode_counts(
         series_removed,
         series_total: to_u64(row.series_active) + series_removed,
     })
+}
+
+#[derive(Debug, FromQueryResult)]
+struct StampedRow {
+    issues_removed: i64,
+    series_removed: i64,
+}
+
+/// How many issues and series of `library_id` still carry `stamp`: the
+/// rows one removal run removed that are neither restored nor purged (a
+/// row restored and removed again carries the later run's stamp). Reads only the partial
+/// `(library_id, removed_at)` indexes, so its cost is bounded by the size
+/// of that removal, not of the library.
+pub async fn stamped_counts(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    stamp: DateTime<FixedOffset>,
+) -> anyhow::Result<(u64, u64)> {
+    let stmt = Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"SELECT
+             (SELECT count(*) FROM issues WHERE library_id = $1 AND removed_at = $2) AS issues_removed,
+             (SELECT count(*) FROM series WHERE library_id = $1 AND removed_at = $2) AS series_removed"#,
+        [library_id.into(), normalize_stamp(stamp).into()],
+    );
+    let row = StampedRow::find_by_statement(stmt)
+        .one(db)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("large-removal stamped counts returned no row"))?;
+    Ok((to_u64(row.issues_removed), to_u64(row.series_removed)))
 }
 
 #[derive(Debug, FromQueryResult)]

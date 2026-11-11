@@ -103,7 +103,7 @@ const KIND_COPY: Record<string, KindCopy> = {
   MetadataDriftFromXml: { label: "Edits not written to XML" },
   LargeRemoval: {
     label: "Large removal in one scan",
-    hint: "One scan removed an unusually large part of this library. This usually means a mount or network share was missing while the scan ran, or a folder was moved aside while you reorganised. Nothing is lost: removed series and issues come back by themselves when their files return, and nothing is purged while the files exist. Check the folders listed, then the library's Removed tab. If the removal was intended, dismiss this.",
+    hint: "One scan removed an unusually large part of this library. This usually means a mount or network share was missing while the scan ran, or a folder was moved aside while you reorganised. Removed series and issues come back with their reading progress, markers and ratings if their files return before they are purged: the library's soft-delete window, then that many days again times the server's purge multiplier (30 + 60 days with the defaults). Only a missing library root holds that clock; a missing folder or share inside the library does not. After the purge, a file that returns is imported as a new issue with no read state. Check the folders listed, then the library's Removed tab. If the removal was intended, dismiss this.",
   },
   SymlinkSkipped: {
     label: "Symbolic link skipped",

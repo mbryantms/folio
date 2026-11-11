@@ -311,14 +311,20 @@ describe("LargeRemoval", () => {
     },
   };
 
-  it("labels the kind and says what causes it and that nothing is lost", () => {
+  it("labels the kind, says what causes it and that the content is purged after the removal window", () => {
     expect(healthKindLabel("LargeRemoval")).toBe("Large removal in one scan");
     const hint = healthPayloadHint("LargeRemoval", payload);
     expect(hint).toMatch(/mount or network share was missing/);
     expect(hint).toMatch(/moved aside/);
-    expect(hint).toMatch(/Nothing is lost/);
-    expect(hint).toMatch(/nothing is purged while the files exist/);
+    expect(hint).toMatch(/come back with their reading progress/);
+    expect(hint).toMatch(/before they are purged/);
+    expect(hint).toMatch(/soft-delete window/);
+    expect(hint).toMatch(/purge multiplier/);
+    expect(hint).toMatch(/new issue with no read state/);
     expect(hint).toMatch(/Removed tab/);
+    // It must not promise more than the lifecycle gives.
+    expect(hint).not.toMatch(/Nothing is lost/i);
+    expect(hint).not.toMatch(/nothing is purged/i);
   });
 
   it("summarizes the numbers", () => {

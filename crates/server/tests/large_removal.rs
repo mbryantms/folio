@@ -3,8 +3,10 @@
 //! A library scan that soft-removes more than the threshold of the library
 //! raises one `LargeRemoval` finding and one `health` / `removed` library
 //! event; the removal itself proceeds unchanged. The finding stays open
-//! across later scans while the removed content stays away, sticks when
-//! dismissed, and resolves when the content returns.
+//! across later scans while the removed content stays away (measured
+//! against the library as it was when raised), sticks when dismissed, and
+//! resolves when enough of the content returns or is purged, by whichever
+//! scan scope sees it.
 
 mod common;
 
@@ -16,12 +18,16 @@ use chrono::Utc;
 use common::TestApp;
 use entity::library_health_issue::{self, HealthIssueKind};
 use entity::{issue, library, library_event, scan_run};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter,
+    QueryOrder, Set, Statement,
+};
+use server::jobs::hard_purge;
 use server::library::scanner;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -103,18 +109,34 @@ struct Fixture {
     lib: Uuid,
 }
 
+/// `(series folder relative to the root, file prefix, issue count)`.
+type Layout<'a> = &'a [(&'a str, &'a str, u32)];
+
+const DEFAULT_LAYOUT: Layout<'static> = &[
+    ("Marvel/Big A (2020)", "Big A", 30),
+    ("Marvel/Big B (2021)", "Big B", 30),
+    ("Image/Keep (2019)", "Keep", 20),
+];
+
 impl Fixture {
     async fn new() -> Self {
+        Self::with_layout(DEFAULT_LAYOUT).await
+    }
+
+    async fn with_layout(layout: Layout<'_>) -> Self {
         let app = TestApp::spawn().await;
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("library");
-        write_series(&root.join("Marvel/Big A (2020)"), "Big A", 30, 1_000);
-        write_series(&root.join("Marvel/Big B (2021)"), "Big B", 30, 2_000);
-        write_series(&root.join("Image/Keep (2019)"), "Keep", 20, 3_000);
-        let parked = tmp.path().join("parked-marvel");
+        let mut expected = 0;
+        for (i, (folder, prefix, count)) in layout.iter().enumerate() {
+            write_series(&root.join(folder), prefix, *count, (i as u32 + 1) * 1_000);
+            expected += u64::from(*count);
+        }
+        let parked = tmp.path().join("parked");
+        std::fs::create_dir_all(&parked).unwrap();
         let lib = create_library(&app, &root).await;
         let s = scanner::scan_library(&app.state(), lib).await.unwrap();
-        assert_eq!(s.files_added, 80, "{s:?}");
+        assert_eq!(s.files_added, expected, "{s:?}");
         Self {
             app,
             _tmp: tmp,
@@ -124,12 +146,59 @@ impl Fixture {
         }
     }
 
+    /// Move `folder` (relative to the root) out of the library.
+    fn park_dir(&self, folder: &str) {
+        let to = self.parked.join(folder);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::rename(self.root.join(folder), to).unwrap();
+    }
+
+    /// Put a parked `folder` back.
+    fn unpark_dir(&self, folder: &str) {
+        let to = self.root.join(folder);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::rename(self.parked.join(folder), to).unwrap();
+    }
+
     fn park(&self) {
-        std::fs::rename(self.root.join("Marvel"), &self.parked).unwrap();
+        self.park_dir("Marvel");
     }
 
     fn unpark(&self) {
-        std::fs::rename(&self.parked, self.root.join("Marvel")).unwrap();
+        self.unpark_dir("Marvel");
+    }
+
+    async fn series_id(&self, name: &str) -> Uuid {
+        entity::series::Entity::find()
+            .filter(entity::series::Column::LibraryId.eq(self.lib))
+            .filter(entity::series::Column::Name.contains(name))
+            .one(&self.app.state().db)
+            .await
+            .unwrap()
+            .unwrap()
+            .id
+    }
+
+    async fn scan_series(&self, name: &str, folder: &str) -> scanner::stats::ScanStats {
+        let series_id = self.series_id(name).await;
+        scanner::scan_series_folder(
+            &self.app.state(),
+            self.lib,
+            series_id,
+            &self.root.join(folder),
+            scanner::ScanKind::Series,
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn dismiss(&self, row: library_health_issue::Model) {
+        let mut am: library_health_issue::ActiveModel = row.into();
+        am.dismissed_at = Set(Some(Utc::now().fixed_offset()));
+        am.update(&self.app.state().db).await.unwrap();
     }
 
     async fn scan(&self) -> scanner::stats::ScanStats {
@@ -330,9 +399,7 @@ async fn a_new_large_removal_reopens_the_same_row_even_when_dismissed() {
     f.park();
     f.scan().await;
     let first = f.only_finding().await;
-    let mut am: library_health_issue::ActiveModel = first.clone().into();
-    am.dismissed_at = Set(Some(Utc::now().fixed_offset()));
-    am.update(&f.app.state().db).await.unwrap();
+    f.dismiss(first.clone()).await;
     f.unpark();
     f.scan().await;
     assert!(f.only_finding().await.resolved_at.is_some());
@@ -396,35 +463,213 @@ async fn a_small_library_below_the_floor_does_not_warn() {
 
 #[tokio::test]
 async fn a_series_scan_never_warns() {
-    let f = Fixture::new().await;
-    let folder = f.root.join("Marvel/Big A (2020)");
-    // Most of one series goes, in one per-series scan: 29 of its 30.
-    for n in 2..=30 {
-        std::fs::remove_file(folder.join(format!("Big A {n:03}.cbz"))).unwrap();
+    // One long run that is most of the library: what a per-series scan
+    // removes here would cross both the share and the floor if a library
+    // scan removed it (55 of 80 issues).
+    let f = Fixture::with_layout(&[
+        ("Marvel/Long Run (2010)", "Long Run", 60),
+        ("Image/Keep (2019)", "Keep", 20),
+    ])
+    .await;
+    let folder = f.root.join("Marvel/Long Run (2010)");
+    for n in 6..=60 {
+        std::fs::remove_file(folder.join(format!("Long Run {n:03}.cbz"))).unwrap();
     }
-    let series_id = entity::series::Entity::find()
-        .filter(entity::series::Column::LibraryId.eq(f.lib))
-        .filter(entity::series::Column::Name.contains("Big A"))
+    let s = f.scan_series("Long Run", "Marvel/Long Run (2010)").await;
+    assert_eq!(s.issues_removed, 55, "{s:?}");
+    assert_eq!(f.removed_issue_count().await, 55);
+    assert!(f.findings().await.is_empty(), "{:?}", f.findings().await);
+    assert!(f.events().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_lease_lost_right_after_the_reconcile_still_reports() {
+    let f = Fixture::new().await;
+    f.park();
+    let lost = Arc::new(AtomicBool::new(false));
+    let flag = lost.clone();
+    // The reconcile has returned Ok (the rows are removed); the lease goes
+    // before the scan's next lease check.
+    scanner::after_reconcile::install(f.lib, move || flag.store(true, Ordering::Relaxed));
+    let s = scanner::scan_library_leased(&f.app.state(), f.lib, false, None, Some(lost.clone()))
+        .await
+        .unwrap();
+    scanner::after_reconcile::remove(f.lib);
+    assert!(lost.load(Ordering::Relaxed), "the hook ran");
+    assert_eq!(s.issues_removed, 60, "{s:?}");
+    assert_eq!(f.removed_issue_count().await, 60);
+    let run = scan_run::Entity::find_by_id(f.latest_run().await)
         .one(&f.app.state().db)
         .await
         .unwrap()
-        .unwrap()
-        .id;
-    let s = scanner::scan_series_folder(
-        &f.app.state(),
-        f.lib,
-        series_id,
-        &folder,
-        scanner::ScanKind::Series,
-        None,
-        false,
-        None,
-    )
-    .await
-    .unwrap();
-    assert_eq!(s.issues_removed, 29, "{s:?}");
-    assert!(f.findings().await.is_empty());
-    assert!(f.events().await.is_empty());
+        .unwrap();
+    assert_eq!(run.state, scan_run::ScanRunState::Cancelled, "superseded");
+    let row = f.only_finding().await;
+    assert!(row.resolved_at.is_none());
+    assert_eq!(row.scan_id, Some(run.id));
+    assert_eq!(row.payload["data"]["issues_removed"], 60);
+    assert_eq!(f.events().await.len(), 1);
+}
+
+#[tokio::test]
+async fn new_content_does_not_dilute_an_open_warning() {
+    let f = Fixture::new().await;
+    f.park();
+    f.scan().await;
+    let raised = f.only_finding().await;
+    assert_eq!(raised.payload["data"]["issues_total"], 80);
+
+    // 250 unrelated new issues while the share is still away: 60 of the
+    // 330 the library would hold now is under 20%, but the warning is
+    // about the 80-issue library the share was removed from.
+    write_series(&f.root.join("Image/New (2024)"), "New", 250, 50_000);
+    let s = f.scan().await;
+    assert_eq!(s.files_added, 250, "{s:?}");
+    assert_eq!(s.issues_removed, 0, "{s:?}");
+    let kept = f.only_finding().await;
+    assert!(kept.resolved_at.is_none(), "still open: nothing came back");
+    assert_eq!(kept.payload["data"]["issues_total"], 80, "totals as raised");
+
+    // The content comes back: it resolves.
+    f.unpark();
+    let s = f.scan().await;
+    assert_eq!(s.issues_restored, 60, "{s:?}");
+    assert!(f.only_finding().await.resolved_at.is_some());
+}
+
+#[tokio::test]
+async fn a_partial_restore_below_the_threshold_resolves_it() {
+    let f = Fixture::new().await;
+    f.park();
+    f.scan().await;
+    assert!(f.only_finding().await.resolved_at.is_none());
+    // Half of it comes back: 30 still away is under the 50-issue floor.
+    f.unpark_dir("Marvel/Big A (2020)");
+    let s = f.scan().await;
+    assert_eq!(s.issues_restored, 30, "{s:?}");
+    assert_eq!(f.removed_issue_count().await, 30);
+    assert!(f.only_finding().await.resolved_at.is_some());
+}
+
+#[tokio::test]
+async fn a_hard_purge_of_the_removed_rows_resolves_it() {
+    let f = Fixture::new().await;
+    f.park();
+    f.scan().await;
+    assert!(f.only_finding().await.resolved_at.is_none());
+    let db = &f.app.state().db;
+    // Confirmed when removed, and the purge runs well past the window.
+    for table in ["issues", "series"] {
+        db.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            format!(
+                "UPDATE {table} SET removal_confirmed_at = removed_at \
+                 WHERE library_id = $1 AND removed_at IS NOT NULL"
+            ),
+            [f.lib.into()],
+        ))
+        .await
+        .unwrap();
+    }
+    let later = Utc::now().fixed_offset() + chrono::Duration::days(365);
+    let stats = hard_purge::run_with(&f.app.state(), 2, later)
+        .await
+        .unwrap();
+    assert_eq!(stats.issues, 60, "{stats:?}");
+    assert_eq!(f.removed_issue_count().await, 0);
+    // The next scan settles it: nothing carries the stamp any more.
+    let s = f.scan().await;
+    assert_eq!(s.issues_removed, 0, "{s:?}");
+    assert!(f.only_finding().await.resolved_at.is_some());
+}
+
+#[tokio::test]
+async fn many_small_series_trip_the_series_share() {
+    // A long run next to twelve one-shots: the one-shots are 12 of 212
+    // issues (under the issue floor) but 12 of 13 series.
+    let mut layout: Vec<(String, String, u32)> =
+        vec![("Big/Long Run (2010)".into(), "Long Run".into(), 200)];
+    for n in 1..=12 {
+        layout.push((
+            format!("Shots/Shot {n:02} (2020)"),
+            format!("Shot {n:02}"),
+            1,
+        ));
+    }
+    let refs: Vec<(&str, &str, u32)> = layout
+        .iter()
+        .map(|(a, b, c)| (a.as_str(), b.as_str(), *c))
+        .collect();
+    let f = Fixture::with_layout(&refs).await;
+    f.park_dir("Shots");
+    let s = f.scan().await;
+    assert_eq!((s.issues_removed, s.series_removed), (12, 12), "{s:?}");
+    let row = f.only_finding().await;
+    let data = &row.payload["data"];
+    assert_eq!(data["issues_removed"], 12);
+    assert_eq!(data["issues_total"], 212);
+    assert_eq!(data["series_removed"], 12);
+    assert_eq!(data["series_total"], 13);
+    assert_eq!(
+        data["top_folders"],
+        serde_json::json!([{"folder": "Shots", "issues": 12}])
+    );
+    assert_eq!(f.events().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_new_crossing_reopens_a_dismissed_open_row_with_the_new_numbers() {
+    let f = Fixture::with_layout(&[
+        ("Marvel/Big A (2020)", "Big A", 30),
+        ("Marvel/Big B (2021)", "Big B", 30),
+        ("DC/Big C (2020)", "Big C", 30),
+        ("DC/Big D (2021)", "Big D", 30),
+        ("Image/Keep (2019)", "Keep", 20),
+    ])
+    .await;
+    f.park_dir("Marvel");
+    f.scan().await;
+    let first = f.only_finding().await;
+    assert_eq!(first.payload["data"]["issues_total"], 140);
+    f.dismiss(first.clone()).await;
+    let dismissed = f.only_finding().await;
+    assert!(dismissed.dismissed_at.is_some() && dismissed.resolved_at.is_none());
+
+    // A second share goes while the first is still away and dismissed.
+    f.park_dir("DC");
+    let s = f.scan().await;
+    assert_eq!(s.issues_removed, 60, "{s:?}");
+    let again = f.only_finding().await;
+    assert_eq!(again.id, first.id, "same row");
+    assert!(again.resolved_at.is_none());
+    assert!(
+        again.dismissed_at.is_none(),
+        "a new removal clears the dismissal"
+    );
+    assert_ne!(again.scan_id, first.scan_id);
+    let data = &again.payload["data"];
+    assert_eq!(data["issues_removed"], 60);
+    assert_eq!(data["issues_total"], 80, "measured against the library now");
+    assert_eq!(
+        data["top_folders"],
+        serde_json::json!([{"folder": "DC", "issues": 60}])
+    );
+    assert_eq!(f.events().await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_series_scan_that_restores_the_content_resolves_it() {
+    let f = Fixture::new().await;
+    f.park();
+    f.scan().await;
+    assert!(f.only_finding().await.resolved_at.is_none());
+    f.unpark();
+    // One per-series scan brings back 30: the 30 still away are under
+    // the floor.
+    let s = f.scan_series("Big A", "Marvel/Big A (2020)").await;
+    assert_eq!(s.issues_restored, 30, "{s:?}");
+    assert_eq!(f.removed_issue_count().await, 30);
+    assert!(f.only_finding().await.resolved_at.is_some());
 }
 
 #[tokio::test]

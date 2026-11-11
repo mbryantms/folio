@@ -961,7 +961,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `EmptyFolder` | warning | Direct child of root has no entries. | [enumerate Phase 2 → mod.rs:1141](../../crates/server/src/library/scanner/mod.rs#L1141) | `{ path }` | Add files or remove the folder. |
 | `AmbiguousFolder` | warning | Folder violates the two-layouts contract: archives at depth-1 *and* non-allowlist archive-bearing subdirs; or no archives at depth-1 with only allowlist subdirs; or 3-deep nesting; or a stray archive directly inside a publisher folder. The subtree is skipped — better than guessing. | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, reason, skipped_archives, skipped_archive_count }` — `reason` carries an actionable hint that adapts to the violation shape; `skipped_archives` is a sorted preview (≤ `enumerate::AMBIGUOUS_PREVIEW_LIMIT` = 20) of the skipped archives relative to `path`, `skipped_archive_count` the exact total (WP-3.4). Rows written before WP-3.4 lack both until the next full scan. | Fix the on-disk layout per §4.2 "Two supported on-disk layouts". |
 | `SymlinkSkipped` | warning | A symbolic link below the library root (folder or file, wherever it points). Links are never followed, so nothing behind it is indexed; a series indexed through one before is reported missing and soft-removed. One INFO log line per link. Resolves on the next full scan after the link is removed or replaced by the real folder / file. | [enumerate.rs](../../crates/server/src/library/scanner/enumerate.rs) (`EnumerationResult::symlinks`, `ArchiveWalk::symlinks`) → Phase 2 / `process_planned_folder` in [mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path }` | Put the real folder or file in the library (or bind-mount it there), or add its location as its own library. |
-| `LargeRemoval` | warning | One **library** scan (full or watcher-scoped) soft-removed more than 20% of the library's issues (and at least 50), or more than 20% of its series (and at least 10). Usually a mount or share missing during the scan, or a folder moved aside. Warning only: the removal proceeds as always. One row per library (constant fingerprint); a later crossing updates it, re-opens it and clears a dismissal. See "Large removals warn" under Removal lifecycle. | [`large_removal::assess`](../../crates/server/src/library/large_removal.rs) from `run_phases` after a completed reconcile; kept alive / resolved by `HealthCollector::settle_large_removals` | `{ scan_id, removed_at, issues_removed, issues_total, series_removed, series_total, top_folders: [{ folder, issues }], folder_count }`; folder names relative to the root, no server path | Check the folders named (the mount, the share, a move), then the library's Removed tab. Removed content comes back when its files do; dismiss when the removal was intended. |
+| `LargeRemoval` | warning | One **library** scan (full or watcher-scoped) soft-removed more than 20% of the library's issues (and at least 50), or more than 20% of its series (and at least 10). Usually a mount or share missing during the scan, or a folder moved aside. Warning only: the removal proceeds as always. One row per library (constant fingerprint); a later crossing updates it, re-opens it and clears a dismissal. See "Large removals warn" under Removal lifecycle. | [`large_removal::assess`](../../crates/server/src/library/large_removal.rs) from `run_phases` after a completed reconcile; kept alive / resolved by `HealthCollector::settle_large_removals` | `{ scan_id, removed_at, issues_removed, issues_total, series_removed, series_total, top_folders: [{ folder, issues }], folder_count }`; folder names relative to the root, no server path | Check the folders named (the mount, the share, a move), then the library's Removed tab. Removed content comes back with its read state only if its files return before it is purged (`soft_delete_days`, then `soft_delete_days × library.hard_purge_multiplier` more days; ~90 days with the defaults; only a missing library *root* holds that clock). After the purge a returning file is a new issue with no read state. Dismiss when the removal was intended. |
 | `OrphanedSeriesJson` | warning | A folder with no archives still holds a `series.json` — the sidecar outlived its archives. Reported *instead of* `EmptyFolder` for that folder (root children and folders under a publisher container). | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ folder }` | Restore the archives, or delete the folder. |
 | `FolderNameMismatch` | warning | The series folder's name disagrees with the dominant ComicInfo `<Series>` of its non-special archives (spec §7.1 — ComicInfo still wins for the series name). See "Folder consistency checks" below for the normalization that keeps this quiet on healthy libraries. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs), called from `process_planned_folder` after ingest | `{ folder, series_id, comic_info_series, files }` | Rename the folder, or re-tag the archives if the folder is right. |
 | `MixedSeriesInFolder` | warning | Non-special archives in one series folder carry more than one distinct `<Series>` (spec §7.2). All files stay attributed to the folder's series. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs) | `{ folder, series_id, series_values: [{ series, files, example }], distinct_values }` — values sorted most-files-first, capped at `MIXED_SERIES_VALUES_LIMIT` = 10; `example` is one file (relative to the folder) carrying the value. | Move the stray archives into their own series folder. |
@@ -1298,7 +1298,14 @@ A library scan whose reconcile soft-removes an unusually large part of
 the library raises a `LargeRemoval` health finding (warning) and one
 `health` / `removed` library event (warning, `entity` = the library,
 `detail` = the same numbers and folders). Nothing is held back: no new
-state, no confirmation step.
+state, no confirmation step. That is why it warns: the confirm and purge
+sweeps refuse only a library whose **root** fails `validate_library`, so
+the rows of a *nested* share that stays unmounted are confirmed after
+`soft_delete_days` and purged `soft_delete_days ×
+library.hard_purge_multiplier` days later (~90 days in all with the
+defaults), with their progress, markers, ratings and collection entries;
+a file that returns after the purge is a new issue with no read state.
+Inside that window a returning file restores the row with its read state.
 
 - **Measured.** The reconcile stamps one `removed_at` on every issue and
   series it soft-removes in a pass (`ScanStats::removal_stamp`,
@@ -1315,22 +1322,35 @@ state, no confirmation step.
 - **Scopes.** Full and watcher-scoped library scans, both measured
   against the whole library. Per-series and single-issue scans never
   raise it (one folder the admin pointed at; its removals are expected).
-  A cancelled or superseded scan, a reconcile that failed or stopped, and
-  a scan refused by `validate_library` never reach the check.
+  A scan cancelled or superseded before its reconcile, a reconcile that
+  failed or stopped, and a scan refused by `validate_library` never
+  reach the check. The check runs as soon as the reconcile returns, before
+  the scan's next lease / cancel check, so a run superseded right after
+  a completed reconcile still reports the removal it wrote.
 - **Cost.** Zero queries unless the run's own counters reach a floor;
   then one counting statement and one grouped per-top-level-folder
-  statement. `finalize` adds one indexed lookup of the open row per scan,
-  and one counting statement while a row is open.
+  statement. `finalize` adds one indexed lookup of the open row per scan
+  and, only while a row is open (dismissed included), one statement that
+  counts the issues and series still carrying the stamp
+  (`large_removal::stamped_counts`): two range reads of the partial
+  `(library_id, removed_at)` indexes, bounded by that removal's size. It
+  never counts the library's active rows; the totals come from the
+  payload.
 - **Payload.** The run id, the stamp, issue and series counts and totals,
   up to `TOP_FOLDERS_LIMIT` (5) top-level folders (relative to the root:
   in the publisher layout that is the publisher folder) with their
   removed-issue counts, and `folder_count`. No server path, and no `path`
   key, so the reader's per-issue health list never matches it.
-- **Stays / resolves.** Every scan re-checks the open row: while the rows
-  carrying the stamp would still cross the threshold, the row stays open
+- **Stays / resolves.** Every scan (any scope) re-checks the open row:
+  while the rows carrying the stamp would still cross the threshold
+  against the `issues_total` / `series_total` recorded when it was raised
+  (fixed, so new content imported meanwhile does not dilute the share and
+  close it), the row stays open
   (`last_seen_at` moves, `scan_id` stays on the removal run, so that run's
   `health_issue_count` keeps counting it). Once enough of them are back
-  (restored by any scan) or purged, it resolves. A quiet scan never closes
+  (restored by any scan) or purged (settled at the next scan's finalize;
+  the purge job itself does not touch health rows), it resolves. A quiet
+  scan never closes
   it. Dismissal sticks across those scans; a *new* crossing re-opens the
   same row with the new run's numbers and clears the dismissal (a newer
   crossing replaces the older numbers; the older rows stay on the Removed
