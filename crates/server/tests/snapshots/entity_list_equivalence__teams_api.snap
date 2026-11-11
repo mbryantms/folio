@@ -1,0 +1,6256 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: api
+---
+{
+  "admin /api/teams": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000008",
+          "issue_count": 0,
+          "name": "Hidden Rollup",
+          "series_count": 1,
+          "slug": "hidden-rollup"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000002",
+          "issue_count": 1,
+          "name": "Joker",
+          "series_count": 1,
+          "slug": "joker"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 23
+    }
+  ],
+  "admin /api/teams?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "admin /api/teams?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": "WyIxMDAlIHB1cmUiLCJwZXJjZW50Il0",
+      "total": 23
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": "WyJfdW5kZXJzY29yZSIsInVuZGVyc2NvcmUiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": "WyJiYXRtYW4iLCJiYXRtYW4iXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        }
+      ],
+      "next_cursor": "WyJjZWUgaGVybyIsImNlZS1oZXJvIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbi1sb3dlciJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAxIiwiZmlsbGVyLTAwMSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAyIiwiZmlsbGVyLTAwMiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAzIiwiZmlsbGVyLTAwMyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA0IiwiZmlsbGVyLTAwNCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA1IiwiZmlsbGVyLTAwNSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA2IiwiZmlsbGVyLTAwNiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000008",
+          "issue_count": 0,
+          "name": "Hidden Rollup",
+          "series_count": 1,
+          "slug": "hidden-rollup"
+        }
+      ],
+      "next_cursor": "WyJoaWRkZW4gcm9sbHVwIiwiaGlkZGVuLXJvbGx1cCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000002",
+          "issue_count": 1,
+          "name": "Joker",
+          "series_count": 1,
+          "slug": "joker"
+        }
+      ],
+      "next_cursor": "WyJqb2tlciIsImpva2VyIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgZ3V5IiwibWF0dXJlLWd1eSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        }
+      ],
+      "next_cursor": "WyJyYXRlZCBzZXJpZXMgZ3V5IiwicmF0ZWQtc2VyaWVzLWd1eSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWIiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": "WyJyb2xsdXAgb25seSIsInJvbGx1cC1vbmx5Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": "WyJ6ZWQiLCJ6ZWQiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000008",
+          "issue_count": 0,
+          "name": "Hidden Rollup",
+          "series_count": 1,
+          "slug": "hidden-rollup"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000002",
+          "issue_count": 1,
+          "name": "Joker",
+          "series_count": 1,
+          "slug": "joker"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 23
+    }
+  ],
+  "admin /api/teams?limit=100&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=100&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=100&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/teams?limit=100&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=100&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "admin /api/teams?limit=100&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null,
+      "total": 6
+    }
+  ],
+  "admin /api/teams?limit=100&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/teams?limit=100&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0",
+      "total": 23
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": "WyJiYXRtYW4iLCJiYXRtYW4iXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAxIiwiZmlsbGVyLTAwMSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAzIiwiZmlsbGVyLTAwMyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA1IiwiZmlsbGVyLTAwNSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000008",
+          "issue_count": 0,
+          "name": "Hidden Rollup",
+          "series_count": 1,
+          "slug": "hidden-rollup"
+        }
+      ],
+      "next_cursor": "WyJoaWRkZW4gcm9sbHVwIiwiaGlkZGVuLXJvbGx1cCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000002",
+          "issue_count": 1,
+          "name": "Joker",
+          "series_count": 1,
+          "slug": "joker"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgZ3V5IiwibWF0dXJlLWd1eSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": "WyJ6ZWQiLCJ6ZWQiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=2&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=2&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=2&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/teams?limit=2&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=2&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=2&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAyIiwiZmlsbGVyLTAwMiJd",
+      "total": 6
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA0IiwiZmlsbGVyLTAwNCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=2&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWIiXQ",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWIiXQ",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=2&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        }
+      ],
+      "next_cursor": "WyJjZWUgaGVybyIsImNlZS1oZXJvIl0",
+      "total": 23
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAzIiwiZmlsbGVyLTAwMyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000008",
+          "issue_count": 0,
+          "name": "Hidden Rollup",
+          "series_count": 1,
+          "slug": "hidden-rollup"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000002",
+          "issue_count": 1,
+          "name": "Joker",
+          "series_count": 1,
+          "slug": "joker"
+        }
+      ],
+      "next_cursor": "WyJqb2tlciIsImpva2VyIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=5&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=5&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=5&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/teams?limit=5&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=5&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "admin /api/teams?limit=5&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA1IiwiZmlsbGVyLTAwNSJd",
+      "total": 6
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/teams?limit=5&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/teams?limit=5&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/teams?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 5,
+          "name": "Batman",
+          "series_count": 3,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000068",
+          "issue_count": 1,
+          "name": "Filler 004",
+          "series_count": 1,
+          "slug": "filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000008",
+          "issue_count": 0,
+          "name": "Hidden Rollup",
+          "series_count": 1,
+          "slug": "hidden-rollup"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000002",
+          "issue_count": 1,
+          "name": "Joker",
+          "series_count": 1,
+          "slug": "joker"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 3,
+          "name": "Zed",
+          "series_count": 3,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 23
+    }
+  ],
+  "admin /api/teams?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "capped /api/teams": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 15
+    }
+  ],
+  "capped /api/teams?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "capped /api/teams?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": "WyIxMDAlIHB1cmUiLCJwZXJjZW50Il0",
+      "total": 15
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": "WyJfdW5kZXJzY29yZSIsInVuZGVyc2NvcmUiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": "WyJiYXRtYW4iLCJiYXRtYW4iXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        }
+      ],
+      "next_cursor": "WyJjZWUgaGVybyIsImNlZS1oZXJvIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbi1sb3dlciJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAxIiwiZmlsbGVyLTAwMSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAyIiwiZmlsbGVyLTAwMiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAzIiwiZmlsbGVyLTAwMyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA2IiwiZmlsbGVyLTAwNiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": "WyJ6ZWQiLCJ6ZWQiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/teams?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 15
+    }
+  ],
+  "capped /api/teams?limit=100&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=100&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=100&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=100&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=100&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/teams?limit=100&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/teams?limit=100&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=100&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0",
+      "total": 15
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": "WyJiYXRtYW4iLCJiYXRtYW4iXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAxIiwiZmlsbGVyLTAwMSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAzIiwiZmlsbGVyLTAwMyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": "WyJ6ZWQiLCJ6ZWQiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/teams?limit=2&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=2&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=2&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=2&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=2&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/teams?limit=2&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAyIiwiZmlsbGVyLTAwMiJd",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/teams?limit=2&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=2&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        }
+      ],
+      "next_cursor": "WyJjZWUgaGVybyIsImNlZS1oZXJvIl0",
+      "total": 15
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAzIiwiZmlsbGVyLTAwMyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/teams?limit=5&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=5&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=5&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=5&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=5&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/teams?limit=5&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/teams?limit=5&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/teams?limit=5&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/teams?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 2,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000a",
+          "issue_count": 2,
+          "name": "Cee Hero",
+          "series_count": 1,
+          "slug": "cee-hero"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 2,
+          "name": "elan",
+          "series_count": 2,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 1,
+          "name": "robin",
+          "series_count": 1,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 15
+    }
+  ],
+  "capped /api/teams?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "partial /api/teams": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 19
+    }
+  ],
+  "partial /api/teams?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "partial /api/teams?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": "WyIxMDAlIHB1cmUiLCJwZXJjZW50Il0",
+      "total": 19
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": "WyJfdW5kZXJzY29yZSIsInVuZGVyc2NvcmUiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": "WyJiYXRtYW4iLCJiYXRtYW4iXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbi1sb3dlciJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAxIiwiZmlsbGVyLTAwMSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAyIiwiZmlsbGVyLTAwMiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAzIiwiZmlsbGVyLTAwMyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA1IiwiZmlsbGVyLTAwNSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA2IiwiZmlsbGVyLTAwNiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgZ3V5IiwibWF0dXJlLWd1eSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        }
+      ],
+      "next_cursor": "WyJyYXRlZCBzZXJpZXMgZ3V5IiwicmF0ZWQtc2VyaWVzLWd1eSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWIiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": "WyJyb2xsdXAgb25seSIsInJvbGx1cC1vbmx5Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": "WyJ6ZWQiLCJ6ZWQiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 19
+    }
+  ],
+  "partial /api/teams?limit=100&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=100&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=100&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/teams?limit=100&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=100&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "partial /api/teams?limit=100&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "partial /api/teams?limit=100&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/teams?limit=100&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0",
+      "total": 19
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": "WyJiYXRtYW4iLCJiYXRtYW4iXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbi1sb3dlciJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAyIiwiZmlsbGVyLTAwMiJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA1IiwiZmlsbGVyLTAwNSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgZ3V5IiwibWF0dXJlLWd1eSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": "WyJ6ZWQiLCJ6ZWQiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=2&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=2&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=2&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/teams?limit=2&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=2&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=2&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDAyIiwiZmlsbGVyLTAwMiJd",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA1IiwiZmlsbGVyLTAwNSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=2&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWIiXQ",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        }
+      ],
+      "next_cursor": "WyI0MiBhZ2VudCIsIjQyLWFnZW50Il0",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWEiXQ",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWIiXQ",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=2&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        }
+      ],
+      "next_cursor": "WyJlbGFuIiwiZWxhbiJd",
+      "total": 19
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        }
+      ],
+      "next_cursor": "WyJmaWxsZXIgMDA1IiwiZmlsbGVyLTAwNSJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        }
+      ],
+      "next_cursor": "WyJyb2JpbiIsInJvYmluLWIiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/teams?limit=5&q=%25": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=5&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=5&q=ELAN": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/teams?limit=5&q=_": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=5&q=an": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "partial /api/teams?limit=5&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "partial /api/teams?limit=5&q=rob": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=B": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=a": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=f&q=1": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/teams?limit=5&starts_with=z": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/teams?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000020000015",
+          "issue_count": 1,
+          "name": "100% Pure",
+          "series_count": 1,
+          "slug": "percent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000012",
+          "issue_count": 1,
+          "name": "42 Agent",
+          "series_count": 1,
+          "slug": "42-agent"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000013",
+          "issue_count": 1,
+          "name": "_Underscore",
+          "series_count": 1,
+          "slug": "underscore"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000001",
+          "issue_count": 3,
+          "name": "Batman",
+          "series_count": 1,
+          "slug": "batman"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000010",
+          "issue_count": 1,
+          "name": "Elan",
+          "series_count": 1,
+          "slug": "elan"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000011",
+          "issue_count": 1,
+          "name": "elan",
+          "series_count": 1,
+          "slug": "elan-lower"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000065",
+          "issue_count": 1,
+          "name": "Filler 001",
+          "series_count": 1,
+          "slug": "filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000066",
+          "issue_count": 1,
+          "name": "Filler 002",
+          "series_count": 1,
+          "slug": "filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000067",
+          "issue_count": 1,
+          "name": "Filler 003",
+          "series_count": 1,
+          "slug": "filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000069",
+          "issue_count": 1,
+          "name": "Filler 005",
+          "series_count": 1,
+          "slug": "filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000006a",
+          "issue_count": 1,
+          "name": "Filler 006",
+          "series_count": 1,
+          "slug": "filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000003",
+          "issue_count": 1,
+          "name": "Mature Guy",
+          "series_count": 1,
+          "slug": "mature-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000004",
+          "issue_count": 1,
+          "name": "Rated Series Guy",
+          "series_count": 1,
+          "slug": "rated-series-guy"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000c",
+          "issue_count": 1,
+          "name": "Robin",
+          "series_count": 1,
+          "slug": "robin-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000d",
+          "issue_count": 1,
+          "name": "ROBIN",
+          "series_count": 1,
+          "slug": "robin-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000e",
+          "issue_count": 2,
+          "name": "robin",
+          "series_count": 2,
+          "slug": "robin-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000007",
+          "issue_count": 0,
+          "name": "Rollup Only",
+          "series_count": 1,
+          "slug": "rollup-only"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000020000014",
+          "issue_count": 2,
+          "name": "Zed",
+          "series_count": 2,
+          "slug": "zed"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00002000000f",
+          "issue_count": 1,
+          "name": "Élan",
+          "series_count": 1,
+          "slug": "elan-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 19
+    }
+  ],
+  "partial /api/teams?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  }
+}

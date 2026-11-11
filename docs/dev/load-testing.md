@@ -150,20 +150,61 @@ the whole single-library fixture) and `similar-large-cold |
 series_characters` (the same all-series candidate set as the existing
 `series_tags` entry).
 
-**Entity indexes, flagged and not fixed.** The same change put the A–Z
-indexes on the harness (`characters-*`, `teams-list`, `locations-list`,
-`creators-*`, `people-search` in `endpoints.txt`; `arcs-*` in
-`endpoints-m7.txt`). The characters and creators lists, and the `/people`
-search, seq-scan their whole junctions on every request, the second page
-and the `q` filter included: `issue_characters` (150,000 rows) plus
-`series_characters`, 240–310 ms of SQL per page; `issue_credits`
-(100,000 rows) plus `series_credits`, 150–210 ms. Each request aggregates
-every visible appearance (`WITH hits AS …` over the junction joined to
-`issues` and `series`) before the keyset picks one page, so the cost grows
-with the library rather than the page. That is a query design to change,
-not an expected scan, so the gate stays red on these labels until it is
-fixed. The arcs list (3,127 `issue_arcs` rows) and the empty team and
-location tables stay under the threshold.
+**Entity indexes (P-01, fixed).** The same change put the A–Z indexes on
+the harness (`characters-*`, `teams-list`, `locations-list`, `creators-*`,
+`people-search` in `endpoints.txt`; `arcs-*` in `endpoints-m7.txt`). They
+used to seq-scan their whole junctions on every request, the second page
+and the `q` filter included (`issue_characters`, 150,000 rows, plus
+`series_characters`; `issue_credits`, 100,000 rows, plus `series_credits`):
+each request aggregated every visible appearance (`WITH hits AS …`) before
+the keyset picked one page, so the cost grew with the library. The
+queries now follow the page:
+
+- **Characters / teams / locations / arcs / publishers**
+  (`entity_pages::list_page`, also the OPDS navigation feeds): walk the
+  entity table in `(lower(name), slug)` order (`<table>_name_order_idx`,
+  migration `m20271112_000001`), keep a row when a `CROSS JOIN LATERAL
+  (… LIMIT 1)` over its membership arms finds a visible appearance (FK
+  arm and name-fallback arm separately, each on its own index), stop at
+  `limit + 1`, then count series / issues for those rows only. The probe
+  is a lateral with `LIMIT 1`, not `EXISTS`: with `EXISTS … OR EXISTS …`
+  the planner chose hashed sub-plans that read the junction once per
+  request — the original scan in another form. The first-page `total`
+  probes every entity row that passes the bucket / `q` filter (bounded by
+  the entity table, not the junctions).
+- **Creators** (`/creators`): a skip scan over the distinct credit names
+  (`min(person) WHERE person > $prev` on `issue_credits_person_idx` and
+  `series_credits_person_idx`, two probes per name), the same lateral
+  visibility probe, the roles + count aggregated for the page's names
+  only. `total` walks every distinct name once (cost follows the number of
+  names, not credits).
+- **People search** (`/people`): ranked by similarity, then credit count,
+  so it cannot stop at the page. The candidates are the distinct names
+  from the same walk filtered by the match predicate; each is probed for
+  visibility, and credit counts are aggregated only for names at least as
+  similar as the `limit`-th best visible one.
+
+| label | Σ SQL before | Σ SQL after | pgbench p95 at 16 clients, before → after |
+|---|---:|---:|---:|
+| `characters-list` | 350.0 ms | 23.9 ms | 441 → 47 ms |
+| `characters-page2` | 320.1 ms | 17.8 ms | 371 → 37 ms |
+| `characters-letter` | 344.3 ms | 23.7 ms | 447 → 49 ms |
+| `characters-search` | 316.7 ms | 1.3 ms | 427 → 8 ms |
+| `creators-list` | 179.8 ms | 37.6 ms | 246 → 57 ms |
+| `creators-page2` | 133.2 ms | 24.6 ms | 219 → 42 ms |
+| `creators-letter` | 150.2 ms | 36.8 ms | 578 → 65 ms |
+| `people-search` | 202.1 ms | 49.9 ms | 322 → 91 ms |
+| `arcs-list` | 17.1 ms | 9.4 ms | 28 → 17 ms |
+
+(Single-request SQL time from `summary.md`; the concurrency column replays
+each label's statements, parameters inlined, with `pgbench -c 16 -T 15`
+against the same database, because the harness's `oha` pass cannot load
+these routes: they sit behind the per-user `SEARCH` rate-limit bucket,
+which `COMIC_RATE_LIMIT_ENABLED=false` does not turn off, so nearly every
+`oha` request is a 429.) Equivalence — same rows, order, counts, `total`
+and cursors for an admin, a partially granted reader and a capped
+reader — is pinned by `crates/server/tests/entity_list_equivalence.rs`,
+whose snapshots were recorded against the old queries.
 
 ### Dataset at stress scale
 

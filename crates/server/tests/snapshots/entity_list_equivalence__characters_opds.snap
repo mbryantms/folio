@@ -1,0 +1,2192 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: opds
+---
+{
+  "admin /opds/v1/characters": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"first\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"next\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"last\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000015</id>\n    <title>100% Pure</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/percent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000012</id>\n    <title>42 Agent</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/42-agent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000013</id>\n    <title>_Underscore</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/underscore\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000001</id>\n    <title>Batman</title>\n    \n    <summary>5 issues · 3 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/batman\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000a</id>\n    <title>Cee Hero</title>\n    \n    <summary>2 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/cee-hero\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000010</id>\n    <title>Elan</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000011</id>\n    <title>elan</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan-lower\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000065</id>\n    <title>Filler 001</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-001\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000066</id>\n    <title>Filler 002</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-002\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000067</id>\n    <title>Filler 003</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-003\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000068</id>\n    <title>Filler 004</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-004\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000069</id>\n    <title>Filler 005</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-005\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006a</id>\n    <title>Filler 006</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-006\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006b</id>\n    <title>Filler 007</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-007\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006c</id>\n    <title>Filler 008</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-008\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006d</id>\n    <title>Filler 009</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-009\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006e</id>\n    <title>Filler 010</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-010\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006f</id>\n    <title>Filler 011</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-011\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000070</id>\n    <title>Filler 012</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-012\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000071</id>\n    <title>Filler 013</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-013\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000072</id>\n    <title>Filler 014</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-014\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000073</id>\n    <title>Filler 015</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-015\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000074</id>\n    <title>Filler 016</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-016\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000075</id>\n    <title>Filler 017</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-017\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000076</id>\n    <title>Filler 018</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-018\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000077</id>\n    <title>Filler 019</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-019\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000078</id>\n    <title>Filler 020</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-020\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000079</id>\n    <title>Filler 021</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-021\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007a</id>\n    <title>Filler 022</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-022\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007b</id>\n    <title>Filler 023</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-023\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007c</id>\n    <title>Filler 024</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-024\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007d</id>\n    <title>Filler 025</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-025\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007e</id>\n    <title>Filler 026</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-026\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007f</id>\n    <title>Filler 027</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-027\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000080</id>\n    <title>Filler 028</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-028\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000081</id>\n    <title>Filler 029</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-029\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000082</id>\n    <title>Filler 030</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-030\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000083</id>\n    <title>Filler 031</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-031\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000084</id>\n    <title>Filler 032</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-032\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000085</id>\n    <title>Filler 033</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-033\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000086</id>\n    <title>Filler 034</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-034\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000087</id>\n    <title>Filler 035</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-035\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000088</id>\n    <title>Filler 036</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-036\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000089</id>\n    <title>Filler 037</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-037\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008a</id>\n    <title>Filler 038</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-038\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008b</id>\n    <title>Filler 039</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-039\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008c</id>\n    <title>Filler 040</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-040\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008d</id>\n    <title>Filler 041</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-041\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008e</id>\n    <title>Filler 042</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-042\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008f</id>\n    <title>Filler 043</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-043\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v1/characters?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"first\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"previous\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"last\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000090</id>\n    <title>Filler 044</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-044\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000091</id>\n    <title>Filler 045</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-045\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000092</id>\n    <title>Filler 046</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-046\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000093</id>\n    <title>Filler 047</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-047\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000094</id>\n    <title>Filler 048</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-048\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000095</id>\n    <title>Filler 049</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-049\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000096</id>\n    <title>Filler 050</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-050\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000097</id>\n    <title>Filler 051</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-051\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000098</id>\n    <title>Filler 052</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-052\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000099</id>\n    <title>Filler 053</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-053\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009a</id>\n    <title>Filler 054</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-054\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009b</id>\n    <title>Filler 055</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-055\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009c</id>\n    <title>Filler 056</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-056\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009d</id>\n    <title>Filler 057</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-057\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009e</id>\n    <title>Filler 058</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-058\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009f</id>\n    <title>Filler 059</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-059\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-0000100000a0</id>\n    <title>Filler 060</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-060\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000008</id>\n    <title>Hidden Rollup</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/hidden-rollup\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000002</id>\n    <title>Joker</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/joker\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000003</id>\n    <title>Mature Guy</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/mature-guy\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000004</id>\n    <title>Rated Series Guy</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/rated-series-guy\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000c</id>\n    <title>Robin</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-a\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000d</id>\n    <title>ROBIN</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-b\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000e</id>\n    <title>robin</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-c\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000007</id>\n    <title>Rollup Only</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/rollup-only\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000014</id>\n    <title>Zed</title>\n    \n    <summary>3 issues · 3 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/zed\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000f</id>\n    <title>Élan</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan-accent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v1/characters?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"first\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"previous\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"last\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v2/characters": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "first",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "next",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "last",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 77,
+        "title": "Characters"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/characters/percent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000015",
+            "numberOfItems": 1
+          },
+          "title": "100% Pure",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/42-agent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000012",
+            "numberOfItems": 1
+          },
+          "title": "42 Agent",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/underscore",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000013",
+            "numberOfItems": 1
+          },
+          "title": "_Underscore",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/batman",
+          "metadata": {
+            "description": "5 issues · 3 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000001",
+            "numberOfItems": 5
+          },
+          "title": "Batman",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/cee-hero",
+          "metadata": {
+            "description": "2 issues · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000a",
+            "numberOfItems": 2
+          },
+          "title": "Cee Hero",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000010",
+            "numberOfItems": 1
+          },
+          "title": "Elan",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan-lower",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000011",
+            "numberOfItems": 2
+          },
+          "title": "elan",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-001",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000065",
+            "numberOfItems": 1
+          },
+          "title": "Filler 001",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-002",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000066",
+            "numberOfItems": 1
+          },
+          "title": "Filler 002",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-003",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000067",
+            "numberOfItems": 1
+          },
+          "title": "Filler 003",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-004",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000068",
+            "numberOfItems": 1
+          },
+          "title": "Filler 004",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-005",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000069",
+            "numberOfItems": 1
+          },
+          "title": "Filler 005",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-006",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 006",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-007",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 007",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-008",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006c",
+            "numberOfItems": 1
+          },
+          "title": "Filler 008",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-009",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 009",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-010",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 010",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-011",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 011",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-012",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000070",
+            "numberOfItems": 1
+          },
+          "title": "Filler 012",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-013",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000071",
+            "numberOfItems": 1
+          },
+          "title": "Filler 013",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-014",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000072",
+            "numberOfItems": 1
+          },
+          "title": "Filler 014",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-015",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000073",
+            "numberOfItems": 1
+          },
+          "title": "Filler 015",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-016",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000074",
+            "numberOfItems": 1
+          },
+          "title": "Filler 016",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-017",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000075",
+            "numberOfItems": 1
+          },
+          "title": "Filler 017",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-018",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000076",
+            "numberOfItems": 1
+          },
+          "title": "Filler 018",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-019",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000077",
+            "numberOfItems": 1
+          },
+          "title": "Filler 019",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-020",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000078",
+            "numberOfItems": 1
+          },
+          "title": "Filler 020",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-021",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000079",
+            "numberOfItems": 1
+          },
+          "title": "Filler 021",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-022",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 022",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-023",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 023",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-024",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007c",
+            "numberOfItems": 1
+          },
+          "title": "Filler 024",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-025",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 025",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-026",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 026",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-027",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 027",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-028",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000080",
+            "numberOfItems": 1
+          },
+          "title": "Filler 028",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-029",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000081",
+            "numberOfItems": 1
+          },
+          "title": "Filler 029",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-030",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000082",
+            "numberOfItems": 1
+          },
+          "title": "Filler 030",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-031",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000083",
+            "numberOfItems": 1
+          },
+          "title": "Filler 031",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-032",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000084",
+            "numberOfItems": 1
+          },
+          "title": "Filler 032",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-033",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000085",
+            "numberOfItems": 1
+          },
+          "title": "Filler 033",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-034",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000086",
+            "numberOfItems": 1
+          },
+          "title": "Filler 034",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-035",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000087",
+            "numberOfItems": 1
+          },
+          "title": "Filler 035",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-036",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000088",
+            "numberOfItems": 1
+          },
+          "title": "Filler 036",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-037",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000089",
+            "numberOfItems": 1
+          },
+          "title": "Filler 037",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-038",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 038",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-039",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 039",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-040",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008c",
+            "numberOfItems": 1
+          },
+          "title": "Filler 040",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-041",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 041",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-042",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 042",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-043",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 043",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /opds/v2/characters?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "first",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "previous",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "last",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 77,
+        "title": "Characters"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/characters/filler-044",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000090",
+            "numberOfItems": 1
+          },
+          "title": "Filler 044",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-045",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000091",
+            "numberOfItems": 1
+          },
+          "title": "Filler 045",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-046",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000092",
+            "numberOfItems": 1
+          },
+          "title": "Filler 046",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-047",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000093",
+            "numberOfItems": 1
+          },
+          "title": "Filler 047",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-048",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000094",
+            "numberOfItems": 1
+          },
+          "title": "Filler 048",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-049",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000095",
+            "numberOfItems": 1
+          },
+          "title": "Filler 049",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-050",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000096",
+            "numberOfItems": 1
+          },
+          "title": "Filler 050",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-051",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000097",
+            "numberOfItems": 1
+          },
+          "title": "Filler 051",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-052",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000098",
+            "numberOfItems": 1
+          },
+          "title": "Filler 052",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-053",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000099",
+            "numberOfItems": 1
+          },
+          "title": "Filler 053",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-054",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 054",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-055",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 055",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-056",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009c",
+            "numberOfItems": 1
+          },
+          "title": "Filler 056",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-057",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 057",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-058",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 058",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-059",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 059",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-060",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-0000100000a0",
+            "numberOfItems": 1
+          },
+          "title": "Filler 060",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/hidden-rollup",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000008",
+            "numberOfItems": 0
+          },
+          "title": "Hidden Rollup",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/joker",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000002",
+            "numberOfItems": 1
+          },
+          "title": "Joker",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/mature-guy",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000003",
+            "numberOfItems": 1
+          },
+          "title": "Mature Guy",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/rated-series-guy",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000004",
+            "numberOfItems": 1
+          },
+          "title": "Rated Series Guy",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-a",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000c",
+            "numberOfItems": 1
+          },
+          "title": "Robin",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-b",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000d",
+            "numberOfItems": 1
+          },
+          "title": "ROBIN",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-c",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000e",
+            "numberOfItems": 2
+          },
+          "title": "robin",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/rollup-only",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000007",
+            "numberOfItems": 0
+          },
+          "title": "Rollup Only",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/zed",
+          "metadata": {
+            "description": "3 issues · 3 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000014",
+            "numberOfItems": 3
+          },
+          "title": "Zed",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan-accent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000f",
+            "numberOfItems": 1
+          },
+          "title": "Élan",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /opds/v2/characters?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "first",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "previous",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "last",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 77,
+        "title": "Characters"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "capped /opds/v1/characters": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000015</id>\n    <title>100% Pure</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/percent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000012</id>\n    <title>42 Agent</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/42-agent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000013</id>\n    <title>_Underscore</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/underscore\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000001</id>\n    <title>Batman</title>\n    \n    <summary>3 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/batman\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000a</id>\n    <title>Cee Hero</title>\n    \n    <summary>2 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/cee-hero\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000010</id>\n    <title>Elan</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000011</id>\n    <title>elan</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan-lower\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000065</id>\n    <title>Filler 001</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-001\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000066</id>\n    <title>Filler 002</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-002\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000067</id>\n    <title>Filler 003</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-003\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006a</id>\n    <title>Filler 006</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-006\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006b</id>\n    <title>Filler 007</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-007\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006d</id>\n    <title>Filler 009</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-009\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006f</id>\n    <title>Filler 011</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-011\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000071</id>\n    <title>Filler 013</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-013\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000072</id>\n    <title>Filler 014</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-014\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000075</id>\n    <title>Filler 017</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-017\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000076</id>\n    <title>Filler 018</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-018\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000077</id>\n    <title>Filler 019</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-019\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000079</id>\n    <title>Filler 021</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-021\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007a</id>\n    <title>Filler 022</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-022\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007b</id>\n    <title>Filler 023</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-023\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007e</id>\n    <title>Filler 026</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-026\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007f</id>\n    <title>Filler 027</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-027\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000081</id>\n    <title>Filler 029</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-029\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000083</id>\n    <title>Filler 031</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-031\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000085</id>\n    <title>Filler 033</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-033\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000086</id>\n    <title>Filler 034</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-034\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000089</id>\n    <title>Filler 037</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-037\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008a</id>\n    <title>Filler 038</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-038\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008b</id>\n    <title>Filler 039</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-039\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008d</id>\n    <title>Filler 041</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-041\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008e</id>\n    <title>Filler 042</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-042\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008f</id>\n    <title>Filler 043</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-043\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000092</id>\n    <title>Filler 046</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-046\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000093</id>\n    <title>Filler 047</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-047\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000095</id>\n    <title>Filler 049</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-049\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000097</id>\n    <title>Filler 051</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-051\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000099</id>\n    <title>Filler 053</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-053\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009a</id>\n    <title>Filler 054</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-054\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009d</id>\n    <title>Filler 057</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-057\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009e</id>\n    <title>Filler 058</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-058\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009f</id>\n    <title>Filler 059</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-059\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000c</id>\n    <title>Robin</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-a\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000e</id>\n    <title>robin</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-c\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000014</id>\n    <title>Zed</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/zed\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000f</id>\n    <title>Élan</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan-accent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v1/characters?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v1/characters?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v2/characters": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 47,
+        "title": "Characters"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/characters/percent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000015",
+            "numberOfItems": 1
+          },
+          "title": "100% Pure",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/42-agent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000012",
+            "numberOfItems": 1
+          },
+          "title": "42 Agent",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/underscore",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000013",
+            "numberOfItems": 1
+          },
+          "title": "_Underscore",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/batman",
+          "metadata": {
+            "description": "3 issues · 2 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000001",
+            "numberOfItems": 3
+          },
+          "title": "Batman",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/cee-hero",
+          "metadata": {
+            "description": "2 issues · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000a",
+            "numberOfItems": 2
+          },
+          "title": "Cee Hero",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000010",
+            "numberOfItems": 1
+          },
+          "title": "Elan",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan-lower",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000011",
+            "numberOfItems": 2
+          },
+          "title": "elan",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-001",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000065",
+            "numberOfItems": 1
+          },
+          "title": "Filler 001",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-002",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000066",
+            "numberOfItems": 1
+          },
+          "title": "Filler 002",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-003",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000067",
+            "numberOfItems": 1
+          },
+          "title": "Filler 003",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-006",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 006",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-007",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 007",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-009",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 009",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-011",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 011",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-013",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000071",
+            "numberOfItems": 1
+          },
+          "title": "Filler 013",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-014",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000072",
+            "numberOfItems": 1
+          },
+          "title": "Filler 014",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-017",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000075",
+            "numberOfItems": 1
+          },
+          "title": "Filler 017",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-018",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000076",
+            "numberOfItems": 1
+          },
+          "title": "Filler 018",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-019",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000077",
+            "numberOfItems": 1
+          },
+          "title": "Filler 019",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-021",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000079",
+            "numberOfItems": 1
+          },
+          "title": "Filler 021",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-022",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 022",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-023",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 023",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-026",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 026",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-027",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 027",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-029",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000081",
+            "numberOfItems": 1
+          },
+          "title": "Filler 029",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-031",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000083",
+            "numberOfItems": 1
+          },
+          "title": "Filler 031",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-033",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000085",
+            "numberOfItems": 1
+          },
+          "title": "Filler 033",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-034",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000086",
+            "numberOfItems": 1
+          },
+          "title": "Filler 034",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-037",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000089",
+            "numberOfItems": 1
+          },
+          "title": "Filler 037",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-038",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 038",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-039",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 039",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-041",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 041",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-042",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 042",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-043",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 043",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-046",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000092",
+            "numberOfItems": 1
+          },
+          "title": "Filler 046",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-047",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000093",
+            "numberOfItems": 1
+          },
+          "title": "Filler 047",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-049",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000095",
+            "numberOfItems": 1
+          },
+          "title": "Filler 049",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-051",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000097",
+            "numberOfItems": 1
+          },
+          "title": "Filler 051",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-053",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000099",
+            "numberOfItems": 1
+          },
+          "title": "Filler 053",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-054",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 054",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-057",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 057",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-058",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 058",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-059",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 059",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-a",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000c",
+            "numberOfItems": 1
+          },
+          "title": "Robin",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-c",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000e",
+            "numberOfItems": 1
+          },
+          "title": "robin",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/zed",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000014",
+            "numberOfItems": 2
+          },
+          "title": "Zed",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan-accent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000f",
+            "numberOfItems": 1
+          },
+          "title": "Élan",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /opds/v2/characters?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 47,
+        "title": "Characters"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "capped /opds/v2/characters?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 47,
+        "title": "Characters"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "partial /opds/v1/characters": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"first\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"next\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"last\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000015</id>\n    <title>100% Pure</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/percent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000012</id>\n    <title>42 Agent</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/42-agent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000013</id>\n    <title>_Underscore</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/underscore\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000001</id>\n    <title>Batman</title>\n    \n    <summary>3 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/batman\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000010</id>\n    <title>Elan</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000011</id>\n    <title>elan</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan-lower\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000065</id>\n    <title>Filler 001</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-001\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000066</id>\n    <title>Filler 002</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-002\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000067</id>\n    <title>Filler 003</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-003\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000069</id>\n    <title>Filler 005</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-005\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006a</id>\n    <title>Filler 006</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-006\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006b</id>\n    <title>Filler 007</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-007\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006d</id>\n    <title>Filler 009</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-009\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006e</id>\n    <title>Filler 010</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-010\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000006f</id>\n    <title>Filler 011</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-011\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000071</id>\n    <title>Filler 013</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-013\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000072</id>\n    <title>Filler 014</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-014\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000073</id>\n    <title>Filler 015</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-015\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000075</id>\n    <title>Filler 017</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-017\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000076</id>\n    <title>Filler 018</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-018\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000077</id>\n    <title>Filler 019</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-019\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000079</id>\n    <title>Filler 021</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-021\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007a</id>\n    <title>Filler 022</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-022\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007b</id>\n    <title>Filler 023</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-023\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007d</id>\n    <title>Filler 025</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-025\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007e</id>\n    <title>Filler 026</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-026\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000007f</id>\n    <title>Filler 027</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-027\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000081</id>\n    <title>Filler 029</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-029\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000082</id>\n    <title>Filler 030</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-030\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000083</id>\n    <title>Filler 031</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-031\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000085</id>\n    <title>Filler 033</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-033\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000086</id>\n    <title>Filler 034</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-034\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000087</id>\n    <title>Filler 035</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-035\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000089</id>\n    <title>Filler 037</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-037\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008a</id>\n    <title>Filler 038</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-038\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008b</id>\n    <title>Filler 039</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-039\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008d</id>\n    <title>Filler 041</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-041\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008e</id>\n    <title>Filler 042</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-042\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000008f</id>\n    <title>Filler 043</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-043\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000091</id>\n    <title>Filler 045</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-045\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000092</id>\n    <title>Filler 046</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-046\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000093</id>\n    <title>Filler 047</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-047\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000095</id>\n    <title>Filler 049</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-049\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000096</id>\n    <title>Filler 050</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-050\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000097</id>\n    <title>Filler 051</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-051\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000099</id>\n    <title>Filler 053</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-053\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009a</id>\n    <title>Filler 054</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-054\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009b</id>\n    <title>Filler 055</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-055\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009d</id>\n    <title>Filler 057</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-057\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009e</id>\n    <title>Filler 058</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-058\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v1/characters?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"first\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"previous\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"last\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000009f</id>\n    <title>Filler 059</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/filler-059\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000003</id>\n    <title>Mature Guy</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/mature-guy\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000004</id>\n    <title>Rated Series Guy</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/rated-series-guy\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000c</id>\n    <title>Robin</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-a\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000d</id>\n    <title>ROBIN</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-b\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000e</id>\n    <title>robin</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/robin-c\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000007</id>\n    <title>Rollup Only</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/rollup-only\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-000010000014</id>\n    <title>Zed</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/zed\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:characters:01940000-0000-7000-8000-00001000000f</id>\n    <title>Élan</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/characters/elan-accent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v1/characters?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:characters</id>\n  <title>Characters</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/characters?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"first\" href=\"/opds/v1/characters?page=1\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"previous\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  <link rel=\"last\" href=\"/opds/v1/characters?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v2/characters": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "first",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "next",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "last",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 59,
+        "title": "Characters"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/characters/percent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000015",
+            "numberOfItems": 1
+          },
+          "title": "100% Pure",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/42-agent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000012",
+            "numberOfItems": 1
+          },
+          "title": "42 Agent",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/underscore",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000013",
+            "numberOfItems": 1
+          },
+          "title": "_Underscore",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/batman",
+          "metadata": {
+            "description": "3 issues · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000001",
+            "numberOfItems": 3
+          },
+          "title": "Batman",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000010",
+            "numberOfItems": 1
+          },
+          "title": "Elan",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan-lower",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000011",
+            "numberOfItems": 1
+          },
+          "title": "elan",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-001",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000065",
+            "numberOfItems": 1
+          },
+          "title": "Filler 001",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-002",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000066",
+            "numberOfItems": 1
+          },
+          "title": "Filler 002",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-003",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000067",
+            "numberOfItems": 1
+          },
+          "title": "Filler 003",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-005",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000069",
+            "numberOfItems": 1
+          },
+          "title": "Filler 005",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-006",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 006",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-007",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 007",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-009",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 009",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-010",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 010",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-011",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000006f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 011",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-013",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000071",
+            "numberOfItems": 1
+          },
+          "title": "Filler 013",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-014",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000072",
+            "numberOfItems": 1
+          },
+          "title": "Filler 014",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-015",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000073",
+            "numberOfItems": 1
+          },
+          "title": "Filler 015",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-017",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000075",
+            "numberOfItems": 1
+          },
+          "title": "Filler 017",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-018",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000076",
+            "numberOfItems": 1
+          },
+          "title": "Filler 018",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-019",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000077",
+            "numberOfItems": 1
+          },
+          "title": "Filler 019",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-021",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000079",
+            "numberOfItems": 1
+          },
+          "title": "Filler 021",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-022",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 022",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-023",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 023",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-025",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 025",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-026",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 026",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-027",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000007f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 027",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-029",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000081",
+            "numberOfItems": 1
+          },
+          "title": "Filler 029",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-030",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000082",
+            "numberOfItems": 1
+          },
+          "title": "Filler 030",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-031",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000083",
+            "numberOfItems": 1
+          },
+          "title": "Filler 031",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-033",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000085",
+            "numberOfItems": 1
+          },
+          "title": "Filler 033",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-034",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000086",
+            "numberOfItems": 1
+          },
+          "title": "Filler 034",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-035",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000087",
+            "numberOfItems": 1
+          },
+          "title": "Filler 035",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-037",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000089",
+            "numberOfItems": 1
+          },
+          "title": "Filler 037",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-038",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 038",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-039",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 039",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-041",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 041",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-042",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 042",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-043",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000008f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 043",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-045",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000091",
+            "numberOfItems": 1
+          },
+          "title": "Filler 045",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-046",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000092",
+            "numberOfItems": 1
+          },
+          "title": "Filler 046",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-047",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000093",
+            "numberOfItems": 1
+          },
+          "title": "Filler 047",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-049",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000095",
+            "numberOfItems": 1
+          },
+          "title": "Filler 049",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-050",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000096",
+            "numberOfItems": 1
+          },
+          "title": "Filler 050",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-051",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000097",
+            "numberOfItems": 1
+          },
+          "title": "Filler 051",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-053",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000099",
+            "numberOfItems": 1
+          },
+          "title": "Filler 053",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-054",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009a",
+            "numberOfItems": 1
+          },
+          "title": "Filler 054",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-055",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009b",
+            "numberOfItems": 1
+          },
+          "title": "Filler 055",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-057",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009d",
+            "numberOfItems": 1
+          },
+          "title": "Filler 057",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/filler-058",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009e",
+            "numberOfItems": 1
+          },
+          "title": "Filler 058",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /opds/v2/characters?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "first",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "previous",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "last",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 59,
+        "title": "Characters"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/characters/filler-059",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000009f",
+            "numberOfItems": 1
+          },
+          "title": "Filler 059",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/mature-guy",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000003",
+            "numberOfItems": 1
+          },
+          "title": "Mature Guy",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/rated-series-guy",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000004",
+            "numberOfItems": 1
+          },
+          "title": "Rated Series Guy",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-a",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000c",
+            "numberOfItems": 1
+          },
+          "title": "Robin",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-b",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000d",
+            "numberOfItems": 1
+          },
+          "title": "ROBIN",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/robin-c",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000e",
+            "numberOfItems": 2
+          },
+          "title": "robin",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/rollup-only",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000007",
+            "numberOfItems": 0
+          },
+          "title": "Rollup Only",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/zed",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-000010000014",
+            "numberOfItems": 2
+          },
+          "title": "Zed",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters/elan-accent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:characters:01940000-0000-7000-8000-00001000000f",
+            "numberOfItems": 1
+          },
+          "title": "Élan",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /opds/v2/characters?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/characters?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=1",
+          "rel": "first",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "previous",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/characters?page=2",
+          "rel": "last",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:characters",
+        "itemsPerPage": 50,
+        "numberOfItems": 59,
+        "title": "Characters"
+      },
+      "navigation": []
+    },
+    "status": 200
+  }
+}

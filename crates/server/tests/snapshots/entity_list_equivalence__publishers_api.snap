@@ -1,0 +1,1634 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: api
+---
+{
+  "admin /api/publishers": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/publishers?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "admin /api/publishers?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        }
+      ],
+      "next_cursor": "WyJhY21lIHByZXNzIiwiYWNtZS1wcmVzcyJd",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": "WyJhZHVsdCBwcmVzcyIsImFkdWx0LXByZXNzIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/publishers?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/publishers?limit=100&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=100&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": "WyJhZHVsdCBwcmVzcyIsImFkdWx0LXByZXNzIl0",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/publishers?limit=2&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=2&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/publishers?limit=5&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=5&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/publishers?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 6,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/publishers?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "capped /api/publishers": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/publishers?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "capped /api/publishers?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        }
+      ],
+      "next_cursor": "WyJhY21lIHByZXNzIiwiYWNtZS1wcmVzcyJd",
+      "total": 2
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/publishers?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/publishers?limit=100&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=100&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/publishers?limit=2&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=2&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/publishers?limit=5&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=5&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/publishers?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 5,
+          "name": "Acme Press",
+          "series_count": 2,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/publishers?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "partial /api/publishers": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/publishers?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "partial /api/publishers?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        }
+      ],
+      "next_cursor": "WyJhY21lIHByZXNzIiwiYWNtZS1wcmVzcyJd",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": "WyJhZHVsdCBwcmVzcyIsImFkdWx0LXByZXNzIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/publishers?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/publishers?limit=100&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=100&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": "WyJhZHVsdCBwcmVzcyIsImFkdWx0LXByZXNzIl0",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/publishers?limit=2&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=2&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/publishers?limit=5&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&q=%C3%A9": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&q=filler%2000": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=%23": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=e": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=5&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/publishers?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000050000001",
+          "issue_count": 4,
+          "name": "Acme Press",
+          "series_count": 1,
+          "slug": "acme-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000002",
+          "issue_count": 2,
+          "name": "Adult Press",
+          "series_count": 1,
+          "slug": "adult-press"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000050000007",
+          "issue_count": 0,
+          "name": "FK Only Press",
+          "series_count": 1,
+          "slug": "fk-only-press"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/publishers?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  }
+}
