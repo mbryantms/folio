@@ -13,6 +13,7 @@ import {
   downloadPageUrl,
   estimateIssueBytes,
   foldProgress,
+  MAX_RATE_LIMIT_RETRIES,
   resolveOfflineResume,
   trackOutboxProgress,
   type DownloadManager,
@@ -78,6 +79,7 @@ function manager(
     concurrency?: number;
     online?: () => boolean;
     freshSession?: () => Promise<void>;
+    sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   } = {},
 ): DownloadManager {
   return createDownloadManager({
@@ -96,6 +98,7 @@ function manager(
     pageConcurrency: opts.concurrency ?? 1,
     online: opts.online ?? (() => true),
     freshSession: opts.freshSession ?? (async () => {}),
+    sleep: opts.sleep ?? (async () => {}),
     storage: {
       persisted: vi.fn().mockResolvedValue(false),
       persist: vi.fn().mockResolvedValue(true),
@@ -158,6 +161,58 @@ describe("issue download", () => {
     expect(record.status).not.toBe("complete");
     const page = "/issues/r2/pages/0?w=1080";
     expect(fetched.filter((u) => u === page)).toHaveLength(2);
+  });
+
+  it("waits out a 429 and retries the same asset", async () => {
+    const waits: number[] = [];
+    const attempts = new Map<string, number>();
+    const m = manager({
+      concurrency: 3,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+      fetch: async (url) => {
+        const n = (attempts.get(url) ?? 0) + 1;
+        attempts.set(url, n);
+        // The page bucket is empty for the first two tries of page 1.
+        return url === "/issues/t1/pages/1?w=1080" && n <= 2
+          ? new Response("", {
+              status: 429,
+              headers: { "retry-after": n === 1 ? "3" : "120" },
+            })
+          : image();
+      },
+    });
+    await m.setAccount("alice");
+    await m.downloadIssue(issue("t1", 3), 1080);
+    const record = await settled(m, "t1");
+    expect(record.status).toBe("complete");
+    expect(record.error).toBeNull();
+    expect(attempts.get("/issues/t1/pages/1?w=1080")).toBe(3);
+    // Retry-After in seconds, capped at 30 s.
+    expect(waits).toEqual([3000, 30_000]);
+  });
+
+  it("gives up after a bounded run of 429s without stopping the queue", async () => {
+    const m = manager({
+      fetch: async (url) =>
+        url.startsWith("/issues/t2/")
+          ? new Response("", { status: 429, headers: { "retry-after": "1" } })
+          : image(),
+    });
+    await m.setAccount("alice");
+    await m.downloadIssue(issue("t2", 1), 1080);
+    await m.downloadIssue(issue("t3", 1), 1080);
+    const failed = await settled(m, "t2");
+    expect(failed.status).toBe("error");
+    expect(failed.error).toBe("network");
+    expect(failed.errorMessage).toMatch(/slow down/);
+    const page = "/issues/t2/pages/0?w=1080";
+    expect(fetched.filter((u) => u === page)).toHaveLength(
+      MAX_RATE_LIMIT_RETRIES + 1,
+    );
+    // The next issue in the queue still downloads.
+    expect((await settled(m, "t3")).status).toBe("complete");
   });
 
   it("stores every page at the chosen tier under canonical keys", async () => {

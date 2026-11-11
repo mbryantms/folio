@@ -14,7 +14,14 @@ vi.mock("@/lib/api/session-refresh", () => ({
   ensureFreshSession: () => ensureFreshSession(),
 }));
 
+// A 429's Retry-After wait, shortened so the tests run in real time.
+const retryAfterMs = vi.fn((_value: string | null) => 5);
+vi.mock("@/lib/api/retry-after", () => ({
+  retryAfterMs: (value: string | null) => retryAfterMs(value),
+}));
+
 import {
+  MAX_PAGE_RATE_LIMIT_WAITS,
   PageImage,
   retryTopPx,
 } from "@/app/[locale]/read/[seriesSlug]/[issueSlug]/PageImage";
@@ -35,6 +42,7 @@ const retry = () =>
 afterEach(() => {
   vi.restoreAllMocks();
   ensureFreshSession.mockClear();
+  retryAfterMs.mockClear();
 });
 
 describe("PageImage load failure", () => {
@@ -158,6 +166,63 @@ describe("PageImage for a page that is gone", () => {
     fireEvent.error(img());
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
     expect(retry()).not.toBeNull();
+  });
+});
+
+describe("PageImage when the server asks to slow down", () => {
+  const limited = () =>
+    new Response(null, { status: 429, headers: { "retry-after": "2" } });
+
+  it("a 429 waits for Retry-After and loads again, keeping the silent retry", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => limited());
+    const { img } = page();
+    fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
+    fireEvent.error(img());
+    // The probe saw the 429: back to loading, then a re-request.
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=2`));
+    expect(retryAfterMs).toHaveBeenCalledWith("2");
+    expect(retry()).toBeNull();
+    // The immediate silent retry was handed back: the next failure uses
+    // it without a probe.
+    const probes = vi.mocked(globalThis.fetch).mock.calls.length;
+    fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=3`));
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(probes);
+    expect(retry()).toBeNull();
+  });
+
+  it("stops waiting after a bounded number of 429s and offers the retry", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => limited());
+    const { img } = page();
+    let r = 0;
+    for (let wait = 0; wait < MAX_PAGE_RATE_LIMIT_WAITS; wait++) {
+      fireEvent.error(img());
+      r += 1;
+      await waitFor(() =>
+        expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`),
+      );
+      fireEvent.error(img());
+      r += 1;
+      await waitFor(() =>
+        expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`),
+      );
+    }
+    fireEvent.error(img());
+    r += 1;
+    await waitFor(() =>
+      expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`),
+    );
+    fireEvent.error(img());
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledTimes(
+        MAX_PAGE_RATE_LIMIT_WAITS + 1,
+      ),
+    );
+    // Past the bound the failure stays shown, nothing re-requests.
+    await new Promise((res) => setTimeout(res, 30));
+    expect(retry()).not.toBeNull();
+    expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`);
   });
 });
 

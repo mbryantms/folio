@@ -46,6 +46,7 @@ import type {
   PageOverridesView,
 } from "@/lib/api/types";
 import { PROGRESS_OUTBOX_KIND } from "@/lib/reader/progress-writer";
+import { retryAfterMs, sleep as sleepFor } from "@/lib/api/retry-after";
 import { pageBytesUrl, pageVariantUrl, withContentVersion } from "@/lib/urls";
 
 import type { Outbox } from "./outbox";
@@ -227,7 +228,14 @@ export type DownloadManagerDeps = {
   /** Renew a lapsed access token before re-fetching an asset that got 401
    *  (`ensureFreshSession`). */
   freshSession?: () => Promise<void>;
+  /** Wait between 429 retries (tests pass an instant one). */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 };
+
+/** Consecutive 429s one asset may get before the download fails the way
+ *  any other server error does. Each wait follows `Retry-After` (1–30 s),
+ *  so a misconfigured server costs at most a few minutes, never a spin. */
+export const MAX_RATE_LIMIT_RETRIES = 8;
 
 const STRIP_THUMB_BYTES = 15_000;
 const UNKNOWN_ORIGINAL_PAGE = 1_200_000;
@@ -345,6 +353,12 @@ function classify(e: unknown): { kind: DownloadErrorKind; message: string } {
         message:
           "This issue's file needs converting to CBZ before it can be downloaded.",
       };
+    if (e.status === 429)
+      return {
+        kind: "network",
+        message:
+          "The server kept asking to slow down. Retry the download later.",
+      };
     if (e.status === 401 || e.status === 403)
       return {
         kind: "network",
@@ -408,6 +422,7 @@ export function createDownloadManager(
       await ensureFreshSession();
     });
   const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? sleepFor;
   const pageConcurrency = deps.pageConcurrency ?? 3;
   const isOnline = deps.online ?? (() => globalThis.navigator?.onLine ?? true);
   const storage = () => deps.storage ?? globalThis.navigator?.storage;
@@ -534,13 +549,28 @@ export function createDownloadManager(
       signal,
       priority: "low",
     } as RequestInit;
-    let res = await doFetch(url, init);
+    // A 429 is the server's page / thumbnail bucket, not a failure: wait
+    // for its `Retry-After` and fetch the same asset again, keeping this
+    // worker's slot (concurrency is unchanged). Bounded per asset.
+    const fetchPaced = async () => {
+      let res = await doFetch(url, init);
+      for (
+        let tries = 0;
+        res.status === 429 && tries < MAX_RATE_LIMIT_RETRIES;
+        tries++
+      ) {
+        await sleep(retryAfterMs(res.headers.get("retry-after")), signal);
+        res = await doFetch(url, init);
+      }
+      return res;
+    };
+    let res = await fetchPaced();
     if (res.status === 401) {
       // Page bytes are cookie-authed and bypass `apiFetch`'s refresh:
       // renew the session, then try this asset once more.
       await freshSession();
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      res = await doFetch(url, init);
+      res = await fetchPaced();
     }
     if (!res.ok) {
       if (required) throw new HttpStatusError(res.status);
@@ -716,8 +746,12 @@ export function createDownloadManager(
               errorMessage: message,
             });
             if (failed) fire({ type: "error", record: failed });
-            // A dropped connection stops the queue until `online`.
-            if (kind === "network") break;
+            // A dropped connection stops the queue until `online`. A
+            // download that ran out of 429 retries fails alone: the next
+            // issue still starts (the server is up, only busy).
+            const rateLimited =
+              e instanceof HttpStatusError && e.status === 429;
+            if (kind === "network" && !rateLimited) break;
           }
         } finally {
           active = null;
