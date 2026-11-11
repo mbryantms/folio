@@ -226,26 +226,67 @@ Early Childhood < Everyone < G < Everyone 10+ < PG < Kids to Adults < Teen
   < MA15+ < Mature 17+ < M < R18+ < Adults Only 18+ < X18+
 ```
 
-Comparison is case-insensitive and ignores surrounding whitespace. The
-admin API validates a cap against the ladder (422 otherwise) and stores
-the canonical spelling.
+Comparison is case-insensitive and ignores surrounding ASCII whitespace
+(space, tab, line feed, carriage return, form feed, vertical tab; the
+Rust `RATING_TRIM` and the SQL `btrim` strip the same set). The admin API
+validates a cap against the ladder (422 otherwise) and stores the
+canonical spelling.
+
+**Aliases.** Metron rates with its own words. `Everyone` and `Teen` are
+already rungs; the others rank as a rung wherever ratings are compared
+(cap checks, the SQL lists, the series derivation), while the stored
+text is left as it is:
+
+| Metron word | ranks as |
+|---|---|
+| `Teen Plus` | `MA15+` (the rung just above `Teen`) |
+| `Mature` | `Mature 17+` |
+| `Adult` | `Adults Only 18+` |
+| `Explicit` | `X18+` |
+
+The vocabularies that reach `age_rating`: ComicInfo uses the ladder;
+MetronInfo and the Metron API use the words above; the GCD provider maps
+its ratings onto ladder words; ComicVine carries no rating; `series.json`
+is free text and ranks only when it uses a ladder word or an alias. An
+alias is not a valid cap.
+
+Edits validate the value: the issue PATCH, the bulk-metadata PATCH and
+the series PATCH accept a ladder rung, an alias, `Unknown` /
+`Rating Pending`, or blank / `null` (clear), and answer 422 with the
+field error "not a recognised age rating" otherwise. Values already
+stored are not re-checked.
 
 ### How a series is rated
 
-A series' `age_rating` is derived from its issues: it is the
-highest-ranked rating among the series' active, not-removed issues
-(`library::series_rating`), stored in the ladder's canonical spelling. A
-rating that is not on the ladder ranks as unrated and never raises the
-result; a series none of whose issues carries a ladder rating is unrated
-(`NULL`). The value is recomputed by the scanner's per-series rollup and
-whenever an issue's rating or a series' set of active issues changes
-(issue edits, bulk metadata, a provider apply, soft-removal and restore).
+A series' `age_rating` is derived: it is the highest-ranked rating among
+the series' active, not-removed issues **and the rating its folder's
+`series.json` declares** (`library::series_rating`), stored in the
+ladder's canonical spelling. The declared rating is a floor: the scanner
+records it in `series.declared_age_rating` on every scan that reads the
+folder, so a `series.json` that says `Mature 17+` keeps the series at
+least `Mature 17+` even when its issues are unrated or rated lower, and
+an issue rated above the declared value raises the series. A
+`series.json` that is removed, or loses its rating, clears the floor at
+the next scan; one that exists but cannot be read leaves it unchanged.
+Every library scan reads every folder's `series.json`, folders whose
+files are unchanged included. The upgrade migration never lowers a
+rating and holds a stored rating that ranks above every issue as a
+provisional floor until that first scan. A
+rating that ranks nowhere (off-ladder text) never raises the result; a
+series with nothing that ranks is unrated (`NULL`). The value is
+recomputed by the scanner's per-series rollup, when the declared rating
+changes, and whenever an issue's rating or a series' set of active
+issues changes (issue edits, bulk metadata, a provider apply,
+soft-removal and restore).
 
-A rating set on the series by a person (series edit) or by a metadata
-provider is kept: a `field_provenance` row for the series field
-`age_rating` whose `set_by` is not a file-tier code protects it
-(`metadata::writers::is_file_tier_set_by`, user > provider > file). An
-admin overrides a series' rating by setting it on the series.
+A rating set on the series by a person (series edit) is kept: a
+`field_provenance` row for the series field `age_rating` whose `set_by`
+is not a file-tier code protects it (`metadata::writers::is_file_tier_set_by`,
+user > provider > file; no metadata provider writes a series rating
+today). An admin holds a series' rating by setting it on the series.
+Clearing the rating in the series edit (`age_rating: null`) removes that
+`user` pin and re-derives the rating in the same transaction, so the
+series returns to its derived value.
 
 ### What a capped user sees
 
@@ -262,8 +303,8 @@ admin overrides a series' rating by setting it on the series.
   `NULL`, empty, `Unknown`, `Rating Pending` and any string not on the
   ladder all pass. Only rows whose rating is a known rung *above* the cap
   are hidden, so the SQL predicate is `rating IS NULL OR
-  lower(btrim(rating)) NOT IN (<rungs above the cap>)`, never an
-  allow-list.
+  lower(btrim(rating, <trim set>)) NOT IN (<rungs and aliases above the
+  cap>)`, never an allow-list.
 - **Hide unrated** (`library_user_access.hide_unrated`, per grant, off by
   default): when on, a series with no ladder rating is hidden from that
   user exactly as if it ranked above the cap, and with it all its issues.
@@ -282,8 +323,11 @@ once per request by `access::for_user`, with each grant's cap and
 `issue_filter()` / `issue_cap_condition()` for sea-orm queries,
 `raw_cap_clause()` (series rows) and `issue_cap_sql_joined()` /
 `issue_cap_sql()` (issue rows) for hand-written SQL, and `series_ok()` /
-`issue_ok()` / `access::issue_visible()` for single rows. Every issue
-predicate includes the series condition. A caller whose grants hide
+`issue_ok()` / `access::issue_visible()` for single rows (lists go
+through `access::filter_issues`, one parent-rating query per batch). Every
+issue predicate includes the series condition. A series rating that could
+not be read (lookup failure, series row missing) counts as hidden wherever
+the grant hides anything (`VisibleLibraries::issue_ok_lookup`). A caller whose grants hide
 nothing gets no predicate at all, so its SQL is unchanged. Every surface
 that consults the library ACL applies it:
 
@@ -346,7 +390,8 @@ unchanged.
 
 Regression suite: `crates/server/tests/age_rating_cap.rs` (a `Teen`-capped
 user against `Teen` / `Mature 17+` / unrated series, an issue-level
-override, a series rated above its issues, the derived series rating and
+override, a series rated above its issues, the derived series rating with
+its `series.json` floor, the upgrade rule, Metron's words and
 `hide_unrated`) and the unit tests in `library/age_rating.rs` /
 `library/access.rs` / `library/series_rating.rs`.
 

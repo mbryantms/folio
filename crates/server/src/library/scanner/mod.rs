@@ -1943,17 +1943,15 @@ async fn run_issue_phase(
     let rollup_started = Instant::now();
     metadata_rollup::rollup_series_metadata_best_effort(&state.db, row.series_id).await;
     stats.record_phase("metadata_rollup", rollup_started.elapsed());
-    let sidecar = match series::Entity::find_by_id(row.series_id)
+    let parent_folder = series::Entity::find_by_id(row.series_id)
         .one(&state.db)
         .await?
-    {
-        Some(parent) => parent
-            .folder_path
-            .as_deref()
-            .map(std::path::Path::new)
-            .and_then(process::read_series_json),
-        None => None,
-    };
+        .and_then(|parent| parent.folder_path)
+        .map(PathBuf::from);
+    let sidecar = parent_folder.as_deref().and_then(process::read_series_json);
+    if let Some(folder) = parent_folder.as_deref() {
+        write_declared_rating(&state.db, row.series_id, folder, sidecar.as_ref()).await;
+    }
     let reconcile_started = Instant::now();
     if let Err(e) =
         reconcile_status::reconcile_series_status(&state.db, row.series_id, sidecar.as_ref()).await
@@ -2551,6 +2549,30 @@ pub fn spawn_cbl_rematch_all(state: AppState) {
     });
 }
 
+/// Store the rating `series.json` declares as the series' floor
+/// (`series.declared_age_rating`) and re-derive the series rating when it
+/// changed. A sidecar that is gone, or parsed without a rating, clears
+/// the floor; one that exists but could not be read leaves it unchanged
+/// (a transient read or parse failure never lowers a rating).
+/// Best-effort: a failure is logged and the next scan retries.
+async fn write_declared_rating(
+    db: &sea_orm::DatabaseConnection,
+    series_id: Uuid,
+    folder: &std::path::Path,
+    sidecar: Option<&parsers::series_json::SeriesMetadata>,
+) {
+    let declared = match sidecar {
+        Some(meta) => meta.age_rating.as_deref(),
+        None if std::fs::symlink_metadata(folder.join("series.json")).is_ok() => return,
+        None => None,
+    };
+    if let Err(e) =
+        crate::library::series_rating::apply_declared_age_rating(db, series_id, declared).await
+    {
+        tracing::warn!(%series_id, error = %e, "scanner: declared series rating write failed");
+    }
+}
+
 #[expect(clippy::too_many_arguments)]
 async fn process_planned_folder(
     state: &AppState,
@@ -2599,6 +2621,11 @@ async fn process_planned_folder(
     // (or shipped enriched) after the previous scan would never apply
     // to series rows whose folders haven't been touched since.
     let series_json = process::read_series_json(&folder);
+    // The sidecar's rating is the series' declared floor; refreshed on
+    // every scan that reads the folder, skipped or not.
+    if let Some(series_id) = known_series_id {
+        write_declared_rating(&state.db, series_id, &folder, series_json.as_ref()).await;
+    }
 
     if planned.skipped_unchanged {
         stats.series_skipped_unchanged += 1;
@@ -2766,6 +2793,9 @@ async fn process_planned_folder(
         resolved.id()
     };
     stats.record_phase_parallel("identity", identity_started.elapsed());
+    if known_series_id.is_none() {
+        write_declared_rating(&state.db, series_id, &folder, series_json.as_ref()).await;
+    }
 
     // metadata-providers-1.0 M8: detect identifier tags in the series
     // folder name (`[cv-12345]`, `[metron-67890]`, `[gcd-…]`) and

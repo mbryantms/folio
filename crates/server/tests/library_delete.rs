@@ -188,6 +188,7 @@ async fn seed(app: &TestApp) -> (Uuid, String) {
         status: Set("ongoing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("eng".into()),
         sort_name: Set(None),

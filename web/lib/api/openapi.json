@@ -37398,7 +37398,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …);\nblank or null clears it."
           },
           "alternate_series": {
             "type": [
@@ -38002,7 +38003,7 @@
               "string",
               "null"
             ],
-            "description": "ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`."
+            "description": "A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).\n`null` (or blank) clears the pin: the series returns to its\nderived rating."
           },
           "comicvine_id": {
             "type": [

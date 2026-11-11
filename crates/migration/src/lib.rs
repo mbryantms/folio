@@ -156,7 +156,8 @@ mod m20271111_000001_series_rating_from_issues;
 /// The series-rating migration's frozen ladder and statement, exposed so
 /// the server's tests can check they agree with the runtime derivation.
 pub use m20271111_000001_series_rating_from_issues::{
-    AGE_RATING_LADDER, recompute_all_series_age_ratings_sql,
+    AGE_RATING_ALIASES, AGE_RATING_LADDER, provisional_declared_sql,
+    recompute_all_series_age_ratings_sql,
 };
 
 #[derive(Debug)]

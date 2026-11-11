@@ -217,6 +217,7 @@ async fn mk_series(db: &DatabaseConnection, lib_id: Uuid, s: S) -> Uuid {
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set(s.lang.unwrap_or("en").into()),
         sort_name: Set(None),

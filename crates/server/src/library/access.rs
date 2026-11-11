@@ -149,6 +149,23 @@ impl VisibleLibraries {
             && age_rating::passes(issue_rating, self.cap_for(library_id))
     }
 
+    /// [`Self::issue_ok`] when the series rating comes from a lookup that
+    /// may have failed: `parent = None` means the rating could not be
+    /// obtained (lookup error, series row missing). That fails closed —
+    /// hidden whenever this library's grant hides anything — and only
+    /// membership counts where nothing is hidden.
+    pub fn issue_ok_lookup(
+        &self,
+        library_id: Uuid,
+        issue_rating: Option<&str>,
+        parent: Option<Option<&str>>,
+    ) -> bool {
+        match parent {
+            Some(series_rating) => self.issue_ok(library_id, issue_rating, series_rating),
+            None => self.contains(library_id) && !self.hides_in(library_id),
+        }
+    }
+
     /// One rule per library whose grant hides something, sorted by
     /// library id so the SQL text (HashMap order is random) keeps query
     /// plans / logs stable. Empty when nothing is hidden, which is what
@@ -202,11 +219,11 @@ impl VisibleLibraries {
     /// expression:
     ///
     /// ```sql
-    /// (library <> $lib OR rating IS NULL OR lower(btrim(rating)) NOT IN (...))
+    /// (library <> $lib OR rating IS NULL OR lower(btrim(rating, <trim>)) NOT IN (...))
     /// AND ... -- one conjunct per library whose grant hides something
     /// ```
     ///
-    /// (`lower(btrim(rating)) IN (<shown rungs>)` for a grant with
+    /// (`lower(btrim(rating, <trim>)) IN (<shown rungs>)` for a grant with
     /// `hide_unrated`.) `None` when nothing is hidden (no predicate
     /// needed). Membership (`library_id IN allowed`) is *not* included —
     /// pair it with the existing ACL filter, or use [`Self::series_filter`]
@@ -407,7 +424,8 @@ impl VisibleLibraries {
                 params.push(Value::from(rule.hidden.clone()));
                 let rungs_param = params.len();
                 format!(
-                    "({own_expr} IS NULL OR lower(btrim({own_expr})) <> ALL(${rungs_param})) AND "
+                    "({own_expr} IS NULL OR {} <> ALL(${rungs_param})) AND ",
+                    age_rating::sql_norm(own_expr)
                 )
             };
             let series_pass = raw_series_pass(&rule, series_expr, params);
@@ -424,20 +442,31 @@ impl VisibleLibraries {
 fn raw_series_pass(rule: &LibraryRule, rating_expr: &str, params: &mut Vec<Value>) -> String {
     if rule.hide_unrated {
         params.push(Value::from(age_rating::shown_ratings(rule.cap.as_deref())));
-        format!("lower(btrim({rating_expr})) = ANY(${})", params.len())
+        format!(
+            "{} = ANY(${})",
+            age_rating::sql_norm(rating_expr),
+            params.len()
+        )
     } else {
         params.push(Value::from(rule.hidden.clone()));
         format!(
-            "{rating_expr} IS NULL OR lower(btrim({rating_expr})) <> ALL(${})",
+            "{rating_expr} IS NULL OR {} <> ALL(${})",
+            age_rating::sql_norm(rating_expr),
             params.len()
         )
     }
 }
 
-/// `lower(btrim(rating))` — the normalisation the ladder applies in
-/// Rust, mirrored in SQL so `mature 17+` and `Mature 17+` rank alike.
+/// `lower(btrim(rating, <trim set>))` — the normalisation the ladder
+/// applies in Rust ([`age_rating::RATING_TRIM`]), mirrored in SQL so
+/// `mature 17+` and `Mature 17+` rank alike.
 fn normalized_rating(rating: SimpleExpr) -> SimpleExpr {
-    Func::lower(Func::cust(BtrimFn).arg(rating)).into()
+    Func::lower(
+        Func::cust(BtrimFn)
+            .arg(rating)
+            .arg(Expr::cust(age_rating::SQL_TRIM_CHARS)),
+    )
+    .into()
 }
 
 struct BtrimFn;
@@ -625,12 +654,14 @@ pub async fn for_library_by_id(
 }
 
 /// `series.age_rating` for a set of series ids (one query; empty input
-/// → no query).
+/// → no query). A series with no entry — row missing, or the query
+/// failed (logged) — has no known rating; callers treat that as hidden
+/// wherever the grant hides anything ([`VisibleLibraries::issue_ok_lookup`]).
 pub async fn series_ratings(app: &AppState, series_ids: &[Uuid]) -> HashMap<Uuid, Option<String>> {
     if series_ids.is_empty() {
         return HashMap::new();
     }
-    series::Entity::find()
+    match series::Entity::find()
         .select_only()
         .column(series::Column::Id)
         .column(series::Column::AgeRating)
@@ -638,9 +669,13 @@ pub async fn series_ratings(app: &AppState, series_ids: &[Uuid]) -> HashMap<Uuid
         .into_tuple::<(Uuid, Option<String>)>()
         .all(&app.db)
         .await
-        .unwrap_or_default()
-        .into_iter()
-        .collect()
+    {
+        Ok(rows) => rows.into_iter().collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "access: series rating lookup failed; hiding affected issues");
+            HashMap::new()
+        }
+    }
 }
 
 /// Full visibility check for one issue row: membership, the issue's own
@@ -674,8 +709,11 @@ pub async fn issue_allowed<T: IssueAclFields>(
     }
     let series_id = row.acl_series_id();
     let parent = series_ratings(app, &[series_id]).await;
-    let series_rating = parent.get(&series_id).and_then(|r| r.as_deref());
-    acl.issue_ok(library_id, row.acl_age_rating(), series_rating)
+    acl.issue_ok_lookup(
+        library_id,
+        row.acl_age_rating(),
+        parent.get(&series_id).map(Option::as_deref),
+    )
 }
 
 /// Full visibility check for one series row (membership + cap).
@@ -708,8 +746,11 @@ pub async fn filter_issues<T: IssueAclFields>(
     let parents = series_ratings(app, &need_parent).await;
     rows.into_iter()
         .filter(|i| {
-            let series_rating = parents.get(&i.acl_series_id()).and_then(|r| r.as_deref());
-            acl.issue_ok(i.acl_library_id(), i.acl_age_rating(), series_rating)
+            acl.issue_ok_lookup(
+                i.acl_library_id(),
+                i.acl_age_rating(),
+                parents.get(&i.acl_series_id()).map(Option::as_deref),
+            )
         })
         .collect()
 }
@@ -797,7 +838,7 @@ mod tests {
         assert_eq!(
             sql,
             " AND (s.library_id <> $2 OR s.age_rating IS NULL \
-             OR lower(btrim(s.age_rating)) <> ALL($3))"
+             OR lower(btrim(s.age_rating, E' \\t\\n\\r\\f\\013')) <> ALL($3))"
         );
         assert_eq!(params.len(), 3);
     }
@@ -813,9 +854,9 @@ mod tests {
         let sql = capped(lib, "Teen").issue_cap_sql("i", &mut params);
         assert_eq!(
             sql,
-            " AND (i.library_id <> $1 OR ((i.age_rating IS NULL OR lower(btrim(i.age_rating)) <> ALL($2)) \
+            " AND (i.library_id <> $1 OR ((i.age_rating IS NULL OR lower(btrim(i.age_rating, E' \\t\\n\\r\\f\\013')) <> ALL($2)) \
              AND ((SELECT s.age_rating FROM series s WHERE s.id = i.series_id) IS NULL \
-             OR lower(btrim((SELECT s.age_rating FROM series s WHERE s.id = i.series_id))) <> ALL($3))))"
+             OR lower(btrim((SELECT s.age_rating FROM series s WHERE s.id = i.series_id), E' \\t\\n\\r\\f\\013')) <> ALL($3))))"
         );
         assert_eq!(params.len(), 3);
     }
@@ -831,10 +872,25 @@ mod tests {
         let sql = capped(lib, "Teen").issue_cap_sql_joined("i", "s", &mut params);
         assert_eq!(
             sql,
-            " AND (s.library_id <> $1 OR ((i.age_rating IS NULL OR lower(btrim(i.age_rating)) <> ALL($2)) \
-             AND (s.age_rating IS NULL OR lower(btrim(s.age_rating)) <> ALL($3))))"
+            " AND (s.library_id <> $1 OR ((i.age_rating IS NULL OR lower(btrim(i.age_rating, E' \\t\\n\\r\\f\\013')) <> ALL($2)) \
+             AND (s.age_rating IS NULL OR lower(btrim(s.age_rating, E' \\t\\n\\r\\f\\013')) <> ALL($3))))"
         );
         assert_eq!(params.len(), 3);
+    }
+
+    #[test]
+    fn an_unknown_series_rating_fails_closed_only_where_something_is_hidden() {
+        let lib = Uuid::now_v7();
+        let other = Uuid::now_v7();
+        let v = capped(lib, "Teen");
+        assert!(!v.issue_ok_lookup(lib, Some("Teen"), None));
+        assert!(!v.issue_ok_lookup(lib, None, None));
+        assert!(v.issue_ok_lookup(lib, Some("Teen"), Some(None)));
+        assert!(!v.issue_ok_lookup(other, None, None));
+        let mut open = VisibleLibraries::default();
+        open.allowed.insert(lib);
+        assert!(open.issue_ok_lookup(lib, None, None));
+        assert!(!hiding_unrated(lib, None).issue_ok_lookup(lib, Some("Teen"), None));
     }
 
     #[test]
@@ -888,19 +944,21 @@ mod tests {
             hiding_unrated(lib, None).raw_cap_clause("s.library_id", "s.age_rating", &mut params);
         assert_eq!(
             sql,
-            " AND (s.library_id <> $1 OR lower(btrim(s.age_rating)) = ANY($2))"
+            " AND (s.library_id <> $1 OR lower(btrim(s.age_rating, E' \\t\\n\\r\\f\\013')) = ANY($2))"
         );
         assert_eq!(params.len(), 2);
         let mut params = Vec::new();
         let sql = hiding_unrated(lib, None).issue_cap_sql_joined("i", "s", &mut params);
         assert_eq!(
             sql,
-            " AND (s.library_id <> $1 OR ((lower(btrim(s.age_rating)) = ANY($2))))"
+            " AND (s.library_id <> $1 OR ((lower(btrim(s.age_rating, E' \\t\\n\\r\\f\\013')) = ANY($2))))"
         );
         let mut params = Vec::new();
         let sql = hiding_unrated(lib, Some("Teen")).issue_cap_sql_joined("i", "s", &mut params);
         assert!(
-            sql.contains("<> ALL($2)) AND (lower(btrim(s.age_rating)) = ANY($3))"),
+            sql.contains(
+                "<> ALL($2)) AND (lower(btrim(s.age_rating, E' \\t\\n\\r\\f\\013')) = ANY($3))"
+            ),
             "{sql}"
         );
         assert_eq!(params.len(), 3);
@@ -935,7 +993,7 @@ mod tests {
         let sql = q.to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""series"."library_id" IN"#), "{sql}");
         assert!(sql.contains(r#""series"."age_rating" IS NULL"#), "{sql}");
-        assert!(sql.contains(r#"LOWER(btrim("series"."age_rating")) NOT IN ('ma15+', 'mature 17+', 'm', 'r18+', 'adults only 18+', 'x18+')"#), "{sql}");
+        assert!(sql.contains(r#"LOWER(btrim("series"."age_rating", E' \t\n\r\f\013')) NOT IN ('ma15+', 'mature 17+', 'm', 'r18+', 'adults only 18+', 'x18+', 'teen plus', 'mature', 'adult', 'explicit')"#), "{sql}");
 
         let mut q = Query::select();
         q.column(issue::Column::Id).from(issue::Entity);
@@ -951,7 +1009,9 @@ mod tests {
         q.cond_where(hiding_unrated(lib, None).series_filter().unwrap());
         let sql = q.to_string(PostgresQueryBuilder);
         assert!(
-            sql.contains(r#"LOWER(btrim("series"."age_rating")) IN ('early childhood'"#),
+            sql.contains(
+                r#"LOWER(btrim("series"."age_rating", E' \t\n\r\f\013')) IN ('early childhood'"#
+            ),
             "{sql}"
         );
         assert!(!sql.contains("IS NULL"), "{sql}");

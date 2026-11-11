@@ -192,6 +192,7 @@ async fn seed_issue(app: &TestApp, file_path: &std::path::Path, file_size: i64) 
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
         sort_name: Set(None),

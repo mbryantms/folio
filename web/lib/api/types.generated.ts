@@ -16008,6 +16008,10 @@ export interface components {
         UpdateIssueReq: {
             /** @description Replace-all. Each link must have a non-empty `url`. */
             additional_links?: components["schemas"]["IssueLink"][] | null;
+            /**
+             * @description A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …);
+             *     blank or null clears it.
+             */
             age_rating?: string | null;
             alternate_series?: string | null;
             black_and_white?: boolean | null;
@@ -16246,7 +16250,11 @@ export interface components {
          *     continuing/ended state and database links without leaving the issue page.
          */
         UpdateSeriesReq: {
-            /** @description ComicInfo `AgeRating` vocabulary (free text, ≤ 40 chars) or `null`. */
+            /**
+             * @description A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).
+             *     `null` (or blank) clears the pin: the series returns to its
+             *     derived rating.
+             */
             age_rating?: string | null;
             /** Format: int64 */
             comicvine_id?: number | null;

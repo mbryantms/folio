@@ -994,11 +994,12 @@ pub async fn upsert_bulk(
     // in the response for shape and is always 0.
     let forbidden: u32 = 0;
 
+    // One parent-rating query for the whole batch, not one per row.
+    let fetched = rows.len();
+    let rows = access::filter_issues(&app, &acl, rows).await;
+    not_found += (fetched - rows.len()) as u32;
+
     for iss in rows {
-        if !access::issue_allowed(&app, &acl, &iss).await {
-            not_found += 1;
-            continue;
-        }
         let target_page = if req.finished {
             iss.page_count.unwrap_or(1).max(1) - 1
         } else {

@@ -67,11 +67,13 @@ impl CollectionSequence {
     /// ([`access::VisibleLibraries::issue_ok`]).
     pub(crate) fn visible(&self, acl: &access::VisibleLibraries, idx: usize) -> bool {
         let item = &self.items[idx];
+        // A missing series row has no known rating: hidden wherever the
+        // grant hides anything.
         let series_rating = self
             .series_by_id
             .get(&item.series_id)
-            .and_then(|s| s.age_rating.as_deref());
-        acl.issue_ok(item.library_id, item.age_rating.as_deref(), series_rating)
+            .map(|s| s.age_rating.as_deref());
+        acl.issue_ok_lookup(item.library_id, item.age_rating.as_deref(), series_rating)
     }
 
     /// Parent series of the item at `idx`. `None` only if the series row

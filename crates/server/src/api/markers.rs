@@ -1870,10 +1870,8 @@ pub async fn restore(
     };
     let visible = access::for_user(&app, &user).await;
     let mut allowed: HashMap<String, issue::Model> = HashMap::with_capacity(issues.len());
-    for row in issues {
-        if access::issue_allowed(&app, &visible, &row).await {
-            allowed.insert(row.id.clone(), row);
-        }
+    for row in access::filter_issues(&app, &visible, issues).await {
+        allowed.insert(row.id.clone(), row);
     }
 
     // Ids that already exist (a repeated Undo, or — vanishingly — another

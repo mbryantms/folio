@@ -419,11 +419,20 @@ without per-library configuration.
   5. **Metadata rollup** — refresh genre/tag/credit junction tables
      for the series ([mod.rs:1635](../../crates/server/src/library/scanner/mod.rs#L1635)),
      and re-derive `series.age_rating`: the highest-ranked rating among
-     the series' active, not-removed issues on the age-rating ladder
-     (unranked ratings ignored, NULL when none ranks), unless a person or
-     a provider set the series rating (a non-file-tier `field_provenance`
-     row on `age_rating`). The value the identity step gap-fills at
-     series creation is only a first guess that this step replaces. The
+     the series' active, not-removed issues and the folder's declared
+     `series.json` rating (`series.declared_age_rating`, a floor), on the
+     age-rating ladder with Metron's words as aliases (unranked ratings
+     ignored, NULL when none ranks), unless a person set the series
+     rating (a non-file-tier `field_provenance` row on `age_rating`). The
+     value the identity step gap-fills at series creation is only a first
+     guess that this step replaces. `declared_age_rating` is written
+     before the folder's files are processed — right after identity
+     resolution for a new series, and on every scan that reads the
+     folder for a known one, fast-path-skipped folders included, plus the
+     single-issue scan — by `series_rating::apply_declared_age_rating`,
+     which re-derives when it changes. A missing `series.json`, or one
+     without a rating, clears it; one that exists but cannot be read
+     leaves it unchanged. The
      same derivation (`library::series_rating`) runs when reconcile
      soft-removes or restores issues, when a single-issue scan removes a
      missing file, and when a rescan re-homes an issue to another series

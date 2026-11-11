@@ -753,8 +753,10 @@ pub struct UpdateIssueReq {
     #[serde(default, deserialize_with = "deserialize_some")]
     #[garde(custom(language_code_len))]
     pub language_code: Option<Option<String>>,
+    /// A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …);
+    /// blank or null clears it.
     #[serde(default, deserialize_with = "deserialize_some")]
-    #[garde(skip)]
+    #[garde(custom(crate::library::age_rating::garde_recognised))]
     pub age_rating: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
     #[garde(skip)]
@@ -1710,31 +1712,40 @@ pub async fn list_issue_health(
 /// covers, mid-series translator changes) and bulk-editing them
 /// risks clobbering accurate per-issue credits. Continue using the
 /// per-issue drawer for credits.
-#[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Default, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct BulkMetadataPatch {
     /// ISO-639-1 language code (`"ja"`, `"en"`, …). `null` clears.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub language_code: Option<Option<String>>,
     /// ComicInfo Manga: `"No"` / `"Yes"` / `"YesAndRightToLeft"`.
     /// `null` clears.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub manga: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub publisher: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub imprint: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(custom(crate::library::age_rating::garde_recognised))]
     pub age_rating: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub format: Option<Option<String>>,
     /// CSV. Replaces the field wholesale; for additive tag operations
     /// the M5 dialog assembles the union client-side and sends it
     /// here.
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub genre: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub tags: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_some")]
+    #[garde(skip)]
     pub story_arc: Option<Option<String>>,
 }
 
@@ -1803,11 +1814,14 @@ pub enum BulkMode {
     Replace,
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, garde::Validate, utoipa::ToSchema)]
 pub struct BulkMetadataReq {
+    #[garde(skip)]
     pub issue_ids: Vec<String>,
+    #[garde(dive)]
     pub patch: BulkMetadataPatch,
     #[serde(default)]
+    #[garde(skip)]
     pub mode: BulkMode,
 }
 
@@ -1859,7 +1873,7 @@ pub async fn bulk_metadata(
     State(app): State<AppState>,
     RequireAdmin(user): RequireAdmin,
     Extension(ctx): Extension<RequestContext>,
-    Json(req): Json<BulkMetadataReq>,
+    Validated(req): Validated<BulkMetadataReq>,
 ) -> impl IntoResponse {
     const MAX_IDS: usize = 500;
     if req.issue_ids.len() > MAX_IDS {

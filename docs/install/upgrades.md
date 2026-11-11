@@ -148,16 +148,45 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ### Unreleased — series age ratings come from their issues
 
-- **Series ratings are recomputed from their issues at upgrade**
-  (migration `m20271111_000001_series_rating_from_issues`). A series'
-  age rating used to be copied from whichever file the scanner read
-  first. It is now the highest rating among the series' issues, and
-  scans keep it up to date. A series whose rating was set by a person
-  or by a metadata provider keeps it. A reader with an age-rating cap
-  may therefore no longer see a series that contains one issue rated
-  above the cap. To override, an admin sets the rating on the series
-  (series edit); a rating set that way is never replaced by the
-  recomputed one.
+- **Series ratings follow their issues** (migration
+  `m20271111_000001_series_rating_from_issues`). A series' age rating
+  used to be copied from whichever file the scanner read first. Scans
+  now keep it at the highest rating among the series' issues and the
+  rating its folder's `series.json` declares (a floor: the series is
+  never rated below it). A series whose rating was set by a person keeps
+  it. A reader with an age-rating cap may therefore no longer see a
+  series that contains one issue rated above the cap.
+- **The upgrade itself never lowers a rating.** For every series not set
+  by a person, the migration raises the stored rating to its
+  highest-rated issue, fills an empty one from its issues, and leaves
+  everything else as it is. A rating that came from `series.json` keeps
+  its value at upgrade and is re-derived, with the declared floor, the
+  next time its folder is scanned. Until then a stored rating that ranks
+  above every issue of its series is held as a provisional floor, so an
+  issue edit or removal in the meantime does not lower it either. A
+  folder whose files have not changed is not re-processed until
+  something in it changes or a forced scan runs, but every library scan
+  still reads its `series.json`, so the provisional floor is replaced at
+  the first library scan after the upgrade (a single-series or
+  single-file scan covers just that series).
+- **A later scan can lower a rating, or make it unrated.** The first
+  scan of a series after the upgrade replaces a rating that was copied
+  from a first file that has since been removed or re-rated (that scan
+  clears the provisional floor when `series.json` does not declare the
+  rating), and the same happens whenever
+  the issues that carried the rating are removed or re-rated, or a
+  `series.json` rating is removed. Metron's rating words (`Teen Plus`,
+  `Mature`, `Adult`, `Explicit`) now rank as `MA15+`, `Mature 17+`,
+  `Adults Only 18+` and `X18+`, which can move a series either way.
+  When a rating goes down, a capped reader may see a series they could
+  not see before. **To hold a rating**, an admin sets it on the series
+  (series edit): a rating set that way is never replaced by the derived
+  one. Clearing it there returns the series to its derived rating.
+- **Age-rating edits are validated.** The issue edit, bulk metadata edit
+  and series edit accept a ladder rating, one of Metron's words above,
+  `Unknown` / `Rating Pending`, or blank; anything else answers 422
+  ("not a recognised age rating"). Ratings already stored are not
+  changed.
 - **An issue of a hidden series no longer opens.** For a reader with an
   age-rating cap, an issue is visible only when its series is visible
   and its own rating is within the cap. An issue rated within the cap

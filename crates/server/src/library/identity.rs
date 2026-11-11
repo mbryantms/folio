@@ -206,6 +206,7 @@ pub async fn resolve_or_create(
             status: Set("continuing".into()),
             total_issues: Set(hint.total_issues),
             age_rating: Set(hint.age_rating.clone()),
+            declared_age_rating: Set(None),
             summary: Set(None),
             language_code: Set(hint
                 .language

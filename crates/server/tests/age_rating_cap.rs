@@ -202,6 +202,7 @@ async fn seed_series(
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(rating.map(str::to_owned)),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
         sort_name: Set(None),
@@ -3440,8 +3441,9 @@ async fn an_issue_rating_edit_rederives_the_series_rating() {
 #[tokio::test]
 async fn migration_ladder_and_recompute_agree_with_the_runtime_derivation() {
     use sea_orm::ConnectionTrait;
-    use server::library::age_rating::LADDER;
+    use server::library::age_rating::{ALIASES, LADDER};
     assert_eq!(migration::AGE_RATING_LADDER, LADDER);
+    assert_eq!(migration::AGE_RATING_ALIASES, ALIASES);
 
     let w = world().await;
     let db = Database::connect(&w.app.db_url).await.unwrap();
@@ -3537,14 +3539,19 @@ async fn migration_ladder_and_recompute_agree_with_the_runtime_derivation() {
         series_rating(&db, pinned).await.as_deref(),
         Some("Everyone")
     );
-    // An unpinned fixture series whose issues carry no rating is unrated.
-    assert_eq!(series_rating(&db, w.fx.teen_series).await, None);
+    // The upgrade never lowers: an unpinned fixture series whose issues
+    // carry no rating keeps its stored rating.
+    assert_eq!(
+        series_rating(&db, w.fx.teen_series).await.as_deref(),
+        Some("Teen")
+    );
 
     // The runtime derivation gives the same answer on every rung.
     for (s, _) in &rung_series {
         entity::series::ActiveModel {
             id: Unchanged(*s),
             age_rating: Set(Some("Unknown".into())),
+            declared_age_rating: Set(None),
             ..Default::default()
         }
         .update(&db)
@@ -4089,6 +4096,7 @@ async fn hide_unrated_entity_and_rail_surfaces_skip_an_unrated_series() {
                 .id,
         ),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         ..Default::default()
     }
     .update(&db)
@@ -4123,4 +4131,525 @@ async fn hide_unrated_entity_and_rail_surfaces_skip_an_unrated_series() {
     .await;
     assert!(!String::from_utf8_lossy(&bytes).contains("Twin"));
     let _ = &e.twin_one;
+}
+
+// ───── the series.json floor, the upgrade rule, Metron's words ─────
+
+fn write_series_json(dir: &std::path::Path, rating: Option<&str>) {
+    let mut meta = serde_json::json!({ "type": "comicSeries", "name": "Floor Run" });
+    if let Some(r) = rating {
+        meta["age_rating"] = r.into();
+    }
+    std::fs::write(
+        dir.join("series.json"),
+        serde_json::json!({ "metadata": meta }).to_string(),
+    )
+    .unwrap();
+}
+
+async fn only_series(db: &sea_orm::DatabaseConnection, lib: Uuid) -> entity::series::Model {
+    use sea_orm::{ColumnTrait, QueryFilter};
+    entity::series::Entity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+async fn capped_opens_series(w: &World, slug: &str) -> bool {
+    let (st, _) = get_json(&w.app, &format!("/api/series/{slug}"), &w.capped).await;
+    st == StatusCode::OK
+}
+
+async fn run_upgrade(db: &sea_orm::DatabaseConnection) {
+    use sea_orm::ConnectionTrait;
+    db.execute_unprepared(&migration::provisional_declared_sql())
+        .await
+        .unwrap();
+    db.execute_unprepared(&migration::recompute_all_series_age_ratings_sql())
+        .await
+        .unwrap();
+}
+
+async fn set_series_ratings(
+    db: &sea_orm::DatabaseConnection,
+    id: Uuid,
+    rating: Option<&str>,
+    declared: Option<&str>,
+) {
+    SeriesAM {
+        id: Unchanged(id),
+        age_rating: Set(rating.map(str::to_owned)),
+        declared_age_rating: Set(declared.map(str::to_owned)),
+        ..Default::default()
+    }
+    .update(db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_series_json_rating_is_a_floor_through_upgrade_rollup_and_rescan() {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("floor-lib");
+    let folder = root.join("Floor Run (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    // Unrated issues; the sidecar declares Mature 17+.
+    write_cbz(&folder.join("Floor Run 001.cbz"));
+    write_cbz(&folder.join("Floor Run 002.cbz"));
+    write_series_json(&folder, Some("Mature 17+"));
+    let lib = insert_library(&db, &root).await;
+    grant(&w.app, w.capped.user_id, lib, Some("Teen")).await;
+    let state = w.app.state();
+    server::library::scanner::scan_library(&state, lib)
+        .await
+        .unwrap();
+    let s = only_series(&db, lib).await;
+    assert_eq!(s.declared_age_rating.as_deref(), Some("Mature 17+"));
+    assert_eq!(s.age_rating.as_deref(), Some("Mature 17+"));
+    assert!(!capped_opens_series(&w, &s.slug).await);
+
+    // Before the upgrade the column did not exist: the stored rating was
+    // the sidecar's copy and nothing declared it. The upgrade keeps it,
+    // and a recompute before the next scan keeps it too.
+    set_series_ratings(&db, s.id, Some("Mature 17+"), None).await;
+    run_upgrade(&db).await;
+    assert_eq!(
+        series_rating(&db, s.id).await.as_deref(),
+        Some("Mature 17+")
+    );
+    assert!(!capped_opens_series(&w, &s.slug).await);
+    rollup(&db, s.id).await;
+    assert_eq!(
+        series_rating(&db, s.id).await.as_deref(),
+        Some("Mature 17+")
+    );
+    assert!(!capped_opens_series(&w, &s.slug).await);
+
+    // The next scan (the folder is unchanged) records the real floor.
+    server::library::scanner::scan_library(&state, lib)
+        .await
+        .unwrap();
+    let s = only_series(&db, lib).await;
+    assert_eq!(s.declared_age_rating.as_deref(), Some("Mature 17+"));
+    rollup(&db, s.id).await;
+    assert_eq!(
+        series_rating(&db, s.id).await.as_deref(),
+        Some("Mature 17+")
+    );
+    assert!(!capped_opens_series(&w, &s.slug).await);
+
+    // series.json goes: the next scan re-derives from the issues alone.
+    std::fs::remove_file(folder.join("series.json")).unwrap();
+    server::library::scanner::scan_library(&state, lib)
+        .await
+        .unwrap();
+    let s = only_series(&db, lib).await;
+    assert_eq!(s.declared_age_rating, None);
+    assert_eq!(s.age_rating, None);
+    assert!(capped_opens_series(&w, &s.slug).await);
+
+    // A sidecar that exists but cannot be parsed leaves the floor alone.
+    write_series_json(&folder, Some("Teen"));
+    server::library::scanner::scan_library(&state, lib)
+        .await
+        .unwrap();
+    assert_eq!(series_rating(&db, s.id).await.as_deref(), Some("Teen"));
+    std::fs::write(folder.join("series.json"), b"{ not json").unwrap();
+    server::library::scanner::scan_library(&state, lib)
+        .await
+        .unwrap();
+    let s = only_series(&db, lib).await;
+    assert_eq!(s.declared_age_rating.as_deref(), Some("Teen"));
+    assert_eq!(s.age_rating.as_deref(), Some("Teen"));
+}
+
+#[tokio::test]
+async fn an_issue_rated_above_the_declared_floor_wins() {
+    use server::library::series_rating::apply_declared_age_rating;
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let s = seed_series(&db, w.fx.lib_id, "Above Floor", "above-floor", None).await;
+    seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        s,
+        1,
+        "above-floor-1",
+        "Above One",
+        Some("Mature 17+"),
+        None,
+    )
+    .await;
+    // The writer re-derives when the declared value changes.
+    assert!(
+        apply_declared_age_rating(&db, s, Some(" Teen "))
+            .await
+            .unwrap()
+    );
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Mature 17+"));
+    // Unchanged declared value: no write, no recompute.
+    assert!(
+        !apply_declared_age_rating(&db, s, Some("Teen"))
+            .await
+            .unwrap()
+    );
+    // A floor above the issues raises the series; clearing it lowers it.
+    assert!(
+        apply_declared_age_rating(&db, s, Some("X18+"))
+            .await
+            .unwrap()
+    );
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("X18+"));
+    assert!(apply_declared_age_rating(&db, s, None).await.unwrap());
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Mature 17+"));
+    // A person-set rating still wins over both.
+    pin_series_rating(&db, s, "user").await;
+    set_series_ratings(&db, s, Some("Everyone"), None).await;
+    apply_declared_age_rating(&db, s, Some("X18+"))
+        .await
+        .unwrap();
+    rollup(&db, s).await;
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Everyone"));
+}
+
+#[tokio::test]
+async fn the_upgrade_never_lowers_a_rating_and_still_raises_and_fills() {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let mut cases = Vec::new();
+    // (stored, issue ratings, after upgrade, provisional floor)
+    for (i, (stored, issues, want, floor)) in [
+        (
+            Some("Mature 17+"),
+            vec![Some("Teen")],
+            Some("Mature 17+"),
+            Some("Mature 17+"),
+        ),
+        (
+            Some("Everyone"),
+            vec![Some("Teen"), None],
+            Some("Teen"),
+            None,
+        ),
+        (None, vec![Some("Mature")], Some("Mature 17+"), None),
+        (Some("PG-13"), vec![Some("Teen")], Some("Teen"), None),
+        (Some("PG-13"), vec![None], Some("PG-13"), None),
+        (None, vec![None], None, None),
+        (
+            Some("Mature"),
+            vec![Some("Teen")],
+            Some("Mature 17+"),
+            Some("Mature"),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let slug = format!("upgrade-{i}");
+        let s = seed_series(&db, w.fx.lib_id, &format!("Upgrade {i}"), &slug, stored).await;
+        for (n, r) in issues.iter().enumerate() {
+            seed_issue(
+                &db,
+                &root,
+                w.fx.lib_id,
+                s,
+                n as u8 + 1,
+                &format!("{slug}-{n}"),
+                "u",
+                *r,
+                None,
+            )
+            .await;
+        }
+        cases.push((s, want, floor));
+    }
+    run_upgrade(&db).await;
+    for (s, want, floor) in &cases {
+        let row = entity::series::Entity::find_by_id(*s)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.age_rating.as_deref(), *want, "{s}");
+        assert_eq!(row.declared_age_rating.as_deref(), *floor, "{s}");
+    }
+    // The stored Mature 17+ outlives an issue removal before the next
+    // scan; that scan (no series.json) drops the provisional floor and the
+    // series follows its issues.
+    let (held, ..) = cases[0];
+    rollup(&db, held).await;
+    assert_eq!(
+        series_rating(&db, held).await.as_deref(),
+        Some("Mature 17+")
+    );
+    server::library::series_rating::apply_declared_age_rating(&db, held, None)
+        .await
+        .unwrap();
+    assert_eq!(series_rating(&db, held).await.as_deref(), Some("Teen"));
+}
+
+#[tokio::test]
+async fn metron_words_rank_in_sql_like_their_rungs() {
+    use server::library::age_rating::{ALIASES, LADDER, highest};
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let mut by_alias = Vec::new();
+    for (i, (word, rank)) in ALIASES.iter().enumerate() {
+        let slug = format!("alias-{i}");
+        let s = seed_series(&db, w.fx.lib_id, &format!("Alias {i}"), &slug, None).await;
+        seed_issue(
+            &db,
+            &root,
+            w.fx.lib_id,
+            s,
+            1,
+            &format!("{slug}-1"),
+            "a",
+            Some(&format!("\t{} ", word.to_uppercase())),
+            None,
+        )
+        .await;
+        by_alias.push((s, LADDER[*rank as usize]));
+        assert_eq!(highest([Some(*word)]), Some(LADDER[*rank as usize]));
+    }
+    // Upgrade and runtime both store the rung's canonical spelling.
+    run_upgrade(&db).await;
+    for (s, rung) in &by_alias {
+        assert_eq!(series_rating(&db, *s).await.as_deref(), Some(*rung));
+        set_series_ratings(&db, *s, None, None).await;
+        rollup(&db, *s).await;
+        assert_eq!(series_rating(&db, *s).await.as_deref(), Some(*rung));
+    }
+    // Every alias is hidden from a Teen reader: the series, and the
+    // issues by their own rating too.
+    let (_, body) = get_json(&w.app, "/api/series?q=Alias", &w.capped).await;
+    assert!(names(&body, "name").is_empty(), "{body}");
+    let (_, body) = get_json(&w.app, "/api/series?q=Alias", &w.uncapped).await;
+    assert_eq!(names(&body, "name").len(), ALIASES.len(), "{body}");
+}
+
+#[tokio::test]
+async fn a_metron_worded_issue_is_held_to_the_cap() {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    // A person rated the series Teen; one issue says Teen Plus (MA15+).
+    let s = seed_series(&db, w.fx.lib_id, "Plus Run", "plus-run", Some("Teen")).await;
+    pin_series_rating(&db, s, "user").await;
+    seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        s,
+        1,
+        "plus-1",
+        "Plus One",
+        Some("Teen"),
+        None,
+    )
+    .await;
+    seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        s,
+        2,
+        "plus-2",
+        "Plus Two",
+        Some("Teen Plus"),
+        None,
+    )
+    .await;
+    assert!(capped_opens_series(&w, "plus-run").await);
+    let (st, _) = get_json(&w.app, "/api/series/plus-run/issues/plus-1", &w.capped).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = get_json(&w.app, "/api/series/plus-run/issues/plus-2", &w.capped).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, body) = get_json(&w.app, "/api/issues/search?q=Plus", &w.capped).await;
+    assert_eq!(names(&body, "title"), vec!["Plus One"], "{body}");
+    let (st, _) = get_json(&w.app, "/api/series/plus-run/issues/plus-2", &w.uncapped).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn hide_unrated_counts_a_metron_word_as_a_rating() {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let lib = w.fx.lib_id.to_string();
+    // Stored as Metron's word, pinned so no derivation rewrites it.
+    let s = seed_series(&db, w.fx.lib_id, "Worded Run", "worded-run", Some("Mature")).await;
+    pin_series_rating(&db, s, "user").await;
+    set_access(
+        &w,
+        &w.capped,
+        serde_json::json!({ lib.clone(): "Mature 17+" }),
+        serde_json::json!({ lib.clone(): true }),
+    )
+    .await;
+    assert!(capped_opens_series(&w, "worded-run").await);
+    let (_, body) = get_json(&w.app, "/api/series?q=Worded", &w.capped).await;
+    assert_eq!(names(&body, "name"), vec!["Worded Run"], "{body}");
+    // The truly unrated fixture series stays hidden.
+    assert!(!capped_opens_series(&w, "unrated-stories").await);
+    // Under a Teen cap the alias ranks above it.
+    set_access(
+        &w,
+        &w.capped,
+        serde_json::json!({ lib.clone(): "Teen" }),
+        serde_json::json!({ lib.clone(): true }),
+    )
+    .await;
+    assert!(!capped_opens_series(&w, "worded-run").await);
+}
+
+#[tokio::test]
+async fn clearing_a_series_rating_releases_the_pin_and_rederives() {
+    use sea_orm::{ColumnTrait, PaginatorTrait, QueryFilter};
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let s = seed_series(&db, w.fx.lib_id, "Held Run", "held-run", None).await;
+    seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        s,
+        1,
+        "held-1",
+        "Held One",
+        Some("Teen"),
+        None,
+    )
+    .await;
+    rollup(&db, s).await;
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Teen"));
+    let user_pins = || {
+        entity::field_provenance::Entity::find()
+            .filter(entity::field_provenance::Column::EntityType.eq("series"))
+            .filter(entity::field_provenance::Column::EntityId.eq(s.to_string()))
+            .filter(entity::field_provenance::Column::Field.eq("age_rating"))
+            .filter(entity::field_provenance::Column::SetBy.eq("user"))
+            .count(&db)
+    };
+    // An admin holds it at Mature 17+ (an alias is accepted)...
+    let (st, body) = raw(
+        &w.app,
+        Method::PATCH,
+        "/api/series/held-run",
+        &w.admin,
+        Some(serde_json::json!({ "age_rating": "Mature" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    rollup(&db, s).await;
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Mature"));
+    assert_eq!(user_pins().await.unwrap(), 1);
+    assert!(!capped_opens_series(&w, "held-run").await);
+    // ...then clears it: the pin goes and the derived rating is back.
+    let (st, body) = raw(
+        &w.app,
+        Method::PATCH,
+        "/api/series/held-run",
+        &w.admin,
+        Some(serde_json::json!({ "age_rating": null })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let view: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(view["age_rating"], "Teen", "{view}");
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Teen"));
+    assert_eq!(user_pins().await.unwrap(), 0);
+    assert!(capped_opens_series(&w, "held-run").await);
+}
+
+#[tokio::test]
+async fn age_rating_edits_must_be_recognised() {
+    let w = world().await;
+    let check = |body: Vec<u8>, field: &str| {
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let details = v["error"]["details"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            details
+                .iter()
+                .any(|d| d["field"] == field && d["message"] == "not a recognised age rating"),
+            "{v}"
+        );
+    };
+    let cases = [
+        (
+            "/api/series/teen-tales",
+            serde_json::json!({ "age_rating": "PG-13" }),
+            "age_rating",
+        ),
+        (
+            "/api/series/teen-tales/issues/teen-2",
+            serde_json::json!({ "age_rating": "Sixteen and up" }),
+            "age_rating",
+        ),
+        (
+            "/api/me/issues/bulk-metadata",
+            serde_json::json!({
+                "issue_ids": [w.fx.teen_2],
+                "patch": { "age_rating": "R" },
+                "mode": "replace",
+            }),
+            "patch.age_rating",
+        ),
+    ];
+    for (path, body, field) in cases {
+        let (st, resp) = raw(&w.app, Method::PATCH, path, &w.admin, Some(body)).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{path}");
+        check(resp, field);
+    }
+    // Recognised values (rung, alias, unrated word, blank) pass.
+    for v in ["Teen", "teen plus", "Unknown", ""] {
+        let (st, body) = raw(
+            &w.app,
+            Method::PATCH,
+            "/api/series/teen-tales/issues/teen-2",
+            &w.admin,
+            Some(serde_json::json!({ "age_rating": v })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{v} {}", String::from_utf8_lossy(&body));
+    }
+}
+
+#[tokio::test]
+async fn an_issue_whose_series_rating_cannot_be_read_is_hidden() {
+    use server::library::access;
+    let w = world().await;
+    let state = w.app.state();
+    let mut row = entity::issue::Entity::find_by_id(w.fx.teen_2.clone())
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let capped = access::for_library_by_id(&state, w.capped.user_id, w.fx.lib_id).await;
+    let open = access::for_library_by_id(&state, w.uncapped.user_id, w.fx.lib_id).await;
+    assert!(access::issue_allowed(&state, &capped, &row).await);
+    // Point the row at a series that does not exist: no rating to check.
+    row.series_id = Uuid::now_v7();
+    assert!(!access::issue_allowed(&state, &capped, &row).await);
+    assert!(
+        access::filter_issues(&state, &capped, vec![row.clone()])
+            .await
+            .is_empty()
+    );
+    // A grant that hides nothing does not look the series up.
+    assert!(access::issue_allowed(&state, &open, &row).await);
+    assert_eq!(
+        access::filter_issues(&state, &open, vec![row]).await.len(),
+        1
+    );
 }

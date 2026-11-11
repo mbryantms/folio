@@ -118,6 +118,7 @@ async fn seed_series_with_issues(
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
         sort_name: Set(None),
