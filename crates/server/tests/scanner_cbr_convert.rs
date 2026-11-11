@@ -308,6 +308,7 @@ async fn conversion_refused_by_a_limit_is_a_safety_refusal() {
     let stats = scanner::scan_library(&state, lib_id).await.expect("scan");
     assert_eq!(stats.files_converted, 0, "{stats:?}");
     assert_eq!(stats.files_added, 0, "{stats:?}");
+    assert_eq!(stats.files_skipped, 1, "{stats:?}");
 
     assert_eq!(
         std::fs::read(&cbr_path).unwrap(),

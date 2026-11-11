@@ -1083,8 +1083,11 @@ page in one grouped query (`scan_runs::finding_counts`, indexed by
 `library_health_issues_scan_idx`). A finding's `scan_id` moves to the
 latest run that sees it: the upsert when the run re-emits it, and the
 touch-on-skip update when the run skipped the unchanged file it names
-(only `first_seen_at` keeps the first sighting). So the count is "open
-findings this run last recorded". The scan rows link to `/admin/findings?tab=health&scan_id=…`,
+(only `first_seen_at` keeps the first sighting). One kind is the
+exception: a duplicate-external-id finding that is still true is kept
+alive by a settle step that runs on every scope and only refreshes
+`last_seen_at`, so it stays with the run that first recorded it. So the
+count is "open findings this run last recorded". The scan rows link to `/admin/findings?tab=health&scan_id=…`,
 which lists exactly those rows through the `scan_id` filter on
 `GET /admin/health-issues` (first-page `total` included).
 
