@@ -1,0 +1,5601 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: "Json::Object(out)"
+---
+{
+  "admin /api/people?q=": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%25": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%25&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%25&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%25&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%25&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%C3%A9lodie": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%C3%A9lodie&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%C3%A9lodie&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%C3%A9lodie&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=%C3%A9lodie&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=STAN%20LEE": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=STAN%20LEE&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=STAN%20LEE&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=STAN%20LEE&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=STAN%20LEE&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=_": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=_&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=_&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=_&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=_&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=ann": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=ann&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=ann&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=ann&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=ann&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator%2001": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator%2001&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator%2001&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator%2001&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 024",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator%2001&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 024",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=creator&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=elodie": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=elodie&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=elodie&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=elodie&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=elodie&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=hidden": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=hidden&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=hidden&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=hidden&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=hidden&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=kirby": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=kirby&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=kirby&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=kirby&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=kirby&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=lee": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=lee&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=lee&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=lee&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=lee&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=mature": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=mature&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=mature&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=mature&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=mature&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=removed": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=removed&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=removed&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=removed&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=removed&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=rollup": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=rollup&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=rollup&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=rollup&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=rollup&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=same": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=same&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=same&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=same&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=same&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=stan": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=stan&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=stan&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=stan&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=stan&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=writer%20042": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=writer%20042&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=writer%20042&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=writer%20042&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=writer%20042&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /api/people?q=zzzz": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=zzzz&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=zzzz&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=zzzz&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "admin /api/people?q=zzzz&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%25": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%25&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%25&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%25&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%25&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%C3%A9lodie": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%C3%A9lodie&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%C3%A9lodie&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%C3%A9lodie&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=%C3%A9lodie&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=STAN%20LEE": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=STAN%20LEE&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=STAN%20LEE&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=STAN%20LEE&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=STAN%20LEE&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=_": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=_&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=_&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=_&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=_&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=ann": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=ann&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=ann&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=ann&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=ann&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator%2001": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator%2001&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator%2001&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator%2001&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator%2001&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=creator&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=elodie": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=elodie&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=elodie&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=elodie&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=elodie&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=hidden": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=hidden&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=hidden&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=hidden&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=hidden&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=kirby": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=kirby&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=kirby&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=kirby&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=kirby&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=lee": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=lee&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=lee&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=lee&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=lee&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=mature": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=mature&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=mature&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=mature&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=mature&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=removed": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=removed&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=removed&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=removed&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=removed&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=rollup": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=rollup&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=rollup&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=rollup&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=rollup&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=same": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=same&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=same&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=same&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=same&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=stan": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=stan&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=stan&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=stan&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=stan&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=writer%20042": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=writer%20042&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=writer%20042&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=writer%20042&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=writer%20042&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /api/people?q=zzzz": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=zzzz&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=zzzz&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=zzzz&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "capped /api/people?q=zzzz&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%25": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%25&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%25&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%25&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%25&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%C3%A9lodie": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%C3%A9lodie&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%C3%A9lodie&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%C3%A9lodie&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=%C3%A9lodie&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=STAN%20LEE": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=STAN%20LEE&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=STAN%20LEE&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=STAN%20LEE&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=STAN%20LEE&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=_": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=_&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=_&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=_&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=_&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=ann": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=ann&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=ann&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=ann&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=ann&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator%2001": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator%2001&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator%2001&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator%2001&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator%2001&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=creator&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=elodie": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=elodie&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=elodie&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=elodie&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=elodie&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=hidden": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=hidden&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=hidden&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=hidden&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=hidden&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=kirby": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=kirby&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=kirby&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=kirby&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=kirby&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=lee": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=lee&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=lee&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=lee&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=lee&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=mature": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=mature&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=mature&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=mature&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=mature&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=removed": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=removed&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=removed&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=removed&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=removed&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=rollup": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=rollup&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=rollup&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=rollup&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=rollup&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=same": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=same&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=same&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=same&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=same&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=stan": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=stan&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=stan&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=stan&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=stan&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=writer%20042": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=writer%20042&limit=0": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=writer%20042&limit=1": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=writer%20042&limit=100": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=writer%20042&limit=3": {
+    "body": {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /api/people?q=zzzz": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=zzzz&limit=0": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=zzzz&limit=1": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=zzzz&limit=100": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  },
+  "partial /api/people?q=zzzz&limit=3": {
+    "body": {
+      "items": []
+    },
+    "status": 200
+  }
+}

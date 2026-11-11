@@ -1,10 +1,11 @@
 //! People search (global-search M4).
 //!
-//! Distinct creator names aggregated across `series_credits` and
-//! `issue_credits`, with role rollup + credit count. Uses the
-//! `pg_trgm` GIN index added in
-//! `m20261218_000001_people_search.rs` for fuzzy substring + similarity
-//! ranking — names like "Jhon" still surface "John …".
+//! Distinct creator names across `series_credits` and `issue_credits`,
+//! with role rollup + credit count, matched by `pg_trgm` similarity
+//! (`%`) or a literal substring and ranked by similarity — names like
+//! "Jhon" still surface "John …". The candidate names come from the
+//! ordered distinct-name walk shared with `/creators` (P-01); see
+//! [`list`].
 //!
 //! Library-ACL gated: we join through series so the same per-user
 //! visibility rules apply as everywhere else.
@@ -133,48 +134,56 @@ pub async fn list(
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
     let issue_cap = visible.entity_issue_cap_sql("i", "s", &mut params);
 
-    // Aggregate (UNION over both credit tables → distinct names with
-    // role + count rollup) inside the `agg` CTE so the outer SELECT
-    // can LEFT JOIN the `person` table for slug resolution. Persons
-    // missing from the table (scanner inserted a credit since the
-    // last backfill) just return `slug = NULL` and the client falls
-    // back to the legacy `?library=all&credits=<name>` URL.
-    // L-4 (WP-6.3): bind LIMIT as a parameter rather than interpolating it.
+    // P-01: no aggregate over every visible credit. The candidates are the
+    // distinct credit names matching `q` — the walk of
+    // [`super::creators::credit_names_walk`] (two index probes per distinct
+    // name, so the cost follows the number of names, not of credits)
+    // filtered by the same predicate as before — each probed for a credit
+    // the caller can see. The ranking needs a name's credit count only to
+    // order names of equal similarity, so counts are aggregated only for
+    // the names at least as similar as the `limit`-th best visible name
+    // (`cut`). Same rows and order as before: each of the top `limit` rows
+    // has a similarity at or above that cut, and the final ORDER BY is
+    // unchanged. A name without a `person` row (credit scanned since the
+    // last backfill) returns `slug = NULL`; the client falls back to the
+    // legacy `?library=all&credits=<name>` URL.
+    // L-4 (WP-6.3): LIMIT / OFFSET are bound parameters.
     params.push(Value::from(limit));
     let limit_param = params.len();
-    let series_arm = super::creators::series_credit_arm(
-        &library_filter,
-        &series_cap,
-        &issue_cap,
-        visible.hides_any(),
-    );
+    params.push(Value::from(limit - 1));
+    let cut_offset_param = params.len();
+    let arms = super::creators::CreditArms {
+        series_arm: super::creators::series_credit_arm(
+            &library_filter,
+            &series_cap,
+            &issue_cap,
+            visible.hides_any(),
+        ),
+        issue_arm: super::creators::issue_credit_arm(&library_filter, &issue_cap),
+    };
     let sql = format!(
-        "WITH all_credits AS ( \
-           {series_arm} \
-           UNION ALL \
-           SELECT ic.person AS person, ic.role AS role, \
-                  'issue:' || ic.issue_id AS ref_id, \
-                  s.library_id AS library_id \
-             FROM issue_credits ic \
-             JOIN issues i ON i.id = ic.issue_id \
-             JOIN series s ON s.id = i.series_id \
-            WHERE s.removed_at IS NULL \
-              AND i.removed_at IS NULL \
-              AND i.state = 'active'{library_filter}{issue_cap} \
+        "{names}, \
+         cand AS MATERIALIZED ( \
+           SELECT n.person, similarity(n.person, $1) AS sim FROM names n \
+            WHERE n.person IS NOT NULL \
+              AND (n.person % $1 OR lower(n.person) LIKE $2{SQL_LIKE_ESCAPE}) \
          ), \
-         agg AS ( \
-           SELECT person, \
-                  ARRAY_AGG(DISTINCT role ORDER BY role) AS roles, \
-                  COUNT(DISTINCT ref_id)::bigint AS credit_count \
-             FROM all_credits \
-            WHERE (person % $1 OR lower(person) LIKE $2{SQL_LIKE_ESCAPE}) \
-            GROUP BY person \
+         vis AS MATERIALIZED ( \
+           SELECT c.person, c.sim FROM cand c{visible} \
+         ), \
+         cut AS ( \
+           SELECT v.sim FROM vis v ORDER BY v.sim DESC LIMIT 1 OFFSET ${cut_offset_param} \
          ) \
-         SELECT a.person, a.roles, a.credit_count, p.slug \
-           FROM agg a \
-           LEFT JOIN person p ON p.normalized_name = btrim(lower(a.person)) \
-          ORDER BY similarity(a.person, $1) DESC, a.credit_count DESC, a.person ASC \
+         SELECT v.person, a.roles, a.credit_count, p.slug \
+           FROM vis v \
+           CROSS JOIN LATERAL ({agg}) a \
+           LEFT JOIN person p ON p.normalized_name = btrim(lower(v.person)) \
+          WHERE v.sim >= COALESCE((SELECT cut.sim FROM cut), 0) \
+          ORDER BY v.sim DESC, a.credit_count DESC, v.person ASC \
           LIMIT ${limit_param}",
+        names = super::creators::credit_names_walk(None),
+        visible = arms.visible_join("c.person"),
+        agg = arms.aggregate("v.person"),
     );
 
     let backend = app.db.get_database_backend();

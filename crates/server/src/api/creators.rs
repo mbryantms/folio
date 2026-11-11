@@ -117,6 +117,87 @@ pub(crate) fn series_credit_arm(
     )
 }
 
+/// The issue-level arm of the creator credit union (`person`, `role`,
+/// `ref_id = 'issue:<id>'`, `library_id`) shared by `/creators` and
+/// `/people`: credits on active, non-removed issues of non-removed series,
+/// filtered by the caller's `library_filter` and entity `issue_cap`
+/// fragments over the aliases `s` / `i`.
+pub(crate) fn issue_credit_arm(library_filter: &str, issue_cap: &str) -> String {
+    format!(
+        "SELECT ic.person AS person, ic.role AS role, \
+                'issue:' || ic.issue_id AS ref_id, s.library_id AS library_id \
+           FROM issue_credits ic \
+           JOIN issues i ON i.id = ic.issue_id \
+           JOIN series s ON s.id = i.series_id \
+          WHERE s.removed_at IS NULL AND i.removed_at IS NULL \
+            AND i.state = 'active'{library_filter}{issue_cap}"
+    )
+}
+
+/// `WITH RECURSIVE names(person) AS (…)`: every distinct credit name of
+/// `issue_credits` ∪ `series_credits`, in `person` order, starting after
+/// the `$bound` placeholder (or from the first name), as a skip scan over
+/// `issue_credits_person_idx` + `series_credits_person_idx` — each step
+/// is the next name after the previous one in either table, two index
+/// probes per distinct name. Read lazily: a consumer that stops early
+/// (`LIMIT`) stops the walk. The last row is a NULL terminator, which
+/// callers filter out.
+pub(crate) fn credit_names_walk(bound: Option<usize>) -> String {
+    let first = |table: &str| match bound {
+        Some(p) => format!("(SELECT min(c.person) FROM {table} c WHERE c.person > ${p})"),
+        None => format!("(SELECT min(c.person) FROM {table} c)"),
+    };
+    format!(
+        "WITH RECURSIVE names(person) AS ( \
+           SELECT LEAST({ic0}, {sc0}) \
+           UNION ALL \
+           SELECT LEAST( \
+                    (SELECT min(c.person) FROM issue_credits c WHERE c.person > n.person), \
+                    (SELECT min(c.person) FROM series_credits c WHERE c.person > n.person)) \
+             FROM names n WHERE n.person IS NOT NULL)",
+        ic0 = first("issue_credits"),
+        sc0 = first("series_credits"),
+    )
+}
+
+/// Per-name probe + aggregate over the two credit arms, for the creator
+/// index and people search (P-01). Both arms are filtered to the outer
+/// name `{name}` (a column reference), so they read that name's credit
+/// rows through `issue_credits_person_idx` / `series_credits_person_idx`
+/// instead of aggregating every visible credit first.
+pub(crate) struct CreditArms {
+    pub series_arm: String,
+    pub issue_arm: String,
+}
+
+impl CreditArms {
+    /// Join that keeps only names with a credit the caller can see — the
+    /// same rule as "the name has a row in the union". A `LATERAL` with
+    /// `LIMIT 1` stops at the first visible credit and, unlike `EXISTS`,
+    /// can never be planned as a hashed sub-plan over every credit row.
+    pub(crate) fn visible_join(&self, name: &str) -> String {
+        format!(
+            " CROSS JOIN LATERAL (SELECT 1 FROM ({series} UNION ALL {issue}) x \
+               WHERE x.person = {name} LIMIT 1) vis",
+            series = self.series_arm,
+            issue = self.issue_arm,
+        )
+    }
+
+    /// `LATERAL` body: `roles` + `credit_count` of one name, exactly the
+    /// former `GROUP BY person` aggregate.
+    pub(crate) fn aggregate(&self, name: &str) -> String {
+        format!(
+            "SELECT ARRAY_AGG(DISTINCT x.role ORDER BY x.role) AS roles, \
+                    COUNT(DISTINCT x.ref_id)::bigint AS credit_count \
+               FROM ({series} UNION ALL {issue}) x \
+              WHERE x.person = {name}",
+            series = self.series_arm,
+            issue = self.issue_arm,
+        )
+    }
+}
+
 #[derive(Debug, FromQueryResult)]
 struct CreditRow {
     series_id: Uuid,
@@ -253,62 +334,70 @@ pub async fn list(
         None => None,
     };
 
-    let series_arm = series_credit_arm(
-        &library_filter,
-        &series_cap,
-        &issue_cap,
-        visible.hides_any(),
-    );
-    let credits_cte = format!(
-        "WITH all_credits AS ( \
-           {series_arm} \
-           UNION ALL \
-           SELECT ic.person AS person, ic.role AS role, \
-                  'issue:' || ic.issue_id AS ref_id, s.library_id AS library_id \
-             FROM issue_credits ic \
-             JOIN issues i ON i.id = ic.issue_id \
-             JOIN series s ON s.id = i.series_id \
-            WHERE s.removed_at IS NULL AND i.removed_at IS NULL \
-              AND i.state = 'active'{library_filter}{issue_cap} \
-         ), \
-         agg AS ( \
-           SELECT person, ARRAY_AGG(DISTINCT role ORDER BY role) AS roles, \
-                  COUNT(DISTINCT ref_id)::bigint AS credit_count \
-             FROM all_credits GROUP BY person \
-         )"
-    );
+    let arms = CreditArms {
+        series_arm: series_credit_arm(
+            &library_filter,
+            &series_cap,
+            &issue_cap,
+            visible.hides_any(),
+        ),
+        issue_arm: issue_credit_arm(&library_filter, &issue_cap),
+    };
 
-    // Page query: keyset filter (+ optional jump-rail bucket) + over-fetch
-    // one to detect a next page. Both are WHERE conditions on `agg a`.
-    let mut params = lib_params.clone();
-    let mut conds: Vec<String> = Vec::new();
-    if let Some(name) = &after {
-        params.push(Value::from(name.clone()));
-        conds.push(format!("a.person > ${}", params.len()));
-    }
-    match &starts_with {
+    // P-01: walk the distinct credit names in `person` order with a skip
+    // scan over `issue_credits_person_idx` + `series_credits_person_idx`
+    // (each step is the next name after the previous one in either table),
+    // keep the names with a credit the caller can see, and stop once the
+    // page is full. The per-name roles + count are aggregated for the
+    // page's names only. Same rows, order and counts as the former
+    // aggregate-every-visible-credit query: a name is listed iff the
+    // union has a row for it; the keyset is still `person > cursor`.
+
+    // A–Z bucket: a plain condition on the name, applied to the walk
+    // before the visibility probe.
+    let bucket = |params: &mut Vec<Value>| match &starts_with {
         Some(StartsWithBucket::Letter(c)) => {
             params.push(Value::from(format!("{c}%")));
-            conds.push(format!("lower(a.person) LIKE ${}", params.len()));
+            format!(" AND lower(n.person) LIKE ${}", params.len())
         }
         // "#" catches everything that doesn't sort under a letter.
-        Some(StartsWithBucket::Digit) => conds.push("lower(a.person) !~ '^[a-z]'".to_string()),
-        None => {}
-    }
-    let where_clause = if conds.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", conds.join(" AND "))
+        Some(StartsWithBucket::Digit) => " AND lower(n.person) !~ '^[a-z]'".to_string(),
+        None => String::new(),
     };
+
+    let mut params = lib_params.clone();
+    let after_param = after.as_ref().map(|name| {
+        params.push(Value::from(name.clone()));
+        params.len()
+    });
+    let bucket_sql = bucket(&mut params);
     // L-4 (WP-6.3): bound, not interpolated.
     params.push(Value::from((limit + 1) as i64));
+    // Order invariant: `page` has no ORDER BY on purpose — sorting the walk
+    // would make Postgres evaluate all of it before the LIMIT, which is the
+    // scan this replaces. Its LIMIT keeps the first `limit + 1` visible
+    // names because the recursive walk emits names in strictly increasing
+    // `person` order and the lateral probe is a nested loop that preserves
+    // the order of its outer input. Only the choice of rows depends on that;
+    // the rows themselves are returned by the explicit `ORDER BY pg.person`
+    // below. `entity_list_equivalence::creators_index_is_unchanged` walks
+    // every cursor at limits 1 and 3 against snapshots of the old
+    // aggregate-then-sort query, so a page that was not the first visible
+    // names after the cursor would fail it.
     let sql = format!(
-        "{credits_cte} \
-         SELECT a.person, a.roles, a.credit_count, p.slug \
-           FROM agg a \
-           LEFT JOIN person p ON p.normalized_name = btrim(lower(a.person)){where_clause} \
-          ORDER BY a.person ASC \
-          LIMIT ${fetch}",
+        "{names}, \
+         page AS MATERIALIZED ( \
+           SELECT n.person FROM names n{visible} \
+            WHERE n.person IS NOT NULL{bucket_sql} \
+            LIMIT ${fetch}) \
+         SELECT pg.person, a.roles, a.credit_count, p.slug \
+           FROM page pg \
+           CROSS JOIN LATERAL ({agg}) a \
+           LEFT JOIN person p ON p.normalized_name = btrim(lower(pg.person)) \
+          ORDER BY pg.person ASC",
+        names = credit_names_walk(after_param),
+        visible = arms.visible_join("n.person"),
+        agg = arms.aggregate("pg.person"),
         fetch = params.len(),
     );
 
@@ -334,19 +423,17 @@ pub async fn list(
 
     // Total only on the first page (keyset pages stay cheap). The count
     // honors the same jump-rail bucket as the page query (but never the
-    // cursor — total is the whole filtered set).
+    // cursor — total is the whole filtered set): one probe per distinct
+    // credit name, never an aggregate over the credits.
     let total = if after.is_none() {
         let mut count_params = lib_params;
-        let count_where = match &starts_with {
-            Some(StartsWithBucket::Letter(c)) => {
-                count_params.push(Value::from(format!("{c}%")));
-                format!(" WHERE lower(a.person) LIKE ${}", count_params.len())
-            }
-            Some(StartsWithBucket::Digit) => " WHERE lower(a.person) !~ '^[a-z]'".to_string(),
-            None => String::new(),
-        };
-        let count_sql =
-            format!("{credits_cte} SELECT COUNT(*)::bigint AS n FROM agg a{count_where}");
+        let bucket_sql = bucket(&mut count_params);
+        let count_sql = format!(
+            "{names} SELECT COUNT(*)::bigint AS n FROM names n{visible} \
+              WHERE n.person IS NOT NULL{bucket_sql}",
+            names = credit_names_walk(None),
+            visible = arms.visible_join("n.person"),
+        );
         let count_stmt = Statement::from_sql_and_values(backend, count_sql, count_params);
         CountRow::find_by_statement(count_stmt)
             .one(&app.db)

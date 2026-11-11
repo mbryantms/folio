@@ -902,8 +902,6 @@ pub(crate) async fn rewrite_one_issue(
         max_entry_bytes: limits.max_entry_bytes,
         max_compression_ratio: limits.max_compression_ratio,
         max_nesting_depth: limits.max_nesting_depth,
-        subprocess_wall_timeout: limits.subprocess_wall_timeout,
-        subprocess_rss_bytes: limits.subprocess_rss_bytes,
     };
     let source_ext = source_path
         .extension()

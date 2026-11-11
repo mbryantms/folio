@@ -49,8 +49,11 @@ current file gives Postgres a 256 MB `/dev/shm` (`shm_size`) so parallel
 queries on large libraries don't fail with "could not resize shared
 memory segment", gives `app` a 35 s `stop_grace_period` so job workers
 can finish their 25 s drain, and rotates every container's logs at
-10 MB × 5 files. If your copy predates these, download the new
-`compose.prod.yml` (re-apply any local edits) before `up -d`.
+10 MB × 5 files. It also runs every container read-only with dropped
+capabilities and puts Postgres and Redis on an internal network (see
+*Unreleased — hardened compose template* below). If your copy predates
+these, download the new `compose.prod.yml` (re-apply any local edits)
+before `up -d`.
 
 ## Postgres version requirement
 
@@ -145,6 +148,67 @@ docker compose -f compose.prod.yml up -d --no-deps app
 ```
 
 ## Breaking changes by version
+
+### Unreleased — hardened compose template; optional Redis password
+
+- **Image updates need no action.** The `folio` image no longer contains
+  the `unrar` program (it was never run: RAR comics are read inside the
+  server through the UnRAR library, as before). Nothing else in the
+  images changed, and they keep working with the `compose.prod.yml` you
+  already have.
+- **Adopting the hardened template is optional and manual** (`pull`
+  never touches your compose file). Download the new `compose.prod.yml`,
+  re-apply your local edits, and run `docker compose up -d`; every
+  container is recreated once, volumes and data are untouched. What the
+  new file adds, if you prefer to merge it into your own copy:
+  - the `x-hardening` block (`read_only: true`, `cap_drop: [ALL]`,
+    `security_opt: ["no-new-privileges:true"]`) merged into every
+    service with `<<: *hardening`;
+  - `cap_add` per service: `app-init` `CHOWN`, `DAC_READ_SEARCH`,
+    `FOWNER`; `postgres` `CHOWN`, `DAC_READ_SEARCH`, `FOWNER`, `SETUID`,
+    `SETGID`; `redis` `SETUID`, `SETGID`; `app` and `web` none;
+  - `tmpfs`: `/tmp` on `app`, `/var/run/postgresql` on `postgres`;
+  - `network_mode: none` on `app-init`; `networks: [default, backend]`
+    on `app`, `[default]` on `web`, `[backend]` on `postgres` and
+    `redis`, and the top-level `networks:` block declaring `backend`
+    as `internal: true`;
+  - on `redis`: the `environment` (`SKIP_FIX_PERMS`, `REDIS_PASSWORD`),
+    the new `command` and `healthcheck`; on `app`: the new
+    `COMIC_REDIS_URL` line.
+
+  The `default` network keeps its name, so a reverse proxy attached to
+  `<project>_default` still reaches `app:8080`. Postgres and Redis are
+  no longer on it: anything else of yours that connected to them over
+  that network (a backup container, an admin tool) must join `backend`
+  instead. `docker compose exec` (and `just backup` / `just restore`)
+  work as before.
+- **Optional Redis password.** Add `REDIS_PASSWORD=<value>` to `.env`
+  (letters, digits and `- . _ ~` only, e.g. `openssl rand -hex 32`; any
+  other character makes Redis refuse to start with a message saying
+  so), then run `docker compose -f compose.prod.yml up -d`. Compose
+  recreates Redis and the app together, Redis with `requirepass` and the
+  app with the password in `COMIC_REDIS_URL`; queued jobs survive (they
+  are in the Redis volume). Do not restart only one of the two: an app
+  without the password cannot reach a Redis that requires one. To turn
+  it off again, remove the line and run `up -d` the same way. Leaving it
+  unset keeps today's behaviour. Needs the new template: an older file
+  ignores the variable.
+- **If you customised your compose file**, check before adopting:
+  - *Extra mounts:* only the image's own filesystem is read-only. Bind
+    mounts and volumes stay writable as declared, so a writeback library
+    still needs its mount without `:ro`. Anything that writes elsewhere
+    in a container (a tool you `docker exec` into it, a sidecar sharing
+    its filesystem) fails with `Read-only file system`; give it a
+    volume or `tmpfs`.
+  - *Custom `user:`* on `postgres` or `redis`: their entrypoints then
+    skip the root steps and need none of the added capabilities; the
+    data volume must already belong to that user.
+  - *SELinux / AppArmor:* the template sets no labels or profiles, so
+    Docker's defaults apply. The new settings only take permissions
+    away, but they were tested on a host with neither enabled: if a
+    container fails to start under your policy, check the audit log for
+    a denial. On SELinux hosts a bind mount still needs its usual `:z` /
+    `:Z` suffix.
 
 ### Unreleased — 1 h access tokens by default; sessions end after 90 days
 

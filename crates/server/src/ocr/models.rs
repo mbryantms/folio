@@ -608,6 +608,32 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// `hf_hub::Cache::default()` here must be the very code the OCR
+    /// crates' loader runs, or this module could place verified files
+    /// where the loader does not look. That holds only while Cargo
+    /// resolves one `hf-hub` for the whole workspace, so a bump of the
+    /// direct dependency on its own (two copies in the lock file) fails
+    /// here. Bump it together with `comic-text-detector` and `manga-ocr`.
+    #[test]
+    fn one_hf_hub_in_the_lock_file() {
+        let lock =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+                .expect("workspace Cargo.lock");
+        let versions: Vec<&str> = lock
+            .split("[[package]]")
+            .filter(|pkg| pkg.lines().any(|l| l.trim() == r#"name = "hf-hub""#))
+            .filter_map(|pkg| {
+                pkg.lines()
+                    .find_map(|l| l.trim().strip_prefix("version = "))
+            })
+            .collect();
+        assert_eq!(
+            versions.len(),
+            1,
+            "expected exactly one hf-hub in Cargo.lock, found {versions:?}"
+        );
+    }
+
     const BODY: &[u8] = b"pretend onnx bytes";
     const REV: &str = "0123456789abcdef0123456789abcdef01234567";
     const ROUTE: &str =

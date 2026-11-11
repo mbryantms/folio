@@ -1,0 +1,5397 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: "Json::Object(out)"
+---
+{
+  "admin /api/creators": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 024",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        },
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        },
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 45
+    }
+  ],
+  "admin /api/creators?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "admin /api/creators?limit=1": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IiBBbm4i",
+      "total": 45
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IjEwMCUgV3JpdGVyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IkFubiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAxIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA0Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA2Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA3Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA4Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA5Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDEwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDExIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDEyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDEzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE0Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE2Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE3Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE4Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE5Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIxIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 024",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDI0Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": "IkVsb2RpZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkhpZGRlbiBXcml0ZXIi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ],
+      "next_cursor": "IkphY2sgS2lyYnki"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ],
+      "next_cursor": "Ik1hdHVyZSBBcnRpc3Qi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IlJvbGx1cCBFZGl0b3Ii"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ],
+      "next_cursor": "IlNhbWUgUm9sZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IlNlcmllcyBSYXRlZCI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "IlN0YW4gTGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDJ4Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IlplZCBaZXJvIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "ImFubiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": "ImVsb2RpZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "InN0YW4gbGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=1&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IiBBbm4i",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IjEwMCUgV3JpdGVyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=1&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": "IkVsb2RpZSI",
+      "total": 2
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=1&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IkFubiI",
+      "total": 2
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=1&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ],
+      "next_cursor": "IlNhbWUgUm9sZSI",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IlNlcmllcyBSYXRlZCI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "IlN0YW4gTGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=1&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=1&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/creators?limit=100": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 024",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        },
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        },
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 45
+    }
+  ],
+  "admin /api/creators?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "admin /api/creators?limit=100&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/creators?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/creators?limit=100&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "admin /api/creators?limit=100&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/creators?limit=100&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/creators?limit=3": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI",
+      "total": 45
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 004",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 008",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA4Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDExIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 012",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE0Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 016",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE3Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 020",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 024",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "Hidden Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkhpZGRlbiBXcml0ZXIi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        },
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        },
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IlJvbGx1cCBFZGl0b3Ii"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "IlN0YW4gTGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDJ4Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "ImFubiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=3&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=3&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/creators?limit=3&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/creators?limit=3&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "IlN0YW4gTGVlIg",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/creators?limit=3&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042x",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/creators?limit=3&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/creators?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "capped /api/creators": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        },
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 28
+    }
+  ],
+  "capped /api/creators?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "capped /api/creators?limit=1": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IiBBbm4i",
+      "total": 28
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IjEwMCUgV3JpdGVyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IkFubiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA2Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA3Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDEwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDExIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE0Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE4Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE5Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": "IkVsb2RpZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ],
+      "next_cursor": "IkphY2sgS2lyYnki"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ],
+      "next_cursor": "IlNhbWUgUm9sZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "IlN0YW4gTGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IlplZCBaZXJvIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "ImFubiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": "ImVsb2RpZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "InN0YW4gbGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=1&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IiBBbm4i",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IjEwMCUgV3JpdGVyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=1&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": "IkVsb2RpZSI",
+      "total": 2
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=1&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IkFubiI",
+      "total": 2
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=1&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ],
+      "next_cursor": "IlNhbWUgUm9sZSI",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "IlN0YW4gTGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=1&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi",
+      "total": 2
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=1&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/creators?limit=100": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        },
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 28
+    }
+  ],
+  "capped /api/creators?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "capped /api/creators?limit=100&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/creators?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/creators?limit=100&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "capped /api/creators?limit=100&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/creators?limit=100&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/creators?limit=3": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI",
+      "total": 28
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 002",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 006",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 010",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDEwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 014",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 018",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 022",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 2,
+          "person": "Jack Kirby",
+          "roles": [
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ],
+      "next_cursor": "IkphY2sgS2lyYnki"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "InN0YW4gbGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=3&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/creators?limit=3&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 1,
+          "person": "elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/creators?limit=3&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/creators?limit=3&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 4,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "stan lee",
+          "roles": [
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "capped /api/creators?limit=3&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/creators?limit=3&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/creators?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "partial /api/creators": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        },
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        },
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 28
+    }
+  ],
+  "partial /api/creators?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "partial /api/creators?limit=1": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IiBBbm4i",
+      "total": 28
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IjEwMCUgV3JpdGVyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IkFubiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAxIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA3Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA5Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDExIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDEzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE3Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE5Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIxIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": "IkVsb2RpZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ],
+      "next_cursor": "IkphY2sgS2lyYnki"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        }
+      ],
+      "next_cursor": "Ik1hdHVyZSBBcnRpc3Qi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IlJvbGx1cCBFZGl0b3Ii"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ],
+      "next_cursor": "IlNhbWUgUm9sZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IlNlcmllcyBSYXRlZCI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": "IlN0YW4gTGVlIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIwIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IlplZCBaZXJvIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/creators?limit=1&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": "IiBBbm4i",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IjEwMCUgV3JpdGVyIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/creators?limit=1&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=1&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=1&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ],
+      "next_cursor": "IlNhbWUgUm9sZSI",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": "IlNlcmllcyBSYXRlZCI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/creators?limit=1&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi",
+      "total": 2
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/creators?limit=1&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=100": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        },
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        },
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 28
+    }
+  ],
+  "partial /api/creators?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "partial /api/creators?limit=100&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=100&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/creators?limit=100&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/creators?limit=100&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=3": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI",
+      "total": 28
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 001",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 003",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDAzIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 005",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 007",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 009",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDA5Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 011",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 013",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 015",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDE1Ig"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 017",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 019",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Creator 021",
+          "roles": [
+            "artist"
+          ]
+        }
+      ],
+      "next_cursor": "IkNyZWF0b3IgMDIxIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Creator 023",
+          "roles": [
+            "artist"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        },
+        {
+          "credit_count": 5,
+          "person": "Jack Kirby",
+          "roles": [
+            "cover_artist",
+            "penciller"
+          ],
+          "slug": "jack-kirby"
+        }
+      ],
+      "next_cursor": "IkphY2sgS2lyYnki"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Mature Artist",
+          "roles": [
+            "artist"
+          ],
+          "slug": "mature-artist"
+        },
+        {
+          "credit_count": 1,
+          "person": "Rollup Editor",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        }
+      ],
+      "next_cursor": "IlNhbWUgUm9sZSI"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        }
+      ],
+      "next_cursor": "IldyaXRlciAwNDIi"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "Il9VbmRlcnNjb3JlIEVkIg"
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/creators?limit=3&starts_with=%23": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": " Ann",
+          "roles": [
+            "letterer"
+          ],
+          "slug": "ann"
+        },
+        {
+          "credit_count": 1,
+          "person": "100% Writer",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "2000AD Staff",
+          "roles": [
+            "editor"
+          ]
+        }
+      ],
+      "next_cursor": "IjIwMDBBRCBTdGFmZiI",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "_Underscore Ed",
+          "roles": [
+            "editor"
+          ]
+        },
+        {
+          "credit_count": 1,
+          "person": "Élodie",
+          "roles": [
+            "inker"
+          ],
+          "slug": "elodie-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/creators?limit=3&starts_with=E": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Elodie",
+          "roles": [
+            "colorist"
+          ],
+          "slug": "elodie"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=3&starts_with=a": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Ann",
+          "roles": [
+            "inker",
+            "letterer"
+          ],
+          "slug": "ann"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?limit=3&starts_with=s": [
+    {
+      "items": [
+        {
+          "credit_count": 5,
+          "person": "Same Role",
+          "roles": [
+            "colorist"
+          ]
+        },
+        {
+          "credit_count": 2,
+          "person": "Series Rated",
+          "roles": [
+            "writer"
+          ]
+        },
+        {
+          "credit_count": 3,
+          "person": "Stan Lee",
+          "roles": [
+            "editor",
+            "writer"
+          ],
+          "slug": "stan-lee"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/creators?limit=3&starts_with=w": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Writer 042",
+          "roles": [
+            "writer"
+          ],
+          "slug": "writer-042"
+        },
+        {
+          "credit_count": 1,
+          "person": "Writer 0420",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "partial /api/creators?limit=3&starts_with=z": [
+    {
+      "items": [
+        {
+          "credit_count": 1,
+          "person": "Zed Zero",
+          "roles": [
+            "writer"
+          ]
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/creators?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  }
+}
