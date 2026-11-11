@@ -168,6 +168,8 @@ export function SearchModal({
   const suggestionHighlighted = commandValue.startsWith(
     SUGGESTION_VALUE_PREFIX,
   );
+  const nothingHighlighted =
+    commandValue === "" || commandValue.startsWith(NO_HIGHLIGHT);
   // Empty-input states: recents chips (if any) or a short hint, above the
   // suggested commands. Shown only when there's nothing to search yet
   // (not enabled, not command mode).
@@ -228,12 +230,22 @@ export function SearchModal({
 
   // cmdk owns Enter for the highlighted item. We intercept two cases at
   // the input (stopping propagation so cmdk doesn't also act): Mod+Enter
-  // → full search, and plain Enter with no quick hits → full search.
+  // → full search, and plain Enter with no quick hits (or nothing
+  // highlighted) → full search.
   function onInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    // Runs before cmdk's own handler on the root: arrow-key moves may
-    // highlight a suggestion, anything else (typing, hover) may not.
+    // The Enter (or arrow) that commits an IME composition is not ours.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // Runs before cmdk's own keydown handler on the root, which moves the
+    // highlight synchronously in this same dispatch: an arrow-key move may
+    // highlight a suggestion. The flag lasts this one keystroke only, so a
+    // later hover or a paste (no keydown) never inherits it.
     keyboardNav.current =
       NAV_KEYS.has(e.key) || (e.ctrlKey && CTRL_NAV_KEYS.has(e.key));
+    if (keyboardNav.current) {
+      queueMicrotask(() => {
+        keyboardNav.current = false;
+      });
+    }
     if (e.key !== "Enter") return;
     if (!commandMode && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
@@ -242,7 +254,7 @@ export function SearchModal({
     } else if (
       !commandMode &&
       enabled &&
-      !hasItems &&
+      (!hasItems || nothingHighlighted) &&
       // A suggestion the user arrowed onto: cmdk's Enter runs it.
       !suggestionHighlighted
     ) {
@@ -322,12 +334,7 @@ export function SearchModal({
           {showVisits ? (
             <RecentVisitsHeader onClear={recentVisits.clear} />
           ) : null}
-          <CommandList
-            className="min-h-0 flex-1 max-sm:max-h-none"
-            onPointerMove={() => {
-              keyboardNav.current = false;
-            }}
-          >
+          <CommandList className="min-h-0 flex-1 max-sm:max-h-none">
             {isLoading && !hasItems ? (
               <p
                 role="status"

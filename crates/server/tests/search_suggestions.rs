@@ -696,48 +696,37 @@ async fn suggestions_respect_the_requests_library_and_facets() {
 /// asks for suggestions.
 #[tokio::test]
 async fn threshold_stays_local_and_cursor_pages_carry_no_suggestions() {
-    let app = TestApp::spawn().await;
+    // One pooled connection: the suggestion transaction and the check
+    // below necessarily run on the same session.
+    let app = TestApp::spawn_with_pool(std::path::PathBuf::from("/tmp/library"), 1, 1).await;
     let admin = register(&app, "admin@local.test").await;
     let db = Database::connect(&app.db_url).await.unwrap();
     let lib = seed_library(&db, "local").await;
     seed_series(&db, lib, "The Sandman Overture Deluxe Edition", None, false).await;
 
-    // Several suggestion requests, so more than one pooled connection has
-    // run the `SET LOCAL`.
-    for _ in 0..8 {
-        let body = get_json(&app, &search_uri("sandmn"), &admin).await;
-        assert_eq!(suggestion_names(&body).len(), 1);
-    }
+    let body = get_json(&app, &search_uri("sandmn"), &admin).await;
+    assert_eq!(suggestion_names(&body).len(), 1);
 
-    // Hold up to every connection of the app's pool (6 in the harness) at
-    // once and read the setting on each.
+    // The pool's only connection: the one that ran the `SET LOCAL`.
     let state = app.state();
-    let mut held = Vec::new();
-    for _ in 0..6 {
-        match tokio::time::timeout(std::time::Duration::from_secs(2), state.db.begin()).await {
-            Ok(txn) => held.push(txn.unwrap()),
-            Err(_) => break,
-        }
-    }
-    assert!(held.len() >= 2, "held {} connections", held.len());
-    for txn in &held {
-        let row = txn
-            .query_one_raw(sea_orm::Statement::from_string(
-                DbBackend::Postgres,
-                // Load pg_trgm in this session first so the setting exists.
-                "SELECT word_similarity('a', 'a')::float8, \
-                 current_setting('pg_trgm.word_similarity_threshold')",
-            ))
-            .await
-            .unwrap()
-            .unwrap();
-        let threshold: String = row.try_get_by_index(1).unwrap();
-        assert_eq!(
-            threshold, "0.6",
-            "pooled connection kept the lowered threshold"
-        );
-    }
-    drop(held);
+    let txn = tokio::time::timeout(std::time::Duration::from_secs(10), state.db.begin())
+        .await
+        .expect("the pool's connection")
+        .unwrap();
+    let row = txn
+        .query_one_raw(sea_orm::Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT current_setting('pg_trgm.word_similarity_threshold')",
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let threshold: String = row.try_get_by_index(0).unwrap();
+    assert_eq!(
+        threshold, "0.6",
+        "the pooled connection kept the lowered threshold"
+    );
+    txn.rollback().await.unwrap();
 
     // A cursor page (the offset cursor of a search) never carries them.
     use base64::Engine;
@@ -800,6 +789,9 @@ async fn documented_word_similarity_scores() {
         // does not.
         ("hulc", "hulk", 0.6, true),
         ("spawm", "spawn", 0.6667, true),
+        // The exact boundary, not a typical case: 2 shared / 5 = 0.4. It
+        // passes because pg_trgm compares with `>=` and the float4 score
+        // 0.4 is 0.4000000059…, just above the float8 threshold 0.4.
         ("thur", "thor", 0.4, true),
         ("sega", "saga", 0.25, false),
         // Noise.

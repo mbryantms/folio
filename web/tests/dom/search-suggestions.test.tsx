@@ -155,7 +155,9 @@ describe("useGlobalSearch suggestions", () => {
 
 const sheet = vi.hoisted(() => ({
   push: vi.fn(),
+  runAction: vi.fn(),
   calls: [] as string[],
+  actions: [] as unknown[],
 }));
 
 /** Load SearchModal against a fake `useGlobalSearch`: "sega" finds nothing
@@ -168,8 +170,8 @@ async function loadSheet() {
   }));
   vi.doMock("@/lib/search/use-search-actions", () => ({
     useSearchActions: () => ({
-      actions: [],
-      run: vi.fn(),
+      actions: sheet.actions,
+      run: sheet.runAction,
       detailFor: () => null,
       keyHintFor: () => null,
     }),
@@ -211,7 +213,9 @@ async function loadSheet() {
 describe("SearchModal no-results state", () => {
   beforeEach(() => {
     sheet.push.mockClear();
+    sheet.runAction.mockClear();
     sheet.calls.length = 0;
+    sheet.actions = [];
   });
 
   it("lists the suggestions with nothing highlighted, and a Browse link", async () => {
@@ -294,6 +298,60 @@ describe("SearchModal no-results state", () => {
     await screen.findByRole("link", { name: "Browse the library" });
     expect(screen.queryByRole("option")).toBeNull();
     expect(screen.getAllByText(/No matches for/)).toHaveLength(1);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sheet.push).toHaveBeenCalledWith("/search?q=zzzzqq");
+  });
+
+  it("after an arrow key, hovering a suggestion still does not make Enter pick it", async () => {
+    const { Sun, Moon } = await import("lucide-react");
+    sheet.actions = [
+      { id: "a1", label: "Toggle theme", group: "Commands", icon: Sun },
+      { id: "a2", label: "Night mode", group: "Commands", icon: Moon },
+    ];
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "sega" } });
+    const item = await screen.findByRole("option", { name: "Search for Saga" });
+    const second = screen.getByRole("option", { name: /Night mode/ });
+    // Arrow among the "Jump to…" actions…
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(second.getAttribute("aria-selected")).toBe("true"),
+    );
+    await act(async () => {});
+    // …then the mouse moves onto the suggestion.
+    fireEvent.pointerMove(item);
+    expect(item.getAttribute("aria-selected")).toBe("false");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sheet.push).toHaveBeenCalledWith("/search?q=sega");
+    expect(sheet.calls).not.toContain("Saga");
+    expect(sheet.runAction).not.toHaveBeenCalled();
+  });
+
+  it("after an arrow key, new zero-hit results from a paste are not highlighted", async () => {
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "saga" } });
+    const hit = await screen.findByRole("option", { name: /Saga/ });
+    await waitFor(() => expect(hit.getAttribute("aria-selected")).toBe("true"));
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await act(async () => {});
+    // A paste from the context menu: a new value, no keydown.
+    fireEvent.change(input, { target: { value: "sega" } });
+    const item = await screen.findByRole("option", { name: "Search for Saga" });
+    await waitFor(() =>
+      expect(item.getAttribute("aria-selected")).toBe("false"),
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sheet.push).toHaveBeenCalledWith("/search?q=sega");
+    expect(sheet.calls).not.toContain("Saga");
+  });
+
+  it("the Enter that commits an IME composition does nothing", async () => {
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "zzzzqq" } });
+    await screen.findByRole("link", { name: "Browse the library" });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(sheet.push).not.toHaveBeenCalled();
     fireEvent.keyDown(input, { key: "Enter" });
     expect(sheet.push).toHaveBeenCalledWith("/search?q=zzzzqq");
   });

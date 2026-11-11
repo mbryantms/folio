@@ -1684,7 +1684,7 @@ pub const SUGGESTION_MIN_CHARS: usize = 3;
 /// run - shared)), so a typo costs what it breaks of that run, not what
 /// length the word has. Measured (`documented_word_similarity_scores` in
 /// `tests/search_suggestions.rs`): `sandmn` 0.71, `helboy` 0.67,
-/// `invisble` 0.58, `batnan` 0.43, `hulc` 0.6, `thur` 0.4 clear it; noise
+/// `invisble` 0.58, `batnan` 0.43, `hulc` 0.6 clear it; noise
 /// stays well under (`zzzzqq` vs "zuzu" 0.17, `qwrtpz` 0). A typo near
 /// the start of a short word leaves no run (`sega` vs "saga" 0.25, level
 /// with noise), so that case stays out of reach.

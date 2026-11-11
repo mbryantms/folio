@@ -109,7 +109,7 @@ trigrams with the whole name, so the page used to be a dead end.
   (default 0.6). `word_similarity` scores the query against the best
   contiguous run of the name's trigrams, so a typo costs what it breaks of
   that run: `sandmn` 0.71, `helboy` 0.67, `batnan` 0.43, `hulc` (hulk)
-  0.6, `thur` (thor) 0.4 clear it; noise stays under 0.2. A typo near the
+  0.6 clear it; noise stays under 0.2. A typo near the
   start of a short word leaves no run (`sega` vs "saga" 0.25) and stays
   out of reach. Figures are pinned by `documented_word_similarity_scores`.
   Queries under 3 letters/digits get no suggestions.
