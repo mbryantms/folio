@@ -1974,6 +1974,7 @@ mod tests {
             status: "ongoing".to_owned(),
             total_issues: Some(12),
             age_rating: None,
+            declared_age_rating: None,
             summary: None,
             language_code: "en".to_owned(),
             series_group: None,

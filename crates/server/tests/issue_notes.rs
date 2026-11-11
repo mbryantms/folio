@@ -158,6 +158,7 @@ async fn seed_visible_issue(
         user_id: Set(auth.user_id),
         library_id: Set(lib_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -286,6 +287,7 @@ async fn notes_are_per_user() {
             user_id: Set(b.user_id),
             library_id: Set(row.library_id),
             age_rating_max: Set(None),
+            hide_unrated: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
         }

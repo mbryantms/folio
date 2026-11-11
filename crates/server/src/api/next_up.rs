@@ -927,7 +927,7 @@ pub(crate) trait WalkIssue {
     fn walk_series_id(&self) -> Uuid;
     fn walk_library_id(&self) -> Uuid;
     /// The issue's own `age_rating` (WP-2.7 cap check; the series
-    /// rating is the fallback and comes from `series_by_id`).
+    /// rating is checked as well and comes from `series_by_id`).
     fn walk_age_rating(&self) -> Option<&str>;
 }
 

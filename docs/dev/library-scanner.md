@@ -590,7 +590,28 @@ without per-library configuration.
      ([mod.rs:1621–1631](../../crates/server/src/library/scanner/mod.rs#L1621-L1631))
      so the next scan's folder mtime fast-path can fire.
   5. **Metadata rollup** — refresh genre/tag/credit junction tables
-     for the series ([mod.rs:1635](../../crates/server/src/library/scanner/mod.rs#L1635)).
+     for the series ([mod.rs:1635](../../crates/server/src/library/scanner/mod.rs#L1635)),
+     and re-derive `series.age_rating`: the highest-ranked rating among
+     the series' active, not-removed issues and the folder's declared
+     `series.json` rating (`series.declared_age_rating`, a floor), on the
+     age-rating ladder with Metron's words as aliases (unranked ratings
+     ignored, NULL when none ranks), unless a person set the series
+     rating (a non-file-tier `field_provenance` row on `age_rating`). The
+     value the identity step gap-fills at series creation is only a first
+     guess that this step replaces. `declared_age_rating` is written
+     before the folder's files are processed — right after identity
+     resolution for a new series, and on every scan that reads the
+     folder for a known one, fast-path-skipped folders included, plus the
+     single-issue scan — by `series_rating::apply_declared_age_rating`,
+     which re-derives every time. A `series.json` without a rating
+     clears it, and so does a missing one, but only when the lookup says
+     not-found and the folder still stats as a directory; a file that
+     exists but cannot be read, a vanished folder or any other lookup
+     error leaves it unchanged. The
+     same derivation (`library::series_rating`) runs when reconcile
+     soft-removes or restores issues, when a single-issue scan removes a
+     missing file, and when a rescan re-homes an issue to another series
+     (for the series it left).
   6. **Status reconcile** — for narrow scans only; the library path
      defers this to a single batch call after Phase 4
      ([mod.rs:1645–1652](../../crates/server/src/library/scanner/mod.rs#L1645-L1652),

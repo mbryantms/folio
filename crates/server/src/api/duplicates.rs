@@ -1068,7 +1068,7 @@ pub async fn set_decision(
                 app.duplicates.invalidate(library_id);
                 return internal(&e, "duplicates: soft-remove failed");
             }
-            recompute_series_status(&app.db, series_id).await;
+            recompute_series_status(&app, series_id).await;
         }
         _ => {}
     }
@@ -1151,7 +1151,7 @@ pub async fn clear_decision(
             app.duplicates.invalidate(library_id);
             return internal(&e, "duplicates: undo soft-remove failed");
         }
-        recompute_series_status(&app.db, series_id).await;
+        recompute_series_status(&app, series_id).await;
         // The undone copy may be the series' only live issue again.
         let mut events = crate::library::event_log::EventCollector::new(library_id, None);
         if let Err(e) = crate::library::reconcile::restore_series_with_live_issues(
@@ -1185,12 +1185,18 @@ pub async fn clear_decision(
 }
 
 /// Issue counts moved — refresh the series' `total_issues` / status.
-async fn recompute_series_status(db: &DatabaseConnection, series_id: Uuid) {
+/// A soft-remove or its undo changed the series' active issue set: refresh
+/// its status and its derived age rating (`library::series_rating`).
+async fn recompute_series_status(app: &AppState, series_id: Uuid) {
+    let db = &app.db;
     if let Err(e) =
         crate::library::scanner::reconcile_status::reconcile_series_status(db, series_id, None)
             .await
     {
         tracing::warn!(error = %e, %series_id, "duplicates: series status recompute failed");
+    }
+    if crate::library::series_rating::recompute_best_effort(db, &[series_id]).await > 0 {
+        app.similarity.invalidate_all();
     }
 }
 

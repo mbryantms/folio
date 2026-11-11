@@ -82,6 +82,7 @@ async fn seed_minimal_issue(app: &TestApp) -> (sea_orm::DatabaseConnection, Stri
         status: Set("continuing".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
         sort_name: Set(None),

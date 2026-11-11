@@ -235,6 +235,7 @@ async fn seed_matchable_issues(app: &TestApp) -> Uuid {
         status: Set("ended".into()),
         total_issues: Set(None),
         age_rating: Set(None),
+        declared_age_rating: Set(None),
         summary: Set(None),
         language_code: Set("en".into()),
         sort_name: Set(None),
@@ -1805,6 +1806,7 @@ async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid, cap: Opti
         user_id: Set(user_id),
         library_id: Set(library_id),
         age_rating_max: Set(cap.map(str::to_owned)),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

@@ -835,6 +835,8 @@ describe("<SeriesRefreshFlow>", () => {
     expect(posts).toHaveLength(1);
     expect(posts[0]!.url).toContain("scope=incomplete");
     expect(screen.getByText("40 / 173 searched")).toBeTruthy();
+    // The step's own progress announces the batch: no toast on top of it.
+    expect(toastSpy.success).not.toHaveBeenCalled();
   });
 
   it("hands off to Review with Fill missing and a Review-page link", async () => {
