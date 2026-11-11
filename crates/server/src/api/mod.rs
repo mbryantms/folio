@@ -184,6 +184,10 @@ pub(crate) fn not_found_msg(message: impl Into<String>) -> Response {
     respond(StatusCode::NOT_FOUND, ApiErrorCode::NotFound, message)
 }
 
+/// What a response says in place of a database error's own text. SQL and
+/// constraint text helps no caller; the real error goes to the log.
+pub const INTERNAL_ERROR_TEXT: &str = "internal error";
+
 /// Legacy error helper retained during M0/M3 migration. New code uses
 /// [`respond`] with an [`ApiErrorCode`] variant.
 pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {

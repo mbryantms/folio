@@ -17,7 +17,9 @@
 //! Visibility follows the issue: a caller who can't see the issue (library
 //! ACL or age-rating cap) gets the same 404 as a missing issue, so the
 //! endpoint never leaks existence and can't be used to write rows against
-//! hidden issues.
+//! hidden issues. A soft-removed issue still reads (history) but takes no
+//! new `PUT`. `DELETE` only ever removes the caller's own row and answers
+//! 204 for any id.
 
 use std::collections::BTreeSet;
 
@@ -90,17 +92,14 @@ fn internal(ctx: &str, e: &dyn std::fmt::Display) -> Response {
     )
 }
 
-/// Load the issue and enforce library ACL + age-rating visibility. An
-/// invisible issue is reported as missing (404).
-async fn visible_issue(
+/// Load the issue for a read: library ACL + age-rating visibility. An
+/// invisible issue is reported as missing (404); a soft-removed one is
+/// history and still reads.
+async fn readable_issue(
     app: &AppState,
     user: &CurrentUser,
     issue_id: &str,
 ) -> Result<issue::Model, Response> {
-    let row = issue::Entity::find_by_id(issue_id.to_owned())
-        .one(&app.db)
-        .await
-        .map_err(|e| internal("issue fetch failed", &e))?;
     let not_found = || {
         respond(
             StatusCode::NOT_FOUND,
@@ -108,13 +107,36 @@ async fn visible_issue(
             "issue not found",
         )
     };
-    let Some(row) = row else {
-        return Err(not_found());
-    };
+    let row = issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&app.db)
+        .await
+        .map_err(|e| internal("issue fetch failed", &e))?
+        .ok_or_else(not_found)?;
     if !access::issue_visible(app, user, &row).await {
         return Err(not_found());
     }
     Ok(row)
+}
+
+/// Load the issue for a write: library ACL + age-rating visibility, and
+/// that it is live (`access::visible_issue`). An invisible or soft-removed
+/// issue is reported as missing (404).
+async fn visible_issue(
+    app: &AppState,
+    user: &CurrentUser,
+    issue_id: &str,
+) -> Result<issue::Model, Response> {
+    let acl = access::for_user(app, user).await;
+    access::visible_issue(&app.db, &acl, issue_id)
+        .await
+        .map_err(|e| internal("issue fetch failed", &e))?
+        .ok_or_else(|| {
+            respond(
+                StatusCode::NOT_FOUND,
+                ApiErrorCode::NotFound,
+                "issue not found",
+            )
+        })
 }
 
 fn pages_from_json(v: &serde_json::Value) -> Vec<i32> {
@@ -214,7 +236,7 @@ pub async fn get_overrides(
     user: CurrentUser,
     AxPath(issue_id): AxPath<String>,
 ) -> Response {
-    if let Err(resp) = visible_issue(&app, &user, &issue_id).await {
+    if let Err(resp) = readable_issue(&app, &user, &issue_id).await {
         return resp;
     }
     match find_row(&app, user.id, &issue_id).await {
@@ -297,8 +319,7 @@ pub async fn put_overrides(
     path = "/me/issues/{issue_id}/page-overrides",
     params(("issue_id" = String, Path,)),
     responses(
-        (status = 204, description = "overrides cleared"),
-        (status = 404, description = "issue not found or not visible"),
+        (status = 204, description = "overrides cleared, or there were none"),
     )
 )]
 #[handler]
@@ -307,9 +328,8 @@ pub async fn delete_overrides(
     user: CurrentUser,
     AxPath(issue_id): AxPath<String>,
 ) -> Response {
-    if let Err(resp) = visible_issue(&app, &user, &issue_id).await {
-        return resp;
-    }
+    // Only the caller's own row can go, so no visibility gate: the answer
+    // is 204 for any id, hidden, removed or unknown alike.
     match delete_row(&app, user.id, &issue_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(resp) => resp,

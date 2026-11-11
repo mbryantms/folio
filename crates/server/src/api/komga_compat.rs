@@ -279,8 +279,8 @@ async fn patch_read_progress(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let visible = access::for_user(&app, &user.0).await;
-    if !access::issue_allowed(&app, &visible, &issue_row).await {
+    // Hidden or soft-removed: no new progress, answered like an unknown id.
+    if !access::issue_writable(&app, &user.0, &issue_row.id).await {
         tracing::info!(
             book_id = %book_id,
             user_id = %user.0.id,

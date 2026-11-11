@@ -407,6 +407,45 @@ async fn rewrite_failure_on_the_last_attempt_marks_the_run_failed_and_aborts() {
     assert!(run.error_summary.is_none(), "stale error cleared");
 }
 
+/// The stored run error names the file, never the directory it lives in:
+/// a CBR whose `.cbz` twin already exists is refused, and the summary the
+/// run stores carries the twin's file name only.
+#[tokio::test]
+async fn stored_run_error_names_the_file_not_its_directory() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbr = dir.path().join("saga-7.cbr");
+    let issue_id = IssueSeed::new(
+        lib_id,
+        series_id,
+        &cbr,
+        &std::fs::read(cbr_fixture()).unwrap(),
+        7.0,
+    )
+    .insert(&app.state().db)
+    .await;
+    std::fs::write(dir.path().join("saga-7.cbz"), build_cbz_bytes("twin")).unwrap();
+    let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+
+    // The conversion cannot overwrite the twin: a refusal, which fails the
+    // run without a retry.
+    assert_refused_without_retry(&app, &issue_id, run_id).await;
+
+    let run = run_row(&app, run_id).await;
+    let summary = run.error_summary.expect("error_summary set");
+    assert!(summary.contains("saga-7.cbz already exists"), "{summary}");
+    let dir_text = dir.path().to_string_lossy().into_owned();
+    assert!(!summary.contains(&dir_text), "no directory: {summary}");
+}
+
 /// A run whose `error_summary` the rewrite job did not write — a search
 /// failure — is never flipped back to `completed` by a rewrite that lands.
 #[tokio::test]

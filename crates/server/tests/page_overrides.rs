@@ -598,10 +598,17 @@ async fn invisible_issue_is_404_for_read_and_write() {
     let body = serde_json::json!({ "spread_pages": [1] });
 
     // No library grant → the issue doesn't exist as far as Bob can tell.
+    // DELETE only ever removes the caller's own row, so it answers 204 for
+    // any id, hidden or unknown alike.
     for method in [Method::GET, Method::PUT, Method::DELETE] {
         let b = (method == Method::PUT).then(|| body.clone());
         let (s, _) = http(&app, method.clone(), &uri(&issue_id), Some(&bob), b).await;
-        assert_eq!(s, StatusCode::NOT_FOUND, "{method} without grant");
+        let expected = if method == Method::DELETE {
+            StatusCode::NO_CONTENT
+        } else {
+            StatusCode::NOT_FOUND
+        };
+        assert_eq!(s, expected, "{method} without grant");
     }
 
     // Granted, but the issue's age rating is above Bob's cap.
@@ -611,7 +618,12 @@ async fn invisible_issue_is_404_for_read_and_write() {
     for method in [Method::GET, Method::PUT, Method::DELETE] {
         let b = (method == Method::PUT).then(|| body.clone());
         let (s, _) = http(&app, method.clone(), &uri(&issue_id), Some(&bob), b).await;
-        assert_eq!(s, StatusCode::NOT_FOUND, "{method} above age cap");
+        let expected = if method == Method::DELETE {
+            StatusCode::NO_CONTENT
+        } else {
+            StatusCode::NOT_FOUND
+        };
+        assert_eq!(s, expected, "{method} above age cap");
     }
     assert_eq!(
         override_rows(&app).await,

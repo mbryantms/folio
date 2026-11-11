@@ -6825,9 +6825,6 @@
           "400": {
             "description": "invalid cursor or status"
           },
-          "403": {
-            "description": "not your list"
-          },
           "404": {
             "description": "list not found"
           }
@@ -7445,9 +7442,6 @@
               }
             }
           },
-          "403": {
-            "description": "not owner"
-          },
           "404": {
             "description": "collection not found"
           },
@@ -7491,9 +7485,6 @@
               }
             }
           },
-          "403": {
-            "description": "not owner"
-          },
           "404": {
             "description": "collection not found"
           },
@@ -7525,9 +7516,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "not the caller's collection"
           },
           "404": {
             "description": "collection not found"
@@ -7577,9 +7565,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "not the caller's collection"
           },
           "404": {
             "description": "collection not found"
@@ -7928,10 +7913,7 @@
         ],
         "responses": {
           "204": {
-            "description": "overrides cleared"
-          },
-          "404": {
-            "description": "issue not found or not visible"
+            "description": "overrides cleared, or there were none"
           }
         }
       }
@@ -9842,6 +9824,9 @@
           },
           "401": {
             "description": "not authenticated"
+          },
+          "404": {
+            "description": "series not found"
           }
         }
       },
@@ -10245,7 +10230,7 @@
             }
           },
           "403": {
-            "description": "admin only / view not visible"
+            "description": "admin only"
           },
           "404": {
             "description": "saved view not found"
@@ -10275,9 +10260,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "batch not visible"
           },
           "404": {
             "description": "batch not found"
@@ -11660,9 +11642,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found"
           }
@@ -11911,9 +11890,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "issue not found"
@@ -12204,9 +12180,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "issue / run not found"
           }
@@ -12333,9 +12306,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "issue / run not found"
           }
@@ -12382,9 +12352,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "issue not found / provider has no such record"
@@ -12469,9 +12436,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "issue / run / candidate not found"
           },
@@ -12531,9 +12495,6 @@
           },
           "400": {
             "description": "no providers configured"
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "issue not found"
@@ -12720,9 +12681,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found / no run"
           }
@@ -12833,9 +12791,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series / run not found"
           }
@@ -12884,9 +12839,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series / run / candidate not found"
@@ -13043,9 +12995,6 @@
               }
             }
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found / provider has no such record"
           },
@@ -13182,9 +13131,6 @@
           "400": {
             "description": "invalid run scope"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series / run / candidate not found"
           },
@@ -13301,9 +13247,6 @@
           "400": {
             "description": "no providers configured"
           },
-          "403": {
-            "description": "library access denied"
-          },
           "404": {
             "description": "series not found"
           },
@@ -13338,9 +13281,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series not found"
@@ -13448,9 +13388,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series not found"
@@ -13602,9 +13539,6 @@
                 }
               }
             }
-          },
-          "403": {
-            "description": "library access denied"
           },
           "404": {
             "description": "series not found"
@@ -17419,7 +17353,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Why the run failed. Admins get the job's error text; any other\ncaller gets a fixed sentence whenever a failure was recorded."
           },
           "finished_at": {
             "type": [
@@ -22492,7 +22427,7 @@
               "string",
               "null"
             ],
-            "description": "Last fetch failure (`enrichment = failed`)."
+            "description": "Last fetch failure (`enrichment = failed`).\nAdmins get the provider's error text; any other caller gets\n[`READER_PROFILE_ERROR`] whenever a failure is recorded."
           },
           "founded_year": {
             "type": [
@@ -24876,7 +24811,6 @@
           "id",
           "kind",
           "severity",
-          "fingerprint",
           "payload",
           "first_seen_at",
           "last_seen_at"
@@ -24889,7 +24823,8 @@
             ]
           },
           "fingerprint": {
-            "type": "string"
+            "type": "string",
+            "description": "Dedupe key, built from the server paths the finding names. Admins\nonly; absent on the reader-facing per-issue list."
           },
           "first_seen_at": {
             "type": "string"
@@ -24903,7 +24838,9 @@
           "last_seen_at": {
             "type": "string"
           },
-          "payload": {},
+          "payload": {
+            "description": "The finding's `{kind, data}` payload. On the reader-facing\nper-issue list `data` keeps only the counts and labels the reader\nshows ([`HealthIssueView::for_reader`]); paths and raw errors are\nfor admins."
+          },
           "resolved_at": {
             "type": [
               "string",
@@ -25242,7 +25179,6 @@
           "series_slug",
           "series_id",
           "library_id",
-          "file_path",
           "state",
           "file_size",
           "created_at",
@@ -25272,7 +25208,7 @@
           },
           "allow_archive_writeback": {
             "type": "boolean",
-            "description": "Whether the parent library has archive writeback enabled. Gates\nthe admin \"Edit archive…\" affordance in the UI\n(`archive-rewrite-1.0` M3). Populated by the issue-detail handler;\ndefaults false (not stored on the issue row)."
+            "description": "Whether the parent library has archive writeback enabled. Gates\nthe admin \"Edit archive…\" affordance in the UI\n(`archive-rewrite-1.0` M3). Populated by the issue-detail handler\nfor admins only (a library setting); absent for other callers."
           },
           "alternate_series": {
             "type": [
@@ -25367,7 +25303,8 @@
             ]
           },
           "file_path": {
-            "type": "string"
+            "type": "string",
+            "description": "Absolute path of the archive on the server. Admins only (the page\neditor and the Details tab); absent for every other caller."
           },
           "file_size": {
             "type": "integer",
@@ -25449,7 +25386,7 @@
           },
           "library_cbr_convert_confirmed": {
             "type": "boolean",
-            "description": "Whether the parent library has acknowledged the CBR→CBZ conversion\nat least once (`library.cbr_convert_confirmed_at` is set). The page\neditor uses this to decide whether to show the one-time conversion\nexplainer when editing a `.cbr`. `archive-rewrite-1.0` M6."
+            "description": "Whether the parent library has acknowledged the CBR→CBZ conversion\nat least once (`library.cbr_convert_confirmed_at` is set). The page\neditor uses this to decide whether to show the one-time conversion\nexplainer when editing a `.cbr`. `archive-rewrite-1.0` M6. Admins\nonly (a library setting); absent for other callers."
           },
           "library_default_reading_direction": {
             "type": [
@@ -26619,34 +26556,11 @@
       },
       "LibraryView": {
         "type": "object",
+        "description": "A library as the API returns it. A non-admin receives only `id`,\n`name` and `slug`: the library root path and every library setting\nbelow are server configuration and are set for admins only\n([`LibraryView::for_user`]); for any other caller they are absent from\nthe JSON.",
         "required": [
           "id",
           "name",
-          "slug",
-          "root_path",
-          "default_language",
-          "default_reading_direction",
-          "dedupe_by_content",
-          "ignore_globs",
-          "report_missing_comicinfo",
-          "file_watch_enabled",
-          "soft_delete_days",
-          "generate_page_thumbs_on_scan",
-          "allow_archive_writeback",
-          "metadata_writeback_enabled",
-          "archive_backup_retain_count",
-          "archive_backup_retain_days",
-          "archive_writeback_jpeg_quality",
-          "auto_convert_cbr_on_scan",
-          "auto_convert_cb7_on_scan",
-          "trust_fingerprint_on_first_import",
-          "root_path_writable",
-          "metadata_publisher_blacklist",
-          "filename_ignore_leading_numbers",
-          "filename_assume_issue_one",
-          "metadata_auto_apply_strong_matches",
-          "auto_search_new_series",
-          "show_in_sidebar_by_default"
+          "slug"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -28808,7 +28722,7 @@
             "properties": {
               "available": {
                 "type": "boolean",
-                "description": "`false` when the marker's issue was removed from the library or is\nno longer visible to the caller (library grant / age cap). The\nmarker is still exported; only the link is withheld."
+                "description": "`false` when the marker's issue was soft-removed (with or without\nits series), or is no longer visible to the caller (library grant /\nage cap; such markers sit in the anonymous group). The marker is\nstill exported; only the link is withheld."
               },
               "jump_url": {
                 "type": [
@@ -30666,7 +30580,7 @@
               "string",
               "null"
             ],
-            "description": "`failed` only: the provider error, for the run detail."
+            "description": "`failed` only: the provider error, for the run detail. Admin\nresponses only; a non-admin's view leaves it out."
           },
           "retry_after_secs": {
             "type": [
@@ -33032,7 +32946,7 @@
           "skipped": {
             "type": "integer",
             "format": "int32",
-            "description": "Snapshots not restored: the id already exists (a repeated Undo,\nor another user's row), the issue is gone or no longer visible,\nor the page no longer exists.",
+            "description": "Snapshots not restored: the id already exists (a repeated Undo,\nor another user's row), the issue is gone, soft-removed or no\nlonger visible, or the page no longer exists.",
             "minimum": 0
           }
         }
@@ -34525,7 +34439,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The series folder on the server. Admins only; `null` for every\nother caller and when the series has no folder."
           },
           "last_scanned_at": {
             "type": [
@@ -38279,7 +38194,7 @@
           "forbidden": {
             "type": "integer",
             "format": "int32",
-            "description": "Always 0. Kept for response shape: an issue the caller can't see\nis counted in `not_found`, indistinguishable from an unknown id.",
+            "description": "Always 0. Kept so the response schema does not change: an issue the\ncaller can't see (outside the grant, above the age cap, or\nsoft-removed) is counted in `not_found`, indistinguishable from an\nunknown id.",
             "minimum": 0
           },
           "not_found": {
@@ -38423,7 +38338,7 @@
           "forbidden_series": {
             "type": "integer",
             "format": "int32",
-            "description": "Always 0. Kept for response shape: a series the caller can't see\nis counted in `not_found_series`.",
+            "description": "Always 0. Kept so the response schema does not change: a series\nthe caller can't see (or a soft-removed one) is counted in\n`not_found_series`.",
             "minimum": 0
           },
           "not_found_series": {

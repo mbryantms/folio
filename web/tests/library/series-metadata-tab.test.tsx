@@ -317,6 +317,31 @@ describe("<SeriesMetadataTab>", () => {
     expect(html).toContain("Select all shown");
   });
 
+  it("shows the series folder to an admin", () => {
+    const html = render();
+    expect(html).toContain("Folder");
+    expect(html).toContain("Wonder Woman (1987)");
+  });
+
+  it("renders the files card without a folder row when the path is null (reader response)", () => {
+    // A non-admin's overview carries `folder_path: null`.
+    overviewData = {
+      ...overview,
+      files: { ...overview.files, folder_path: null },
+    };
+    role = "user";
+    let html: string;
+    try {
+      html = render();
+    } finally {
+      overviewData = overview;
+      role = "admin";
+    }
+    expect(html).toContain('data-testid="series-metadata-files"');
+    expect(html).not.toContain("Copy folder path");
+    expect(html).not.toContain("/library/media");
+  });
+
   it("mounts the provider-mapping card, which now carries the series ids", () => {
     const html = render();
     expect(html).toContain("provider-ranges-card");

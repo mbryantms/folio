@@ -977,6 +977,7 @@ fn review_error(e: ReviewError) -> Response {
         ReviewError::Pair(crate::relationships::PairError::Conflict { .. }) => {
             respond(StatusCode::CONFLICT, ApiErrorCode::Conflict, e.to_string())
         }
+        ReviewError::Pair(crate::relationships::PairError::Db(d)) => internal(&d),
         ReviewError::Pair(_) => respond(
             StatusCode::UNPROCESSABLE_ENTITY,
             ApiErrorCode::Validation,
