@@ -258,7 +258,9 @@ pub enum IssueKind {
     /// back. One row per library. Kept open across later scans while the
     /// rows this run removed (all stamped `removed_at`) would still cross
     /// the threshold against `issues_total` / `series_total` as recorded
-    /// here; resolves once enough of them are back or purged.
+    /// here; resolves once enough of them are back or purged. It tracks
+    /// only the latest crossing: a newer one replaces the stamp and the
+    /// numbers, and an earlier loss still away is then no longer watched.
     /// Carries no server path: `top_folders` names are relative to the
     /// library root.
     LargeRemoval {
