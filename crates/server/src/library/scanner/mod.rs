@@ -2699,6 +2699,10 @@ async fn run_phases(
     // folder-missing sweep and before its final series restore (R-03); the
     // work for the series this run scanned always completes once started.
     let lease_stop = || lease_lost.load(Ordering::Relaxed);
+    // This pass's own removals, for the large-removal check below.
+    let removed_before = (stats.issues_removed, stats.series_removed);
+    stats.removal_stamp = None;
+    let mut reconciled = false;
     match crate::library::reconcile::reconcile_library_seen_until(
         &state.db,
         lib.id,
@@ -2714,7 +2718,10 @@ async fn run_phases(
     )
     .await
     {
-        Ok(series_restored) => invalidate_after_series_restore(state, lib.id, series_restored),
+        Ok(series_restored) => {
+            reconciled = true;
+            invalidate_after_series_restore(state, lib.id, series_restored);
+        }
         Err(e) if lease_lost.load(Ordering::Relaxed) => {
             // Superseded: the reconcile stopped on purpose; the next
             // holder's reconcile completes the library-wide work.
@@ -2727,6 +2734,21 @@ async fn run_phases(
     lease_check();
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
+    }
+    // Large-removal warning (R-01, D-5): only from a reconcile that
+    // completed, never from a cancelled, superseded or failed one.
+    if reconciled && let Some(stamp) = stats.removal_stamp {
+        report_large_removal(
+            state,
+            lib,
+            scan_id,
+            stamp,
+            stats.issues_removed.saturating_sub(removed_before.0),
+            stats.series_removed.saturating_sub(removed_before.1),
+            health,
+            events,
+        )
+        .await;
     }
     if let Err(e) =
         reconcile_status::reconcile_series_status_many(&state.db, &status_reconcile_entries).await
@@ -2790,6 +2812,87 @@ async fn run_phases(
     .await;
 
     Ok(())
+}
+
+/// Raise the `LargeRemoval` finding and its library event when this run's
+/// reconcile removed more than the threshold
+/// ([`crate::library::large_removal`]). Best-effort: a failed count is
+/// logged and the scan carries on, as the removal itself already did.
+#[expect(clippy::too_many_arguments)]
+async fn report_large_removal(
+    state: &AppState,
+    lib: &library::Model,
+    scan_id: Uuid,
+    stamp: chrono::DateTime<chrono::FixedOffset>,
+    issues_removed: u64,
+    series_removed: u64,
+    health: &mut HealthCollector,
+    events: &mut EventCollector,
+) {
+    use crate::library::health::IssueKind;
+    use crate::library::large_removal::{self, percent};
+    let finding = match large_removal::assess(
+        &state.db,
+        lib.id,
+        &lib.root_path,
+        scan_id,
+        stamp,
+        issues_removed,
+        series_removed,
+    )
+    .await
+    {
+        Ok(Some(f)) => f,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(library_id = %lib.id, error = %e, "scanner: large-removal check failed");
+            return;
+        }
+    };
+    let IssueKind::LargeRemoval {
+        issues_removed,
+        issues_total,
+        series_removed,
+        series_total,
+        top_folders,
+        folder_count,
+        ..
+    } = &finding
+    else {
+        return;
+    };
+    tracing::warn!(
+        library_id = %lib.id,
+        scan_id = %scan_id,
+        issues_removed,
+        issues_total,
+        series_removed,
+        series_total,
+        "scanner: this scan removed an unusually large part of the library"
+    );
+    let ev = events
+        .build(
+            Category::Health,
+            Action::Removed,
+            Severity::Warning,
+            format!(
+                "Large removal: this scan removed {issues_removed} of {issues_total} issues ({}%) \
+                 and {series_removed} of {series_total} series",
+                percent(*issues_removed, *issues_total)
+            ),
+        )
+        .entity("library", lib.id.to_string(), Some(lib.name.clone()))
+        .detail(serde_json::json!({
+            "kind": "large_removal",
+            "issues_removed": issues_removed,
+            "issues_total": issues_total,
+            "series_removed": series_removed,
+            "series_total": series_total,
+            "top_folders": top_folders,
+            "folder_count": folder_count,
+        }));
+    events.push(ev);
+    health.emit(finding);
 }
 
 /// Did this scan change anything relationship suggestions are derived from

@@ -944,6 +944,10 @@ opaque JSON so adding variants doesn't need a migration.
 - **Touch-on-skip** keeps issues alive when the scanner short-circuited
   past the file or folder that emitted them; see fast-path #7
   ([health.rs:373–410](../../crates/server/src/library/health.rs#L373-L410)).
+- **Settled from the database** — `DuplicateExternalId` and
+  `LargeRemoval` rows are not re-emitted by a scan; `finalize` checks them
+  against the tables on every scope (keep alive by moving `last_seen_at`,
+  or resolve), before the auto-resolve sweep.
 - **Manual dismiss** — `dismissed_at` is permanent; auto-resolve never
   clears it
   ([health.rs:331](../../crates/server/src/library/health.rs#L331)).
@@ -957,6 +961,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `EmptyFolder` | warning | Direct child of root has no entries. | [enumerate Phase 2 → mod.rs:1141](../../crates/server/src/library/scanner/mod.rs#L1141) | `{ path }` | Add files or remove the folder. |
 | `AmbiguousFolder` | warning | Folder violates the two-layouts contract: archives at depth-1 *and* non-allowlist archive-bearing subdirs; or no archives at depth-1 with only allowlist subdirs; or 3-deep nesting; or a stray archive directly inside a publisher folder. The subtree is skipped — better than guessing. | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, reason, skipped_archives, skipped_archive_count }` — `reason` carries an actionable hint that adapts to the violation shape; `skipped_archives` is a sorted preview (≤ `enumerate::AMBIGUOUS_PREVIEW_LIMIT` = 20) of the skipped archives relative to `path`, `skipped_archive_count` the exact total (WP-3.4). Rows written before WP-3.4 lack both until the next full scan. | Fix the on-disk layout per §4.2 "Two supported on-disk layouts". |
 | `SymlinkSkipped` | warning | A symbolic link below the library root (folder or file, wherever it points). Links are never followed, so nothing behind it is indexed; a series indexed through one before is reported missing and soft-removed. One INFO log line per link. Resolves on the next full scan after the link is removed or replaced by the real folder / file. | [enumerate.rs](../../crates/server/src/library/scanner/enumerate.rs) (`EnumerationResult::symlinks`, `ArchiveWalk::symlinks`) → Phase 2 / `process_planned_folder` in [mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path }` | Put the real folder or file in the library (or bind-mount it there), or add its location as its own library. |
+| `LargeRemoval` | warning | One **library** scan (full or watcher-scoped) soft-removed more than 20% of the library's issues (and at least 50), or more than 20% of its series (and at least 10). Usually a mount or share missing during the scan, or a folder moved aside. Warning only: the removal proceeds as always. One row per library (constant fingerprint); a later crossing updates it, re-opens it and clears a dismissal. See "Large removals warn" under Removal lifecycle. | [`large_removal::assess`](../../crates/server/src/library/large_removal.rs) from `run_phases` after a completed reconcile; kept alive / resolved by `HealthCollector::settle_large_removals` | `{ scan_id, removed_at, issues_removed, issues_total, series_removed, series_total, top_folders: [{ folder, issues }], folder_count }`; folder names relative to the root, no server path | Check the folders named (the mount, the share, a move), then the library's Removed tab. Removed content comes back when its files do; dismiss when the removal was intended. |
 | `OrphanedSeriesJson` | warning | A folder with no archives still holds a `series.json` — the sidecar outlived its archives. Reported *instead of* `EmptyFolder` for that folder (root children and folders under a publisher container). | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ folder }` | Restore the archives, or delete the folder. |
 | `FolderNameMismatch` | warning | The series folder's name disagrees with the dominant ComicInfo `<Series>` of its non-special archives (spec §7.1 — ComicInfo still wins for the series name). See "Folder consistency checks" below for the normalization that keeps this quiet on healthy libraries. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs), called from `process_planned_folder` after ingest | `{ folder, series_id, comic_info_series, files }` | Rename the folder, or re-tag the archives if the folder is right. |
 | `MixedSeriesInFolder` | warning | Non-special archives in one series folder carry more than one distinct `<Series>` (spec §7.2). All files stay attributed to the folder's series. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs) | `{ folder, series_id, series_values: [{ series, files, example }], distinct_values }` — values sorted most-files-first, capped at `MIXED_SERIES_VALUES_LIMIT` = 10; `example` is one file (relative to the folder) carrying the value. | Move the stray archives into their own series folder. |
@@ -1287,6 +1292,49 @@ picker). Backed by [`api/duplicates.rs`](../../crates/server/src/api/duplicates.
 
 With the defaults (`soft_delete_days = 30`, multiplier `2`) a missing
 file's row survives ~90 days: 30 pending, then 60 confirmed.
+
+**Large removals warn** (audit 2026-11 R-01 step 4, decision D-5).
+A library scan whose reconcile soft-removes an unusually large part of
+the library raises a `LargeRemoval` health finding (warning) and one
+`health` / `removed` library event (warning, `entity` = the library,
+`detail` = the same numbers and folders). Nothing is held back: no new
+state, no confirmation step.
+
+- **Measured.** The reconcile stamps one `removed_at` on every issue and
+  series it soft-removes in a pass (`ScanStats::removal_stamp`,
+  in-process only), so "removed by this run" is exactly the rows with
+  that stamp, never rows that were already removed. The denominator is
+  the library as if they were back (active rows now + removed by the
+  run). It trips on **more than `SHARE_PERCENT` (20) % of the issues and
+  at least `MIN_ISSUES` (50)**, or **more than 20 % of the series and at
+  least `MIN_SERIES` (10)** (a share of many small series folders next to
+  a few long runs). Constants in
+  [`large_removal.rs`](../../crates/server/src/library/large_removal.rs);
+  no operator setting (that would need the full registry + `Config` +
+  `apply_setting` + admin UI chain).
+- **Scopes.** Full and watcher-scoped library scans, both measured
+  against the whole library. Per-series and single-issue scans never
+  raise it (one folder the admin pointed at; its removals are expected).
+  A cancelled or superseded scan, a reconcile that failed or stopped, and
+  a scan refused by `validate_library` never reach the check.
+- **Cost.** Zero queries unless the run's own counters reach a floor;
+  then one counting statement and one grouped per-top-level-folder
+  statement. `finalize` adds one indexed lookup of the open row per scan,
+  and one counting statement while a row is open.
+- **Payload.** The run id, the stamp, issue and series counts and totals,
+  up to `TOP_FOLDERS_LIMIT` (5) top-level folders (relative to the root:
+  in the publisher layout that is the publisher folder) with their
+  removed-issue counts, and `folder_count`. No server path, and no `path`
+  key, so the reader's per-issue health list never matches it.
+- **Stays / resolves.** Every scan re-checks the open row: while the rows
+  carrying the stamp would still cross the threshold, the row stays open
+  (`last_seen_at` moves, `scan_id` stays on the removal run, so that run's
+  `health_issue_count` keeps counting it). Once enough of them are back
+  (restored by any scan) or purged, it resolves. A quiet scan never closes
+  it. Dismissal sticks across those scans; a *new* crossing re-opens the
+  same row with the new run's numbers and clears the dismissal (a newer
+  crossing replaces the older numbers; the older rows stay on the Removed
+  tab). Guards: `crates/server/tests/large_removal.rs`.
 
 **Removal guards (both automatic steps look at the disk).** Neither the
 04:00 confirm sweep ([`reconcile::auto_confirm_sweep`](../../crates/server/src/library/reconcile.rs))

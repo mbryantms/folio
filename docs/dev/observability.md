@@ -107,6 +107,12 @@ row per change.
 - **Scanner** (in-scan, carries `scan_run_id`): issue added/updated/removed/
   restored, series added/removed, file converted (CBR→CBZ), scan
   started/completed/errored. Emitted via the threaded `EventCollector`.
+- **Scanner, large removal** (in-scan): one `health` / `removed` row
+  (severity `warning`, entity = the library) when one library scan
+  soft-removes more than the `large_removal` threshold; `detail` carries
+  `issues_removed` / `issues_total` / `series_removed` / `series_total` /
+  `top_folders` (relative names) / `folder_count`, the same numbers as the
+  `LargeRemoval` health finding. Never one row per file.
 - **Out-of-scan jobs** (one-off `record`, no `scan_run_id`): thumbnail
   failures (`jobs/post_scan.rs`), metadata apply (`jobs/metadata_apply.rs`),
   archive edit + sidecar writeback (`jobs/archive_edit.rs`,

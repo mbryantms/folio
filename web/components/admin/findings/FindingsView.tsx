@@ -288,7 +288,11 @@ function HealthIssueRow({ row }: { row: CrossLibHealthIssueView }) {
               {summary}
             </p>
           ) : null}
-          <HealthPayloadExtras kind={row.kind} payload={row.payload} />
+          <HealthPayloadExtras
+            kind={row.kind}
+            payload={row.payload}
+            librarySlug={row.library_slug}
+          />
           <PayloadRefLinks payload={row.payload} />
         </div>
         {isOpen ? (

@@ -251,6 +251,32 @@ pub enum IssueKind {
         #[serde(default)]
         owner_number: Option<String>,
     },
+    /// One library scan soft-removed an unusually large share of the
+    /// library ([`crate::library::large_removal`]): more than
+    /// `SHARE_PERCENT` of its issues (at least `MIN_ISSUES`) or of its
+    /// series (at least `MIN_SERIES`). A warning only; nothing is held
+    /// back. One row per library. Kept open across later scans while the
+    /// rows this run removed (all stamped `removed_at`) would still cross
+    /// the threshold; resolves once enough of them are back or purged.
+    /// Carries no server path: `top_folders` names are relative to the
+    /// library root.
+    LargeRemoval {
+        /// The scan run that removed the content.
+        scan_id: Uuid,
+        /// The `removed_at` the run's reconcile stamped on every row it
+        /// removed; how later scans find those rows again.
+        removed_at: DateTime<FixedOffset>,
+        issues_removed: u64,
+        /// Active issues before the removal (active now + removed).
+        issues_total: u64,
+        series_removed: u64,
+        series_total: u64,
+        /// The top-level folders with the most removed issues, capped at
+        /// `large_removal::TOP_FOLDERS_LIMIT`.
+        top_folders: Vec<crate::library::large_removal::RemovedFolder>,
+        /// Distinct top-level folders the removed issues lived in.
+        folder_count: u32,
+    },
 }
 
 impl IssueKind {
@@ -281,6 +307,7 @@ impl IssueKind {
             Self::AmbiguousFolder { .. } => HealthIssueKind::AmbiguousFolder,
             Self::DuplicateExternalId { .. } => HealthIssueKind::DuplicateExternalId,
             Self::SymlinkSkipped { .. } => HealthIssueKind::SymlinkSkipped,
+            Self::LargeRemoval { .. } => HealthIssueKind::LargeRemoval,
         }
     }
 
@@ -306,7 +333,8 @@ impl IssueKind {
             | Self::NoPages { .. }
             | Self::AmbiguousFolder { .. }
             | Self::SymlinkSkipped { .. }
-            | Self::DuplicateExternalId { .. } => Severity::Warning,
+            | Self::DuplicateExternalId { .. }
+            | Self::LargeRemoval { .. } => Severity::Warning,
 
             Self::MissingComicInfo { .. } | Self::RecoveredArchive { .. } => Severity::Info,
         }
@@ -400,6 +428,9 @@ impl IssueKind {
                     path.display()
                 )
             }
+            // One row per library (`library_id` is part of the unique
+            // key): a later crossing updates it instead of stacking.
+            Self::LargeRemoval { .. } => "LargeRemoval".to_owned(),
         };
         // Hash the key so the column stays a fixed length and doesn't leak
         // the full path through the unique index.
@@ -439,6 +470,7 @@ impl IssueKind {
             Self::DuplicateContent { path_a, path_b } => {
                 Some(format!("{} | {}", path_a.display(), path_b.display()))
             }
+            Self::LargeRemoval { .. } => None,
         }
     }
 }
@@ -594,6 +626,88 @@ impl HealthCollector {
             library_health_issue::Entity::update_many()
                 .col_expr(library_health_issue::Column::LastSeenAt, Expr::value(now))
                 .filter(library_health_issue::Column::Id.is_in(keep))
+                .exec(db)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+impl HealthCollector {
+    /// Keep the library's open `LargeRemoval` row alive, or resolve it
+    /// ([`crate::library::large_removal`]). Answered from the database,
+    /// like [`Self::settle_duplicate_external_ids`], so it runs on every
+    /// scan scope and outcome: the rows the removal run stamped are counted
+    /// again, and the row stays open (its `last_seen_at` moves; `scan_id`
+    /// stays on the removal run) while they would still cross the
+    /// threshold. Otherwise it resolves. A row this run re-emitted (a new
+    /// crossing) was refreshed by the upsert; its dismissal is cleared,
+    /// because a new removal is new news.
+    async fn settle_large_removals(
+        &self,
+        db: &DatabaseConnection,
+        now: DateTime<FixedOffset>,
+    ) -> anyhow::Result<()> {
+        let open: Vec<library_health_issue::Model> = library_health_issue::Entity::find()
+            .filter(library_health_issue::Column::LibraryId.eq(self.library_id))
+            .filter(library_health_issue::Column::ResolvedAt.is_null())
+            .filter(library_health_issue::Column::Kind.eq(HealthIssueKind::LargeRemoval))
+            .all(db)
+            .await?;
+        if open.is_empty() {
+            return Ok(());
+        }
+        let emitted: HashSet<String> = self
+            .issues
+            .iter()
+            .filter(|i| matches!(i, IssueKind::LargeRemoval { .. }))
+            .map(IssueKind::fingerprint)
+            .collect();
+        let (mut reopen, mut keep, mut resolve) = (Vec::new(), Vec::new(), Vec::new());
+        for row in open {
+            if emitted.contains(&row.fingerprint) {
+                reopen.push(row.id);
+                continue;
+            }
+            let stamp = row
+                .payload
+                .get("data")
+                .and_then(|d| d.get("removed_at"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
+            let Some(stamp) = stamp else {
+                resolve.push(row.id);
+                continue;
+            };
+            let counts =
+                crate::library::large_removal::episode_counts(db, self.library_id, stamp).await?;
+            if counts.crosses() {
+                keep.push(row.id);
+            } else {
+                resolve.push(row.id);
+            }
+        }
+        if !reopen.is_empty() {
+            library_health_issue::Entity::update_many()
+                .col_expr(
+                    library_health_issue::Column::DismissedAt,
+                    Expr::value(Option::<DateTime<FixedOffset>>::None),
+                )
+                .filter(library_health_issue::Column::Id.is_in(reopen))
+                .exec(db)
+                .await?;
+        }
+        if !keep.is_empty() {
+            library_health_issue::Entity::update_many()
+                .col_expr(library_health_issue::Column::LastSeenAt, Expr::value(now))
+                .filter(library_health_issue::Column::Id.is_in(keep))
+                .exec(db)
+                .await?;
+        }
+        if !resolve.is_empty() {
+            library_health_issue::Entity::update_many()
+                .col_expr(library_health_issue::Column::ResolvedAt, Expr::value(now))
+                .filter(library_health_issue::Column::Id.is_in(resolve))
                 .exec(db)
                 .await?;
         }
@@ -785,6 +899,9 @@ impl HealthCollector {
         // below would otherwise pin such a row open for as long as the file
         // is unchanged — which, for a healthy file, is forever.
         self.settle_duplicate_external_ids(db, now).await?;
+        // `LargeRemoval` likewise: whether it still holds is a count of the
+        // rows the removal run stamped, not something a scan re-emits.
+        self.settle_large_removals(db, now).await?;
 
         // Touch open issues for files/folders the scanner skipped this run
         // because their on-disk fingerprint didn't change. Without this, the

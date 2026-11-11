@@ -101,6 +101,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Two files claim the same provider id; only one can hold it. Remove the extra copy, or fix the id on the file that is tagged wrong, then rescan.",
   },
   MetadataDriftFromXml: { label: "Edits not written to XML" },
+  LargeRemoval: {
+    label: "Large removal in one scan",
+    hint: "One scan removed an unusually large part of this library. This usually means a mount or network share was missing while the scan ran, or a folder was moved aside while you reorganised. Nothing is lost: removed series and issues come back by themselves when their files return, and nothing is purged while the files exist. Check the folders listed, then the library's Removed tab. If the removal was intended, dismiss this.",
+  },
   SymlinkSkipped: {
     label: "Symbolic link skipped",
     hint: "Folio never follows symbolic links, so nothing behind this one is imported. Put the real folder or file in the library (or bind-mount it there), or add its location as its own library.",
@@ -299,6 +303,19 @@ export function healthPayloadSummary(kind: string, p: unknown): string {
       if (a && b) return `${a} ≡ ${b}`;
       break;
     }
+    case "LargeRemoval": {
+      const issues = num(obj.issues_removed);
+      const issuesTotal = num(obj.issues_total);
+      const series = num(obj.series_removed);
+      const seriesTotal = num(obj.series_total);
+      if (issues === undefined || issuesTotal === undefined) break;
+      const pct =
+        issuesTotal > 0 ? Math.floor((issues * 100) / issuesTotal) : 0;
+      const parts = [`${issues} of ${plural(issuesTotal, "issue")} (${pct}%)`];
+      if (series !== undefined && seriesTotal !== undefined)
+        parts.push(`${series} of ${seriesTotal} series`);
+      return `One scan removed ${parts.join(" and ")}`;
+    }
     case "DuplicateExternalId": {
       const source = externalIdSourceLabel(str(obj.source) ?? "id");
       const id = str(obj.external_id) ?? "?";
@@ -352,6 +369,23 @@ export function mixedSeriesValues(p: unknown): MixedSeriesValue[] {
   return out;
 }
 
+/** The top-level folders (relative to the library root) a `LargeRemoval`
+ *  row names, most removed issues first. */
+export function largeRemovalFolders(
+  p: unknown,
+): { folder: string; issues: number }[] {
+  const list = healthPayloadFields(p).top_folders;
+  if (!Array.isArray(list)) return [];
+  const out: { folder: string; issues: number }[] = [];
+  for (const v of list) {
+    if (!v || typeof v !== "object") continue;
+    const o = v as Record<string, unknown>;
+    const folder = str(o.folder);
+    if (folder) out.push({ folder, issues: num(o.issues) ?? 0 });
+  }
+  return out;
+}
+
 /**
  * Expandable detail lines for kinds that carry a list: the skipped-subtree
  * preview on `AmbiguousFolder`, the per-value breakdown on
@@ -372,6 +406,16 @@ export function healthPayloadDetails(
       title: "Skipped archives",
       lines: list,
       more: Math.max(0, total - list.length),
+    };
+  }
+  if (kind === "LargeRemoval") {
+    const folders = largeRemovalFolders(p);
+    if (folders.length === 0) return null;
+    const total = num(obj.folder_count) ?? folders.length;
+    return {
+      title: "Folders with the most removed issues",
+      lines: folders.map((f) => `${f.folder} — ${plural(f.issues, "issue")}`),
+      more: Math.max(0, total - folders.length),
     };
   }
   if (kind === "MixedSeriesInFolder") {
