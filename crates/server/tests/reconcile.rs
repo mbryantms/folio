@@ -2491,3 +2491,174 @@ async fn recently_scanned_series_is_not_rescanned() {
     assert_eq!(stats.rescans_queued, 1, "{stats:?}");
     assert_eq!(series_scan_runs(&app, series.id).await, 1);
 }
+
+// ───── Reconcile stopped by a lost scan lease (R-03) ─────
+
+/// Run `reconcile_library_seen_until` over every series of `lib_id` whose
+/// folder is in `present`, stopping when `stop` says so.
+async fn reconcile_until(
+    app: &TestApp,
+    lib_id: Uuid,
+    scanned: &std::collections::HashSet<Uuid>,
+    present: &std::collections::HashSet<String>,
+    stop: &(dyn Fn() -> bool + Send + Sync),
+) -> (anyhow::Result<u64>, scanner::ScanStats) {
+    let state = app.state();
+    let seen: std::collections::HashSet<String> = IssueEntity::find()
+        .filter(entity::issue::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|i| i.file_path)
+        .filter(|p| Path::new(p).exists())
+        .collect();
+    let mut stats = scanner::ScanStats::default();
+    let mut events = server::library::event_log::EventCollector::new(lib_id, None);
+    let res = reconcile::reconcile_library_seen_until(
+        &state.db,
+        lib_id,
+        scanned,
+        &seen,
+        present,
+        present,
+        None,
+        &std::collections::HashSet::new(),
+        &mut stats,
+        &mut events,
+        Some(stop),
+    )
+    .await;
+    events.flush(&state.db).await;
+    (res, stats)
+}
+
+/// A stop counter: the first `allowed` checks pass, every later one stops.
+fn stop_after(allowed: usize) -> impl Fn() -> bool + Send + Sync {
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    move || calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= allowed
+}
+
+/// A stop requested while the reconcile works on the series the scan
+/// itself walked does not interrupt that work: a series whose files were
+/// all deleted is still marked removed, because a later non-forced scan
+/// would skip its unchanged folder and never mark it.
+#[tokio::test]
+async fn stopped_reconcile_still_marks_the_scanned_emptied_series_removed() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Series Tav (2025)");
+    write_old_folder(&folder, "Tav", 2, 900);
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    let series = series_named(&app, "Tav").await;
+    std::fs::remove_file(folder.join("Tav 001.cbz")).unwrap();
+    std::fs::remove_file(folder.join("Tav 002.cbz")).unwrap();
+
+    let scanned: std::collections::HashSet<Uuid> = [series.id].into_iter().collect();
+    let present: std::collections::HashSet<String> = [folder.to_string_lossy().into_owned()]
+        .into_iter()
+        .collect();
+    // Entry passes; the stop is requested from then on.
+    let stop = stop_after(1);
+    let (res, stats) = reconcile_until(&app, lib_id, &scanned, &present, &stop).await;
+    assert!(res.is_err(), "the reconcile reports the stop");
+    assert_eq!(stats.issues_removed, 2, "{stats:?}");
+    assert_eq!(stats.series_removed, 1, "{stats:?}");
+    assert!(
+        issues_of(&app, series.id)
+            .await
+            .iter()
+            .all(|i| i.removed_at.is_some())
+    );
+    let sr = SeriesEntity::find_by_id(series.id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        sr.removed_at.is_some(),
+        "the emptied series is marked removed"
+    );
+}
+
+/// A stop between series of the folder-missing sweep completes the series
+/// already handled, leaves the rest, and records events only for rows that
+/// were written.
+#[tokio::test]
+async fn stop_mid_sweep_records_only_what_was_written() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    write_old_folder(&tmp.path().join("Series Kaf (2025)"), "Kaf", 2, 910);
+    write_old_folder(&tmp.path().join("Series Lamed (2025)"), "Lamed", 2, 920);
+    let lib_id = create_library(&app, tmp.path(), 30).await;
+    let state = app.state();
+    scanner::scan_library(&state, lib_id).await.unwrap();
+    std::fs::remove_dir_all(tmp.path().join("Series Kaf (2025)")).unwrap();
+    std::fs::remove_dir_all(tmp.path().join("Series Lamed (2025)")).unwrap();
+    let removed_events_before = entity::library_event::Entity::find()
+        .filter(entity::library_event::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_event::Column::Action.eq("removed"))
+        .all(&state.db)
+        .await
+        .unwrap()
+        .len();
+
+    // Entry and the first missing series pass; the second is stopped.
+    let stop = stop_after(2);
+    let empty_scanned = std::collections::HashSet::new();
+    let empty_present = std::collections::HashSet::new();
+    let (res, stats) = reconcile_until(&app, lib_id, &empty_scanned, &empty_present, &stop).await;
+    assert!(res.is_err());
+
+    let rows = SeriesEntity::find()
+        .filter(entity::series::Column::LibraryId.eq(lib_id))
+        .all(&state.db)
+        .await
+        .unwrap();
+    let removed: Vec<&entity::series::Model> =
+        rows.iter().filter(|s| s.removed_at.is_some()).collect();
+    assert_eq!(removed.len(), 1, "exactly the handled series is flagged");
+    assert_eq!(stats.series_removed, 1, "{stats:?}");
+    assert_eq!(stats.issues_removed, 2, "{stats:?}");
+    let handled = removed[0].id;
+    assert!(
+        issues_of(&app, handled)
+            .await
+            .iter()
+            .all(|i| i.removed_at.is_some())
+    );
+    let other = rows.iter().find(|s| s.id != handled).unwrap();
+    assert!(other.removed_at.is_none());
+    assert!(
+        issues_of(&app, other.id)
+            .await
+            .iter()
+            .all(|i| i.removed_at.is_none())
+    );
+
+    let events: Vec<entity::library_event::Model> = entity::library_event::Entity::find()
+        .filter(entity::library_event::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_event::Column::Action.eq("removed"))
+        .all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        events.len(),
+        removed_events_before + 1,
+        "one event, for the written series"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.entity_id.as_deref() == Some(handled.to_string().as_str())),
+        "the event names the series that was written"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e.entity_id.as_deref() == Some(other.id.to_string().as_str())),
+        "no event for the series left to the next reconcile"
+    );
+}
