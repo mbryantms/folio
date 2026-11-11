@@ -1,8 +1,10 @@
 //! `comic-text-detector` singleton.
 //!
-//! The upstream crate's [`ComicTextDetector::new`] downloads a ~50 MB
-//! ONNX from Hugging Face on first call (cached under `HF_HOME`) and
-//! takes ~1–2 s cold. We pay that cost once per process behind a
+//! The upstream crate's [`ComicTextDetector::new`] loads a ~90 MB ONNX
+//! from the Hugging Face cache. [`super::models::ensure_pinned`] puts a
+//! digest-verified copy from a pinned commit there first, so the
+//! constructor never downloads anything itself. Cold start takes ~1–2 s
+//! plus the hash of the cached file. We pay that cost once per process behind a
 //! [`tokio::sync::OnceCell`] and serialize subsequent inferences
 //! through a [`std::sync::Mutex`] because `inference` takes
 //! `&mut self`.
@@ -32,7 +34,10 @@ impl Detector {
     pub async fn shared() -> anyhow::Result<&'static Self> {
         static CELL: OnceCell<Detector> = OnceCell::const_new();
         CELL.get_or_try_init(|| async {
-            // Session::builder + HF download both block; run on the
+            // Fetch (if needed) and verify the pinned model; a mismatch
+            // fails here, before the session ever reads the file.
+            super::models::ensure_pinned(super::models::DETECTOR_FILES).await?;
+            // Session::builder + HF cache lookup both block; run on the
             // blocking pool so we don't stall the reactor during a
             // cold start that may take seconds.
             let detector = tokio::task::spawn_blocking(ComicTextDetector::new)

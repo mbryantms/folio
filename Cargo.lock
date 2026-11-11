@@ -6922,6 +6922,7 @@ dependencies = [
  "garde",
  "globset",
  "governor",
+ "hf-hub",
  "hmac 0.13.0",
  "hyper",
  "hyper-util",
