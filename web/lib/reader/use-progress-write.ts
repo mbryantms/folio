@@ -6,7 +6,7 @@ import {
   invalidateRails,
   invalidateSeriesProgress,
 } from "@/lib/api/mutations/rails";
-import { queryKeys } from "@/lib/api/queries";
+import { queryKeys } from "@/lib/api/query-keys";
 import { nextPersistedProgressPage } from "@/lib/reader/webtoon-window";
 
 import { createProgressWriter } from "./progress-writer";

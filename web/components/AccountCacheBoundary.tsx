@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "@/lib/api/queries";
+import { queryKeys } from "@/lib/api/query-keys";
 import type { MeView } from "@/lib/api/types";
 import {
   ACCOUNT_CHANNEL,

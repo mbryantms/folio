@@ -6,7 +6,7 @@
  */
 import { useQueryClient } from "@tanstack/react-query";
 
-import { queryKeys } from "../queries";
+import { queryKeys } from "../query-keys";
 import type { MeView, PreferencesReq } from "../types";
 import { useApiMutation } from "./_core";
 

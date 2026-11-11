@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { safeTopOverride } from "@/lib/safe-area";
-import { isStandaloneDisplay } from "@/lib/use-pull-to-refresh";
+import { isStandaloneDisplay } from "@/lib/pwa/display-mode";
 
 /**
  * Pins `--safe-top` to 0 on `<html>` once the OS is seen to reserve the
