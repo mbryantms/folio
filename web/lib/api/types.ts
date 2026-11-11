@@ -41,6 +41,8 @@ type Schemas = components["schemas"];
 // these shapes, change the Rust DTO.
 export type LibraryView = Schemas["LibraryView"];
 export type LibraryStatsView = Schemas["LibraryStatsView"];
+export type LibraryAgeRatingsView = Schemas["LibraryAgeRatingsView"];
+export type AgeRatingRungCount = Schemas["AgeRatingRungCount"];
 export type CreateLibraryReq = Schemas["CreateLibraryReq"];
 export type UpdateLibraryReq = Schemas["UpdateLibraryReq"];
 export type HashBackfillView = Schemas["HashBackfillView"];

@@ -61,6 +61,9 @@ backup-storage-warm     | /api/libraries/{library_slug}/backup-storage
 # aggregate reads the issue rows once (file_size is not in any index).
 library-stats-all       | /api/admin/libraries/stats
 library-stats-one       | /api/admin/libraries/{library_slug}/stats
+# The age-cap control's histogram (U-09): one GROUP BY over every series row
+# (a whole-table aggregate; `series` is under the gate at this scale).
+library-age-ratings     | /api/admin/libraries/age-ratings
 
 # ── entity indexes (audit 2026-11, P-06) ────────────────────────────────
 # The A–Z browse pages for characters, teams, locations and creators, the

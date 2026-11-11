@@ -244,9 +244,27 @@ Verified against the code at `5a1d2f64` on 2026-11-10.
 
 Non-admin users see a library only through a `library_user_access` row
 (admins are unrestricted). Each grant may carry an **age-rating cap**
-(`age_rating_max`), set per library from `/admin/users/{id}` → *Library
-access*. The cap is enforced server-side on every read surface; the web
-app never filters client-side.
+(`age_rating_max`) and a **Hide unrated** switch (below), both set per
+library from `/admin/users/{id}` → *Library access*. The cap is enforced
+server-side on every read surface; the web app never filters client-side.
+
+The picker lists "No cap" first, then every rung under a plain group
+heading in ladder order (`AGE_RATING_GROUPS` in `web/lib/age-rating.ts`:
+Young children = Early Childhood; All ages = Everyone, G; Older children
+= Everyone 10+, PG, Kids to Adults; Teens = Teen, MA15+; Mature = Mature
+17+, M; Adults only = R18+, Adults Only 18+, X18+), each with a one-line
+description of who it suits. The web copy of the ladder is pinned to the
+server's by `tests/library_age_ratings.rs`. Each library row shows what
+the selection does before saving: how many series the cap (and switch)
+hide and how many unrated series stay shown or are hidden. The figures
+come from `GET /admin/libraries/age-ratings` (admin, read-only): per
+library, the active series at each rung (aliases counted on their rung,
+after the same normalisation as the cap) and the unrated count; the web
+does the arithmetic for whatever is selected. They count **series** only:
+an issue rated above the cap inside a visible series is hidden too and is
+not counted. The same test checks, for every cap with and without
+`hide_unrated`, that the hidden count equals what `GET /api/series` leaves
+out for a reader holding that grant.
 
 ### Ladder
 
@@ -353,8 +371,8 @@ series returns to its derived value.
   series and is not unrated. The option works without a cap: then it
   hides only unrated content. The admin API field is `hide_unrated` on
   `POST /admin/users/{id}/library-access` (a map of library id to
-  boolean) and on each grant in the user detail; the admin screen control
-  comes later. Admins are unaffected.
+  boolean) and on each grant in the user detail; the admin screen sets it
+  with the *Hide unrated* switch beside the cap. Admins are unaffected.
 
 ### Surfaces enforced
 

@@ -45,6 +45,7 @@ pub mod issue_permalink;
 pub mod issues;
 pub mod komga_compat;
 pub mod libraries;
+pub mod library_age_ratings;
 pub mod library_events;
 pub mod library_hash_backfill;
 pub mod library_stats;

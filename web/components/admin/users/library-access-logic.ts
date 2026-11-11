@@ -3,6 +3,8 @@
  * diff logic can be unit-tested without rendering a DOM.
  */
 
+import { ladderRank } from "@/lib/age-rating";
+
 export function toggleSelection(
   current: ReadonlySet<string>,
   libraryId: string,
@@ -79,9 +81,8 @@ export function setCap(
 /**
  * Request-body shape for `POST /admin/users/{id}/library-access`: the
  * selected ids plus the caps of selected libraries only. `hideUnrated` is
- * the set of libraries whose grant hides unrated content; the server turns
- * the option off for any granted library left out, so a caller that has no
- * control for it passes back the set it loaded.
+ * the set of libraries whose grant hides unrated series (the per-library
+ * switch); the server turns the option off for any granted library left out.
  */
 export function buildAccessRequest(
   selected: ReadonlySet<string>,
@@ -101,4 +102,97 @@ export function buildAccessRequest(
     if (hideUnrated.has(id)) hide_unrated[id] = true;
   }
   return { library_ids, age_rating_caps, hide_unrated };
+}
+
+/** Turn one library's "hide unrated" switch on or off. */
+export function setHideUnrated(
+  current: ReadonlySet<string>,
+  libraryId: string,
+  on: boolean,
+): Set<string> {
+  const next = new Set(current);
+  if (on) {
+    next.add(libraryId);
+  } else {
+    next.delete(libraryId);
+  }
+  return next;
+}
+
+/**
+ * True when any *selected* library's "hide unrated" switch differs from the
+ * saved one. Like caps, switches on unselected libraries are dropped on save.
+ */
+export function hideUnratedDirty(
+  original: ReadonlySet<string>,
+  current: ReadonlySet<string>,
+  selected: ReadonlySet<string>,
+): boolean {
+  for (const id of selected) {
+    if (original.has(id) !== current.has(id)) return true;
+  }
+  return false;
+}
+
+/** The per-library histogram `GET /admin/libraries/age-ratings` returns. */
+export interface AgeRatingHistogram {
+  rungs: ReadonlyArray<{ rating: string; series_count: number }>;
+  unrated_count: number;
+  series_count: number;
+}
+
+/** What one grant does to a library's series, from its histogram. */
+export interface CapEffect {
+  /** Series rated above the cap. */
+  aboveCap: number;
+  /** Series with no rating. */
+  unrated: number;
+  /** True when the unrated series are hidden (`hide_unrated` on). */
+  unratedHidden: boolean;
+  /** Every series the grant hides: `aboveCap`, plus `unrated` when hidden. */
+  hidden: number;
+  /** Every active series in the library. */
+  total: number;
+}
+
+/**
+ * Work out what a cap and the "hide unrated" switch hide, at the series
+ * level, the way the server's rule does: a series ranked above the cap is
+ * hidden; an unrated one is hidden only with the switch on. A cap that is
+ * not a ladder rung counts as no cap (as on the server).
+ */
+export function capEffect(
+  histogram: AgeRatingHistogram,
+  cap: string | null | undefined,
+  hideUnrated: boolean,
+): CapEffect {
+  const capRank = ladderRank(cap);
+  let aboveCap = 0;
+  if (capRank !== null) {
+    for (const rung of histogram.rungs) {
+      const rank = ladderRank(rung.rating);
+      if (rank !== null && rank > capRank) aboveCap += rung.series_count;
+    }
+  }
+  const unrated = histogram.unrated_count;
+  return {
+    aboveCap,
+    unrated,
+    unratedHidden: hideUnrated,
+    hidden: aboveCap + (hideUnrated ? unrated : 0),
+    total: histogram.series_count,
+  };
+}
+
+/** One plain sentence describing a {@link CapEffect}. */
+export function describeCapEffect(effect: CapEffect): string {
+  const hides =
+    effect.hidden === 0
+      ? `Hides none of ${effect.total.toLocaleString()} series`
+      : `Hides ${effect.hidden.toLocaleString()} of ${effect.total.toLocaleString()} series`;
+  if (effect.unrated === 0) return `${hides}.`;
+  const unrated = `${effect.unrated.toLocaleString()} unrated ${
+    effect.unratedHidden ? "hidden" : "still shown"
+  }`;
+  return `${hides}; ${unrated}.`;
 }

@@ -65,6 +65,7 @@ export function invalidationsForEvent(
         // The libraries list's figures; the overview card's per-library
         // key sits under `library(id)` (and its slug alias) above.
         queryKeys.libraryStatsAll,
+        queryKeys.libraryAgeRatingsAll,
         ["series"],
       ];
     case "scan.health_issue":

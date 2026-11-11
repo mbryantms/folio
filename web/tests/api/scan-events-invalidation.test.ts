@@ -56,6 +56,7 @@ const CASES: { evt: ScanEvent; expected: readonly (readonly unknown[])[] }[] = [
       queryKeys.adminHealthIssuesAll,
       queryKeys.removed(LIB),
       queryKeys.libraryStatsAll,
+      queryKeys.libraryAgeRatingsAll,
       ["series"],
     ],
   },
