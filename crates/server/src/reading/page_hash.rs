@@ -73,13 +73,29 @@ pub fn hash_all_pages_blocking(
 /// hashes describe the same file version as the row it writes. Never
 /// reopens by name.
 pub async fn hash_all_pages(state: &AppState, src: archive::ArchiveFile) -> Option<Vec<String>> {
-    let limits = state.cfg().archive_limits();
     let _permit = state
         .archive_work_semaphore
         .clone()
         .acquire_owned()
         .await
         .ok()?;
+    hash_all_pages_without_permit(state, src).await
+}
+
+/// [`hash_all_pages`] without the `archive_work_semaphore` permit, for a
+/// caller that holds a database transaction and so must not wait for one:
+/// the scanner's rare second read in `persist_prepared`. Waiting there
+/// would hold a pooled connection while every permit may be held by jobs
+/// that are themselves waiting for a connection. What bounds it instead:
+/// one read at a time per open scan transaction (persist runs a batch's
+/// files one after another), so at most the pool size at once, and each
+/// read streams page by page into a hasher (memory is the reader plus
+/// about 90 bytes per page).
+pub async fn hash_all_pages_without_permit(
+    state: &AppState,
+    src: archive::ArchiveFile,
+) -> Option<Vec<String>> {
+    let limits = state.cfg().archive_limits();
     let shown = src.display_path().to_path_buf();
     match tokio::task::spawn_blocking(move || hash_all_pages_blocking(src, limits)).await {
         Ok(Ok(hashes)) => Some(hashes),

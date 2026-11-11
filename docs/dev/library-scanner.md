@@ -538,9 +538,24 @@ without per-library configuration.
        a hashed anchor was written between the two phases (prepare saw
        none and read no hashes), persist reopens the file through the
        no-follow walk and hashes it, but only if its size and mtime are
-       still the recorded ones; otherwise, or when a page cannot be read,
-       the anchors take the ordinal map, as for an unreadable page (a
-       later scan that sees the file change places them by hash).
+       still the recorded ones **and** its device and inode are those of
+       the handle prepare read (`PreparedIngest.identity`; for a converted
+       CBR / CB7, the new `.cbz` that was actually hashed). Size and mtime
+       alone pass a same-size replacement by rename on a filesystem with
+       2 s timestamps (FAT, SMB). Otherwise, or when a page cannot be
+       read, the anchors take the ordinal map, as for an unreadable page
+       (a later scan that sees the file change places them by hash). This
+       read takes **no** `archive_work_semaphore` permit
+       (`page_hash::hash_all_pages_without_permit`): waiting for one while
+       the transaction pins a pooled connection could deadlock against
+       jobs that hold every permit and wait for a connection. It is
+       bounded instead by the open scan transactions (a batch persists its
+       files one at a time, so at most one such read per transaction) and
+       streams page by page into a hasher (memory: the reader plus about
+       90 bytes per page). The thumbnail job, for the same reason,
+       resolves the library root from its already-loaded row before it
+       takes a permit and opens the file with
+       `no_follow::open_issue_archive_at`, which runs no query.
 
      So no connection is pinned while archives are read. The single-issue
      rescan (`scan_issue_file` → `run_issue_phase`: the "Scan issue"
