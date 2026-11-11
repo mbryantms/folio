@@ -41,7 +41,9 @@
 #   PERF_OHA=1             after the plans, run an `oha` HTTP load pass over
 #                          the same endpoints (PERF_OHA_DURATION=15s,
 #                          PERF_OHA_CONCURRENCY=16, PERF_OHA_IMAGE when no
-#                          local `oha` binary) → oha-<label>.txt
+#                          local `oha` binary) → oha-<label>.txt; labels behind
+#                          the per-user `search` bucket run paced at
+#                          PERF_OHA_SEARCH_QPS (default 8/s) instead
 #   PERF_M7=0              skip phase 2 (the M7 relationship / similarity set)
 #   PERF_SERVER_BIN        run this server binary instead of building the
 #                          working tree (e.g. an origin/main build, for a
@@ -425,11 +427,24 @@ if [ "${PERF_OHA:-0}" = "1" ]; then
         OHA=(docker run --rm --network host "${PERF_OHA_IMAGE:-ghcr.io/hatoo/oha:latest}")
     fi
     log "oha: ${PERF_OHA_DURATION:-15s} × ${PERF_OHA_CONCURRENCY:-16} connections per endpoint"
+    # Routes behind the per-user `search` token bucket (10/s, burst 60;
+    # docs/architecture/rate-limits.md). No setting turns it off, so an
+    # unthrottled run measures the 429 path. Those labels run paced under
+    # the bucket (PERF_OHA_SEARCH_QPS, default 8/s): their oha file is a
+    # latency sample, not a throughput figure; use the pgbench SQL replay
+    # for concurrency (load-testing.md).
+    SEARCH_BUCKET_RE='^/api/(series|issues|issues/search|people|me/markers/search|characters|teams|locations|arcs)$'
     while IFS='|' read -r label _ _ url; do
-        "${OHA[@]}" --no-tui -z "${PERF_OHA_DURATION:-15s}" -c "${PERF_OHA_CONCURRENCY:-16}" \
+        pace=()
+        note=""
+        if [[ "${url%%\?*}" =~ $SEARCH_BUCKET_RE ]]; then
+            pace=(-q "${PERF_OHA_SEARCH_QPS:-8}")
+            note="(paced under the search bucket: latency only)"
+        fi
+        "${OHA[@]}" --no-tui -z "${PERF_OHA_DURATION:-15s}" -c "${PERF_OHA_CONCURRENCY:-16}" "${pace[@]}" \
             -H "Authorization: Bearer $TOKEN" "$API$url" >"$OUT/oha-$label.txt" 2>&1 || true
-        printf '    %-22s %s\n' "$label" \
-            "$(grep -E 'Requests/sec|Success rate' "$OUT/oha-$label.txt" | tr -s ' ' | tr '\n' ' ')" >&2
+        printf '    %-22s %s %s\n' "$label" \
+            "$(grep -E 'Requests/sec|Success rate' "$OUT/oha-$label.txt" | tr -s ' ' | tr '\n' ' ')" "$note" >&2
     done <"$OUT/requests.txt"
 fi
 exit $rc
