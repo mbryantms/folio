@@ -54,6 +54,7 @@ neither are lazy `next/dynamic` chunks.
 | 2026-10-31, audit C5 (touch pinch zoom, first-open chrome on touch) | 142.66 KB | 15 | 145 KB | 120 KB |
 | 2026-11-04, Folio Flair 1.0 (drag-to-turn, page curl, cover morph into the reader, finishing moment) | 161.47 KB | 17 | 170 KB | 120 KB |
 | 2026-11-10, deferred drag-turn motion + peek, health toast, mutations-barrel import | 148.58 KB | 16 | 152 KB | 120 KB |
+| 2026-11-11, session refresh retries an unanswered refresh inside the grace window | 152.19 KB | 17 | 153 KB | 120 KB |
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
@@ -109,6 +110,26 @@ in the serwist precache (it holds only `offline.html`); the offline shell
 crawl (`lib/pwa/offline-shell.ts`) stores every chunk named inside a
 stored chunk, which includes the new lazy ones, and the fallbacks above
 cover a cold cache.
+
+The 2026-11-11 row: `main` measured 151.92 KB (17 chunks) in CI before
+it, 0.08 KB under the ceiling. The creep since the 2026-11-10 row is
+audit remediation that had to run on the first paint: the page states
+for missing, unreadable and needs-conversion archives, the page's
+transient-failure waits and the page strip's retrying thumbnails. The
+change in this row is not reader code at all. It is the session refresh
+scheduler, which the root layout loads on every signed-in page and which
+this gate therefore counts: it now retries a refresh that got no answer
+inside the server's 60-second grace window (`docs/architecture/auth-model.md`),
+about 0.3 KB. It cannot be a `lazy.tsx` surface, because it runs exactly
+when requests are failing and a chunk fetched at that moment may not
+arrive. The ceiling moves by 1 KB to 153 KB, the owner's decision, far
+tighter than measured + 10%. That leaves under 1 KB, on purpose: the
+next change to anything in first load, reader code or root-layout code,
+has to free room first. The candidates named above still stand (the
+drag-turn physics and the finishing-progress queries), and the bundle
+report has no per-module breakdown without source maps, so that work
+starts by producing one. A local build reads about 0.36 KB lower than
+CI's for the same tree, so only CI's number decides.
 
 The C5 row: +1.0 KB for the `usePinchZoom` shim, the swipe layer's
 `isPinching` gate, `readerTouchAction` and the store's first-open chrome

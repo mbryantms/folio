@@ -1101,3 +1101,69 @@ async fn oidc_only_mode_refuses_the_request_up_front() {
     assert!(app.email.outbox().await.is_empty(), "no mail");
     assert_eq!(pending_rows(&app, a.user_id).await, 0);
 }
+
+/// The browser that opens the link keeps its session, but that session
+/// forgets its previous refresh token: inside the grace window the previous
+/// token is refused, and the kept current token still refreshes.
+#[tokio::test]
+async fn the_kept_session_loses_its_previous_refresh_token() {
+    let app = TestApp::spawn_with_smtp().await;
+    let a = register(&app, "grace-owner@example.com").await;
+
+    // Rotate once, so the session remembers a previous token (a.refresh).
+    let resp = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/refresh")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_refresh={}; __Host-comic_csrf={}",
+                        a.refresh, a.csrf
+                    ),
+                )
+                .header("X-CSRF-Token", &a.csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cookies = set_cookies(&resp);
+    let current = Authed {
+        session: cookie_value(&cookies, "__Host-comic_session"),
+        csrf: cookie_value(&cookies, "__Host-comic_csrf"),
+        refresh: cookie_value(&cookies, "__Host-comic_refresh"),
+        user_id: a.user_id,
+    };
+    let previous = Authed {
+        session: current.session.clone(),
+        csrf: current.csrf.clone(),
+        refresh: a.refresh.clone(),
+        user_id: a.user_id,
+    };
+
+    let token = request_change(&app, &current, "grace-new@example.com").await;
+    assert_eq!(open_link(&app, &token, Some(&current)).await, CONFIRMED);
+
+    let row = entity::auth_session::Entity::find()
+        .filter(entity::auth_session::Column::UserId.eq(a.user_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        row.revoked_at.is_none(),
+        "the opening browser's session is kept"
+    );
+    assert!(row.previous_refresh_token_hash.is_none());
+    assert_eq!(
+        refresh_status(&app, &previous).await,
+        StatusCode::UNAUTHORIZED,
+        "previous token inside the window after the change"
+    );
+    assert_eq!(refresh_status(&app, &current).await, StatusCode::OK);
+}
