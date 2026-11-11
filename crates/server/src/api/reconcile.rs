@@ -725,8 +725,12 @@ pub async fn restore_series(
             .await
         {
             tracing::error!(error = %e, series_id = %row.id, "restore series: issue restore failed");
-            // Earlier chunks may have landed.
+            // Earlier chunks may have landed: they count toward the series'
+            // derived rating again, so it is re-derived before the error.
             app.duplicates.invalidate(row.library_id);
+            if crate::library::series_rating::recompute_best_effort(&app.db, &[row.id]).await > 0 {
+                app.similarity.invalidate_all();
+            }
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     }

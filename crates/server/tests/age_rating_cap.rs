@@ -3260,6 +3260,57 @@ async fn reconcile(db: &sea_orm::DatabaseConnection, series_id: Uuid) {
         .unwrap();
 }
 
+/// A series left soft-removed while its issues are live again (a partial
+/// failure of a restore) carries a rating derived while none of them were
+/// live. The scan that lifts the removal re-derives it first, so the series
+/// does not come back unrated to a capped reader.
+#[tokio::test]
+async fn a_series_the_scan_brings_back_is_rated_from_its_live_issues() {
+    let w = world().await;
+    let fx = &w.fx;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    entity::issue::ActiveModel {
+        id: Unchanged(fx.mature_1.clone()),
+        age_rating: Set(Some("Mature 17+".into())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    entity::series::ActiveModel {
+        id: Unchanged(fx.mature_series),
+        age_rating: Set(None),
+        declared_age_rating: Set(None),
+        removed_at: Set(Some(Utc::now().fixed_offset())),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+
+    let mut stats = server::library::scanner::stats::ScanStats::default();
+    server::library::reconcile::reconcile_library(&db, fx.lib_id, &mut stats)
+        .await
+        .unwrap();
+
+    let row = entity::series::Entity::find_by_id(fx.mature_series)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.removed_at.is_none(), "the scan lifts the removal");
+    assert_eq!(row.age_rating.as_deref(), Some("Mature 17+"));
+    let (st, _) = get_json(&w.app, "/api/series/mature-matters", &w.capped).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, body) = get_json(&w.app, "/api/series", &w.capped).await;
+    assert!(
+        !names(&body, "name").contains(&"Mature Matters".to_owned()),
+        "{body}"
+    );
+    let (st, _) = get_json(&w.app, "/api/series/mature-matters", &w.uncapped).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn series_rating_follows_its_highest_rated_active_issue() {
     let w = world().await;
@@ -4114,6 +4165,15 @@ async fn hide_unrated_entity_and_rail_surfaces_skip_an_unrated_series() {
     let (st, body) = get_json(&w.app, "/api/me/continue-reading", &w.capped).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     assert!(body.to_string().contains("Twin One"), "{body}");
+    let (_, body) = get_json(&w.app, "/api/me/recent-issues", &w.capped).await;
+    assert!(body.to_string().contains("Twin One"), "{body}");
+    // On deck needs a finished issue with a readable next one: the
+    // uncapped reader finished Twin One, so Twin Two (rated above the
+    // capped reader's cap) is on deck for them.
+    progress(&w.app, w.uncapped.user_id, &e.twin_one, true).await;
+    let (st, body) = get_json(&w.app, "/api/me/on-deck", &w.uncapped).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains("Twin Two"), "{body}");
 
     set_access(
         w,
@@ -4122,6 +4182,15 @@ async fn hide_unrated_entity_and_rail_surfaces_skip_an_unrated_series() {
         serde_json::json!({ lib.clone(): true }),
     )
     .await;
+    set_access(
+        w,
+        &w.uncapped,
+        serde_json::json!({}),
+        serde_json::json!({ lib.clone(): true }),
+    )
+    .await;
+    let (_, body) = get_json(&w.app, "/api/me/on-deck", &w.uncapped).await;
+    assert!(!body.to_string().contains("Twin"), "{body}");
     let (_, body) = get_json(&w.app, &format!("{base}/series"), &w.capped).await;
     assert_eq!(item_strings(&body, "slug"), vec!["gap-run"], "{body}");
     let (_, body) = get_json(&w.app, &base, &w.capped).await;
@@ -4273,6 +4342,23 @@ async fn hide_only_reader_leaves_out_an_unrated_series_on_sql_surfaces() {
         vec!["Mature One", "Mature Two", "Teen One", "Teen Two"],
         "{body}"
     );
+
+    // Random picks reads series rows only (`raw_cap_clause`, no issue
+    // predicate): the capped reader, who has read nothing, is offered the
+    // unrated series until the option hides it.
+    let (_, body) = get_json(&w.app, "/api/me/random-picks", &w.capped).await;
+    let mut got = names(&body, "name");
+    got.sort();
+    assert_eq!(got, vec!["Teen Tales", "Unrated Stories"], "{body}");
+    set_access(
+        &w,
+        &w.capped,
+        serde_json::json!({ fx.lib_id.to_string(): "Teen" }),
+        serde_json::json!({ fx.lib_id.to_string(): true }),
+    )
+    .await;
+    let (_, body) = get_json(&w.app, "/api/me/random-picks", &w.capped).await;
+    assert_eq!(names(&body, "name"), vec!["Teen Tales"], "{body}");
 
     // Reading log.
     let (st, body) = get_json(&w.app, "/api/me/reading-log", u).await;

@@ -2170,6 +2170,9 @@ async fn run_issue_phase(
             return Err(e);
         }
     }
+    // The ingested rating counts toward the series' derived rating now,
+    // whatever fails between here and the rollup below.
+    crate::library::series_rating::recompute_best_effort(&state.db, &[row.series_id]).await;
     stats.record_phase("process", process_started.elapsed());
 
     // A Duplicates-page soft-remove (WP-3.3) is sticky: skip the restore.
@@ -2183,13 +2186,16 @@ async fn run_issue_phase(
             let mut am: issue::ActiveModel = updated.clone().into();
             am.removed_at = Set(None);
             am.removal_confirmed_at = Set(None);
-            am.update(&state.db).await?;
-            stats.issues_restored += 1;
+            let restored = am.update(&state.db).await;
             // The restored issue counts toward its series' rating again;
-            // re-derived here, not only by the rollup below, which skips its
-            // remaining steps after a lost connection or aborted transaction.
+            // re-derived here (also when the write reported an error, which
+            // may still have committed), not only by the rollup below,
+            // which skips its remaining steps after a lost connection or
+            // aborted transaction.
             crate::library::series_rating::recompute_best_effort(&state.db, &[updated.series_id])
                 .await;
+            restored?;
+            stats.issues_restored += 1;
             crate::library::reconcile::restore_series_with_live_issues(
                 &state.db,
                 [updated.series_id],
@@ -3335,7 +3341,12 @@ async fn process_planned_folder(
             }
         }
         if chunk_ok {
-            txn.commit().await?;
+            if let Err(e) = txn.commit().await {
+                // Earlier batches are committed (and this one may be): their
+                // ratings count toward the series' rating before the error.
+                crate::library::series_rating::recompute_best_effort(&state.db, &[series_id]).await;
+                return Err(e.into());
+            }
         } else {
             if let Err(e) = txn.rollback().await {
                 tracing::warn!(error = %e, "scanner: transaction rollback failed");
@@ -3365,15 +3376,22 @@ async fn process_planned_folder(
     // Stamp the series's last_scanned_at if we actually saw it — and only
     // when every batch committed. A stamped folder is mtime-skipped by the
     // next plain scan, which would bury the rolled-back files for good.
-    if !any_batch_failed
-        && let Some(s) = entity::series::Entity::find_by_id(series_id)
-            .one(&state.db)
-            .await?
-    {
-        let mut am: series::ActiveModel = s.into();
-        am.last_scanned_at = Set(Some(Utc::now().fixed_offset()));
-        am.update(&state.db).await?;
+    // A failure here is returned only after the rollup below: the batches
+    // are committed, and a retry scan fast-paths their files, so it would
+    // never roll them up (or re-derive the series rating) otherwise.
+    let stamped: anyhow::Result<()> = async {
+        if !any_batch_failed
+            && let Some(s) = entity::series::Entity::find_by_id(series_id)
+                .one(&state.db)
+                .await?
+        {
+            let mut am: series::ActiveModel = s.into();
+            am.last_scanned_at = Set(Some(Utc::now().fixed_offset()));
+            am.update(&state.db).await?;
+        }
+        Ok(())
     }
+    .await;
 
     // Roll up genre/tag/credit junctions from this series's active issues.
     // Best-effort — a stale rollup is cosmetic and the next scan retries.
@@ -3393,6 +3411,7 @@ async fn process_planned_folder(
         metadata_rollup::rollup_series_metadata_best_effort(&state.db, series_id).await;
         stats.record_phase_parallel("metadata_rollup", rollup_started.elapsed());
     }
+    stamped?;
 
     // WP-3.4: folder-name vs ComicInfo `<Series>` and mixed-series checks.
     // Deliberately NOT behind the PERF-2 `folder_mutated` gate: a folder

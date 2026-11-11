@@ -236,6 +236,12 @@ async fn restore_removed_series_with_live_issues(
         return Ok(0);
     }
     let restore_ids: Vec<Uuid> = to_restore.iter().map(|(id, _)| *id).collect();
+    // Re-derive each series' rating from its live issues before lifting the
+    // removal: a series left removed by a partial failure (its issues came
+    // back, its rating was derived while none were live) must not become
+    // visible with that stale rating. Done first so a failure below still
+    // leaves the ratings right.
+    crate::library::series_rating::recompute_best_effort(db, &restore_ids).await;
     let mut restored = 0u64;
     for ids in restore_ids.chunks(chunk.max(1)) {
         let res = series::Entity::update_many()
@@ -731,7 +737,12 @@ pub async fn reconcile_series(
     }
     .await;
 
-    if stats.issues_removed > removed_before || stats.issues_restored > restored_before {
+    // A failed write may still have committed (its response lost), so an
+    // error re-derives too, not only a counted flip.
+    if flipped.is_err()
+        || stats.issues_removed > removed_before
+        || stats.issues_restored > restored_before
+    {
         crate::library::series_rating::recompute_best_effort(db, &[series_id]).await;
     }
     flipped?;
