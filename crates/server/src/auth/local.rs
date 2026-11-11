@@ -1080,6 +1080,10 @@ async fn revoke_if_past_max_age(
 /// disable — the `token_version` bump alone only stops *access* tokens, not
 /// the refresh-token rotation (AUTH-1). Best-effort: a DB error is logged and
 /// swallowed so it never blocks the primary mutation. Returns the count revoked.
+///
+/// The kept session also forgets its previous refresh token, so a copy of
+/// that token cannot use the refresh grace window (`REFRESH_GRACE`) to take
+/// over the one session the credential change left standing.
 pub(crate) async fn revoke_sessions_for_user<C: sea_orm::ConnectionTrait>(
     db: &C,
     user_id: uuid::Uuid,
@@ -1095,13 +1099,41 @@ pub(crate) async fn revoke_sessions_for_user<C: sea_orm::ConnectionTrait>(
     if let Some(h) = keep_refresh_hash {
         q = q.filter(auth_session::Column::RefreshTokenHash.ne(h));
     }
-    match q.exec(db).await {
+    let revoked = match q.exec(db).await {
         Ok(r) => r.rows_affected,
         Err(e) => {
             tracing::error!(error = %e, user_id = %user_id, "revoke_sessions_for_user failed");
             0
         }
+    };
+    if let Some(h) = keep_refresh_hash {
+        // Clearing only the previous hash keeps the row's CHECK
+        // (`previous IS NULL OR rotated_at IS NOT NULL`) satisfied.
+        let cleared = SessionEntity::update_many()
+            .col_expr(
+                auth_session::Column::PreviousRefreshTokenHash,
+                sea_orm::sea_query::Expr::value(Option::<String>::None),
+            )
+            .filter(auth_session::Column::UserId.eq(user_id))
+            .filter(auth_session::Column::RefreshTokenHash.eq(h))
+            .filter(auth_session::Column::PreviousRefreshTokenHash.is_not_null())
+            .exec(db)
+            .await;
+        if let Err(e) = cleared {
+            tracing::error!(error = %e, user_id = %user_id, "clearing the kept session's previous refresh token failed");
+        }
     }
+    revoked
+}
+
+/// SQL for "a rotation recent enough for the refresh grace", on the
+/// database clock (the clock that stamped `refresh_rotated_at`).
+fn within_refresh_grace() -> sea_orm::sea_query::Expr {
+    // Scoped: `ExprTrait::gt` would otherwise shadow `Iterator`/`Ord` methods.
+    use sea_orm::sea_query::{Expr, ExprTrait};
+    Expr::col((auth_session::Entity, auth_session::Column::RefreshRotatedAt)).gt(Expr::cust(
+        format!("now() - make_interval(secs => {})", REFRESH_GRACE.as_secs()),
+    ))
 }
 
 /// RP-initiated logout target for a `fetch()` caller. A fetch can't follow
@@ -1146,11 +1178,7 @@ pub async fn logout(
             .add(
                 sea_orm::Condition::all()
                     .add(auth_session::Column::PreviousRefreshTokenHash.eq(presented_hash.clone()))
-                    .add(
-                        auth_session::Column::RefreshRotatedAt.gt((chrono::Utc::now()
-                            - crate::auth::cookies::chrono_delta(REFRESH_GRACE))
-                        .fixed_offset()),
-                    ),
+                    .add(within_refresh_grace()),
             );
         if let Ok(Some(sess)) = SessionEntity::find()
             .filter(session_match.clone())

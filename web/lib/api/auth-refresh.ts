@@ -126,7 +126,21 @@ export function resetClockOffsetForTests(): void {
   }
 }
 
-let refreshInFlight: Promise<boolean | null> | null = null;
+/**
+ * What one refresh attempt came to.
+ * - `renewed`: this tab has working cookies (it refreshed, or another tab did).
+ * - `signed-out`: the server refused the session (or no CSRF cookie).
+ * - `answered`: the server answered with something else (403, 5xx); nothing
+ *   is known about the session.
+ * - `no-answer`: no HTTP answer at all (timeout or network error). The
+ *   server may still have rotated the refresh token; it accepts the
+ *   previous token once for a minute after a rotation, so the caller should
+ *   retry soon (`session-refresh.ts` does).
+ */
+export type RefreshOutcome =
+  "renewed" | "signed-out" | "answered" | "no-answer";
+
+let refreshInFlight: Promise<RefreshOutcome> | null = null;
 
 /** Web Locks name serializing `/auth/refresh` across this origin's tabs. */
 const REFRESH_LOCK = "folio:auth-refresh";
@@ -145,6 +159,27 @@ const renewedListeners = new Set<RenewedListener>();
 export function onSessionRenewed(listener: RenewedListener): () => void {
   renewedListeners.add(listener);
   return () => renewedListeners.delete(listener);
+}
+
+type UnansweredListener = (sentAt: number) => void;
+const unansweredListeners = new Set<UnansweredListener>();
+
+/** Subscribe to "a refresh this tab sent got no answer". `sentAt` is the
+ *  client time (`Date.now()`) just before the request went out, which is no
+ *  later than any rotation the server may have made for it. */
+export function onRefreshUnanswered(listener: UnansweredListener): () => void {
+  unansweredListeners.add(listener);
+  return () => unansweredListeners.delete(listener);
+}
+
+function notifyUnanswered(sentAt: number) {
+  for (const l of unansweredListeners) {
+    try {
+      l(sentAt);
+    } catch {
+      /* a listener's failure must not break the refresh */
+    }
+  }
 }
 
 function notifyRenewed() {
@@ -182,10 +217,11 @@ function expireReadableAuthCookies() {
 /**
  * Renew the access token through `POST /api/auth/refresh`.
  *
- * `true`: this tab now has working cookies (it refreshed, or another tab
- * did). `false`: the session is gone. `null`: the server could not be
- * reached, failed, or did not answer within `REFRESH_TIMEOUT_MS`; nothing
- * is known and nothing is signed out.
+ * Resolves to a `RefreshOutcome`. `renewed`: this tab now has working
+ * cookies (it refreshed, or another tab did). `signed-out`: the session is
+ * gone. `answered` (a 403 or 5xx) and `no-answer` (unreachable, or nothing
+ * within `REFRESH_TIMEOUT_MS`): nothing is known and nothing is signed out;
+ * `no-answer` also tells `onRefreshUnanswered` listeners when it was sent.
  *
  * Refresh-token rotation is single-use on the server, except that the
  * token a rotation replaced is accepted once more within a minute (a lost
@@ -205,10 +241,10 @@ function expireReadableAuthCookies() {
  *     refresh is a lost race when the expiry moved, checked again once
  *     after a short wait for the winner's response.
  * Only a 401 is a refusal. A 403 is a CSRF failure (the cookie changed
- * under the request), which says nothing about the session: "no answer".
+ * under the request), which says nothing about the session: `answered`.
  * "Future" is judged on the server's clock (`serverNow`).
  */
-async function attemptRefresh(): Promise<boolean | null> {
+function attemptRefresh(): Promise<RefreshOutcome> {
   if (refreshInFlight) return refreshInFlight;
   const before = readAccessExp();
   const someoneElseRefreshed = () => {
@@ -217,12 +253,13 @@ async function attemptRefresh(): Promise<boolean | null> {
     if (before !== null && now <= before) return false;
     return now * 1000 > serverNow();
   };
-  const p = withRefreshLock(async (): Promise<boolean | null> => {
-    if (someoneElseRefreshed()) return true;
+  const p = withRefreshLock(async (): Promise<RefreshOutcome> => {
+    if (someoneElseRefreshed()) return "renewed";
     const csrf = getCsrfToken();
     // Without the CSRF cookie the refresh cannot pass the CSRF check: the
     // session is gone (sign-out cleared it).
-    if (!csrf) return false;
+    if (!csrf) return "signed-out";
+    const sentAt = Date.now();
     try {
       const res = await connectionFetch("/api/auth/refresh", {
         method: "POST",
@@ -231,23 +268,24 @@ async function attemptRefresh(): Promise<boolean | null> {
         signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
       });
       noteServerDate(res);
-      if (res.ok) return true;
-      if (res.status !== 401) return null;
-      if (someoneElseRefreshed()) return true;
+      if (res.ok) return "renewed";
+      if (res.status !== 401) return "answered";
+      if (someoneElseRefreshed()) return "renewed";
       await new Promise((resolve) => setTimeout(resolve, LOST_RACE_SETTLE_MS));
-      if (someoneElseRefreshed()) return true;
+      if (someoneElseRefreshed()) return "renewed";
       // Refused, and the expiry did not move: the session is gone.
       expireReadableAuthCookies();
-      return false;
+      return "signed-out";
     } catch {
       // Network failure or timeout: no answer.
-      return null;
+      notifyUnanswered(sentAt);
+      return "no-answer";
     }
   });
   refreshInFlight = p;
   void p.then(
-    (ok) => {
-      if (ok === true) notifyRenewed();
+    (outcome) => {
+      if (outcome === "renewed") notifyRenewed();
     },
     () => {},
   );
@@ -260,7 +298,18 @@ async function attemptRefresh(): Promise<boolean | null> {
 /** Renew the session now through the cross-tab path (deduped with any
  *  refresh already in flight). Same result as `attemptRefresh`. */
 export function refreshSession(): Promise<boolean | null> {
+  return attemptRefresh().then(asTriState);
+}
+
+/** `refreshSession` with the outcome spelled out (see `RefreshOutcome`). */
+export function refreshSessionOutcome(): Promise<RefreshOutcome> {
   return attemptRefresh();
+}
+
+function asTriState(outcome: RefreshOutcome): boolean | null {
+  if (outcome === "renewed") return true;
+  if (outcome === "signed-out") return false;
+  return null;
 }
 
 /**
@@ -271,7 +320,7 @@ export function refreshSession(): Promise<boolean | null> {
  */
 export async function resumeSession(): Promise<boolean> {
   if (!getCsrfToken()) return false;
-  return (await attemptRefresh()) === true;
+  return (await attemptRefresh()) === "renewed";
 }
 
 /**
@@ -291,7 +340,7 @@ export async function apiFetch(
   if (res.status !== 401) return res;
   // Don't try to refresh the refresh endpoint itself — that would loop.
   if (path === "/auth/refresh") return res;
-  const refreshed = await attemptRefresh();
+  const refreshed = asTriState(await attemptRefresh());
   if (!refreshed) {
     if (refreshed === false) reportConnectivity("authentication");
     return res;

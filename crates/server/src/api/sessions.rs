@@ -115,12 +115,19 @@ pub async fn list(
     };
 
     let current_hash = jar.get(REFRESH_COOKIE).map(|c| sha256_hex(c.value()));
+    // A browser whose last refresh response was lost still holds the
+    // previous token, which `/auth/refresh` accepts within the grace window:
+    // it is this device too. (App clock, like the rest of this listing; the
+    // marker is cosmetic.)
+    let grace_start = now - crate::auth::cookies::chrono_delta(crate::auth::local::REFRESH_GRACE);
     let sessions = rows
         .into_iter()
         .map(|r| SessionView {
-            current: current_hash
-                .as_deref()
-                .is_some_and(|h| h == r.refresh_token_hash),
+            current: current_hash.as_deref().is_some_and(|h| {
+                h == r.refresh_token_hash
+                    || (r.previous_refresh_token_hash.as_deref() == Some(h)
+                        && r.refresh_rotated_at.is_some_and(|t| t > grace_start))
+            }),
             id: r.id,
             created_at: r.created_at.to_rfc3339(),
             last_used_at: r.last_used_at.to_rfc3339(),

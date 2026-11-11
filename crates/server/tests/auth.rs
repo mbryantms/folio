@@ -590,6 +590,9 @@ async fn concurrent_refreshes_with_one_token_leave_one_valid_token() {
     let reg = register(&app, "race@example.com", "correctly-horse-battery").await;
     let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
     let mut current = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
 
     for round in 0..5 {
         let (a, b) = tokio::join!(
@@ -605,45 +608,49 @@ async fn concurrent_refreshes_with_one_token_leave_one_valid_token() {
             extract_cookie(&a, "__Host-comic_refresh").unwrap(),
             extract_cookie(&b, "__Host-comic_refresh").unwrap(),
         ];
-
-        // The presented token is spent: its single grace use is gone.
-        let replay = refresh_call(&app, &current, &csrf).await;
-        assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
-
-        // Exactly one of the issued tokens is live.
-        let mut live = Vec::new();
-        for t in &issued {
-            let r = refresh_call(&app, t, &csrf).await;
-            if r.status() == StatusCode::OK {
-                let access = extract_cookie(&r, "__Host-comic_session").unwrap();
-                let me = app
-                    .router
-                    .clone()
-                    .oneshot(
-                        Request::builder()
-                            .uri("/auth/me")
-                            .header(header::COOKIE, format!("__Host-comic_session={access}"))
-                            .body(Body::empty())
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(me.status(), StatusCode::OK);
-                live.push(extract_cookie(&r, "__Host-comic_refresh").unwrap());
-            } else {
-                assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
-            }
-        }
+        // Read from the row, without presenting any token: exactly one
+        // issued token is current and no previous token is left to use.
+        let survivor = surviving_token(&session_for(&db, user_id).await, &issued);
         assert_eq!(
-            live.len(),
-            1,
-            "round {round}: exactly one issued token is live"
+            refresh_call(&app, &current, &csrf).await.status(),
+            StatusCode::UNAUTHORIZED,
+            "round {round}: the presented token is spent"
         );
-        current = live.pop().unwrap();
+        current = survivor;
     }
 
+    // The survivor refreshes, and its access token works.
     let next = refresh_call(&app, &current, &csrf).await;
     assert_eq!(next.status(), StatusCode::OK);
+    let access = extract_cookie(&next, "__Host-comic_session").unwrap();
+    let me = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/auth/me")
+                .header(header::COOKIE, format!("__Host-comic_session={access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(me.status(), StatusCode::OK);
+}
+
+/// After a grace use, the row's current hash is the SHA-256 of exactly one
+/// of `issued` and no previous hash remains. Returns that token.
+fn surviving_token(row: &entity::auth_session::Model, issued: &[String]) -> String {
+    let matching: Vec<&String> = issued
+        .iter()
+        .filter(|t| server::auth::cookies::sha256_hex(t) == row.refresh_token_hash)
+        .collect();
+    assert_eq!(matching.len(), 1, "exactly one issued token is current");
+    assert!(
+        row.previous_refresh_token_hash.is_none(),
+        "the grace use left no previous token"
+    );
+    matching[0].clone()
 }
 
 async fn session_for(
@@ -924,13 +931,12 @@ async fn refreshes_queued_on_a_locked_row_leave_one_valid_token() {
         extract_cookie(&a, "__Host-comic_refresh").unwrap(),
         extract_cookie(&b, "__Host-comic_refresh").unwrap(),
     ];
-    let mut live = 0;
-    for t in &issued {
-        if refresh_call(&app, t, &csrf).await.status() == StatusCode::OK {
-            live += 1;
-        }
-    }
-    assert_eq!(live, 1, "one token line survives");
+    let survivor = surviving_token(&session_for(&db, user_id).await, &issued);
+    assert_eq!(
+        refresh_call(&app, &survivor, &csrf).await.status(),
+        StatusCode::OK,
+        "the survivor refreshes"
+    );
 }
 
 /// The first of two queued refreshes finds the account disabled and rolls

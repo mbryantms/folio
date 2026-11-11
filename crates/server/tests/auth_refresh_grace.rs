@@ -15,6 +15,7 @@ use axum::{
 };
 use common::TestApp;
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, TransactionTrait};
+use server::auth::cookies::sha256_hex;
 use server::auth::local::REFRESH_GRACE;
 use tower::ServiceExt;
 
@@ -320,14 +321,126 @@ async fn queued_refreshes_with_one_token_leave_one_valid_token() {
         .collect();
     assert_eq!(issued.len(), 2);
 
+    // From the row, without presenting any token: exactly one issued token
+    // is current, and the grace use left no previous token.
+    let row = session_for(&db, s.user_id).await;
+    let current: Vec<&String> = issued
+        .iter()
+        .filter(|t| sha256_hex(t) == row.refresh_token_hash)
+        .collect();
+    assert_eq!(current.len(), 1, "exactly one issued token is current");
+    assert!(row.previous_refresh_token_hash.is_none());
+
     assert_refused(refresh_call(&app, &s.refresh, &s.csrf).await, "T0 spent").await;
-    let mut ok = 0;
-    for t in &issued {
-        if refresh_call(&app, t, &s.csrf).await.status() == StatusCode::OK {
-            ok += 1;
+    rotate(&app, current[0], &s.csrf).await;
+}
+
+/// The current token and the previous token of one session, queued on the
+/// locked row: whichever runs first wins (a normal rotation or the grace),
+/// the other gets 401, and one token line remains.
+#[tokio::test]
+async fn current_and_previous_token_queued_together_have_one_winner() {
+    let app = TestApp::spawn().await;
+    let s = register(&app, "cur-prev@example.com").await;
+    let t1 = rotate(&app, &s.refresh, &s.csrf).await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+
+    let holder = db.begin().await.unwrap();
+    holder
+        .execute_unprepared(&format!(
+            "SELECT id FROM auth_sessions WHERE user_id = '{}' FOR UPDATE",
+            s.user_id
+        ))
+        .await
+        .unwrap();
+    let (with_current, with_previous, ()) = tokio::join!(
+        refresh_call(&app, &t1, &s.csrf),
+        refresh_call(&app, &s.refresh, &s.csrf),
+        async {
+            wait_for_lock_waiters(&db, 2).await;
+            holder.commit().await.unwrap();
         }
+    );
+    let mut statuses = [with_current.status(), with_previous.status()];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::UNAUTHORIZED]);
+    let current_won = with_current.status() == StatusCode::OK;
+    let (winner, loser) = if current_won {
+        (with_current, with_previous)
+    } else {
+        (with_previous, with_current)
+    };
+    let issued = extract_cookie(&winner, "__Host-comic_refresh").unwrap();
+    assert_refused(loser, "the second of the two").await;
+
+    let row = session_for(&db, s.user_id).await;
+    assert_eq!(row.refresh_token_hash, sha256_hex(&issued));
+    if current_won {
+        // A normal rotation: T1 is now the previous token, T0 is gone.
+        assert_eq!(row.previous_refresh_token_hash, Some(sha256_hex(&t1)));
+    } else {
+        // The grace: nothing previous remains, and T1 is retired.
+        assert!(row.previous_refresh_token_hash.is_none());
     }
-    assert_eq!(ok, 1, "exactly one of the issued tokens is valid");
+    assert_refused(refresh_call(&app, &s.refresh, &s.csrf).await, "T0").await;
+    rotate(&app, &issued, &s.csrf).await;
+}
+
+/// A password change keeps the caller's session but drops its previous
+/// token: inside the window that token no longer gets the grace. Control:
+/// the same token is accepted inside the window without the change (see
+/// `lost_response_retry_with_the_previous_token_is_accepted_once`), and the
+/// kept session's current token still refreshes.
+#[tokio::test]
+async fn a_password_change_drops_the_kept_sessions_previous_token() {
+    let app = TestApp::spawn().await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let s = register(&app, "pw-grace@example.com").await;
+    let resp = refresh_call(&app, &s.refresh, &s.csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let t1 = extract_cookie(&resp, "__Host-comic_refresh").unwrap();
+    let access = extract_cookie(&resp, "__Host-comic_session").unwrap();
+    let csrf = extract_cookie(&resp, "__Host-comic_csrf").unwrap();
+    assert!(
+        session_for(&db, s.user_id)
+            .await
+            .previous_refresh_token_hash
+            .is_some()
+    );
+
+    let changed = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/me/account")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(
+                    header::COOKIE,
+                    format!(
+                        "__Host-comic_session={access}; __Host-comic_csrf={csrf}; __Host-comic_refresh={t1}"
+                    ),
+                )
+                .header("x-csrf-token", &csrf)
+                .body(Body::from(
+                    r#"{"current_password":"correctly-horse-battery","new_password":"another-horse-battery-2"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), StatusCode::OK);
+
+    let row = session_for(&db, s.user_id).await;
+    assert!(row.revoked_at.is_none(), "the caller's session is kept");
+    assert!(row.previous_refresh_token_hash.is_none());
+    assert_refused(
+        refresh_call(&app, &s.refresh, &csrf).await,
+        "previous token after a password change, inside the window",
+    )
+    .await;
+    rotate(&app, &t1, &csrf).await;
 }
 
 /// (4) + (6) Someone else presents the previous token inside the window.
@@ -441,8 +554,7 @@ async fn grace_path_respects_the_absolute_session_age() {
     assert!(row.expires_at <= row.created_at + chrono::Duration::days(90));
 }
 
-/// A revoked session offers no grace. Control: the unrevoked case is
-/// `lost_response_retry_with_the_previous_token_is_accepted_once`.
+/// A revoked session offers no grace; an unrevoked one does (control).
 #[tokio::test]
 async fn grace_path_refuses_a_revoked_session() {
     let app = TestApp::spawn().await;
@@ -460,6 +572,11 @@ async fn grace_path_refuses_a_revoked_session() {
         "grace on a revoked session",
     )
     .await;
+
+    // Control: the same steps without the revocation.
+    let c = register(&app, "revoked-control@example.com").await;
+    rotate(&app, &c.refresh, &c.csrf).await;
+    rotate(&app, &c.refresh, &c.csrf).await;
 }
 
 /// CSRF is checked before the grace path, and a CSRF failure does not use
@@ -541,4 +658,44 @@ async fn logout_with_the_previous_token_inside_the_window_revokes_the_session() 
     assert_eq!(out.status(), StatusCode::NO_CONTENT);
     assert!(session_for(&db, c.user_id).await.revoked_at.is_none());
     rotate(&app, &t1, &c.csrf).await;
+}
+
+/// `/me/sessions` marks the session as this device when the cookie holds
+/// its previous token inside the window (the browser whose response was
+/// lost), and not after the window.
+#[tokio::test]
+async fn sessions_list_marks_this_device_by_the_previous_token_in_the_window() {
+    let app = TestApp::spawn().await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let s = register(&app, "this-device@example.com").await;
+    let resp = refresh_call(&app, &s.refresh, &s.csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let access = extract_cookie(&resp, "__Host-comic_session").unwrap();
+
+    let listed_current = |rt: String| {
+        let router = app.router.clone();
+        let access = access.clone();
+        async move {
+            let resp = router
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/me/sessions")
+                        .header(
+                            header::COOKIE,
+                            format!("__Host-comic_session={access}; __Host-comic_refresh={rt}"),
+                        )
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = body_json(resp.into_body()).await;
+            body["sessions"][0]["current"].as_bool().unwrap()
+        }
+    };
+
+    assert!(listed_current(s.refresh.clone()).await, "inside the window");
+    rotated_ago(&db, s.user_id, grace_secs() + 5).await;
+    assert!(!listed_current(s.refresh.clone()).await, "after the window");
 }
