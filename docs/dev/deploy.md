@@ -23,6 +23,21 @@ reaches it without anyone logging into the host:
    untouched). A failed deploy is retried on the next tick, up to three
    times, then left for the next deployment to supersede.
 
+The host's compose file is its own copy. A deployment changes only the
+image tag, so an image change reaches production with the next release
+while a change to [`compose.prod.yml`](../../compose.prod.yml) reaches it
+only when someone copies it to `/opt/folio/docker-compose.yml` (keeping
+the host's local edits) and runs `docker compose up -d`. Image changes
+therefore must keep working with the compose file an existing install
+already has: no new required variable, mount, tmpfs or capability. The
+template's hardening (read-only roots, dropped capabilities,
+`no-new-privileges`, the internal `backend` network, the optional
+`REDIS_PASSWORD`) and the steps to adopt it on an existing host are in
+[`docs/install/upgrades.md`](../install/upgrades.md) under
+*Unreleased — hardened compose template*. `compose.test.yml`, which the
+`docker-smoke` CI job boots, carries the same app and web hardening, so a
+published image is known to start under it.
+
 Re-deploy or roll back: run `deploy.yml` by hand (Actions → deploy → Run
 workflow, also from the GitHub app) with any published tag. The host
 treats it like any other deployment.

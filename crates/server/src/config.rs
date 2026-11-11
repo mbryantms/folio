@@ -952,20 +952,14 @@ impl Config {
     }
 
     /// Build the `archive::ArchiveLimits` the archive crate consumes,
-    /// reading the env-tunable caps from this config. Subprocess-bound
-    /// fields (wall_timeout / rss_bytes) stay at the `ArchiveLimits::
-    /// default()` values for now — those govern CBR/CB7 extraction
-    /// which is currently stubbed; revisit when those formats ship.
+    /// reading the env-tunable caps from this config.
     pub fn archive_limits(&self) -> archive::ArchiveLimits {
-        let defaults = archive::ArchiveLimits::default();
         archive::ArchiveLimits {
             max_entries: self.archive_max_entries,
             max_total_bytes: self.archive_max_total_bytes,
             max_entry_bytes: self.archive_max_entry_bytes,
             max_compression_ratio: self.archive_max_ratio,
             max_nesting_depth: self.archive_max_nesting,
-            subprocess_wall_timeout: defaults.subprocess_wall_timeout,
-            subprocess_rss_bytes: defaults.subprocess_rss_bytes,
         }
     }
 
@@ -2105,14 +2099,6 @@ mod tests {
         assert_eq!(limits.max_entry_bytes, 1_111_222);
         assert_eq!(limits.max_compression_ratio, 7);
         assert_eq!(limits.max_nesting_depth, 3);
-        // Subprocess-bound fields are CBR/CB7-specific and keep the
-        // archive crate's defaults; this is the contract.
-        let defaults = archive::ArchiveLimits::default();
-        assert_eq!(
-            limits.subprocess_wall_timeout,
-            defaults.subprocess_wall_timeout
-        );
-        assert_eq!(limits.subprocess_rss_bytes, defaults.subprocess_rss_bytes);
     }
 
     /// Minimal `Config` skeleton — only the fields needed to exist

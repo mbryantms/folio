@@ -4,8 +4,8 @@
 # Multi-stage:
 #   1a/1b. cargo-chef plan + cached cook (`deps`) for the Rust workspace
 #   1c.   `rust-builder` compiles the workspace on top of `deps`
-#   2.    Pulls `tini` + `unrar-free` out of a slim Debian intermediate
-#   3.    Distroless final image — only the two binaries + tini + unrar
+#   2.    Pulls `tini` out of a slim Debian intermediate
+#   3.    Distroless final image — only the two binaries + tini
 #
 # Base images are pinned by digest (tag@sha256:...). Renovate refreshes the
 # digest whenever upstream rebuilds the tag (OS package fixes) and
@@ -91,18 +91,20 @@ RUN printf '%s  %s\n' \
       e0c3338dc17503dc7d335a507c9ae01b2b46cfd07561171e1e1ac55d85e8e438 /root/.tesseract-rs/tessdata/tur.traineddata \
     | sha256sum -c -
 
-# ───── Stage 2: tini + unrar from Debian apt ─────
+# ───── Stage 2: tini from Debian apt ─────
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS apt-source
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    unrar-free tini \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
 # ───── Stage 3: distroless runtime ─────
 # distroless/cc carries glibc + libssl; required by the Rust binary (reqwest,
-# argon2, sea-orm Postgres TLS) and by unrar-free. debian13 (trixie) rather
-# than debian12: the bookworm-based tag shipped a fixable HIGH libssl3 CVE for
-# weeks (2026-09) while the trixie tag was clean; a bookworm-built binary runs
-# on the newer glibc unchanged. Verified by the docker-smoke job.
+# argon2, sea-orm Postgres TLS). RAR is read in process through the UnRAR
+# library compiled into the server, so the image ships no `unrar` program.
+# debian13 (trixie) rather than debian12: the bookworm-based tag shipped a
+# fixable HIGH libssl3 CVE for weeks (2026-09) while the trixie tag was clean;
+# a bookworm-built binary runs on the newer glibc unchanged. Verified by the
+# docker-smoke job.
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1 AS runtime
 WORKDIR /app
 
@@ -126,9 +128,6 @@ LABEL org.opencontainers.image.title="Folio" \
 # Binaries
 COPY --from=rust-builder /work/target/release/server    /app/server
 COPY --from=rust-builder /work/target/release/migration /app/migration
-
-# unrar (binary, GPL; see LICENSE-THIRD-PARTY.md)
-COPY --from=apt-source   /usr/bin/unrar-free            /usr/bin/unrar
 
 # tini as PID 1 — reaps zombies, forwards SIGTERM to the server for graceful drain.
 COPY --from=apt-source   /usr/bin/tini                  /sbin/tini

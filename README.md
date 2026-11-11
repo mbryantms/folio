@@ -149,6 +149,12 @@ sign-on, email and server settings are configured in the admin pages too.
 `.env.example` in the repository is the development file; don't use it
 for a deployment.
 
+`compose.prod.yml` runs every container with a read-only root
+filesystem, all Linux capabilities dropped except the few an entrypoint
+needs, and `no-new-privileges`; Postgres and Redis sit on an internal
+network only the app can reach. If you add your own mounts or services,
+read the hardening notes at the top of the file.
+
 Next steps, including reverse-proxy setup, single sign-on, backups and
 upgrades, are in [docs/install/](./docs/install/).
 
@@ -199,7 +205,7 @@ Folio is licensed under the [GNU Affero General Public License v3.0 or
 later](./LICENSE). If you run a modified version as a network service,
 the AGPL requires you to offer its source to that service's users.
 
-Third-party notices, including the terms for the bundled `unrar` binary,
+Third-party notices, including the terms for the bundled UnRAR library,
 are in [LICENSE-THIRD-PARTY.md](./LICENSE-THIRD-PARTY.md).
 
 Folio is not affiliated with ComicVine, Metron or the Grand Comics
