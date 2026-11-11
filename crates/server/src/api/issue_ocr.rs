@@ -428,19 +428,42 @@ async fn load_page_image(
     row: &issue::Model,
     page: u32,
 ) -> Result<image::DynamicImage, Box<Response>> {
-    // Same rules as the page routes (`library::no_follow`).
-    if !crate::library::no_follow::issue_path_ok(app, row).await {
-        return Err(Box::new(error(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "issue not found",
-        )));
-    }
-    let arc = match app
-        .zip_lru
-        .get_or_open(&row.id, std::path::Path::new(&row.file_path))
-        .await
-    {
+    // Same rules as the page routes (`library::no_follow`). What OCR
+    // answers for each refusal:
+    //   - a link, a non-regular file, a path outside the root, or an I/O
+    //     error opening it: 404 not_found (as before handles were used);
+    //   - a missing file: 500 archive_unreadable, the answer it always gave
+    //     when the reader could not open the archive;
+    //   - a failed library lookup: 500 (a server fault, never not-found).
+    // The reader is built from this handle (or reused only for the same
+    // file).
+    use crate::library::no_follow::Refusal;
+    let archive_file = match crate::library::no_follow::open_issue_archive(app, row).await {
+        Ok(f) => Ok(f),
+        Err(Refusal::Missing | Refusal::Lookup(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(Refusal::Symlink | Refusal::NotRegular | Refusal::OutsideRoot | Refusal::Io(_)) => {
+            Err(StatusCode::NOT_FOUND)
+        }
+    };
+    let archive_file = match archive_file {
+        Ok(f) => f,
+        Err(StatusCode::NOT_FOUND) => {
+            return Err(Box::new(error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "issue not found",
+            )));
+        }
+        Err(_) => {
+            tracing::warn!(issue_id = %row.id, "ocr: archive missing or unreadable");
+            return Err(Box::new(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "archive_unreadable",
+                "archive unreadable",
+            )));
+        }
+    };
+    let arc = match app.zip_lru.get_or_open(&row.id, archive_file).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "ocr: zip_lru open failed");
