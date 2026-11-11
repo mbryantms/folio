@@ -157,7 +157,11 @@ Every change to it is a single atomic command or Lua script:
   run with a new id, so this cannot repeat for the same run. A new run
   joins the superseded run's scan-all batch; a request folded into
   another holder's follow-up runs unbatched, and the batch counts the
-  superseded run as cancelled.
+  superseded run as cancelled. Either way the batch never reads as
+  complete for that library, because the superseded run stays cancelled
+  in it even though the library was scanned; when the run was the
+  batch's last open member, the batch is marked finished and then
+  finalised again once the new run ends.
 - **Cancel while queued.** The cancel endpoint flips a `queued` run with
   one conditional update (`… WHERE state = 'queued'`) and, only when that
   changed the row, releases the library run's claim through

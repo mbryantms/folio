@@ -2713,6 +2713,11 @@ async fn run_phases(
     .await
     {
         Ok(series_restored) => invalidate_after_series_restore(state, lib.id, series_restored),
+        Err(e) if lease_lost.load(Ordering::Relaxed) => {
+            // Superseded: the reconcile stopped on purpose; the next
+            // holder's reconcile completes the library-wide work.
+            tracing::info!(library_id = %lib.id, reason = %e, "scanner: reconcile stopped, scan superseded");
+        }
         Err(e) => {
             tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
         }
