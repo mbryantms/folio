@@ -26,9 +26,11 @@
 //! under one process-wide semaphore of [`OCR_MAX_CONCURRENT`] permits.
 //! Order of work: visibility, the result cache (a hit never takes a
 //! permit), the cheap checks (encrypted row, missing file, offline
-//! library, page out of range: their 404 / 409 / 410 / 503 never wait),
-//! the models (a first-use download is waited on *without* a permit),
-//! then the permit. The permit moves into the blocking decode and
+//! library, page out of range, the entry's size against the per-entry
+//! cap: their 404 / 409 / 410 / 503 never wait, and no page bytes are
+//! read for them), the models (a first-use download is waited on
+//! *without* a permit), then the permit. The page is read and decoded
+//! only inside it. The permit moves into the blocking read, decode and
 //! inference tasks and is released when they finish, not when the
 //! request future is dropped (`ocr::pipeline`). A request that waits
 //! longer than [`OCR_PERMIT_WAIT`] for one gets 503
@@ -48,6 +50,8 @@ use axum::{
 use entity::{issue, series};
 use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{Semaphore, SemaphorePermit};
 use utoipa_axum::router::OpenApiRouter;
@@ -56,7 +60,7 @@ use utoipa_axum::routes;
 use super::error;
 use super::page_source::{PageUnavailable, issue_not_found, no_store};
 use crate::auth::CurrentUser;
-use crate::library::zip_lru::lock_reader;
+use crate::library::zip_lru::{CachedReader, lock_reader};
 use crate::middleware::rate_limit;
 use crate::ocr::cache::{self, CachedDetection};
 use crate::ocr::pipeline::{
@@ -363,9 +367,9 @@ pub async fn serve(
         return Json(hit).into_response();
     }
 
-    // ─── Cheap checks + page bytes (no permit) ───────────────────
-    let bytes = match read_page_bytes(&app, &row, req.page).await {
-        Ok(b) => b,
+    // ─── Cheap checks (no permit, no page bytes) ─────────────────
+    let located = match locate_page(&app, &row, req.page).await {
+        Ok(l) => l,
         Err(resp) => return *resp,
     };
     // ─── Models (a first-use download waits here, without a permit) ─
@@ -381,7 +385,7 @@ pub async fn serve(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    let (decoded, permit) = match decode_holding(bytes, permit).await {
+    let (decoded, permit) = match read_and_decode_holding(located, permit).await {
         Ok(pair) => pair,
         Err(resp) => return *resp,
     };
@@ -488,9 +492,9 @@ pub async fn text_regions(
         return Json(TextRegionsView::from(hit)).into_response();
     }
 
-    // ─── Cheap checks + page bytes (no permit) ───────────────────
-    let bytes = match read_page_bytes(&app, &row, page).await {
-        Ok(b) => b,
+    // ─── Cheap checks (no permit, no page bytes) ─────────────────
+    let located = match locate_page(&app, &row, page).await {
+        Ok(l) => l,
         Err(resp) => return *resp,
     };
     // ─── Detector (a first-use download waits here, no permit) ───
@@ -506,7 +510,7 @@ pub async fn text_regions(
         Ok(p) => p,
         Err(resp) => return *resp,
     };
-    let (decoded, permit) = match decode_holding(bytes, permit).await {
+    let (decoded, permit) = match read_and_decode_holding(located, permit).await {
         Ok(pair) => pair,
         Err(resp) => return *resp,
     };
@@ -548,21 +552,36 @@ fn ocr_failure(e: &anyhow::Error, generic: &str) -> axum::response::Response {
     }
 }
 
-/// Read one page's bytes from the issue's archive: the cheap checks
-/// (encrypted row, refused / missing file, offline library, unreadable
-/// archive, page out of range) that run before any OCR permit is taken.
-/// Failures come back as ready-to-return canonical-envelope responses so
-/// the OCR POST and the text-regions GET share one error mapping. Boxed
+/// One page of an issue's archive, found but not read.
+struct LocatedPage {
+    reader: Arc<Mutex<CachedReader>>,
+    entry: archive::ArchiveEntry,
+}
+
+/// Page entries read for OCR so far (each one inside a permit). For tests
+/// and diagnostics: a test holding every permit checks no page is read.
+static OCR_PAGE_READS: AtomicU64 = AtomicU64::new(0);
+
+/// Pages read for OCR since start (see [`OCR_PAGE_READS`]).
+pub fn ocr_page_reads() -> u64 {
+    OCR_PAGE_READS.load(Ordering::Relaxed)
+}
+
+/// The cheap checks that run before any OCR permit is taken, without
+/// reading the page: encrypted row, refused / missing file, offline
+/// library, unreadable archive, page out of range, and the entry's listed
+/// size against the archive's per-entry cap. Failures come back as
+/// ready-to-return canonical-envelope responses (the shared `page_source`
+/// mapping) so the OCR POST and the text-regions GET answer alike. Boxed
 /// because the error path is cold and `Response` is large.
-async fn read_page_bytes(
+async fn locate_page(
     app: &AppState,
     row: &issue::Model,
     page: u32,
-) -> Result<Vec<u8>, Box<Response>> {
-    // Same rules as the page routes (`library::no_follow`); every refusal
-    // and archive failure answers by the shared `page_source` mapping. The
-    // reader is built from this handle (or reused only for the same
-    // version of the same file).
+) -> Result<LocatedPage, Box<Response>> {
+    // Same rules as the page routes (`library::no_follow`). The reader is
+    // built from this handle (or reused only for the same version of the
+    // same file).
     PageUnavailable::check_row(row).map_err(|why| Box::new(why.response()))?;
     let archive_file = match crate::library::no_follow::open_issue_archive(app, row).await {
         Ok(f) => f,
@@ -574,61 +593,89 @@ async fn read_page_bytes(
             ));
         }
     };
-    let arc = match app.zip_lru.get_or_open(&row.id, archive_file).await {
+    let reader = match app.zip_lru.get_or_open(&row.id, archive_file).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "ocr: zip_lru open failed");
             return Err(Box::new(PageUnavailable::from_archive_error(&e).response()));
         }
     };
+    let max_entry_bytes = app.cfg().archive_limits().max_entry_bytes;
     let page_index = page as usize;
-    let arc_clone = arc.clone();
-    // `Ok(None)`: no page at that index.
-    let bytes_result =
-        tokio::task::spawn_blocking(move || -> Result<Option<Vec<u8>>, archive::ArchiveError> {
-            let mut cbz = lock_reader(&arc_clone)?;
-            let pages = cbz.pages();
-            let Some(entry) = pages.get(page_index).copied().cloned() else {
-                return Ok(None);
-            };
-            let total = entry.uncompressed_size;
-            cbz.read_entry_range(&entry, 0, total).map(Some)
-        })
-        .await;
-    match bytes_result {
-        Ok(Ok(Some(b))) => Ok(b),
-        Ok(Ok(None)) => Err(Box::new(no_store(error(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "page not found",
-        )))),
+    let for_task = reader.clone();
+    // The page list is in memory; the lock is taken off the runtime only
+    // because a page stream may hold it for a while.
+    let found = tokio::task::spawn_blocking(
+        move || -> Result<Option<archive::ArchiveEntry>, archive::ArchiveError> {
+            let cbz = lock_reader(&for_task)?;
+            Ok(cbz.pages().get(page_index).copied().cloned())
+        },
+    )
+    .await;
+    let entry = match found {
+        Ok(Ok(Some(entry))) => entry,
+        Ok(Ok(None)) => {
+            return Err(Box::new(no_store(error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "page not found",
+            ))));
+        }
         Ok(Err(e)) => {
+            tracing::warn!(error = %e, "ocr: page lookup failed");
+            return Err(Box::new(PageUnavailable::from_archive_error(&e).response()));
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "ocr: page lookup task failed");
+            return Err(Box::new(PageUnavailable::Internal.response()));
+        }
+    };
+    if entry.uncompressed_size > max_entry_bytes {
+        let e = archive::ArchiveError::CapExceeded(archive::Cap::new(
+            archive::SafetyCheck::EntrySize,
+            "entry exceeded max_entry_bytes",
+        ));
+        return Err(Box::new(PageUnavailable::from_archive_error(&e).response()));
+    }
+    Ok(LocatedPage { reader, entry })
+}
+
+/// Why [`read_and_decode_holding`] produced no image.
+enum ReadDecodeError {
+    Read(archive::ArchiveError),
+    Decode(String),
+}
+
+/// Read the located page and decode it on the blocking pool with the OCR
+/// `permit` held by the task (released when the work ends, even if the
+/// request is dropped first), and hand the permit back for the next
+/// stage. The page bytes exist only inside the permit. A read error found
+/// here answers by the same `page_source` mapping as the cheap checks.
+/// `decode_limited` (security M0) caps decoded dimensions so a malicious
+/// archive can't OOM the box via a decompression bomb.
+async fn read_and_decode_holding<P: Send + 'static>(
+    located: LocatedPage,
+    permit: P,
+) -> Result<(image::DynamicImage, P), Box<Response>> {
+    let LocatedPage { reader, entry } = located;
+    let work = blocking_with_permit(permit, move || {
+        OCR_PAGE_READS.fetch_add(1, Ordering::Relaxed);
+        let bytes = {
+            let mut cbz = lock_reader(&reader).map_err(ReadDecodeError::Read)?;
+            cbz.read_entry_range(&entry, 0, entry.uncompressed_size)
+                .map_err(ReadDecodeError::Read)?
+        };
+        crate::util::image_decode::decode_limited(&bytes)
+            .map_err(|e| ReadDecodeError::Decode(e.to_string()))
+    })
+    .await;
+    match work {
+        Ok((Ok(img), permit)) => Ok((img, permit)),
+        Ok((Err(ReadDecodeError::Read(e)), _)) => {
             tracing::warn!(error = %e, "ocr: page read failed");
             Err(Box::new(PageUnavailable::from_archive_error(&e).response()))
         }
-        Err(e) => {
-            tracing::error!(error = %e, "ocr: page read task panicked");
-            Err(Box::new(PageUnavailable::Internal.response()))
-        }
-    }
-}
-
-/// Decode page bytes on the blocking pool with the OCR `permit` held by
-/// the task (released when the decode ends, even if the request is
-/// dropped first), and hand the permit back for the next stage.
-/// `decode_limited` (security M0) caps decoded dimensions so a malicious
-/// archive can't OOM the box via a decompression bomb.
-async fn decode_holding<P: Send + 'static>(
-    bytes: Vec<u8>,
-    permit: P,
-) -> Result<(image::DynamicImage, P), Box<Response>> {
-    match blocking_with_permit(permit, move || {
-        crate::util::image_decode::decode_limited(&bytes)
-    })
-    .await
-    {
-        Ok((Ok(img), permit)) => Ok((img, permit)),
-        Ok((Err(e), _)) => {
+        Ok((Err(ReadDecodeError::Decode(e)), _)) => {
             tracing::warn!(error = %e, "ocr: page decode failed");
             Err(Box::new(error(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -637,12 +684,8 @@ async fn decode_holding<P: Send + 'static>(
             )))
         }
         Err(e) => {
-            tracing::error!(error = %e, "ocr: decode task panicked");
-            Err(Box::new(error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "internal",
-            )))
+            tracing::error!(error = %e, "ocr: read / decode task failed");
+            Err(Box::new(PageUnavailable::Internal.response()))
         }
     }
 }

@@ -9,7 +9,9 @@
 //! - a request that needs the work waits for a permit and then answers
 //!   503 `service_unavailable` with `Retry-After` (when this host can load
 //!   the recognizer; without the models it fails at model preparation,
-//!   before any permit, which is also what the order promises).
+//!   before any permit, which is also what the order promises);
+//! - no page bytes are read by any of these: the page is read only inside
+//!   a permit (`ocr_page_reads` stays put while every permit is held).
 
 mod common;
 
@@ -151,6 +153,9 @@ async fn only_the_work_takes_an_ocr_permit() {
         .await
         .unwrap();
     assert_eq!(sem.available_permits(), 0);
+    // Nothing else in this binary runs OCR, so the count only moves if a
+    // request below reads a page.
+    let reads_before = server::api::issue_ocr::ocr_page_reads();
     let quick = server::api::issue_ocr::OCR_PERMIT_WAIT / 2;
 
     // A cache hit takes none.
@@ -200,6 +205,11 @@ async fn only_the_work_takes_an_ocr_permit() {
             "waited for a permit"
         );
     }
+    assert_eq!(
+        server::api::issue_ocr::ocr_page_reads(),
+        reads_before,
+        "no page bytes are read without an OCR permit"
+    );
     drop(held);
     assert_eq!(
         sem.available_permits(),

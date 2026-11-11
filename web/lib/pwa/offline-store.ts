@@ -61,7 +61,14 @@ export type DownloadStatus =
   /** Stopped by a failure (quota, network, removed issue); retryable. */
   | "error";
 
-export type DownloadErrorKind = "quota" | "network" | "gone" | "unknown";
+/**
+ * Why a download stopped. `network` is the only kind put back in the
+ * queue on reconnect; `gone` (404 / 410: the issue or its file is gone)
+ * and `needs_conversion` (409: the issue's file must be converted to CBZ
+ * before its pages can be served) wait for a manual retry.
+ */
+export type DownloadErrorKind =
+  "quota" | "network" | "gone" | "needs_conversion" | "unknown";
 
 export type ReaderSnapshot = {
   default_reading_direction?: string | null;

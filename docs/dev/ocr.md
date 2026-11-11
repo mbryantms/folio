@@ -98,9 +98,11 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 Order of work in both routes: visibility (a hidden issue is the
 unknown-id 404), the result cache (a hit takes no permit), the cheap
 checks (encrypted row, missing file, offline library, unreadable archive,
-page past the end; none waits for a permit), the models (a first-use
-download is waited on without holding a permit), then an OCR permit. The
-permit is moved into the blocking decode and inference tasks
+page past the end, the page entry's listed size over the per-entry cap;
+none waits for a permit, and none reads the page), the models (a
+first-use download is waited on without holding a permit), then an OCR
+permit. The page bytes are read only under the permit: the permit is
+moved into the blocking read + decode and inference tasks
 (`ocr::pipeline::blocking_with_permit`) and released when they finish, so
 a client that disconnects mid-request cannot free it early and start more
 concurrent work than there are permits.
