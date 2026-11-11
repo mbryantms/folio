@@ -119,12 +119,22 @@ function topLevelBlocks(src: string): { name: string; body: string }[] {
 function offenders(
   queries: string,
   cursorTypes: Set<string>,
+  sharedOptions = "",
 ): Map<string, string> {
   const found = new Map<string, string>();
   const typeRe = new RegExp(`\\b(${[...cursorTypes].join("|")})\\b`);
+  // Hooks whose key + queryFn live in `query-options.ts` (shared with the
+  // server prefetch) spread `xOptions(...)`; read that factory's body as
+  // part of the hook so the response type stays visible to the guard.
+  const factories = new Map(
+    topLevelBlocks(sharedOptions).map((b) => [b.name, stripComments(b.body)]),
+  );
   for (const { name, body } of topLevelBlocks(queries)) {
     if (!name.startsWith("use")) continue;
-    const code = stripComments(body);
+    let code = stripComments(body);
+    for (const m of code.matchAll(/\b(\w+Options)\(/g)) {
+      code += factories.get(m[1]!) ?? "";
+    }
     if (!/\buseQuer(?:y|ies)\s*[<(]/.test(code)) continue;
     const hit = /\bnext_cursor\b/.exec(code)?.[0] ?? typeRe.exec(code)?.[1];
     if (hit) found.set(name, hit);
@@ -132,10 +142,30 @@ function offenders(
   return found;
 }
 
+/** `*Options(` factories a hook in `queries.ts` calls that the guard
+ *  cannot read (not a top-level declaration of `query-options.ts`). Such a
+ *  hook's response type is invisible to `offenders`, so it must fail
+ *  instead of silently going unchecked. TanStack's own identity helpers
+ *  are exempt. */
+function unknownFactories(queries: string, sharedOptions: string): string[] {
+  const known = new Set(topLevelBlocks(sharedOptions).map((b) => b.name));
+  const out = new Set<string>();
+  for (const { name, body } of topLevelBlocks(queries)) {
+    if (!name.startsWith("use")) continue;
+    for (const m of stripComments(body).matchAll(/\b(\w+Options)\(/g)) {
+      const f = m[1]!;
+      if (f === "queryOptions" || f === "infiniteQueryOptions") continue;
+      if (!known.has(f)) out.add(`${name} → ${f}`);
+    }
+  }
+  return [...out];
+}
+
 describe("queries.ts: no useQuery over a next_cursor response", () => {
   const generated = read("lib/api/types.generated.ts");
   const typesTs = read("lib/api/types.ts");
   const queries = read("lib/api/queries.ts");
+  const sharedOptions = read("lib/api/query-options.ts");
 
   const schemas = cursorSchemas(generated);
   const cursorTypes = new Set([...schemas, ...cursorAliases(typesTs, schemas)]);
@@ -184,7 +214,7 @@ describe("queries.ts: no useQuery over a next_cursor response", () => {
   });
 
   it("every useQuery over a cursor type is allowlisted with a reason", () => {
-    const found = offenders(queries, cursorTypes);
+    const found = offenders(queries, cursorTypes, sharedOptions);
     const unexpected = [...found].filter(([name]) => !(name in ALLOWLIST));
     expect(
       unexpected,
@@ -192,8 +222,29 @@ describe("queries.ts: no useQuery over a next_cursor response", () => {
     ).toEqual([]);
   });
 
+  it("every options factory a hook spreads is one the guard can read", () => {
+    expect(
+      unknownFactories(queries, sharedOptions),
+      "hook spreads an options factory outside lib/api/query-options.ts (or one the block parser cannot see) — move it there so this guard sees its response type",
+    ).toEqual([]);
+    // Self-check: a factory from elsewhere is reported.
+    expect(
+      unknownFactories(
+        "export function useZ() {\n  return useQuery({ ...otherOptions(jsonFetch) });\n}",
+        sharedOptions,
+      ),
+    ).toEqual(["useZ → otherOptions"]);
+    // And the shared module's arrow-const factories count as known.
+    expect(
+      unknownFactories(
+        "export function useY() {\n  return useQuery({ ...arrowOptions(jsonFetch) });\n}",
+        "export const arrowOptions = (f: F) =>\n  queryOptions({ queryKey: k, queryFn: () => f<AView>('/a') });",
+      ),
+    ).toEqual([]);
+  });
+
   it("the allowlist carries no stale entries", () => {
-    const found = offenders(queries, cursorTypes);
+    const found = offenders(queries, cursorTypes, sharedOptions);
     const stale = Object.keys(ALLOWLIST).filter((name) => !found.has(name));
     expect(stale, "no longer a useQuery over a cursor type; drop it").toEqual(
       [],

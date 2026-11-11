@@ -28,8 +28,16 @@ const API_BASE =
  */
 const REQUEST_TIMEOUT_MS = 10_000;
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(
+  path: string,
+  init?: {
+    /** Cancels the request early (the home prefetch's budget); the
+     *  timeout below applies either way. */
+    signal?: AbortSignal;
+  },
+): Promise<T> {
   const cookieHeader = (await cookies()).toString();
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(`${API_BASE}/api${path}`, {
@@ -38,7 +46,7 @@ export async function apiGet<T>(path: string): Promise<T> {
         Cookie: cookieHeader,
       },
       cache: "no-store",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: init?.signal ? AbortSignal.any([timeout, init.signal]) : timeout,
     });
   } catch (e) {
     // AbortSignal.timeout → DOMException "TimeoutError"; surface as a
