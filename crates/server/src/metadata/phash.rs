@@ -286,13 +286,17 @@ pub async fn upsert_archive_cover_hashes_from_parts<C: ConnectionTrait>(
 /// the front cover alone, so hashing the full spread would put a
 /// genuine match 20+ bits away; ComicTagger does the same crop
 /// (`IssueIdentifier.crop_cover`) before comparing.
+///
+/// `source` is the archive opened by the caller (a library file through
+/// the no-follow walk, `library::no_follow`); it is read only through
+/// that handle.
 pub fn compute_archive_cover(
-    archive_path: &std::path::Path,
+    source: archive::ArchiveFile,
     cover_page_index: usize,
     limits: ArchiveLimits,
     front_side: FrontCoverSide,
 ) -> Result<ArchiveCoverHashes, ArchiveCoverError> {
-    let mut a = archive::open(archive_path, limits)?;
+    let mut a = archive::open_file(source, limits)?;
     let entry_name = {
         let pages = a.pages();
         if pages.is_empty() {
@@ -348,17 +352,33 @@ pub enum ArchiveCoverError {
 /// archive was missing or undecodable (soft-skip — the row stays
 /// NULL and a future run will retry), `Err(_)` only on DB-write
 /// failures.
+///
+/// The archive is opened through the no-follow walk from `library_root`
+/// (`library::no_follow`); a refused file (a link, not a regular file,
+/// outside the root) is a soft skip like a missing one.
 pub async fn backfill_row<C: ConnectionTrait>(
     db: &C,
     cover_row: &issue_cover::Model,
+    library_root: &std::path::Path,
     issue_file_path: &std::path::Path,
     cover_page_index: usize,
     archive_limits: ArchiveLimits,
     front_side: FrontCoverSide,
 ) -> Result<bool, std::io::Error> {
     let path = issue_file_path.to_path_buf();
+    let root = library_root.to_path_buf();
     let hashed = tokio::task::spawn_blocking(move || {
-        compute_archive_cover(&path, cover_page_index, archive_limits, front_side)
+        let file = crate::library::no_follow::open_library_file(&root, &path).map_err(|r| {
+            ArchiveCoverError::Archive(archive::ArchiveError::Io(format!(
+                "archive not opened: {r}"
+            )))
+        })?;
+        compute_archive_cover(
+            archive::ArchiveFile::new(file, &path),
+            cover_page_index,
+            archive_limits,
+            front_side,
+        )
     })
     .await
     .map_err(|e| std::io::Error::other(format!("phash backfill join: {e}")))?;
@@ -584,6 +604,9 @@ pub async fn run_backfill<C: ConnectionTrait>(
     let mut hashed = 0usize;
     let mut skipped = 0usize;
     let mut errored = 0usize;
+    // Library roots, for opening each archive through the no-follow walk.
+    let mut roots: std::collections::HashMap<uuid::Uuid, Option<String>> =
+        std::collections::HashMap::new();
     for (cover, issue) in rows {
         let Some(issue) = issue else {
             // Orphan cover row — parent issue gone. Soft-skip; an
@@ -594,8 +617,35 @@ pub async fn run_backfill<C: ConnectionTrait>(
         };
         let cover_idx = usize::try_from(issue.cover_page_index.max(0)).unwrap_or(0);
         let path = std::path::Path::new(&issue.file_path);
+        let root = match roots.get(&issue.library_id) {
+            Some(r) => r.clone(),
+            None => {
+                let r = entity::library::Entity::find_by_id(issue.library_id)
+                    .select_only()
+                    .column(entity::library::Column::RootPath)
+                    .into_tuple::<String>()
+                    .one(db)
+                    .await?;
+                roots.insert(issue.library_id, r.clone());
+                r
+            }
+        };
+        let Some(root) = root else {
+            skipped += 1;
+            continue;
+        };
         let front_side = resolve_front_cover_side(db, &issue).await;
-        match backfill_row(db, &cover, path, cover_idx, archive_limits, front_side).await {
+        match backfill_row(
+            db,
+            &cover,
+            std::path::Path::new(&root),
+            path,
+            cover_idx,
+            archive_limits,
+            front_side,
+        )
+        .await
+        {
             Ok(true) => hashed += 1,
             Ok(false) => skipped += 1,
             Err(e) => {

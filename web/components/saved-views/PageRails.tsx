@@ -47,16 +47,26 @@ export function PageRails({
   pageDescription,
   isSystem,
   showInSidebar,
+  priorityViewId = null,
 }: {
   pageId: string;
   pageName: string;
   pageDescription: string | null;
   isSystem: boolean;
   showInSidebar: boolean;
+  /** The rail the server prefetch settled on (`prefetchPageRails`): the
+   *  first rail that will show. Rails before it are empty system rails
+   *  that hide; they mount at once so they leave no placeholder gap.
+   *  `null` (no prefetch): the first rail is the priority one. */
+  priorityViewId?: string | null;
 }) {
   const pinnedQ = useSavedViews({ pinnedOn: pageId });
 
   const items = pinnedQ.data?.items ?? [];
+  const settledIdx = priorityViewId
+    ? items.findIndex((v) => v.id === priorityViewId)
+    : -1;
+  const priorityIdx = settledIdx >= 0 ? settledIdx : 0;
 
   const pageActions = (
     <PageActionsMenu
@@ -139,9 +149,10 @@ export function PageRails({
             <LazyRail
               key={view.id}
               view={view}
-              // Prioritize the first (above-the-fold) rail's covers — the
-              // LCP element lives there; the rest stay lazy.
-              priority={idx === 0}
+              // Prioritize the first rail that shows (above the fold) —
+              // the LCP element lives there; the rest stay lazy.
+              priority={idx === priorityIdx}
+              eager={idx <= priorityIdx}
             />
           ))}
         </div>

@@ -25,6 +25,12 @@ import {
 import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import type { SavedViewView } from "@/lib/api/types";
 import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
+// Rail parameters shared with the server prefetch (D18), so the hooks
+// below read the cache entries the home page dehydrated.
+import {
+  CBL_RAIL_WINDOW,
+  RAIL_PREVIEW_LIMIT,
+} from "@/lib/saved-views/rail-queries";
 
 import {
   ContinueReadingRailBody,
@@ -52,11 +58,6 @@ function viewDetailHref(view: SavedViewView): string {
   }
   return `/views/${view.id}`;
 }
-
-/** Max cards we hydrate on the home page for filter rails. Higher = more
- *  cards visible before the trailing "View all" tile becomes the way to
- *  reach the long tail. */
-const RAIL_PREVIEW_LIMIT = 30;
 
 /** Built-in "Recently Added" filter view (saved_views.rs, m20261205). The
  *  rail hosts the "Surprise me" discovery action in its header (3.7) — the
@@ -328,11 +329,7 @@ function CblRailBody({
   // variant lets the rail asynchronously extend in either direction
   // as the user scrolls past the edge sentinels, without disturbing
   // the anchored slice that landed first.
-  const query = useCblListWindowInfinite(listId, {
-    before: 3,
-    after: 24,
-    limit: 24,
-  });
+  const query = useCblListWindowInfinite(listId, CBL_RAIL_WINDOW);
 
   // Latest query stashed in a ref so the IntersectionObserver callbacks
   // can read `hasNextPage` / `isFetching*` without us having to rebuild

@@ -57,7 +57,7 @@ vi.mock("@/lib/ui/cover-morph", () => ({
   }),
 }));
 
-import { Check } from "lucide-react";
+import { ReadCheck } from "@/components/library/ReadCheck";
 
 import { CblIssueCard } from "@/components/cbl/cbl-issue-card";
 import type {
@@ -188,7 +188,7 @@ describe("CblIssueCard", () => {
       issue: issue(),
       cblSavedViewId: SV_ID,
     });
-    const check = findByType(tree, Check);
+    const check = findByType(tree, ReadCheck);
     expect(check).toBeTruthy();
     progressState.clear();
   });
@@ -200,6 +200,6 @@ describe("CblIssueCard", () => {
       issue: issue(),
       cblSavedViewId: SV_ID,
     });
-    expect(findByType(tree, Check)).toBeNull();
+    expect(findByType(tree, ReadCheck)).toBeNull();
   });
 });

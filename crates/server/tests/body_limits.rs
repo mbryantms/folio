@@ -448,13 +448,13 @@ async fn upload_feeds_the_editor_in_a_writeback_library() {
     .await
     .unwrap();
 
-    let archive = archive::open(
+    let archive = archive::open_path_unchecked(
         &dir.path().join("issue.cbz"),
         archive::ArchiveLimits::default(),
     )
     .unwrap();
     assert_eq!(archive.pages().len(), 1);
-    let mut cbz = archive::cbz::Cbz::open(
+    let mut cbz = archive::cbz::Cbz::open_path_unchecked(
         dir.path().join("issue.cbz"),
         archive::ArchiveLimits::default(),
     )

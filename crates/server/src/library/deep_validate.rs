@@ -271,6 +271,11 @@ async fn walk(
         .await?;
 
     let archive_limits = state.cfg().archive_limits();
+    // Every archive is opened through the no-follow walk from this root
+    // (`library::no_follow`).
+    let root = crate::library::no_follow::library_root(state, library_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("library {library_id} not found"))?;
     let poll_every = opts.cancel_poll_interval.unwrap_or(CANCEL_POLL_INTERVAL);
     let mut last_poll: Option<Instant> = None;
     let mut walked: u32 = 0;
@@ -288,7 +293,7 @@ async fn walk(
             }
         }
         let path = PathBuf::from(&file_path);
-        let outcome = probe_one(state, &path, archive_limits, health, stats).await;
+        let outcome = probe_one(state, &root, &path, archive_limits, health, stats).await;
         if outcome.is_err() {
             stats.issues_unopenable += 1;
             // Its pages were not decoded this run, so its open findings
@@ -419,6 +424,7 @@ fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
 /// flags as `MalformedArchive` etc., so we don't re-emit here).
 async fn probe_one(
     state: &AppState,
+    root: &std::sync::Arc<crate::library::no_follow::LibraryRoot>,
     path: &std::path::Path,
     archive_limits: archive::ArchiveLimits,
     health: &mut HealthCollector,
@@ -434,8 +440,23 @@ async fn probe_one(
         .map_err(|e| anyhow::anyhow!("archive permit closed: {e}"))?;
     let path_owned = path.to_path_buf();
     let path_for_blocking = path_owned.clone();
+    let root = std::sync::Arc::clone(root);
     let outcome = tokio::task::spawn_blocking(move || -> Vec<DecodeResult> {
-        let Ok(mut archive) = archive::open(&path_for_blocking, archive_limits) else {
+        // Read through a handle from the no-follow walk; a link, a
+        // non-regular file or a path outside the root counts as unopenable.
+        let source = match root.open_archive(&path_for_blocking) {
+            Ok(s) => s,
+            Err(crate::library::no_follow::Refusal::Missing) => return Vec::new(),
+            Err(reason) => {
+                tracing::warn!(
+                    path = %path_for_blocking.display(),
+                    reason = %reason,
+                    "deep-validate: archive refused"
+                );
+                return Vec::new();
+            }
+        };
+        let Ok(mut archive) = archive::open_file(source, archive_limits) else {
             return Vec::new();
         };
         let page_names: Vec<String> = archive.pages().iter().map(|e| e.name.clone()).collect();

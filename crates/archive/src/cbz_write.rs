@@ -41,7 +41,6 @@ use crate::{ArchiveError, ArchiveLimits};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
 use zip::write::{SimpleFileOptions, ZipWriter};
 use zip::{CompressionMethod, result::ZipError};
 
@@ -114,23 +113,22 @@ pub struct RebuildSummary {
     pub added_count: u64,
 }
 
-/// Run the rebuild plan against `src` and write the result to `dst_path`.
+/// Run the rebuild plan against `src` and write the result into `dst`, an
+/// empty file the caller opened for writing.
 ///
-/// The destination file is created if missing and truncated if present.
-/// The caller is responsible for the atomic-swap dance (write to a temp
-/// path, fsync, rename over the original); this function only produces
-/// the freshly-encoded zip at the path it's given. Returns
+/// The caller is responsible for the atomic-swap dance (write to a staging
+/// file, fsync, rename over the original); this function only produces the
+/// freshly-encoded zip in the file it's given. It never opens a path. Returns
 /// `Err(ArchiveError::CapExceeded)` when the running uncompressed-byte
 /// total exceeds `limits.max_total_bytes` — checked progressively so a
 /// runaway plan fails fast.
 pub fn rebuild(
     src: &mut Cbz,
     plan: RebuildPlan,
-    dst_path: &Path,
+    dst: File,
     limits: ArchiveLimits,
 ) -> Result<RebuildSummary, ArchiveError> {
-    let dst_file = File::create(dst_path)?;
-    let mut writer = ZipWriter::new(dst_file);
+    let mut writer = ZipWriter::new(dst);
 
     // Build a case-insensitive lookup of override names → canonical key in
     // the map. Source entries are matched in `Cbz::find` case-insensitively;
@@ -295,11 +293,10 @@ pub fn rebuild_pages(
     src: &mut Cbz,
     pages: Vec<OutputPage>,
     extras: Vec<(String, Vec<u8>, i64)>,
-    dst_path: &Path,
+    dst: File,
     limits: ArchiveLimits,
 ) -> Result<RebuildSummary, ArchiveError> {
-    let dst_file = File::create(dst_path)?;
-    let mut writer = ZipWriter::new(dst_file);
+    let mut writer = ZipWriter::new(dst);
     let mut summary = RebuildSummary::default();
 
     for (i, page) in pages.iter().enumerate() {
@@ -365,11 +362,10 @@ pub fn rebuild_pages(
 pub fn write_pages(
     pages: Vec<(String, Vec<u8>, i64)>,
     extras: Vec<(String, Vec<u8>, i64)>,
-    dst_path: &Path,
+    dst: File,
     limits: ArchiveLimits,
 ) -> Result<RebuildSummary, ArchiveError> {
-    let dst_file = File::create(dst_path)?;
-    let mut writer = ZipWriter::new(dst_file);
+    let mut writer = ZipWriter::new(dst);
     let mut summary = RebuildSummary::default();
 
     let emit = |writer: &mut ZipWriter<File>,
@@ -481,7 +477,7 @@ mod tests {
     }
 
     /// Read every entry of `path` and return a `(name → bytes)` map.
-    fn extract(path: &Path) -> BTreeMap<String, Vec<u8>> {
+    fn extract(path: &std::path::Path) -> BTreeMap<String, Vec<u8>> {
         let mut f = std::fs::File::open(path).unwrap();
         let mut buf = Vec::new();
         f.read_to_end(&mut buf).unwrap();
@@ -500,7 +496,7 @@ mod tests {
     /// Compressed-bytes view of every entry in `path` — exposes the raw
     /// LFH+payload window. Used to prove `Keep`'d entries land byte-for-
     /// byte equal across a rebuild.
-    fn raw_payload_lens(path: &Path) -> BTreeMap<String, u64> {
+    fn raw_payload_lens(path: &std::path::Path) -> BTreeMap<String, u64> {
         let mut f = std::fs::File::open(path).unwrap();
         let mut buf = Vec::new();
         f.read_to_end(&mut buf).unwrap();
@@ -520,7 +516,7 @@ mod tests {
 
         let pre_lens = raw_payload_lens(&src_path);
 
-        let mut src = Cbz::open(&src_path, ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(&src_path, ArchiveLimits::default()).unwrap();
         let dst = NamedTempFile::new().unwrap();
         let dst_path = dst.path().to_path_buf();
 
@@ -530,7 +526,13 @@ mod tests {
             b"<?xml version=\"1.0\"?><ComicInfo><Title>Updated</Title></ComicInfo>".to_vec(),
         );
 
-        let summary = rebuild(&mut src, plan, &dst_path, ArchiveLimits::default()).unwrap();
+        let summary = rebuild(
+            &mut src,
+            plan,
+            std::fs::File::create(&dst_path).unwrap(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         drop(src);
 
         assert_eq!(
@@ -567,13 +569,19 @@ mod tests {
     #[test]
     fn remove_entry_drops_it() {
         let (src_file, pages, _info) = build_fixture();
-        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(src_file.path(), ArchiveLimits::default()).unwrap();
         let dst = NamedTempFile::new().unwrap();
 
         let mut plan = RebuildPlan::new();
         plan.remove_entry("p2.jpg");
 
-        let summary = rebuild(&mut src, plan, dst.path(), ArchiveLimits::default()).unwrap();
+        let summary = rebuild(
+            &mut src,
+            plan,
+            std::fs::File::create(dst.path()).unwrap(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         assert_eq!(summary.removed_count, 1);
         assert_eq!(summary.kept_count, 2);
 
@@ -586,7 +594,7 @@ mod tests {
     #[test]
     fn over_size_cap_fails_pre_finish() {
         let (src_file, _pages, _info) = build_fixture();
-        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(src_file.path(), ArchiveLimits::default()).unwrap();
         let dst = NamedTempFile::new().unwrap();
 
         let mut plan = RebuildPlan::new();
@@ -597,14 +605,20 @@ mod tests {
             ..ArchiveLimits::default()
         };
 
-        let err = rebuild(&mut src, plan, dst.path(), limits).unwrap_err();
+        let err = rebuild(
+            &mut src,
+            plan,
+            std::fs::File::create(dst.path()).unwrap(),
+            limits,
+        )
+        .unwrap_err();
         assert!(matches!(err, ArchiveError::CapExceeded(_)));
     }
 
     #[test]
     fn case_insensitive_override_match() {
         let (src_file, _pages, _info) = build_fixture();
-        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(src_file.path(), ArchiveLimits::default()).unwrap();
         let dst = NamedTempFile::new().unwrap();
 
         // Source has `ComicInfo.xml`; override declared with different case
@@ -614,7 +628,13 @@ mod tests {
         let mut plan = RebuildPlan::new();
         plan.set_entry("comicinfo.xml", b"<?xml?><ComicInfo/>".to_vec());
 
-        let summary = rebuild(&mut src, plan, dst.path(), ArchiveLimits::default()).unwrap();
+        let summary = rebuild(
+            &mut src,
+            plan,
+            std::fs::File::create(dst.path()).unwrap(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         // The matched-case-insensitively override consumes the source
         // entry slot. The override key is added as a fresh entry under
         // its declared name (lowercase here).
@@ -633,13 +653,13 @@ mod tests {
         let src_path = src_file.path().to_path_buf();
         let pre_lens = raw_payload_lens(&src_path);
 
-        let mut src = Cbz::open(&src_path, ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(&src_path, ArchiveLimits::default()).unwrap();
         let dst = NamedTempFile::new().unwrap();
 
         let summary = rebuild(
             &mut src,
             RebuildPlan::new(),
-            dst.path(),
+            std::fs::File::create(dst.path()).unwrap(),
             ArchiveLimits::default(),
         )
         .unwrap();
@@ -672,7 +692,7 @@ mod tests {
     fn rebuild_pages_reorders_and_renames_keeping_bytes() {
         let (src_file, pages, _info) = build_fixture();
         let src_path = src_file.path().to_path_buf();
-        let mut src = Cbz::open(&src_path, ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(&src_path, ArchiveLimits::default()).unwrap();
         let idx = page_indices(&src);
         assert_eq!(idx.len(), 3);
 
@@ -696,7 +716,7 @@ mod tests {
             &mut src,
             plan,
             Vec::new(),
-            dst.path(),
+            std::fs::File::create(dst.path()).unwrap(),
             ArchiveLimits::default(),
         )
         .unwrap();
@@ -709,7 +729,7 @@ mod tests {
         assert_eq!(out.get("p0002.jpg"), Some(&pages[0]));
         assert_eq!(out.get("p0003.jpg"), Some(&pages[1]));
         // The reopened archive sees exactly three pages in the new order.
-        let reopened = Cbz::open(dst.path(), ArchiveLimits::default()).unwrap();
+        let reopened = Cbz::open_path_unchecked(dst.path(), ArchiveLimits::default()).unwrap();
         let names: Vec<String> = reopened.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, vec!["p0001.jpg", "p0002.jpg", "p0003.jpg"]);
     }
@@ -717,7 +737,7 @@ mod tests {
     #[test]
     fn rebuild_pages_drops_omitted_pages() {
         let (src_file, pages, _info) = build_fixture();
-        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(src_file.path(), ArchiveLimits::default()).unwrap();
         let idx = page_indices(&src);
 
         // Keep only page0 and page2 (drop page1).
@@ -736,7 +756,7 @@ mod tests {
             &mut src,
             plan,
             Vec::new(),
-            dst.path(),
+            std::fs::File::create(dst.path()).unwrap(),
             ArchiveLimits::default(),
         )
         .unwrap();
@@ -750,7 +770,7 @@ mod tests {
     #[test]
     fn rebuild_pages_writes_encoded_and_preserves_extras() {
         let (src_file, pages, _info) = build_fixture();
-        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(src_file.path(), ArchiveLimits::default()).unwrap();
         let idx = page_indices(&src);
 
         let new_bytes = b"\x89PNG\r\n\x1a\nFRESH_ENCODED_PAGE".to_vec();
@@ -769,8 +789,14 @@ mod tests {
         ];
         let extras = vec![("ComicInfo.xml".to_string(), b"<ComicInfo/>".to_vec(), 6)];
         let dst = NamedTempFile::new().unwrap();
-        let summary =
-            rebuild_pages(&mut src, plan, extras, dst.path(), ArchiveLimits::default()).unwrap();
+        let summary = rebuild_pages(
+            &mut src,
+            plan,
+            extras,
+            std::fs::File::create(dst.path()).unwrap(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         assert_eq!(summary.kept_count, 1);
         assert_eq!(summary.replaced_count, 1);
         assert_eq!(summary.added_count, 1);
@@ -784,7 +810,7 @@ mod tests {
     #[test]
     fn rebuild_pages_cap_exceeded_fails() {
         let (src_file, _pages, _info) = build_fixture();
-        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(src_file.path(), ArchiveLimits::default()).unwrap();
 
         let plan = vec![OutputPage {
             ext: "jpg".into(),
@@ -798,7 +824,14 @@ mod tests {
             ..ArchiveLimits::default()
         };
         let dst = NamedTempFile::new().unwrap();
-        let err = rebuild_pages(&mut src, plan, Vec::new(), dst.path(), limits).unwrap_err();
+        let err = rebuild_pages(
+            &mut src,
+            plan,
+            Vec::new(),
+            std::fs::File::create(dst.path()).unwrap(),
+            limits,
+        )
+        .unwrap_err();
         assert!(matches!(err, ArchiveError::CapExceeded(_)));
     }
 
@@ -850,7 +883,7 @@ mod tests {
         let (src_file, written) = build_mixed_fixture();
         let src_path = src_file.path().to_path_buf();
         let pre_lens = raw_payload_lens(&src_path);
-        let mut src = Cbz::open(&src_path, ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(&src_path, ArchiveLimits::default()).unwrap();
         let dst = NamedTempFile::new().unwrap();
 
         let mut plan = RebuildPlan::new();
@@ -859,7 +892,13 @@ mod tests {
             b"<ComicInfo><Title>New</Title></ComicInfo>".to_vec(),
         );
         plan.set_entry("MetronInfo.xml", b"<MetronInfo/>".to_vec());
-        rebuild(&mut src, plan, dst.path(), ArchiveLimits::default()).unwrap();
+        rebuild(
+            &mut src,
+            plan,
+            std::fs::File::create(dst.path()).unwrap(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         drop(src);
 
         let out = extract(dst.path());
@@ -901,7 +940,7 @@ mod tests {
         assert!(out.contains_key("MetronInfo.xml"), "MetronInfo added");
 
         // The nested image is still a page to the reader after the rewrite.
-        let reopened = Cbz::open(dst.path(), ArchiveLimits::default()).unwrap();
+        let reopened = Cbz::open_path_unchecked(dst.path(), ArchiveLimits::default()).unwrap();
         let pages: Vec<&str> = reopened.pages().iter().map(|e| e.name.as_str()).collect();
         assert_eq!(pages, vec!["extras/cover-alt.jpg", "p1.jpg", "p2.jpg"]);
     }
@@ -913,7 +952,7 @@ mod tests {
     fn rebuild_pages_with_preserved_extras_keeps_foreign_entries() {
         use crate::rewrite_policy::preserved_extras;
         let (src_file, written) = build_mixed_fixture();
-        let mut src = Cbz::open(src_file.path(), ArchiveLimits::default()).unwrap();
+        let mut src = Cbz::open_path_unchecked(src_file.path(), ArchiveLimits::default()).unwrap();
         let dst = NamedTempFile::new().unwrap();
 
         let extras = preserved_extras(&mut src, true).unwrap();
@@ -950,7 +989,7 @@ mod tests {
             &mut src,
             pages,
             extras,
-            dst.path(),
+            std::fs::File::create(dst.path()).unwrap(),
             ArchiveLimits::default(),
         )
         .unwrap();

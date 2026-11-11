@@ -51,7 +51,7 @@ indexes.
 
    **Two menu icons, two meanings, at every width.** The four-squares
    glyph (`LayoutGrid`) is _View options_: a panel of presentation
-   settings (cover size, collection dots, layout) plus the grid-wide
+   settings (cover size, collection badges, layout) plus the grid-wide
    tools above. It is `CoverSizeOptions`' popover on desktop (bookmarks:
    `CardSizeOptions`, their own size) and the bar's bottom sheet on
    phones, and the bar's trigger defaults to that glyph. `⋯` is _More actions_ on the page's subject — Edit, Export,

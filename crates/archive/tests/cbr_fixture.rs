@@ -12,7 +12,7 @@ use archive::cbr::Cbr;
 use archive::cbz::Cbz;
 use archive::cbz_write::write_pages;
 use archive::comic_archive::ComicArchive;
-use archive::{ArchiveLimits, open};
+use archive::{ArchiveLimits, open_path_unchecked as open};
 use std::path::PathBuf;
 
 /// The committed synthetic `fixtures/synthetic-3page.cbr` (RAR5, stored, three
@@ -72,7 +72,7 @@ fn cbr_to_cbz_roundtrip_preserves_page_bytes() {
 
     // Mimic the job's CBR path: decompress every page into materialized
     // (ext, bytes, store) and write a CBZ via the conversion writer.
-    let mut src = Cbr::open(&path, ArchiveLimits::default()).expect("open cbr");
+    let mut src = Cbr::open_path_unchecked(&path, ArchiveLimits::default()).expect("open cbr");
     let names: Vec<String> = src.pages().iter().map(|e| e.name.clone()).collect();
     let mut mats: Vec<(String, Vec<u8>, i64)> = Vec::with_capacity(names.len());
     for name in &names {
@@ -89,11 +89,18 @@ fn cbr_to_cbz_roundtrip_preserves_page_bytes() {
     let page_count = mats.len();
 
     let dst = tempfile::NamedTempFile::new().unwrap();
-    write_pages(mats, Vec::new(), dst.path(), ArchiveLimits::default()).expect("write cbz");
+    write_pages(
+        mats,
+        Vec::new(),
+        std::fs::File::create(dst.path()).unwrap(),
+        ArchiveLimits::default(),
+    )
+    .expect("write cbz");
 
     // Reopen as a CBZ and confirm the conversion preserved every page,
     // contiguously renamed, byte-for-byte.
-    let mut cbz = Cbz::open(dst.path(), ArchiveLimits::default()).expect("open converted cbz");
+    let mut cbz =
+        Cbz::open_path_unchecked(dst.path(), ArchiveLimits::default()).expect("open converted cbz");
     let out_names: Vec<String> = cbz.pages().iter().map(|e| e.name.clone()).collect();
     assert_eq!(out_names.len(), page_count, "page count preserved");
     assert_eq!(out_names[0], "p0001.jpg", "contiguous page naming");

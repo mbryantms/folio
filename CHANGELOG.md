@@ -13,6 +13,32 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.79.0](https://github.com/mbryantms/folio/compare/v0.78.0...v0.79.0) (2026-11-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **library:** multi-part RAR comics are no longer read. Repack them as a single archive.
+
+### Added
+
+* **web:** series cards show read state, and the collection badge says what it means ([#1577](https://github.com/mbryantms/folio/issues/1577)) ([807558b](https://github.com/mbryantms/folio/commit/807558b74d32efa12eba41c29db1a1a8f57efc84))
+
+
+### Fixed
+
+* **library:** archives are read and written through checked handles, never by name ([#1576](https://github.com/mbryantms/folio/issues/1576)) ([cd76e7e](https://github.com/mbryantms/folio/commit/cd76e7e22a49885fa5ae266bd0949e586af5025b))
+
+
+### Changed
+
+* **web:** the home page's first rail arrives with the page ([#1580](https://github.com/mbryantms/folio/issues/1580)) ([cb49c13](https://github.com/mbryantms/folio/commit/cb49c137dbd81776cba689e4378edb299765f2f9))
+
+
+### Build & CI
+
+* **perf:** weekly query-plan gate ([#1578](https://github.com/mbryantms/folio/issues/1578)) ([d00c504](https://github.com/mbryantms/folio/commit/d00c5041c5298e91a1458d1e2576318356acbc2e))
+
 ## [0.78.0](https://github.com/mbryantms/folio/compare/v0.77.3...v0.78.0) (2026-11-11)
 
 
