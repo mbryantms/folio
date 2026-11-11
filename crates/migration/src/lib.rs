@@ -152,6 +152,7 @@ mod m20271106_000001_email_change_requests;
 mod m20271107_000001_app_password_lookup_digest;
 mod m20271110_000001_new_in_series_rail;
 mod m20271111_000002_health_issue_scan_idx;
+mod m20271112_000001_entity_list_indexes;
 
 #[derive(Debug)]
 pub struct Migrator;
@@ -312,6 +313,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20271107_000001_app_password_lookup_digest::Migration),
             Box::new(m20271110_000001_new_in_series_rail::Migration),
             Box::new(m20271111_000002_health_issue_scan_idx::Migration),
+            Box::new(m20271112_000001_entity_list_indexes::Migration),
         ]
     }
 }

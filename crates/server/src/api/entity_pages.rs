@@ -563,64 +563,106 @@ fn series_members_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> Str
     }
 }
 
-/// `SELECT eid, issue_id, series_id` over **every** entity of a kind —
-/// the browse-index aggregation source. `issue_id` is NULL for
-/// series-level membership rows.
-fn hits_all(kind: EntityKind, acl: &AclSql) -> String {
+/// The browse index's membership source for **one** entity row — the
+/// outer row aliased `e` (`e.id`, `e.normalized_name`) — as `SELECT
+/// issue_id, series_id` arms. `issue_id` is NULL for series-level
+/// membership rows.
+///
+/// A junction row belongs to entity `X` when its FK is `X.id`, or its FK
+/// is NULL and `btrim(lower(name)) = X.normalized_name` (unique per
+/// table). The FK arm and the name arm are therefore disjoint, and each is
+/// its own arm so it probes its own index (`{junction}_{fk}_idx`,
+/// `{junction}_norm_name_idx`) instead of reading the junction at large
+/// (P-01: the index used to aggregate every visible junction row before
+/// the keyset picked a page). Visibility is exactly
+/// [`issue_visible`] / [`series_visible`]; a capped caller skips the
+/// `series_*` cast rollups ([`AclSql::capped`]).
+fn entity_hit_arms(kind: EntityKind, acl: &AclSql) -> Vec<String> {
     let ivis = issue_visible(acl);
     let svis = series_visible(acl);
-    let table = kind.table();
     match kind {
         EntityKind::Character | EntityKind::Team | EntityKind::Location => {
             let (junction, fk, name) = junction_cols(kind);
-            let issue_arm = format!(
-                "SELECT COALESCE(j.{fk}, e.id) AS eid, i.id AS issue_id, i.series_id AS series_id \
-                   FROM {junction} j \
-                   JOIN issues i ON i.id = j.issue_id \
-                   JOIN series s ON s.id = i.series_id \
-                   LEFT JOIN {table} e ON j.{fk} IS NULL \
-                        AND e.normalized_name = btrim(lower(j.{name})) \
-                  WHERE {ivis}"
-            );
-            // Capped caller: issue hits only (see `AclSql::capped`).
-            if acl.capped {
-                return issue_arm;
+            let issue_arm = |matches: &str| {
+                format!(
+                    "SELECT i.id AS issue_id, i.series_id AS series_id \
+                       FROM {junction} j \
+                       JOIN issues i ON i.id = j.issue_id \
+                       JOIN series s ON s.id = i.series_id \
+                      WHERE {matches} AND {ivis}"
+                )
+            };
+            let mut arms = vec![
+                issue_arm(&format!("j.{fk} = e.id")),
+                issue_arm(&format!(
+                    "j.{fk} IS NULL AND btrim(lower(j.{name})) = e.normalized_name"
+                )),
+            ];
+            if !acl.capped {
+                let series_junction = series_junction(kind);
+                let series_arm = |matches: &str| {
+                    format!(
+                        "SELECT NULL::text AS issue_id, s.id AS series_id \
+                           FROM {series_junction} sj \
+                           JOIN series s ON s.id = sj.series_id \
+                          WHERE {matches} AND {svis}"
+                    )
+                };
+                arms.push(series_arm(&format!("sj.{fk} = e.id")));
+                arms.push(series_arm(&format!(
+                    "sj.{fk} IS NULL AND btrim(lower(sj.{name})) = e.normalized_name"
+                )));
             }
-            let series_junction = series_junction(kind);
-            format!(
-                "{issue_arm} \
-                 UNION ALL \
-                 SELECT COALESCE(sj.{fk}, e.id), NULL::text, s.id \
-                   FROM {series_junction} sj \
-                   JOIN series s ON s.id = sj.series_id \
-                   LEFT JOIN {table} e ON sj.{fk} IS NULL \
-                        AND e.normalized_name = btrim(lower(sj.{name})) \
-                  WHERE {svis}"
-            )
+            arms
         }
-        EntityKind::Arc => format!(
-            "SELECT ia.arc_id AS eid, i.id AS issue_id, i.series_id AS series_id \
-               FROM issue_arcs ia \
-               JOIN issues i ON i.id = ia.issue_id \
-               JOIN series s ON s.id = i.series_id \
-              WHERE {ivis} \
-             UNION ALL \
-             SELECT sa.arc_id, NULL::text, s.id \
-               FROM series_arcs sa \
-               JOIN series s ON s.id = sa.series_id \
-              WHERE {svis}"
-        ),
-        EntityKind::Publisher => format!(
-            "SELECT COALESCE(s.publisher_id, e.id) AS eid, i.id AS issue_id, s.id AS series_id \
-               FROM series s \
-               LEFT JOIN issues i ON i.series_id = s.id \
-                    AND i.state = 'active' AND i.removed_at IS NULL{icap} \
-               LEFT JOIN publisher e ON s.publisher_id IS NULL \
-                    AND e.normalized_name = btrim(lower(s.publisher)) \
-              WHERE (s.publisher_id IS NOT NULL OR s.publisher IS NOT NULL) AND {svis}",
-            icap = acl.issue_cap,
-        ),
+        EntityKind::Arc => vec![
+            format!(
+                "SELECT i.id AS issue_id, i.series_id AS series_id \
+                   FROM issue_arcs ia \
+                   JOIN issues i ON i.id = ia.issue_id \
+                   JOIN series s ON s.id = i.series_id \
+                  WHERE ia.arc_id = e.id AND {ivis}"
+            ),
+            format!(
+                "SELECT NULL::text AS issue_id, s.id AS series_id \
+                   FROM series_arcs sa \
+                   JOIN series s ON s.id = sa.series_id \
+                  WHERE sa.arc_id = e.id AND {svis}"
+            ),
+        ],
+        EntityKind::Publisher => {
+            // Every visible series of the publisher, with its visible
+            // issues (none → one row with a NULL issue: the series still
+            // counts).
+            let arm = |matches: &str| {
+                format!(
+                    "SELECT i.id AS issue_id, s.id AS series_id \
+                       FROM series s \
+                       LEFT JOIN issues i ON i.series_id = s.id \
+                            AND i.state = 'active' AND i.removed_at IS NULL{icap} \
+                      WHERE {matches} AND {svis}",
+                    icap = acl.issue_cap,
+                )
+            };
+            vec![
+                arm("s.publisher_id = e.id"),
+                arm("s.publisher_id IS NULL AND btrim(lower(s.publisher)) = e.normalized_name"),
+            ]
+        }
     }
+}
+
+/// "The entity row `e` has at least one appearance the caller can see",
+/// as a join: `CROSS JOIN LATERAL (… LIMIT 1)` over the arms of
+/// [`entity_hit_arms`] in order, so the probe stops at the first visible
+/// row. Deliberately not `EXISTS (…) OR EXISTS (…)`: the planner may turn
+/// those into hashed sub-plans, which read every junction row once
+/// (exactly the P-01 scan); a `LIMIT` inside a lateral cannot be hashed.
+fn entity_visible_join(kind: EntityKind, acl: &AclSql) -> String {
+    format!(
+        " CROSS JOIN LATERAL (SELECT 1 FROM ({arms}) h LIMIT 1) vis",
+        arms = entity_hit_arms(kind, acl).join(" UNION ALL "),
+    )
 }
 
 // ───────── queries ─────────
@@ -848,22 +890,10 @@ struct ListRow {
     issue_count: i64,
 }
 
-/// Build the shared `WITH hits …, agg …` prefix and the WHERE conditions
-/// on the `e` (entity) alias for the browse index.
-fn list_prefix(
-    kind: EntityKind,
-    acl: &AclSql,
-    filter: &ListFilter,
-    params: &mut Vec<Value>,
-) -> (String, Vec<String>) {
-    let cte = format!(
-        "WITH hits AS ({hits}), \
-         agg AS ( \
-           SELECT eid, COUNT(DISTINCT issue_id)::bigint AS issue_count, \
-                  COUNT(DISTINCT series_id)::bigint AS series_count \
-             FROM hits WHERE eid IS NOT NULL GROUP BY eid)",
-        hits = hits_all(kind, acl),
-    );
+/// The browse index's filter conditions on the entity alias `e` (the A–Z
+/// bucket, the `q` substring): plain row filters, applied to the entity
+/// scan before the visibility probe joins.
+fn list_conds(filter: &ListFilter, params: &mut Vec<Value>) -> Vec<String> {
     let mut conds = Vec::new();
     match &filter.starts_with {
         Some(StartsWithBucket::Letter(c)) => {
@@ -877,9 +907,28 @@ fn list_prefix(
         params.push(q.to_lowercase().into());
         conds.push(format!("strpos(lower(e.name), ${}) > 0", params.len()));
     }
-    (cte, conds)
+    conds
 }
 
+fn where_clause(conds: &[String]) -> String {
+    if conds.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conds.join(" AND "))
+    }
+}
+
+/// One page of the browse index (`GET /<kind>`, the OPDS navigation
+/// feeds).
+///
+/// P-01: the page is picked from the entity table in `(lower(name),
+/// slug)` order with a per-row visibility probe, and the per-row counts
+/// are aggregated for the page's rows only (`LATERAL`), so the cost
+/// follows the page, not the library. Same rows, order and counts as the
+/// former aggregate-everything-then-page query: an entity is listed iff
+/// one of its [`entity_hit_arms`] has a row, and the counts are
+/// `COUNT(DISTINCT issue_id)` / `COUNT(DISTINCT series_id)` over exactly
+/// those arms.
 pub(crate) async fn list_page(
     app: &AppState,
     kind: EntityKind,
@@ -891,7 +940,7 @@ pub(crate) async fn list_page(
     let Some(acl) = acl_sql(visible, &mut params) else {
         return Ok((Vec::new(), false));
     };
-    let (cte, mut conds) = list_prefix(kind, &acl, filter, &mut params);
+    let mut conds = list_conds(filter, &mut params);
     if let Some((name, slug)) = &paging.after {
         params.push(name.clone().into());
         params.push(slug.clone().into());
@@ -901,11 +950,6 @@ pub(crate) async fn list_page(
             params.len()
         ));
     }
-    let where_clause = if conds.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", conds.join(" AND "))
-    };
     let offset = if paging.after.is_some() {
         0
     } else {
@@ -916,11 +960,21 @@ pub(crate) async fn list_page(
     let fetch_param = params.len();
     params.push(Value::from(offset as i64));
     let sql = format!(
-        "{cte} SELECT e.id, e.slug, e.name, a.series_count, a.issue_count \
-           FROM agg a JOIN {table} e ON e.id = a.eid{where_clause} \
-          ORDER BY lower(e.name), e.slug \
-          LIMIT ${fetch} OFFSET ${offset}",
+        "WITH page AS MATERIALIZED ( \
+           SELECT e.id, e.slug, e.name, e.normalized_name FROM {table} e{visible}{conds} \
+            ORDER BY lower(e.name), e.slug \
+            LIMIT ${fetch} OFFSET ${offset}) \
+         SELECT e.id, e.slug, e.name, c.series_count, c.issue_count \
+           FROM page e \
+           CROSS JOIN LATERAL ( \
+             SELECT COUNT(DISTINCT h.issue_id)::bigint AS issue_count, \
+                    COUNT(DISTINCT h.series_id)::bigint AS series_count \
+               FROM ({arms}) h) c \
+          ORDER BY lower(e.name), e.slug",
         table = kind.table(),
+        visible = entity_visible_join(kind, &acl),
+        conds = where_clause(&conds),
+        arms = entity_hit_arms(kind, &acl).join(" UNION ALL "),
         fetch = fetch_param,
         offset = fetch_param + 1,
     );
@@ -958,6 +1012,9 @@ struct N {
     n: i64,
 }
 
+/// Size of the filtered browse index (`total` on the first page): one
+/// visibility probe per entity row that passes the bucket / `q` filter —
+/// bounded by the entity table, never a scan of the junctions.
 pub(crate) async fn list_count(
     app: &AppState,
     kind: EntityKind,
@@ -968,15 +1025,12 @@ pub(crate) async fn list_count(
     let Some(acl) = acl_sql(visible, &mut params) else {
         return Ok(0);
     };
-    let (cte, conds) = list_prefix(kind, &acl, filter, &mut params);
-    let where_clause = if conds.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", conds.join(" AND "))
-    };
+    let conds = list_conds(filter, &mut params);
     let sql = format!(
-        "{cte} SELECT COUNT(*)::bigint AS n FROM agg a JOIN {table} e ON e.id = a.eid{where_clause}",
+        "SELECT COUNT(*)::bigint AS n FROM {table} e{visible}{conds}",
         table = kind.table(),
+        visible = entity_visible_join(kind, &acl),
+        conds = where_clause(&conds),
     );
     Ok(N::find_by_statement(Statement::from_sql_and_values(
         app.db.get_database_backend(),
