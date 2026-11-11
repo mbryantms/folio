@@ -272,9 +272,13 @@ impl LibraryDir {
         Ok(self.open_regular_identified(name)?.0)
     }
 
-    /// [`LibraryDir::open_regular`], plus the `(device, inode)` of the
-    /// opened file from the `fstat` the check already makes.
-    pub fn open_regular_identified(&self, name: &OsStr) -> Result<(File, (u64, u64)), Refusal> {
+    /// [`LibraryDir::open_regular`], plus the opened file's
+    /// [`archive::FileStamp`] (device, inode, size, modification and
+    /// status-change times) from the `fstat` the check already makes.
+    pub fn open_regular_identified(
+        &self,
+        name: &OsStr,
+    ) -> Result<(File, archive::FileStamp), Refusal> {
         // Stat before opening so a device or FIFO is never opened at all.
         let pre = rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|e| refusal_for(&self.fd, name, e))?;
@@ -293,11 +297,12 @@ impl LibraryDir {
             Mode::empty(),
         )
         .map_err(|e| refusal_for(&self.fd, name, e))?;
-        let st = rustix::fs::fstat(&fd).map_err(|e| Refusal::Io(e.into()))?;
-        if !FileType::from_raw_mode(st.st_mode).is_file() {
+        let file = File::from(fd);
+        let meta = file.metadata().map_err(Refusal::Io)?;
+        if !meta.file_type().is_file() {
             return Err(Refusal::NotRegular);
         }
-        Ok((File::from(fd), (st.st_dev, st.st_ino)))
+        Ok((file, archive::FileStamp::from_metadata(&meta)))
     }
 
     /// Create `name` as a new file, read-write. Exclusive (`O_EXCL`) and
@@ -494,9 +499,9 @@ impl LibraryRoots {
 }
 
 /// Open an issue's stored file through [`open_below_roots`], as an
-/// [`archive::ArchiveFile`] that carries the file's `(device, inode)` from
-/// the open (so the page cache's identity check costs no further system
-/// call). Readers built from it (directly or through `zip_lru`) read only
+/// [`archive::ArchiveFile`] that carries the file's [`archive::FileStamp`]
+/// from the open (so the page cache's identity and version check costs no
+/// further system call). Readers built from it (directly or through `zip_lru`) read only
 /// through this handle. A refusal (symbolic link, outside the root, not a
 /// regular file) is logged at WARN with the issue id and the reason, never
 /// anything read from the file; a missing file only at DEBUG (the caller
@@ -529,8 +534,8 @@ pub async fn open_issue_archive(
     })
     .await;
     match opened {
-        Ok(Ok((f, identity))) => {
-            Ok(archive::ArchiveFile::new(f, PathBuf::from(&row.file_path)).with_identity(identity))
+        Ok(Ok((f, stamp))) => {
+            Ok(archive::ArchiveFile::new(f, PathBuf::from(&row.file_path)).with_stamp(stamp))
         }
         Ok(Err(Refusal::Missing)) => {
             tracing::debug!(issue_id, "issue file missing");
@@ -556,6 +561,27 @@ pub async fn library_root(
     library_id: Uuid,
 ) -> Result<Option<Arc<LibraryRoot>>, sea_orm::DbErr> {
     state.library_roots.get(&state.db, library_id).await
+}
+
+/// Whether `library_id`'s root is unavailable: it cannot be opened as a
+/// folder, or it is empty. Asked only after an issue's file was found
+/// missing, to tell "the file is gone" (410) from "the share is not
+/// mounted" (503): an unmounted mount point or bind-mount source is either
+/// absent or an empty folder, while a library whose file is really gone
+/// still has its other folders. A library that no longer exists, or whose
+/// root could not be looked up, counts as available (the missing-file
+/// answer stands). Blocking work runs off the runtime.
+pub async fn library_root_offline(state: &AppState, library_id: Uuid) -> bool {
+    let Ok(Some(root)) = state.library_roots.get(&state.db, library_id).await else {
+        return false;
+    };
+    let configured = root.configured.clone();
+    tokio::task::spawn_blocking(move || match std::fs::read_dir(&configured) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(_) => true,
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// The library root of a library row the caller already loaded (writers,

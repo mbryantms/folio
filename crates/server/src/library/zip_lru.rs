@@ -24,43 +24,91 @@
 //! ([`crate::library::no_follow`]), as an [`ArchiveFile`]. On a miss the
 //! reader is built from that handle and keeps reading through it (the
 //! archive crate never reopens by name). On a hit the cached reader is
-//! reused only when it was opened from the same file as the caller's
-//! handle (device and inode, one `fstat`); otherwise the entry is dropped
-//! and rebuilt from the caller's handle. So a path that has since been
-//! replaced by a link is refused before the cache is consulted, and a path
-//! now naming a different file never serves the old reader. A file
-//! rewritten in place keeps its inode; the writers invalidate the entry
-//! explicitly, and [`ZipLru::get_or_open_entry`] is the seam where a size
-//! and modification-time check would go.
+//! reused only when it was opened from the same version of the same file
+//! as the caller's handle: the [`FileStamp`] (device, inode, size,
+//! modification time, status-change time) the opener took with its one
+//! `fstat`. Otherwise the entry is dropped and rebuilt from the caller's
+//! handle. So a path that has since been replaced by a link is refused
+//! before the cache is consulted, a path now naming a different file never
+//! serves the old reader, and a file rewritten in place (same inode, new
+//! size or times) never serves the old reader's entry offsets against the
+//! new bytes (audit R-05). The comparison costs nothing beyond the `fstat`
+//! every request already makes when it opens the file, so it runs on every
+//! lookup rather than on a timer.
+//!
+//! ## Failed opens
+//!
+//! A file that does not open as an archive (malformed, truncated, a
+//! format with no page reader) is remembered for [`FAILED_OPEN_TTL`]
+//! (I/O errors are not: they say nothing about the file and are retried),
+//! keyed on the issue and the file's stamp, in a bounded map
+//! ([`FAILED_OPEN_CAPACITY`] entries). Repeat requests inside that window
+//! get the same error without reading the file again (audit S-23: a
+//! broken archive was re-read in full on every page request). A repaired
+//! or replaced file has a different stamp and is opened at once.
+//!
+//! ## A panic during a read
+//!
+//! A panic while a reader's lock is held poisons that lock. A poisoned
+//! slot is never handed out again: the next lookup drops it and opens the
+//! archive afresh (audit SRV-13), and [`lock_reader`] lets a caller that
+//! already holds the poisoned handle fail that one request cleanly
+//! instead of panicking.
 
 use archive::cbt::Cbt;
 use archive::cbz::{Cbz, PreadIndex};
-use archive::{ArchiveEntry, ArchiveError, ArchiveFile, ArchiveLimits, ComicArchive, SkippedEntry};
+use archive::{
+    ArchiveEntry, ArchiveError, ArchiveFile, ArchiveLimits, ComicArchive, FileStamp, SkippedEntry,
+};
 use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 /// A cached open archive: the locked handle (decompression / compressed reads)
 /// plus the immutable lock-free read index for its stored entries (PERF-3),
 /// both produced once at open. Cloning is two `Arc` bumps.
 pub type CachedArchive = (Arc<Mutex<CachedReader>>, Arc<PreadIndex>);
 
-/// `(device, inode)` of an open archive file.
-type FileIdentity = (u64, u64);
-
-fn identity_of(file: &ArchiveFile) -> Result<FileIdentity, ArchiveError> {
-    file.identity()
+fn stamp_of(file: &ArchiveFile) -> Result<FileStamp, ArchiveError> {
+    file.stamp()
         .map_err(|e| ArchiveError::Io(format!("archive stat failed: {e}")))
 }
 
-/// A cache slot: the reader and the identity of the file it reads.
+/// A cache slot: the reader and the stamp of the file version it reads.
 #[derive(Clone)]
 struct Slot {
     archive: CachedArchive,
-    identity: FileIdentity,
+    stamp: FileStamp,
+}
+
+/// How long a failed open is remembered for one file version.
+pub const FAILED_OPEN_TTL: Duration = Duration::from_secs(10);
+
+/// How many failed opens are remembered at once (least recently failed
+/// dropped first). Each entry is an issue id, a stamp and a short error.
+pub const FAILED_OPEN_CAPACITY: usize = 256;
+
+/// A remembered failed open.
+struct FailedOpen {
+    stamp: FileStamp,
+    at: Instant,
+    error: ArchiveError,
+}
+
+/// Lock a cached reader. A lock poisoned by a panic in an earlier read
+/// is an error for this request (the reader's state is not trusted after
+/// a panic part-way through a read), never a second panic; the cache
+/// drops the poisoned slot on its next lookup.
+pub fn lock_reader(
+    reader: &Mutex<CachedReader>,
+) -> Result<MutexGuard<'_, CachedReader>, ArchiveError> {
+    reader
+        .lock()
+        .map_err(|_| ArchiveError::Io("archive reader unavailable after a failed read".into()))
 }
 
 const HITS: &str = "folio_zip_lru_hits_total";
@@ -73,9 +121,9 @@ const OPEN_FDS: &str = "folio_zip_lru_open_fds";
 /// the byte-serving handlers need, so they never branch on format.
 ///
 /// Formats without a random-access reader (`.cbr`, `.cb7`) are not
-/// cached here: [`CachedReader::open`] returns [`ArchiveError::Malformed`]
-/// for them, which the handlers map to `archive_unreadable` exactly as
-/// before. A library that opts into `auto_convert_cbr_on_scan` /
+/// cached here: [`CachedReader::open`] returns
+/// [`ArchiveError::NoPageReader`] for them, which the handlers answer as
+/// 409 `archive_needs_conversion` (`api::page_source`). A library that opts into `auto_convert_cbr_on_scan` /
 /// `auto_convert_cb7_on_scan` gets its CBRs / CB7s rewritten to CBZ at scan
 /// time (`scanner::cbr_convert`).
 pub enum CachedReader {
@@ -102,8 +150,8 @@ impl CachedReader {
         match format.as_str() {
             "cbz" => Cbz::open_file(src, limits).map(Self::Cbz),
             "cbt" => Cbt::open_file(src, limits).map(Self::Cbt),
-            other => Err(ArchiveError::Malformed(format!(
-                "no page reader for archive format: {other:?} (extension {ext:?})"
+            other => Err(ArchiveError::NoPageReader(format!(
+                "{other:?} (extension {ext:?})"
             ))),
         }
     }
@@ -213,6 +261,12 @@ pub struct ZipLru {
     /// Archives actually opened (cache misses that reached the disk).
     /// Observable for tests; the `MISSES` counter is the metric.
     opens: AtomicU64,
+    /// Opens attempted, successful or not (failed opens served from
+    /// `failures` are not attempts). Observable for tests.
+    open_attempts: AtomicU64,
+    /// Recently failed opens, by issue id (see the module docs).
+    failures: Mutex<LruCache<String, FailedOpen>>,
+    failure_ttl: Duration,
     /// Archive caps applied at open time. Captured at boot from
     /// `Config::archive_limits()` so a `COMIC_ARCHIVE_MAX_*` override
     /// flows through every cached open. `Copy`, ~64 bytes — cheap to
@@ -228,6 +282,11 @@ impl ZipLru {
             inner,
             in_flight: Mutex::new(HashMap::new()),
             opens: AtomicU64::new(0),
+            open_attempts: AtomicU64::new(0),
+            failures: Mutex::new(LruCache::new(
+                NonZeroUsize::new(FAILED_OPEN_CAPACITY).expect("non-zero"),
+            )),
+            failure_ttl: FAILED_OPEN_TTL,
             limits,
         };
         metrics::describe_gauge!(OPEN_FDS, "Open file descriptors held by the ZIP LRU");
@@ -261,6 +320,34 @@ impl ZipLru {
         self.opens.load(Ordering::Relaxed)
     }
 
+    /// Opens attempted so far, failed ones included (a failure served from
+    /// the failed-open memory is not an attempt).
+    pub fn open_attempts(&self) -> u64 {
+        self.open_attempts.load(Ordering::Relaxed)
+    }
+
+    /// The same cache with a different failed-open window (tests).
+    #[must_use]
+    pub fn with_failure_ttl(mut self, ttl: Duration) -> Self {
+        self.failure_ttl = ttl;
+        self
+    }
+
+    /// A remembered failure for this issue and file version, if still fresh.
+    fn remembered_failure(&self, issue_id: &str, stamp: FileStamp) -> Option<ArchiveError> {
+        let mut failures = self.failures.lock().unwrap_or_else(|p| p.into_inner());
+        match failures.peek(issue_id) {
+            Some(f) if f.stamp == stamp && f.at.elapsed() < self.failure_ttl => {
+                Some(f.error.clone())
+            }
+            Some(_) => {
+                failures.pop(issue_id);
+                None
+            }
+            None => None,
+        }
+    }
+
     /// Like [`Self::get_or_open`] but also returns the [`PreadIndex`] for the
     /// issue's stored entries, so the page server can read uncompressed pages
     /// lock-free (PERF-3). The index is computed once at open and cached.
@@ -285,12 +372,13 @@ impl ZipLru {
     }
 
     /// Cache fast path: a hit bumps the LRU and the `HITS` counter. A
-    /// cached reader opened from a different file than `identity` is not a
-    /// hit: the slot is dropped so the caller's handle replaces it.
-    fn cached(&self, issue_id: &str, identity: FileIdentity) -> Option<CachedArchive> {
-        let mut cache = self.inner.lock().unwrap();
+    /// cached reader opened from a different file or file version than
+    /// `stamp`, or one whose lock a panic poisoned, is not a hit: the slot
+    /// is dropped so the caller's handle replaces it.
+    fn cached(&self, issue_id: &str, stamp: FileStamp) -> Option<CachedArchive> {
+        let mut cache = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         match cache.get(issue_id) {
-            Some(slot) if slot.identity == identity => {
+            Some(slot) if slot.stamp == stamp && !slot.archive.0.is_poisoned() => {
                 metrics::counter!(HITS).increment(1);
                 Some(slot.archive.clone())
             }
@@ -303,17 +391,20 @@ impl ZipLru {
         }
     }
 
-    /// The one lookup path. Revalidation seam: a hit is checked against the
-    /// caller's freshly opened handle by device and inode only; a size and
-    /// modification-time comparison would also belong here.
+    /// The one lookup path: the caller's handle is compared with the cached
+    /// slot by [`FileStamp`] (see the module docs), and a recently failed
+    /// open of the same file version answers from memory.
     async fn get_or_open_entry(
         &self,
         issue_id: &str,
         file: ArchiveFile,
     ) -> Result<(CachedArchive, bool), ArchiveError> {
-        let identity = identity_of(&file)?;
-        if let Some(existing) = self.cached(issue_id, identity) {
+        let stamp = stamp_of(&file)?;
+        if let Some(existing) = self.cached(issue_id, stamp) {
             return Ok((existing, false));
+        }
+        if let Some(err) = self.remembered_failure(issue_id, stamp) {
+            return Err(err);
         }
 
         // Miss: single-flight per issue. The first caller through the gate
@@ -321,7 +412,7 @@ impl ZipLru {
         // winner's handle (the old loser-discard race opened the archive N
         // times for N concurrent misses and threw away N-1 handles).
         let gate = {
-            let mut in_flight = self.in_flight.lock().unwrap();
+            let mut in_flight = self.in_flight.lock().unwrap_or_else(|p| p.into_inner());
             Arc::clone(
                 in_flight
                     .entry(issue_id.to_owned())
@@ -330,16 +421,18 @@ impl ZipLru {
         };
         let result = {
             let _held = gate.lock().await;
-            if let Some(existing) = self.cached(issue_id, identity) {
+            if let Some(existing) = self.cached(issue_id, stamp) {
                 Ok((existing, false))
+            } else if let Some(err) = self.remembered_failure(issue_id, stamp) {
+                Err(err)
             } else {
-                self.open_and_insert(issue_id, file, identity).await
+                self.open_and_insert(issue_id, file, stamp).await
             }
         };
         // Drop the gate once no open is in flight for this issue. Another
         // miss may have installed a fresh gate meanwhile; only remove ours.
         {
-            let mut in_flight = self.in_flight.lock().unwrap();
+            let mut in_flight = self.in_flight.lock().unwrap_or_else(|p| p.into_inner());
             if in_flight
                 .get(issue_id)
                 .is_some_and(|g| Arc::ptr_eq(g, &gate))
@@ -356,27 +449,51 @@ impl ZipLru {
         &self,
         issue_id: &str,
         file: ArchiveFile,
-        identity: FileIdentity,
+        stamp: FileStamp,
     ) -> Result<(CachedArchive, bool), ArchiveError> {
         let limits = self.limits;
+        self.open_attempts.fetch_add(1, Ordering::Relaxed);
         // CBZ open parses the central directory, CBT walks the tar headers;
         // building the pread index reads each Stored entry's local header
         // for CBZ. All synchronous file I/O — keep it off the async runtime.
-        let entry: CachedArchive = tokio::task::spawn_blocking(move || {
+        let entry: Result<CachedArchive, ArchiveError> = tokio::task::spawn_blocking(move || {
             let reader = CachedReader::open(file, limits)?;
             let pread = Arc::new(reader.build_pread_index());
             Ok::<_, ArchiveError>((Arc::new(Mutex::new(reader)), pread))
         })
         .await
-        .map_err(|e| ArchiveError::Io(format!("archive open task failed: {e}")))??;
+        .map_err(|e| ArchiveError::Io(format!("archive open task failed: {e}")))
+        .and_then(|r| r);
+        let entry = match entry {
+            Ok(entry) => entry,
+            // Only a verdict about the file is remembered. An I/O error
+            // (a network share hiccup, EIO, a failed blocking task) says
+            // nothing about the bytes and is retried on the next request.
+            Err(error @ ArchiveError::Io(_)) => return Err(error),
+            Err(error) => {
+                self.failures.lock().unwrap_or_else(|p| p.into_inner()).put(
+                    issue_id.to_owned(),
+                    FailedOpen {
+                        stamp,
+                        at: Instant::now(),
+                        error: error.clone(),
+                    },
+                );
+                return Err(error);
+            }
+        };
         self.opens.fetch_add(1, Ordering::Relaxed);
+        self.failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pop(issue_id);
 
-        let mut cache = self.inner.lock().unwrap();
+        let mut cache = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let evicted = cache.push(
             issue_id.to_owned(),
             Slot {
                 archive: entry.clone(),
-                identity,
+                stamp,
             },
         );
         if evicted.is_some() {
@@ -387,15 +504,20 @@ impl ZipLru {
         Ok((entry, true))
     }
 
+    /// Drop the issue's cached reader and any remembered failed open.
     pub fn invalidate(&self, issue_id: &str) {
-        let mut cache = self.inner.lock().unwrap();
+        self.failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pop(issue_id);
+        let mut cache = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if cache.pop(issue_id).is_some() {
             metrics::gauge!(OPEN_FDS).set(cache.len() as f64);
         }
     }
 
     fn update_gauge(&self) {
-        let cache = self.inner.lock().unwrap();
+        let cache = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         metrics::gauge!(OPEN_FDS).set(cache.len() as f64);
     }
 }
@@ -516,5 +638,130 @@ mod tests {
         assert_eq!(swapped.lock().unwrap().pages().len(), 5);
         // The old reader still reads the file it was opened from.
         assert_eq!(first.lock().unwrap().pages().len(), 2);
+    }
+
+    /// Audit S-23: a file that does not open is read once per window, not
+    /// once per request; a different version of the file is tried at once,
+    /// and so is the same version once the window has passed.
+    #[tokio::test]
+    async fn a_failed_open_is_remembered_per_file_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let junk = dir.path().join("junk.cbz");
+        std::fs::write(&junk, b"not an archive, and never will be").unwrap();
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        let open = || ArchiveFile::open_path_unchecked(&junk).unwrap();
+        for _ in 0..20 {
+            assert!(matches!(
+                lru.get_or_open("x", open()).await,
+                Err(ArchiveError::Malformed(_))
+            ));
+        }
+        assert_eq!(lru.open_attempts(), 1, "20 requests, one read of the file");
+
+        // Repaired in place (same name, new content): opened at once.
+        write_cbz(&junk, 2);
+        let reader = lru
+            .get_or_open("x", open())
+            .await
+            .expect("repaired file opens");
+        assert_eq!(reader.lock().unwrap().pages().len(), 2);
+        assert_eq!(lru.open_attempts(), 2);
+        assert_eq!(lru.opens(), 1);
+    }
+
+    /// An I/O error says nothing about the file: it is not remembered, so
+    /// the next request tries again (a share hiccup is not 10 s of 503s).
+    #[tokio::test]
+    async fn an_io_failure_is_not_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory opened as a file: every read fails with EISDIR.
+        let open = || ArchiveFile::new(std::fs::File::open(dir.path()).unwrap(), "x.cbz");
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        assert!(matches!(
+            lru.get_or_open("x", open()).await,
+            Err(ArchiveError::Io(_))
+        ));
+        assert!(lru.get_or_open("x", open()).await.is_err());
+        assert_eq!(lru.open_attempts(), 2, "each request tried again");
+    }
+
+    #[tokio::test]
+    async fn a_remembered_failure_expires() {
+        let dir = tempfile::tempdir().unwrap();
+        let junk = dir.path().join("junk.cbz");
+        std::fs::write(&junk, b"not an archive").unwrap();
+        let lru =
+            ZipLru::new(8, ArchiveLimits::default()).with_failure_ttl(Duration::from_millis(50));
+        let open = || ArchiveFile::open_path_unchecked(&junk).unwrap();
+        assert!(lru.get_or_open("x", open()).await.is_err());
+        assert!(lru.get_or_open("x", open()).await.is_err());
+        assert_eq!(lru.open_attempts(), 1);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(lru.get_or_open("x", open()).await.is_err());
+        assert_eq!(lru.open_attempts(), 2);
+        // `invalidate` forgets it too.
+        lru.invalidate("x");
+        assert!(lru.get_or_open("x", open()).await.is_err());
+        assert_eq!(lru.open_attempts(), 3);
+    }
+
+    /// Audit R-05, same inode: a file truncated and rewritten in place keeps
+    /// its device and inode, so only the size / times show it changed. The
+    /// cached reader must not be reused against the new bytes.
+    #[tokio::test]
+    async fn a_file_rewritten_in_place_is_reopened() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.cbz");
+        write_cbz(&path, 2);
+        let ino = std::fs::metadata(&path).unwrap().ino();
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        let open = || ArchiveFile::open_path_unchecked(&path).unwrap();
+        let first = lru.get_or_open("a", open()).await.unwrap();
+        assert_eq!(first.lock().unwrap().pages().len(), 2);
+
+        // `File::create` truncates the existing inode and writes into it.
+        write_cbz(&path, 4);
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), ino, "same inode");
+        let second = lru.get_or_open("a", open()).await.unwrap();
+        assert!(!Arc::ptr_eq(&first, &second), "not the stale reader");
+        assert_eq!(second.lock().unwrap().pages().len(), 4);
+        assert_eq!(lru.opens(), 2);
+        // Unchanged since: a hit.
+        let third = lru.get_or_open("a", open()).await.unwrap();
+        assert!(Arc::ptr_eq(&second, &third));
+        assert_eq!(lru.opens(), 2);
+    }
+
+    /// Audit SRV-13: a panic while a read holds the reader's lock poisons
+    /// it. The poisoned slot is not handed out again: the next lookup opens
+    /// a fresh reader, and a holder of the old handle gets an error, not a
+    /// second panic.
+    #[tokio::test]
+    async fn a_reader_poisoned_by_a_panic_is_rebuilt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.cbz");
+        write_cbz(&path, 3);
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        let open = || ArchiveFile::open_path_unchecked(&path).unwrap();
+        let first = lru.get_or_open("a", open()).await.unwrap();
+
+        // Test-only injection: panic while holding the lock, as a reader
+        // that panicked part-way through a read would.
+        let held = Arc::clone(&first);
+        let joined = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            panic!("injected panic during a read");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(first.is_poisoned());
+        assert!(lock_reader(&first).is_err(), "an error, not a panic");
+
+        let rebuilt = lru.get_or_open("a", open()).await.unwrap();
+        assert!(!Arc::ptr_eq(&first, &rebuilt));
+        assert!(!rebuilt.is_poisoned());
+        assert_eq!(lock_reader(&rebuilt).unwrap().pages().len(), 3);
+        assert_eq!(lru.opens(), 2);
     }
 }

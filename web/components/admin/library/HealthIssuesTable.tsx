@@ -116,6 +116,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
             <HealthPayloadExtras
               kind={row.original.kind}
               payload={row.original.payload}
+              librarySlug={libraryId}
             />
             <PayloadRefLinks payload={row.original.payload} />
           </span>
@@ -175,7 +176,7 @@ export function HealthIssuesTable({ libraryId }: { libraryId: string }) {
         },
       },
     ],
-    [dismiss],
+    [dismiss, libraryId],
   );
 
   if (isLoading && !data) return <LibraryHealthSkeleton />;

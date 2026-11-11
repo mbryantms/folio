@@ -122,7 +122,7 @@ pub async fn capture(state: &AppState, row: &issue::Model, page: i32) -> Option<
     };
     let issue_id = row.id.clone();
     let res = tokio::task::spawn_blocking(move || {
-        let mut reader = arc.lock().expect("zip_lru reader mutex");
+        let mut reader = crate::library::zip_lru::lock_reader(&arc)?;
         hash_page(&mut reader, index)
     })
     .await;
