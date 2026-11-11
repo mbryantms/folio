@@ -30,7 +30,6 @@ the scanner and is documented in
 | `.bak` retention prune | `jobs::backup_prune` (daily) | Deletes only under libraries with `allow_archive_writeback = true` and `archive_backup_retain_days > 0`, and only Folio's backups made more than that many days ago (see [Backups](#backups-what-counts-and-how-old-they-are)). Every library is walked read-only for the health page's backup tally (`library_backup_stats`, see [`library::backup_stats`](../../crates/server/src/library/backup_stats.rs)); the walk under a non-writeback library counts and never removes | `backup_prune.rs::libraries_without_archive_writeback_are_skipped`, `::sweep_stores_a_backup_tally_for_every_library`, `::todays_sweep_keeps_a_fresh_backup_of_an_old_archive_and_foreign_bak_files`; `jobs::backup_prune` unit tests |
 | Startup staging-file cleanup | `archive_rewrite::spawn_startup_cleanup` → `startup_cleanup`, started once at boot after the HTTP listener is bound, walking on the blocking pool in the background | Walks only libraries with `allow_archive_writeback = true`. Deletes only names `archive_rewrite::is_staging_name` matches — exactly what the stager (`temp_staging`) produces: a recognized archive file name (`.cbz` / `.cbt` / `.cbr` / `.cb7`), a dot, 32 lowercase hex characters, `.tmp` — and only when older than `STARTUP_CLEANUP_TTL` (10 min, cutoff fixed when the walk starts, so a rewrite that begins during the walk is never touched). Any other `.tmp` (`notes.tmp`, another tool's `x.cbz.tmp`) and every `.bak` are left alone | `archive_edit.rs::startup_cleanup_removes_only_own_staging_in_writeback_libraries`, `archive_rewrite/mod.rs` unit tests (`is_staging_name_matches_only_folio_staging_files`, `startup_cleanup_leaves_other_tmp_files`) |
 
-
 ## Backups: what counts, and how old they are
 
 A rewrite keeps the original as `<archive>.bak` (older ones rotated to
@@ -72,6 +71,7 @@ with the default 30-day retention. How each path leaves the backup:
 |---|---|---|---|
 | `rewrite_atomic` (page edit, sidecar rewrite, in-place conversion) | `linkat` archive → `.bak` | the original's (old) | the link (now) |
 | same, hard links refused (SMB / some NAS / FAT) | copy into a new `.bak` | now | now |
+| same, link made but its ctime is not "now" (sshfs) | link removed, then a copy into a new `.bak` | now | now |
 | `convert_atomic` to a new name (`X.cbr` → `X.cbz`) | `linkat` / copy to a staging name, renamed over `X.cbr.bak` | as above | the link or copy, then the rename (now) |
 | `rename_into_place` (a ZIP named `.cbr`) | no backup | | |
 | slot rotation (`.bak` → `.bak.1`) | rename | unchanged | the rename (later) |
@@ -82,13 +82,62 @@ a ctime back, so the ctime is never earlier than the backup. Anything
 later (the rewrite unlinking the archive's old name, a rotation, a
 `chmod` / `chown`, a torrent client dropping its own hard link to the
 same inode) only moves it forward: a backup may be kept longer than the
-retention, never deleted sooner. A backup whose ctime is missing (zero)
-or earlier than its mtime (a filesystem that does not keep ctime) has an
-unknown age and is **kept**. The tally's oldest / newest dates use the
+retention, never deleted sooner. The tally's oldest / newest dates use the
 same clock. Stamping the backup's mtime instead was rejected: for a hard
 link it would also change the mtime of every other name of that inode
 (a download client's hard link, or the archive itself before the swap,
 which the scanner fingerprints by size + mtime).
+
+**A filesystem that does not set ctime on a link is caught when the
+backup is made.** sshfs is the known case: SFTP v3 has no ctime, so the
+client reports the mtime as ctime, while hard links work through an
+extension; a link there reads exactly as old as the original archive
+(ctime == mtime, years ago). That cannot be told apart later: ctime ==
+mtime is also what every file on FAT / exFAT reports, so equal times are
+trusted. Instead `archive_rewrite::link_or_copy` looks at the new link
+once, through the folder handle: when it is still the original's file
+and its age (`backup_made_at`) is earlier than the staging file's mtime
+by more than `LINK_AGE_SLACK` (2 s), it unlinks the backup name alone
+(the archive keeps its own name; it is the same file under two names)
+and makes a copy, whose times are now. The reference is the staging
+file's mtime, written moments before by the same filesystem, so a
+server clock that runs behind ours does not matter; ours (taken just
+before the link) stands in only when the filesystem reports no mtime.
+The slack covers timestamp granularity (whole seconds on sshfs and some
+NAS filesystems, two on FAT). A failure part-way leaves either the link
+(a valid backup; the error stops the rewrite before the swap) or no
+backup, and the archive at its name in every case. The decision is
+unit-tested with injected times (`a_link_must_read_as_made_now_against_the_reference`)
+and the fallback by a reference the link cannot meet
+(`a_link_that_does_not_age_from_now_is_replaced_by_a_copy`); a filesystem
+that really behaves like sshfs is not available to the tests.
+
+**Unknown age is kept, counted and reported.** A backup whose ctime is
+missing (zero) or earlier than its mtime has an unknown age and is
+**kept**. A filesystem that keeps ctime produces "earlier than the mtime"
+only for a file whose mtime was set into the future, for example an
+archive tagged on a machine whose clock ran ahead: a hard link to it
+shares that future mtime. New backups of such an archive are copies
+(the link check above refuses a link of unknown age), so this concerns
+backups made before that check, or touched later. Such a backup is
+never pruned until its times change. The sweep counts them
+(`PruneStats::kept_unknown_age`, only in a library it prunes) and logs
+one WARN per library per sweep with the count (no paths). On the health
+page's backup card they count toward the files and bytes but have no
+date: a library whose backups all have unknown age shows its count and
+size with both dates as "—".
+
+**The age is checked again just before the delete.** The walk decides
+from its own look at the name, and a rewrite can rotate a fresh backup
+into that name (or a user can copy a file over it) before the delete.
+`backup_prune::remove_if_still_expired` re-opens the name through the
+no-follow walk from the root, just before the unlink and in the same
+folder handle, and deletes only when it still holds the same file
+(device and inode) and that file's age still qualifies; otherwise the
+file is kept and counted in `PruneStats::skipped_changed`. The window
+left is between that look and the unlink itself, which no portable call
+closes. Test: `jobs::backup_prune::a_file_that_changes_between_the_walk_and_the_delete_is_kept`.
+
 ## How every writer touches the library: through a folder handle
 
 No writer creates, renames, links or deletes a file under a library root

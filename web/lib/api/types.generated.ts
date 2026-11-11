@@ -6901,14 +6901,29 @@ export interface components {
             computed_at: string;
             /** Format: int64 */
             file_count: number;
+            /**
+             * @description RFC 3339: when the newest backup was made; `None` as for
+             *     `oldest_modified_at`.
+             */
             newest_modified_at?: string | null;
-            /** @description RFC 3339; `None` when there are no backup files. */
+            /**
+             * @description RFC 3339: when the oldest backup was made (its inode change time,
+             *     the clock the retention sweep ages by), not its modification time.
+             *     `None` when there are no backup files, or when no backup's age can
+             *     be told (a modification time in the future, or no change time);
+             *     such backups still count in `file_count` / `total_bytes`.
+             */
             oldest_modified_at?: string | null;
             /** Format: int64 */
             total_bytes: number;
         };
         BackupView: {
-            /** @description RFC3339 modification time, or null if unavailable. */
+            /**
+             * @description RFC3339 modification time of the backup file, or null if
+             *     unavailable. For a hard-linked backup (the usual kind) this is the
+             *     ORIGINAL archive's modification time, not when the backup was made;
+             *     the retention sweep ages backups by when they were made instead.
+             */
             modified_at?: string | null;
             path: string;
             /** Format: int64 */
@@ -11251,14 +11266,19 @@ export interface components {
             allow_archive_writeback?: boolean;
             /**
              * Format: int32
-             * @description How many `.bak` siblings to keep per archive after a rewrite.
-             *     1..=5; default 1.
+             * @description How many `.bak` slots a rewrite keeps per archive (`.bak`, then
+             *     `.bak.1` …). 0..=5; default 1. `0` keeps no backup (the rewrite is
+             *     validated before the swap).
              */
             archive_backup_retain_count?: number;
             /**
              * Format: int32
-             * @description Auto-prune `.bak` files older than this many days. Default 30;
-             *     `0` = keep forever.
+             * @description Days a backup is kept before the daily sweep deletes it, counted
+             *     from when Folio made the backup (its inode change time), not from
+             *     the archive's own date; a backup whose age cannot be told is kept.
+             *     Only Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular
+             *     files) are deleted, and only in a library with archive writeback
+             *     on. `0` keeps backups forever. Default 30; non-negative.
              */
             archive_backup_retain_days?: number;
             /**
@@ -16130,8 +16150,12 @@ export interface components {
             archive_backup_retain_count?: number | null;
             /**
              * Format: int32
-             * @description Days a `.bak` file lives before the daily prune cron removes
-             *     it; `0` = keep forever. Non-negative.
+             * @description Days a backup is kept before the daily sweep deletes it, counted
+             *     from when Folio made the backup (its inode change time), not from
+             *     the archive's own date; a backup whose age cannot be told is kept.
+             *     Only Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular
+             *     files) are deleted, and only in a library with archive writeback
+             *     on. `0` keeps backups forever. Default 30; non-negative.
              */
             archive_backup_retain_days?: number | null;
             /**

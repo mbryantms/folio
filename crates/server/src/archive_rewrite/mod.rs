@@ -373,6 +373,7 @@ where
         staging_path: &staging_path,
     })?;
     staging.sync_all()?;
+    let written_at = written_at(&staging);
     drop(staging);
     dir.sync()?;
     fault(RewriteStep::Staged)?;
@@ -383,7 +384,7 @@ where
             rotate_backups(&dir, &name, retain_count)?;
             fault(RewriteStep::Rotated)?;
             let slot0 = backup_slot_name(&name, 0);
-            link_or_copy(&dir, &name, &slot0, original)?;
+            link_or_copy(&dir, &name, &slot0, original, written_at)?;
             fault(RewriteStep::BackedUp)?;
             Some(dir.display(&slot0))
         }
@@ -488,6 +489,32 @@ fn file_identity(f: &fs::File) -> io::Result<(u64, u64)> {
     Ok((m.dev(), m.ino()))
 }
 
+/// When the staging file's bytes were last written, by the filesystem's
+/// own clock: the reference [`link_or_copy`] checks a fresh link's age
+/// against. `None` when the filesystem reports no mtime.
+fn written_at(staging: &fs::File) -> Option<SystemTime> {
+    staging.metadata().ok().and_then(|m| m.modified().ok())
+}
+
+/// How far a fresh hard link's [`backup_made_at`] may lie before the
+/// reference time and still count as "made now". Covers timestamp
+/// granularity (whole seconds on sshfs and some NAS filesystems, two on
+/// FAT), not clock skew: the reference is the staging file's mtime, read
+/// from the same filesystem clock as the link's ctime.
+const LINK_AGE_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Whether a hard link whose [`backup_made_at`] reads `made_at` will age
+/// from the moment it was made, given `reference`: a time no later than the
+/// link, by the same clock. A filesystem that does not set ctime on
+/// `link(2)` (sshfs: SFTP v3 has no ctime and reports the mtime, so the
+/// link reads as old as the original archive) or whose ctime cannot be
+/// read fails, and so does a link whose age is unknown (an original with an
+/// mtime in the future): the caller then copies, and a copy is a new file
+/// whose times are now.
+fn link_ages_from_now(made_at: Option<SystemTime>, reference: SystemTime) -> bool {
+    made_at.is_some_and(|m| m + LINK_AGE_SLACK >= reference)
+}
+
 /// Make `dst` a second name for the original at `src` (both in `dir`)
 /// without ever removing `src`: a hard link when the filesystem supports
 /// one (same inode, zero extra bytes, instant; `linkat` without
@@ -499,14 +526,37 @@ fn file_identity(f: &fs::File) -> io::Result<(u64, u64)> {
 /// Either way `src` is untouched, which is what keeps the target readable
 /// through the whole swap. `dst` must not exist (the rotation freed the
 /// slot). A copy that fails part-way is removed again.
+///
+/// **A link must age from now.** The retention sweep ages a backup by its
+/// ctime ([`backup_made_at`]). After a link is made, the new name is
+/// looked at once (no link followed): when it is still the original's
+/// file and [`link_ages_from_now`] fails against `written_at` (the staging
+/// file's mtime, the filesystem's own clock; our clock taken just before
+/// the link when that is unknown), the backup name alone is unlinked (the
+/// original keeps its own name, so it is never touched) and the copy path
+/// runs. A failure part-way leaves a valid backup (the link, when the
+/// unlink fails: the error stops the rewrite before the swap) or none
+/// (the copy failed and was removed), and the archive at `src` either way.
 fn link_or_copy(
     dir: &LibraryDir,
     src: &OsStr,
     dst: &OsStr,
     original: &ArchiveFile,
+    written_at: Option<SystemTime>,
 ) -> Result<(), RewriteError> {
+    let before = SystemTime::now();
     match dir.hard_link(src, dst) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            let reference = written_at.unwrap_or(before);
+            if linked_backup_ages_from_now(dir, dst, original, reference)? {
+                return Ok(());
+            }
+            tracing::debug!(
+                dst = %dir.display(dst).display(),
+                "archive_rewrite: the hard link does not read as made now; copying the backup instead",
+            );
+            dir.remove_file(dst)?;
+        }
         Err(e) => {
             tracing::debug!(
                 src = %dir.display(src).display(),
@@ -518,14 +568,34 @@ fn link_or_copy(
             // defensive: clear anything at `dst` before copying so a
             // stale slot never masquerades as the backup.
             let _ = dir.remove_file(dst);
-            let (out, mut guard) = Staged::create(dir, dst)?;
-            copy_from_handle(original.file(), &out)?;
-            out.set_permissions(original.file().metadata()?.permissions())?;
-            out.sync_all()?;
-            guard.disarm();
-            Ok(())
         }
     }
+    let (out, mut guard) = Staged::create(dir, dst)?;
+    copy_from_handle(original.file(), &out)?;
+    out.set_permissions(original.file().metadata()?.permissions())?;
+    out.sync_all()?;
+    guard.disarm();
+    Ok(())
+}
+
+/// Look at the freshly made link `dst` (no link followed): an error unless
+/// it is still the original's file, then [`link_ages_from_now`].
+fn linked_backup_ages_from_now(
+    dir: &LibraryDir,
+    dst: &OsStr,
+    original: &ArchiveFile,
+    reference: SystemTime,
+) -> Result<bool, RewriteError> {
+    let (file, stamp) = dir.open_regular_identified(dst)?;
+    if stamp.identity() != original.identity()? {
+        return Err(RewriteError::Io(io::Error::other(
+            "the backup name changed while it was being made; nothing was replaced",
+        )));
+    }
+    Ok(link_ages_from_now(
+        backup_made_at(&file.metadata()?),
+        reference,
+    ))
 }
 
 /// Copy all of `src` into the empty `dst`, reading `src` at explicit
@@ -994,6 +1064,7 @@ where
         staging_path: &staging_path,
     })?;
     staging.sync_all()?;
+    let written_at = written_at(&staging);
     drop(staging);
     dir.sync()?;
     fault(RewriteStep::Staged)?;
@@ -1004,7 +1075,7 @@ where
     // with neither the older backup nor the new one.
     let backup = backup_slot_name(&orig_name, 0);
     let backup_tmp = staging_name(&orig_name);
-    link_or_copy(&dir, &orig_name, &backup_tmp, &source)?;
+    link_or_copy(&dir, &orig_name, &backup_tmp, &source, written_at)?;
     let mut backup_guard = Staged {
         dir: &dir,
         identity: dir.identity(&backup_tmp).ok(),
@@ -1164,11 +1235,20 @@ pub fn is_backup_name(name: &str) -> bool {
 /// space can set ctime back. Later changes (the rewrite unlinking the
 /// archive's old name, a slot rotation's rename, a `chmod` / `chown`)
 /// only move it forward, which keeps a backup longer, never shorter.
+/// A filesystem that does NOT set ctime on a link (sshfs reports the mtime
+/// as ctime) is caught when the backup is made, not here: a link that
+/// does not read as made now is replaced by a copy ([`link_or_copy`]).
+/// Such a filesystem reads ctime == mtime, which this function cannot tell
+/// from a file that simply was not changed since it was written (every
+/// file on FAT / exFAT), so equal times are trusted.
 ///
 /// Unknown (`None`): no ctime (zero or before the epoch), or a ctime
-/// earlier than the mtime, which a filesystem that keeps ctime cannot
-/// produce (every mtime change also sets ctime), so its ctime is not to be
-/// trusted.
+/// earlier than the mtime. A filesystem that keeps ctime produces that
+/// only for a file whose mtime was set into the future (every mtime change
+/// also sets ctime), for example an archive tagged by a machine whose
+/// clock ran ahead; such a backup's age cannot be told, so the sweep keeps
+/// it, counts it (`PruneStats::kept_unknown_age`) and warns once per
+/// library.
 pub fn backup_made_at(meta: &fs::Metadata) -> Option<SystemTime> {
     use std::os::unix::fs::MetadataExt;
     let ctime = u64::try_from(meta.ctime())
@@ -1603,7 +1683,7 @@ mod tests {
         fs::write(&dst, b"stale").unwrap();
         let (folder, name) = root(&dir).open_parent(&src).unwrap();
         let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
-        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original).unwrap();
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original, None).unwrap();
         assert_eq!(fs::read(&src).unwrap(), b"payload", "source untouched");
         assert_eq!(fs::read(&dst).unwrap(), b"payload", "slot holds the copy");
     }
@@ -2355,7 +2435,7 @@ mod tests {
         fs::write(dir.path().join("issue.cbz.bak"), b"stale").unwrap();
         let (folder, name) = root(&dir).open_parent(&src).unwrap();
         let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
-        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original).unwrap();
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original, None).unwrap();
         let bak = dir.path().join("issue.cbz.bak");
         assert_eq!(fs::read(&bak).unwrap(), b"payload");
         assert_eq!(
@@ -2494,7 +2574,7 @@ mod tests {
         fs::write(&bak, b"stale").unwrap();
         let (folder, name) = root(&dir).open_parent(&src).unwrap();
         let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
-        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original).unwrap();
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original, None).unwrap();
         assert_ne!(
             fs::metadata(&bak).unwrap().ino(),
             fs::metadata(&src).unwrap().ino(),
@@ -2514,5 +2594,66 @@ mod tests {
         assert_eq!(stats.removed, 1, "{stats:?}");
         assert!(!bak.exists());
         assert!(src.exists(), "the archive is never touched");
+    }
+
+    #[test]
+    fn a_link_must_read_as_made_now_against_the_reference() {
+        let r = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let secs = std::time::Duration::from_secs;
+        // A link on a filesystem that sets ctime: at or after the reference.
+        assert!(link_ages_from_now(Some(r), r));
+        assert!(link_ages_from_now(Some(r + secs(30)), r));
+        // Timestamp granularity: up to the slack before the reference.
+        assert!(link_ages_from_now(Some(r - secs(1)), r));
+        assert!(link_ages_from_now(Some(r - LINK_AGE_SLACK), r));
+        // sshfs-like: the link reads the original's (old) time.
+        assert!(!link_ages_from_now(Some(r - LINK_AGE_SLACK - secs(1)), r));
+        assert!(!link_ages_from_now(Some(r - secs(400 * 86_400)), r));
+        // Unknown age (no ctime, or a ctime before a future mtime).
+        assert!(!link_ages_from_now(None, r));
+    }
+
+    /// The fallback itself, driven by a reference the link cannot meet
+    /// (the real filesystem here sets ctime correctly, so a filesystem that
+    /// does not cannot be reproduced; this is the closest stand-in): the
+    /// backup name alone is unlinked, the copy path runs, and the original
+    /// keeps its name, bytes and link count.
+    #[test]
+    fn a_link_that_does_not_age_from_now_is_replaced_by_a_copy() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        let src_ino = fs::metadata(&src).unwrap().ino();
+        let (folder, name) = root(&dir).open_parent(&src).unwrap();
+        let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
+        let unreachable = SystemTime::now() + std::time::Duration::from_secs(86_400);
+        link_or_copy(
+            &folder,
+            &name,
+            OsStr::new("issue.cbz.bak"),
+            &original,
+            Some(unreachable),
+        )
+        .unwrap();
+        let bak = dir.path().join("issue.cbz.bak");
+        assert_ne!(fs::metadata(&bak).unwrap().ino(), src_ino, "a copy");
+        assert_eq!(fs::read(&bak).unwrap(), b"payload");
+        let src_meta = fs::metadata(&src).unwrap();
+        assert_eq!(src_meta.ino(), src_ino, "the original keeps its file");
+        assert_eq!(src_meta.nlink(), 1, "the link was removed");
+        assert_eq!(fs::read(&src).unwrap(), b"payload");
+
+        // Control: a reachable reference keeps the hard link.
+        fs::remove_file(&bak).unwrap();
+        link_or_copy(
+            &folder,
+            &name,
+            OsStr::new("issue.cbz.bak"),
+            &original,
+            Some(SystemTime::now()),
+        )
+        .unwrap();
+        assert_eq!(fs::metadata(&bak).unwrap().ino(), src_ino, "a hard link");
     }
 }

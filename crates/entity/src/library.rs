@@ -66,12 +66,17 @@ pub struct Model {
     /// Per-library so operators migrate gradually.
     #[serde(default)]
     pub metadata_writeback_enabled: bool,
-    /// How many `.bak` siblings to keep per archive (1..=5). Default 1
-    /// — one undo slot. Capped at 5 to bound disk pressure.
+    /// How many `.bak` slots a rewrite keeps per archive (0..=5, CHECK
+    /// constraint). Default 1 — one undo slot; `0` keeps no backup.
+    /// Capped at 5 to bound disk pressure.
     #[serde(default = "default_archive_backup_retain_count")]
     pub archive_backup_retain_count: i32,
-    /// Auto-prune `.bak` files older than this. Default 30 days; `0` =
-    /// keep forever.
+    /// Days a backup is kept before the daily sweep deletes it, counted
+    /// from when Folio made the backup (its inode change time), not from
+    /// the archive's own date; a backup whose age cannot be told is kept.
+    /// Only Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular
+    /// files) are deleted, and only in a library with archive writeback
+    /// on. `0` keeps backups forever. Default 30; non-negative.
     #[serde(default = "default_archive_backup_retain_days")]
     pub archive_backup_retain_days: i32,
     /// Encoder quality (60..=100) used when the page editor re-encodes a

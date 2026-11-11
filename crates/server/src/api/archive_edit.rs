@@ -654,7 +654,10 @@ pub struct BackupView {
     /// Retention slot: 0 = most recent (`.bak`), 1 = `.bak.1`, …
     pub slot: i32,
     pub path: String,
-    /// RFC3339 modification time, or null if unavailable.
+    /// RFC3339 modification time of the backup file, or null if
+    /// unavailable. For a hard-linked backup (the usual kind) this is the
+    /// ORIGINAL archive's modification time, not when the backup was made;
+    /// the retention sweep ages backups by when they were made instead.
     pub modified_at: Option<String>,
     pub size_bytes: u64,
 }
