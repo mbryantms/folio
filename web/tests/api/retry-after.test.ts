@@ -4,8 +4,8 @@ import {
   MAX_RETRY_AFTER_MS,
   MIN_RETRY_AFTER_MS,
   retryAfterMs,
-  sleep,
 } from "@/lib/api/retry-after";
+import { sleep } from "@/lib/api/sleep";
 
 describe("retryAfterMs", () => {
   it("reads delta-seconds", () => {

@@ -46,7 +46,8 @@ import type {
   PageOverridesView,
 } from "@/lib/api/types";
 import { PROGRESS_OUTBOX_KIND } from "@/lib/reader/progress-writer";
-import { retryAfterMs, sleep as sleepFor } from "@/lib/api/retry-after";
+import { retryAfterMs } from "@/lib/api/retry-after";
+import { sleep as sleepFor } from "@/lib/api/sleep";
 import { pageBytesUrl, pageVariantUrl, withContentVersion } from "@/lib/urls";
 
 import type { Outbox } from "./outbox";
