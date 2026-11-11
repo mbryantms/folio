@@ -1,0 +1,4367 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: api
+---
+{
+  "admin /api/arcs": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000002",
+          "issue_count": 1,
+          "name": "Hidden War",
+          "series_count": 1,
+          "slug": "hidden-war"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 5,
+          "name": "Knightfall",
+          "series_count": 3,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 18
+    }
+  ],
+  "admin /api/arcs?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "admin /api/arcs?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        }
+      ],
+      "next_cursor": "WyIxLXNob3QiLCIxLXNob3QiXQ",
+      "total": 18
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        }
+      ],
+      "next_cursor": "WyJhZHVsdCBzZXJpZXMgYXJjIiwiYWR1bHQtc2VyaWVzLWFyYyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMSIsImFyYy1maWxsZXItMDAxIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMyIsImFyYy1maWxsZXItMDAzIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNSIsImFyYy1maWxsZXItMDA1Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNiIsImFyYy1maWxsZXItMDA2Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        }
+      ],
+      "next_cursor": "WyJjZWUgYXJjIiwiY2VlLWFyYyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWIiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000002",
+          "issue_count": 1,
+          "name": "Hidden War",
+          "series_count": 1,
+          "slug": "hidden-war"
+        }
+      ],
+      "next_cursor": "WyJoaWRkZW4gd2FyIiwiaGlkZGVuLXdhciJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 5,
+          "name": "Knightfall",
+          "series_count": 3,
+          "slug": "knightfall"
+        }
+      ],
+      "next_cursor": "WyJrbmlnaHRmYWxsIiwia25pZ2h0ZmFsbCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgc2FnYSIsIm1hdHVyZS1zYWdhIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": "WyJyYXRlZCBzZXJpZXMgYXJjIiwicmF0ZWQtc2VyaWVzLWFyYyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        }
+      ],
+      "next_cursor": "WyJzZXJpZXMgb25seSBhcmMiLCJzZXJpZXMtb25seS1hcmMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000002",
+          "issue_count": 1,
+          "name": "Hidden War",
+          "series_count": 1,
+          "slug": "hidden-war"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 5,
+          "name": "Knightfall",
+          "series_count": 3,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 18
+    }
+  ],
+  "admin /api/arcs?limit=100&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/arcs?limit=100&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": null,
+      "total": 6
+    }
+  ],
+  "admin /api/arcs?limit=100&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": null,
+      "total": 7
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=100&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        }
+      ],
+      "next_cursor": "WyJhZHVsdCBzZXJpZXMgYXJjIiwiYWR1bHQtc2VyaWVzLWFyYyJd",
+      "total": 18
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNiIsImFyYy1maWxsZXItMDA2Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000002",
+          "issue_count": 1,
+          "name": "Hidden War",
+          "series_count": 1,
+          "slug": "hidden-war"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 5,
+          "name": "Knightfall",
+          "series_count": 3,
+          "slug": "knightfall"
+        }
+      ],
+      "next_cursor": "WyJrbmlnaHRmYWxsIiwia25pZ2h0ZmFsbCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": "WyJyYXRlZCBzZXJpZXMgYXJjIiwicmF0ZWQtc2VyaWVzLWFyYyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=2&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/arcs?limit=2&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0",
+      "total": 6
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=2&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMSIsImFyYy1maWxsZXItMDAxIl0",
+      "total": 7
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMyIsImFyYy1maWxsZXItMDAzIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNSIsImFyYy1maWxsZXItMDA1Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWIiXQ",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=2&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMyIsImFyYy1maWxsZXItMDAzIl0",
+      "total": 18
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000002",
+          "issue_count": 1,
+          "name": "Hidden War",
+          "series_count": 1,
+          "slug": "hidden-war"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 5,
+          "name": "Knightfall",
+          "series_count": 3,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgc2FnYSIsIm1hdHVyZS1zYWdhIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=5&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/arcs?limit=5&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNSIsImFyYy1maWxsZXItMDA1Il0",
+      "total": 6
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=5&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0",
+      "total": 7
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=5&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "admin /api/arcs?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000067",
+          "issue_count": 1,
+          "name": "Arc Filler 003",
+          "series_count": 1,
+          "slug": "arc-filler-003"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000006a",
+          "issue_count": 1,
+          "name": "Arc Filler 006",
+          "series_count": 1,
+          "slug": "arc-filler-006"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000002",
+          "issue_count": 1,
+          "name": "Hidden War",
+          "series_count": 1,
+          "slug": "hidden-war"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 5,
+          "name": "Knightfall",
+          "series_count": 3,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 18
+    }
+  ],
+  "admin /api/arcs?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "capped /api/arcs": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 2,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 11
+    }
+  ],
+  "capped /api/arcs?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "capped /api/arcs?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        }
+      ],
+      "next_cursor": "WyIxLXNob3QiLCIxLXNob3QiXQ",
+      "total": 11
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMSIsImFyYy1maWxsZXItMDAxIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNSIsImFyYy1maWxsZXItMDA1Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        }
+      ],
+      "next_cursor": "WyJjZWUgYXJjIiwiY2VlLWFyYyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 2,
+          "slug": "knightfall"
+        }
+      ],
+      "next_cursor": "WyJrbmlnaHRmYWxsIiwia25pZ2h0ZmFsbCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        }
+      ],
+      "next_cursor": "WyJzZXJpZXMgb25seSBhcmMiLCJzZXJpZXMtb25seS1hcmMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/arcs?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 2,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 11
+    }
+  ],
+  "capped /api/arcs?limit=100&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/arcs?limit=100&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/arcs?limit=100&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=100&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMSIsImFyYy1maWxsZXItMDAxIl0",
+      "total": 11
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        }
+      ],
+      "next_cursor": "WyJjZWUgYXJjIiwiY2VlLWFyYyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 2,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        }
+      ],
+      "next_cursor": "WyJzZXJpZXMgb25seSBhcmMiLCJzZXJpZXMtb25seS1hcmMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/arcs?limit=2&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/arcs?limit=2&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/arcs?limit=2&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=2&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNSIsImFyYy1maWxsZXItMDA1Il0",
+      "total": 11
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 2,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        }
+      ],
+      "next_cursor": "WyJzZXJpZXMgb25seSBhcmMiLCJzZXJpZXMtb25seS1hcmMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "capped /api/arcs?limit=5&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "capped /api/arcs?limit=5&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/arcs?limit=5&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 2
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=r": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=5&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "capped /api/arcs?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000e",
+          "issue_count": 1,
+          "name": "1-Shot",
+          "series_count": 1,
+          "slug": "1-shot"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000f",
+          "issue_count": 0,
+          "name": "Cee Arc",
+          "series_count": 1,
+          "slug": "cee-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 2,
+          "name": "event",
+          "series_count": 2,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 2,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 11
+    }
+  ],
+  "capped /api/arcs?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  },
+  "partial /api/arcs": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 1,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 13
+    }
+  ],
+  "partial /api/arcs?cursor=bogus": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "invalid cursor"
+      }
+    },
+    "status": 400
+  },
+  "partial /api/arcs?limit=0": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        }
+      ],
+      "next_cursor": "WyJhZHVsdCBzZXJpZXMgYXJjIiwiYWR1bHQtc2VyaWVzLWFyYyJd",
+      "total": 13
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMSIsImFyYy1maWxsZXItMDAxIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNSIsImFyYy1maWxsZXItMDA1Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWIiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 1,
+          "slug": "knightfall"
+        }
+      ],
+      "next_cursor": "WyJrbmlnaHRmYWxsIiwia25pZ2h0ZmFsbCJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgc2FnYSIsIm1hdHVyZS1zYWdhIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": "WyJyYXRlZCBzZXJpZXMgYXJjIiwicmF0ZWQtc2VyaWVzLWFyYyJd"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        }
+      ],
+      "next_cursor": "WyJzZXJpZXMgb25seSBhcmMiLCJzZXJpZXMtb25seS1hcmMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/arcs?limit=100": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 1,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 13
+    }
+  ],
+  "partial /api/arcs?limit=100&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=100&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "partial /api/arcs?limit=100&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=100&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMSIsImFyYy1maWxsZXItMDAxIl0",
+      "total": 13
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWEiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 1,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgc2FnYSIsIm1hdHVyZS1zYWdhIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        }
+      ],
+      "next_cursor": "WyJzZXJpZXMgb25seSBhcmMiLCJzZXJpZXMtb25seS1hcmMiXQ"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/arcs?limit=2&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=2&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMiIsImFyYy1maWxsZXItMDAyIl0",
+      "total": 4
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/arcs?limit=2&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwMSIsImFyYy1maWxsZXItMDAxIl0",
+      "total": 5
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNCIsImFyYy1maWxsZXItMDA0Il0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        }
+      ],
+      "next_cursor": "WyJldmVudCIsImV2ZW50LWIiXQ",
+      "total": 3
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=2&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": "WyJhcmMgZmlsbGVyIDAwNSIsImFyYy1maWxsZXItMDA1Il0",
+      "total": 13
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 1,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        }
+      ],
+      "next_cursor": "WyJtYXR1cmUgc2FnYSIsIm1hdHVyZS1zYWdhIl0"
+    },
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "partial /api/arcs?limit=5&q=%25": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&q=%C3%A9": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=5&q=ELAN": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&q=_": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&q=an": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&q=filler%2000": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 4
+    }
+  ],
+  "partial /api/arcs?limit=5&q=rob": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=%23": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=B": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=a": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        }
+      ],
+      "next_cursor": null,
+      "total": 5
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=e": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        }
+      ],
+      "next_cursor": null,
+      "total": 3
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=f&q=1": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=r": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        }
+      ],
+      "next_cursor": null,
+      "total": 1
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=r&q=robin": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=5&starts_with=z": [
+    {
+      "items": [],
+      "next_cursor": null,
+      "total": 0
+    }
+  ],
+  "partial /api/arcs?limit=500": [
+    {
+      "items": [
+        {
+          "id": "01940000-0000-7000-8000-000040000005",
+          "issue_count": 0,
+          "name": "Adult Series Arc",
+          "series_count": 1,
+          "slug": "adult-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000065",
+          "issue_count": 1,
+          "name": "Arc Filler 001",
+          "series_count": 1,
+          "slug": "arc-filler-001"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000066",
+          "issue_count": 1,
+          "name": "Arc Filler 002",
+          "series_count": 1,
+          "slug": "arc-filler-002"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000068",
+          "issue_count": 1,
+          "name": "Arc Filler 004",
+          "series_count": 1,
+          "slug": "arc-filler-004"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000069",
+          "issue_count": 1,
+          "name": "Arc Filler 005",
+          "series_count": 1,
+          "slug": "arc-filler-005"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000a",
+          "issue_count": 1,
+          "name": "Event",
+          "series_count": 1,
+          "slug": "event-a"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000b",
+          "issue_count": 1,
+          "name": "EVENT",
+          "series_count": 1,
+          "slug": "event-b"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000c",
+          "issue_count": 1,
+          "name": "event",
+          "series_count": 1,
+          "slug": "event-c"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000001",
+          "issue_count": 3,
+          "name": "Knightfall",
+          "series_count": 1,
+          "slug": "knightfall"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000003",
+          "issue_count": 1,
+          "name": "Mature Saga",
+          "series_count": 1,
+          "slug": "mature-saga"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000004",
+          "issue_count": 1,
+          "name": "Rated Series Arc",
+          "series_count": 1,
+          "slug": "rated-series-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-000040000006",
+          "issue_count": 0,
+          "name": "Series Only Arc",
+          "series_count": 1,
+          "slug": "series-only-arc"
+        },
+        {
+          "id": "01940000-0000-7000-8000-00004000000d",
+          "issue_count": 1,
+          "name": "Éclipse",
+          "series_count": 1,
+          "slug": "eclipse-accent"
+        }
+      ],
+      "next_cursor": null,
+      "total": 13
+    }
+  ],
+  "partial /api/arcs?starts_with=zz": {
+    "body": {
+      "error": {
+        "code": "validation",
+        "message": "starts_with must be a single letter or #"
+      }
+    },
+    "status": 422
+  }
+}

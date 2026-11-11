@@ -2,17 +2,15 @@
 
 Comic Reader bundles or invokes the following third-party software.
 
-## `unrar` binary (or `unrar-free`)
+## UnRAR library (through the `unrar` Rust crate)
 
-Source: https://www.rarlab.com/rar_add.htm (or the Debian-maintained `unrar-free` fork).
+Source: https://www.rarlab.com/rar_add.htm. The `unrar` crate (MIT OR Apache-2.0) builds the UnRAR library source into the server binary; see `crates/archive/NOTICE`.
 
-The official `unrar` source carries a license clause:
+The UnRAR source carries a license clause:
 
 > The unrar sources may be used in any software to handle RAR archives without limitations free of charge, but cannot be used to re-create the RAR compression algorithm, which is proprietary. Distribution of modified unrar sources in separate form or as a part of other software is permitted, provided that it is clearly stated in the documentation and source comments that the code may not be used to develop a RAR (WinRAR) compatible archiver.
 
-Comic Reader uses `unrar` only to **read** RAR archives (CBR comic files). It does not create, modify, or distribute RAR archives. Distributing the `unrar` binary inside our container image is consistent with this license; we do not redistribute the source.
-
-The Debian-derived `unrar-free` fork (used in our default Docker image) is licensed under GPL-3.0; same usage constraints apply transitively.
+Comic Reader uses UnRAR only to **read** RAR archives (CBR comic files), in process. It does not create RAR archives. The container image no longer ships a separate `unrar` program.
 
 ## `tini`
 
