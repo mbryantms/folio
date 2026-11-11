@@ -491,6 +491,11 @@ pub async fn bulk_edit(
 pub struct RestoreResponse {
     pub issue_id: String,
     pub status: &'static str,
+    /// Where the archive the restore replaced is kept: `<file>.bak`, the
+    /// newest backup (restore swaps the archive and its `.bak`, so
+    /// restoring again undoes it). Null when there was no archive at the
+    /// issue's path to keep.
+    pub kept_as: Option<String>,
 }
 
 #[utoipa::path(
@@ -558,8 +563,8 @@ pub async fn restore(
     let mut redis = app.jobs.redis.clone();
     mutex::release(&mut redis, &row.id, &token).await;
 
-    match restore_res {
-        Ok(Ok(())) => {}
+    let restored = match restore_res {
+        Ok(Ok(outcome)) => outcome,
         Ok(Err(archive_rewrite::RewriteError::Io(e)))
             if e.kind() == std::io::ErrorKind::NotFound =>
         {
@@ -590,7 +595,11 @@ pub async fn restore(
             tracing::error!(error = %e, "archive restore: join failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
-    }
+    };
+    let kept_as = restored
+        .kept
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
 
     app.zip_lru.invalidate(&row.id);
 
@@ -632,7 +641,11 @@ pub async fn restore(
             action: "admin.issue.archive_restore",
             target_type: Some("issue"),
             target_id: Some(row.id.clone()),
-            payload: serde_json::json!({ "issue_id": row.id, "file_path": row.file_path }),
+            payload: serde_json::json!({
+                "issue_id": row.id,
+                "file_path": row.file_path,
+                "kept_as": kept_as,
+            }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
         },
@@ -644,6 +657,7 @@ pub async fn restore(
         Json(RestoreResponse {
             issue_id: row.id,
             status: "restored",
+            kept_as,
         }),
     )
         .into_response()

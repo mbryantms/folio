@@ -406,6 +406,30 @@ impl LibraryDir {
         self.rename(from, to)
     }
 
+    /// Swap the entries `a` and `b` (both in this directory, both must
+    /// exist) in one atomic step: `renameat2(RENAME_EXCHANGE)` on Linux.
+    /// Neither name is followed. `Ok(false)` when the swap is not available
+    /// here (another platform, or a filesystem that answers `EINVAL` /
+    /// `ENOSYS` / `EOPNOTSUPP`, as some network filesystems do); nothing was
+    /// changed then, and the caller falls back to separate steps.
+    pub fn exchange(&self, a: &OsStr, b: &OsStr) -> std::io::Result<bool> {
+        #[cfg(target_os = "linux")]
+        match rustix::fs::renameat_with(&self.fd, a, &self.fd, b, rustix::fs::RenameFlags::EXCHANGE)
+        {
+            Ok(()) => return Ok(true),
+            Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => {
+                tracing::debug!(
+                    dir = %self.path.display(),
+                    "RENAME_EXCHANGE not supported here; swapping in separate steps",
+                );
+            }
+            Err(e) => return Err(e.into()),
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (a, b);
+        Ok(false)
+    }
+
     /// Make `to` a second name for the file at `from`, both in this
     /// directory. Without `AT_SYMLINK_FOLLOW`, so a link at `from` is
     /// never followed.

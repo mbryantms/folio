@@ -229,8 +229,9 @@ export function IssueActions({
             <AlertDialogTitle>Restore from backup?</AlertDialogTitle>
             <AlertDialogDescription>
               The archive&apos;s most recent backup (<code>.bak</code>) is
-              restored over the current file, undoing the last edit. The issue
-              is re-scanned afterward.
+              restored, undoing the last edit. The current file is kept as the
+              new <code>.bak</code>, so restoring again undoes the restore. The
+              issue is re-scanned afterward.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

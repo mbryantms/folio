@@ -6947,13 +6947,29 @@ export interface components {
         };
         BackupView: {
             /**
+             * @description RFC3339 time the backup was made (the file's inode change time,
+             *     `archive_rewrite::backup_made_at`, the clock the retention sweep
+             *     ages backups by), or null when that cannot be known (no change time,
+             *     or one earlier than the modification time); the sweep keeps such a
+             *     backup. A later rotation, restore or permission change moves it
+             *     forward, never back.
+             */
+            made_at?: string | null;
+            /**
              * @description RFC3339 modification time of the backup file, or null if
              *     unavailable. For a hard-linked backup (the usual kind) this is the
-             *     ORIGINAL archive's modification time, not when the backup was made;
-             *     the retention sweep ages backups by when they were made instead.
+             *     ORIGINAL archive's modification time, not when the backup was made:
+             *     show `made_at` as the backup's date.
              */
             modified_at?: string | null;
             path: string;
+            /**
+             * @description The backup of the archive this issue's file was converted from
+             *     (`X.cbr.bak` / `X.cb7.bak[.n]` beside the issue's `X.cbz`), not of
+             *     the current file. Listed so it can be found; restore does not use
+             *     it (restore takes the issue's own `<file>.bak`).
+             */
+            pre_conversion: boolean;
             /** Format: int64 */
             size_bytes: number;
             /**
@@ -14201,6 +14217,13 @@ export interface components {
         };
         RestoreResponse: {
             issue_id: string;
+            /**
+             * @description Where the archive the restore replaced is kept: `<file>.bak`, the
+             *     newest backup (restore swaps the archive and its `.bak`, so
+             *     restoring again undoes it). Null when there was no archive at the
+             *     issue's path to keep.
+             */
+            kept_as?: string | null;
             status: string;
         };
         RevokeAllResp: {
@@ -21409,6 +21432,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description the issue file's own backups by slot, then the pre-conversion backups */
             200: {
                 headers: {
                     [name: string]: unknown;

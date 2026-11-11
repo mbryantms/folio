@@ -4811,6 +4811,7 @@
         ],
         "responses": {
           "200": {
+            "description": "the issue file's own backups by slot, then the pre-conversion backups",
             "content": {
               "application/json": {
                 "schema": {
@@ -15974,18 +15975,30 @@
         "required": [
           "slot",
           "path",
-          "size_bytes"
+          "size_bytes",
+          "pre_conversion"
         ],
         "properties": {
+          "made_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC3339 time the backup was made (the file's inode change time,\n`archive_rewrite::backup_made_at`, the clock the retention sweep\nages backups by), or null when that cannot be known (no change time,\nor one earlier than the modification time); the sweep keeps such a\nbackup. A later rotation, restore or permission change moves it\nforward, never back."
+          },
           "modified_at": {
             "type": [
               "string",
               "null"
             ],
-            "description": "RFC3339 modification time of the backup file, or null if\nunavailable. For a hard-linked backup (the usual kind) this is the\nORIGINAL archive's modification time, not when the backup was made;\nthe retention sweep ages backups by when they were made instead."
+            "description": "RFC3339 modification time of the backup file, or null if\nunavailable. For a hard-linked backup (the usual kind) this is the\nORIGINAL archive's modification time, not when the backup was made:\nshow `made_at` as the backup's date."
           },
           "path": {
             "type": "string"
+          },
+          "pre_conversion": {
+            "type": "boolean",
+            "description": "The backup of the archive this issue's file was converted from\n(`X.cbr.bak` / `X.cb7.bak[.n]` beside the issue's `X.cbz`), not of\nthe current file. Listed so it can be found; restore does not use\nit (restore takes the issue's own `<file>.bak`)."
           },
           "size_bytes": {
             "type": "integer",
@@ -33071,6 +33084,13 @@
         "properties": {
           "issue_id": {
             "type": "string"
+          },
+          "kept_as": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the archive the restore replaced is kept: `<file>.bak`, the\nnewest backup (restore swaps the archive and its `.bak`, so\nrestoring again undoes it). Null when there was no archive at the\nissue's path to keep."
           },
           "status": {
             "type": "string"

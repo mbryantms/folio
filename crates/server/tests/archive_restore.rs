@@ -1,4 +1,5 @@
-//! ARC-2: the backups listing finds a converted archive's pre-conversion backups and
+//! ARC-2: restore from `.bak` keeps the archive it replaces, and the
+//! backups listing finds a converted archive's pre-conversion backups and
 //! reports when each backup was made.
 //!
 //! Every file lives in a temp dir.
@@ -12,7 +13,7 @@ use axum::{
 use common::TestApp;
 use common::seed::{IssueSeed, LibrarySeed, SeriesSeed};
 use sea_orm::{ActiveModelTrait, Set};
-use server::archive_rewrite;
+use server::archive_rewrite::{self, RewriteError, RewriteStep};
 use server::library::no_follow::LibraryRoot;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -137,6 +138,159 @@ async fn seed(
 
 fn slot(path: &Path, n: i32) -> PathBuf {
     archive_rewrite::backup_slot(path, n)
+}
+
+// ───────── (2) restore keeps the replaced archive ─────────
+
+/// Restore swaps the archive with its `.bak`: the backup comes back and
+/// the file it replaces becomes the newest backup, older slots unchanged,
+/// whatever the slot count (0, 1, 3). Restoring again undoes it. Pre-fix
+/// the backup was renamed over the archive and the replaced file was gone.
+#[tokio::test]
+async fn restore_keeps_the_replaced_archive_as_the_newest_backup() {
+    for slots in [0, 1, 3] {
+        let app = TestApp::spawn().await;
+        let auth = register_admin(&app).await;
+        let dir = tempdir().unwrap();
+        let (id, path) = seed(&app, dir.path(), slots, "issue.cbz", b"current").await;
+        std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+        if slots == 3 {
+            std::fs::write(slot(&path, 1), b"backup-1").unwrap();
+            std::fs::write(slot(&path, 2), b"backup-2").unwrap();
+        }
+
+        let (status, body) = call(
+            &app,
+            &auth,
+            Method::POST,
+            format!("/api/issues/{id}/archive/restore"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{slots} slots: {body}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"backup-0", "{slots} slots");
+        assert_eq!(
+            std::fs::read(slot(&path, 0)).unwrap(),
+            b"current",
+            "the replaced archive is the newest backup ({slots} slots)"
+        );
+        assert_eq!(
+            body["kept_as"].as_str().map(PathBuf::from),
+            Some(slot(&path, 0)),
+            "{body}"
+        );
+        if slots == 3 {
+            assert_eq!(std::fs::read(slot(&path, 1)).unwrap(), b"backup-1");
+            assert_eq!(std::fs::read(slot(&path, 2)).unwrap(), b"backup-2");
+        }
+        assert!(!slot(&path, 3).exists(), "no slot is added ({slots} slots)");
+        let others: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(others.is_empty(), "no leftover: {others:?}");
+
+        // A wrong click is undone by restoring again.
+        let (status, _) = call(
+            &app,
+            &auth,
+            Method::POST,
+            format!("/api/issues/{id}/archive/restore"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(std::fs::read(&path).unwrap(), b"current");
+        assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), b"backup-0");
+    }
+}
+
+/// The swap where `RENAME_EXCHANGE` is not available takes three steps.
+/// Control: it ends like the exchange.
+#[test]
+fn three_step_restore_ends_like_the_exchange() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let root = LibraryRoot::resolve(dir.path());
+    let out = archive_rewrite::restore_latest_backup_with_faults(&root, &path, false, |_| Ok(()))
+        .unwrap();
+    assert_eq!(out.kept, Some(slot(&path, 0)));
+    assert_eq!(std::fs::read(&path).unwrap(), b"backup-0");
+    assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), b"current");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+}
+
+/// A failure half-way never leaves the archive missing: before the backup
+/// is renamed over it, nothing changed (the second name is removed again);
+/// after, the restored file is at the name and the replaced one is kept
+/// under the second name the error names.
+#[test]
+fn a_restore_that_fails_half_way_leaves_the_archive_in_place() {
+    let crash = |at: RewriteStep| {
+        move |step: RewriteStep| {
+            if step == at {
+                Err(RewriteError::Io(std::io::Error::other("injected")))
+            } else {
+                Ok(())
+            }
+        }
+    };
+
+    // Fails once the replaced archive has its second name.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let root = LibraryRoot::resolve(dir.path());
+    archive_rewrite::restore_latest_backup_with_faults(
+        &root,
+        &path,
+        false,
+        crash(RewriteStep::BackedUp),
+    )
+    .unwrap_err();
+    assert_eq!(std::fs::read(&path).unwrap(), b"current", "nothing changed");
+    assert_eq!(std::fs::read(slot(&path, 0)).unwrap(), b"backup-0");
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        2,
+        "the second name was removed again"
+    );
+
+    // Fails after the backup took the archive's name.
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("issue.cbz");
+    std::fs::write(&path, b"current").unwrap();
+    std::fs::write(slot(&path, 0), b"backup-0").unwrap();
+    let root = LibraryRoot::resolve(dir.path());
+    let err = archive_rewrite::restore_latest_backup_with_faults(
+        &root,
+        &path,
+        false,
+        crash(RewriteStep::Swapped),
+    )
+    .unwrap_err();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        b"backup-0",
+        "the archive is there"
+    );
+    let held: Vec<PathBuf> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p != &path)
+        .collect();
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert_eq!(std::fs::read(&held[0]).unwrap(), b"current", "kept");
+    let name = held[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(err.to_string().contains(&name), "the error names it: {err}");
+    assert!(
+        !archive_rewrite::is_staging_name(&name),
+        "startup cleanup leaves it"
+    );
 }
 
 // ───────── (3) pre-conversion backups ─────────
