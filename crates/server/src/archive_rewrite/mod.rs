@@ -111,7 +111,13 @@ pub enum RewriteError {
     /// A conversion's destination name is already taken (another archive,
     /// often another issue's file). Nothing was written over it. A refusal:
     /// retrying gives the same answer until someone resolves the clash.
-    #[error("destination already exists: {}", .0.display())]
+    #[error(
+        "{} already exists; nothing was written. If Folio wrote that file during a \
+         conversion that did not finish, remove that file and retry: the original \
+         and its .bak still hold the original bytes. Otherwise another file has \
+         this name.",
+        .0.display()
+    )]
     DestinationExists(PathBuf),
 }
 
@@ -699,8 +705,8 @@ impl Converted {
     /// is left alone. A failure here is logged, not returned: the
     /// conversion is complete, and the leftover name holds the original's
     /// bytes. Blocking.
-    pub fn finish(self) -> RewriteOutcome {
-        if let Some(p) = &self.pending {
+    pub fn finish(mut self) -> RewriteOutcome {
+        if let Some(p) = self.pending.take() {
             let same = p.dir.kind(&p.original).ok() == Some(EntryKind::Regular)
                 && p.dir.identity(&p.original).ok() == Some(p.original_identity);
             if same {
@@ -724,15 +730,15 @@ impl Converted {
                 );
             }
         }
-        self.outcome
+        self.outcome.clone()
     }
 
     /// The row could not be repointed: remove the new file (only while its
     /// name still holds it) so the original, still at its name, is again
     /// the only copy, and a later retry starts from the same state. The
     /// original and its `.bak` are left as they are. Blocking.
-    pub fn abandon(self) {
-        let Some(p) = &self.pending else {
+    pub fn abandon(mut self) {
+        let Some(p) = self.pending.take() else {
             return;
         };
         let same = p.dir.kind(&p.placed).ok() == Some(EntryKind::Regular)
@@ -752,6 +758,105 @@ impl Converted {
             ),
         }
     }
+}
+
+impl Converted {
+    /// The original's path while it still has its old name.
+    pub fn original_path(&self) -> Option<PathBuf> {
+        self.pending.as_ref().map(|p| p.dir.display(&p.original))
+    }
+
+    /// Settle nothing and say so: both names stay, for the operator.
+    fn leave(mut self, why: &str) {
+        if let Some(p) = self.pending.take() {
+            tracing::error!(
+                original = %p.dir.display(&p.original).display(),
+                converted = %p.dir.display(&p.placed).display(),
+                reason = why,
+                "archive_rewrite: conversion left unsettled; both files kept",
+            );
+        }
+    }
+}
+
+impl Drop for Converted {
+    /// Neither `finish` nor `abandon` ran (an early return, a dropped
+    /// future): both files stay, which is recoverable. Nothing is deleted
+    /// here; the names are logged for the operator.
+    fn drop(&mut self) {
+        if let Some(p) = &self.pending {
+            tracing::warn!(
+                original = %p.dir.display(&p.original).display(),
+                converted = %p.dir.display(&p.placed).display(),
+                "archive_rewrite: conversion dropped before it was settled; both files kept",
+            );
+        }
+    }
+}
+
+/// What to do with a conversion whose row update reported an error. An
+/// update (or its commit) can fail on the client after the database
+/// applied it, so the row is read again on a fresh statement first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settle {
+    /// The row names the new file: remove the original's old name.
+    Finish,
+    /// The row still names the original: remove the new file.
+    Abandon,
+    /// The re-read failed, or the row names neither (or is gone): keep both
+    /// files. A wrong guess would strand the row; both files are
+    /// recoverable.
+    Leave,
+}
+
+/// [`Settle`] for the row's current `file_path` (`Err` when the re-read
+/// failed).
+pub fn settle_for<E>(row_path: Result<Option<String>, E>, original: &Path, dst: &Path) -> Settle {
+    match row_path {
+        Ok(Some(p)) if Path::new(&p) == dst => Settle::Finish,
+        Ok(Some(p)) if Path::new(&p) == original => Settle::Abandon,
+        _ => Settle::Leave,
+    }
+}
+
+/// Settle `converted` after the caller's row update for `issue_id`
+/// returned an error: re-read the row's `file_path` (outside any failed
+/// transaction) and finish, abandon or leave per [`settle_for`]. Returns
+/// what it did.
+pub async fn settle_unclear_repoint(
+    db: &sea_orm::DatabaseConnection,
+    issue_id: &str,
+    converted: Converted,
+) -> Settle {
+    use sea_orm::{EntityTrait, QuerySelect};
+    let Some(original) = converted.original_path() else {
+        return Settle::Leave;
+    };
+    let dst = converted.outcome.target.clone();
+    let row_path = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .select_only()
+        .column(entity::issue::Column::FilePath)
+        .into_tuple::<String>()
+        .one(db)
+        .await;
+    let decision = settle_for(row_path.clone(), &original, &dst);
+    match decision {
+        Settle::Finish => {
+            let _ = tokio::task::spawn_blocking(move || converted.finish()).await;
+        }
+        Settle::Abandon => {
+            let _ = tokio::task::spawn_blocking(move || converted.abandon()).await;
+        }
+        Settle::Leave => {
+            let why = match &row_path {
+                Err(e) => format!("re-reading the issue row failed: {e}"),
+                Ok(Some(p)) => format!("the issue row names neither file: {p}"),
+                Ok(None) => "the issue row is gone".to_owned(),
+            };
+            converted.leave(&why);
+        }
+    }
+    decision
 }
 
 /// The destination name in the original's folder; any other folder is
@@ -803,8 +908,9 @@ fn taken(e: io::Error, dst: &Path) -> RewriteError {
 ///   2. Write the new archive into `<dst>.<hex>.tmp`; fsync it and the
 ///      folder.
 ///   3. Confirm the original is unchanged, then hard-link (or copy) it to
-///      `<original>.bak` (an older `.bak` is replaced): the original now
-///      has two names.
+///      a staging name and rename that over `<original>.bak` (an older
+///      `.bak` is replaced in that one step, never removed first): the
+///      original now has two names.
 ///   4. Rename the staging file to `dst` without replacing anything
 ///      ([`LibraryDir::rename_noreplace`]); fsync the folder (a failure of
 ///      that fsync is logged, not returned).
@@ -827,8 +933,9 @@ where
 }
 
 /// [`convert_atomic`] with the fault hook of [`rewrite_atomic_with_faults`]
-/// at the same points (for a new name, `Rotated` is the old `.bak`
-/// cleared, `Swapped` the staging file renamed to `dst`). Tests only.
+/// at the same points (for a new name, `Rotated` is the new backup made
+/// under its staging name, `BackedUp` that renamed over `.bak`, `Swapped`
+/// the staging file renamed to `dst`). Tests only.
 pub fn convert_atomic_with_faults<F, H>(
     root: &LibraryRoot,
     original: &Path,
@@ -866,13 +973,26 @@ where
     fault(RewriteStep::Staged)?;
 
     confirm_unchanged(&dir, &orig_name, Some(&source))?;
-    // One rollback slot: an older `.bak` of the original gives way.
-    rotate_backups(&dir, &orig_name, 1)?;
-    fault(RewriteStep::Rotated)?;
+    // One rollback slot. The new backup is made under a staging name first
+    // and then renamed over `.bak` in one step, so there is never a moment
+    // with neither the older backup nor the new one.
     let backup = backup_slot_name(&orig_name, 0);
-    link_or_copy(&dir, &orig_name, &backup, &source)?;
+    let backup_tmp = staging_name(&orig_name);
+    link_or_copy(&dir, &orig_name, &backup_tmp, &source)?;
+    let mut backup_guard = Staged {
+        dir: &dir,
+        identity: dir.identity(&backup_tmp).ok(),
+        name: backup_tmp.clone(),
+    };
+    fault(RewriteStep::Rotated)?;
+    dir.rename(&backup_tmp, &backup)?;
+    backup_guard.disarm();
+    drop(backup_guard);
     fault(RewriteStep::BackedUp)?;
 
+    // Taken before the rename, so nothing can fail between the rename and
+    // handing the caller a `Converted` to settle.
+    let original_identity = source.identity()?;
     dir.rename_noreplace(&tmp_name, &dst_name)
         .map_err(|e| taken(e, dst))?;
     guard.disarm();
@@ -886,7 +1006,7 @@ where
             backup: Some(dir.display(&backup)),
         },
         pending: Some(Pending {
-            original_identity: source.identity()?,
+            original_identity,
             dir,
             original: orig_name,
             placed: dst_name,
@@ -1962,9 +2082,12 @@ mod tests {
                 "original at its name after {step:?}"
             );
             let bak = fs::read(dir.path().join("issue.cbr.bak")).ok();
+            // The older backup stays until the new one replaces it in one
+            // rename: never neither.
             match step {
-                RewriteStep::Staged => assert_eq!(bak.as_deref(), Some(&b"older-bytes"[..])),
-                RewriteStep::Rotated => assert_eq!(bak, None, "old slot cleared"),
+                RewriteStep::Staged | RewriteStep::Rotated => {
+                    assert_eq!(bak.as_deref(), Some(&b"older-bytes"[..]), "{step:?}");
+                }
                 _ => assert_eq!(bak.as_deref(), Some(&b"rar-bytes"[..]), "{step:?}"),
             }
             if step == RewriteStep::Swapped {
@@ -2017,6 +2140,21 @@ mod tests {
             .finish();
         assert_eq!(fs::read(&target).unwrap(), b"zip-bytes");
         assert_eq!(fs::read(outcome.backup.unwrap()).unwrap(), b"rar-bytes");
+    }
+
+    #[test]
+    fn settle_follows_what_the_row_names_and_leaves_both_when_unsure() {
+        let orig = Path::new("/lib/S/x.cbr");
+        let dst = Path::new("/lib/S/x.cbz");
+        let ok = |p: &str| Ok::<_, ()>(Some(p.to_owned()));
+        assert_eq!(settle_for(ok("/lib/S/x.cbz"), orig, dst), Settle::Finish);
+        assert_eq!(settle_for(ok("/lib/S/x.cbr"), orig, dst), Settle::Abandon);
+        assert_eq!(settle_for(ok("/lib/S/y.cbz"), orig, dst), Settle::Leave);
+        assert_eq!(settle_for(Ok::<_, ()>(None), orig, dst), Settle::Leave);
+        assert_eq!(
+            settle_for(Err::<Option<String>, _>(()), orig, dst),
+            Settle::Leave
+        );
     }
 
     // ── staging files never outlive a failure ──

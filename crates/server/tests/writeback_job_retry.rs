@@ -989,3 +989,44 @@ async fn a_failed_lookup_is_retried_not_taken_for_a_missing_library() {
     assert!(res.is_err(), "Err, so apalis retries it");
     assert_eq!(std::fs::read(&f.cbz).unwrap(), before, "nothing written");
 }
+
+/// A conversion that did not finish (both files left, the row on the
+/// original): a retry is refused with `DestinationExists`, and the failed
+/// run's reason tells the operator which file to remove.
+#[tokio::test]
+async fn a_retry_after_an_unfinished_conversion_names_the_file_to_remove() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    let lib_id = LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .with_auto_convert_cbr_on_scan()
+        .insert(&app.state().db)
+        .await;
+    let series_id = SeriesSeed::new(lib_id, "Saga")
+        .insert(&app.state().db)
+        .await;
+    let cbr = dir.path().join("saga-1.cbr");
+    let cbr_bytes = std::fs::read(cbr_fixture()).unwrap();
+    let issue_id = IssueSeed::new(lib_id, series_id, &cbr, &cbr_bytes, 1.0)
+        .insert(&app.state().db)
+        .await;
+    let run_id = seed_run(&app, "issue", &issue_id, json!({"kind": "issue"})).await;
+    // The leftover state: converted, never settled (as after a crash).
+    let root = server::library::no_follow::LibraryRoot::resolve(dir.path());
+    let converted = server::library::scanner::cbr_convert::convert_cbr_to_cbz(
+        &root,
+        &cbr,
+        archive::ArchiveLimits::default(),
+    )
+    .unwrap();
+    drop(converted);
+    let leftover = dir.path().join("saga-1.cbz");
+    assert!(leftover.exists() && cbr.exists());
+
+    assert_refused_without_retry(&app, &issue_id, run_id).await;
+    let summary = run_row(&app, run_id).await.error_summary.unwrap();
+    assert!(summary.contains("already exists"), "{summary}");
+    assert!(summary.contains("remove that file and retry"), "{summary}");
+    assert!(summary.contains("saga-1.cbz"), "{summary}");
+    assert_eq!(std::fs::read(&cbr).unwrap(), cbr_bytes);
+}

@@ -960,7 +960,9 @@ pub(crate) async fn rewrite_one_issue(
             ..Default::default()
         };
         if let Err(e) = am.update(&state.db).await {
-            let _ = tokio::task::spawn_blocking(move || converted.abandon()).await;
+            // The update may have been applied although the client saw an
+            // error: settle by what the row names now, never by guess.
+            archive_rewrite::settle_unclear_repoint(&state.db, &row.id, converted).await;
             return Err(e.into());
         }
         let converted = tokio::task::spawn_blocking(move || converted.finish().target)

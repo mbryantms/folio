@@ -58,7 +58,13 @@ pub enum CbrConvertError {
     /// A `.cbz` sibling already exists at the destination. We refuse to
     /// overwrite it — the existing `.cbz` is ingested by the normal path and
     /// the source is left for the operator to resolve (likely a duplicate).
-    #[error("destination already exists: {0}")]
+    #[error(
+        "{} already exists; nothing was written. If Folio wrote that file during a \
+         conversion that did not finish, remove that file and retry: the original \
+         and its .bak still hold the original bytes. Otherwise another file has \
+         this name.",
+        .0.display()
+    )]
     DestinationExists(PathBuf),
     /// The file isn't a container we can read (not ZIP, RAR, or 7z) — the
     /// extension was misleading.

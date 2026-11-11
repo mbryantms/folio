@@ -2838,7 +2838,15 @@ pub fn special_type_from_format(format: &str) -> Option<&'static str> {
 /// folder path or at the name is never followed), at most 1 MiB.
 pub fn read_series_json(library_root: &Path, folder: &Path) -> Option<SeriesMetadata> {
     let p = folder.join("series.json");
-    let bytes = crate::library::no_follow::read_sidecar(library_root, &p).ok()?;
+    let bytes = match crate::library::no_follow::read_sidecar(library_root, &p) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            let shown = p.strip_prefix(library_root).unwrap_or(&p);
+            tracing::warn!(path = %shown.display(), error = %e, "series.json ignored: larger than 1 MiB");
+            return None;
+        }
+        Err(_) => return None,
+    };
     match parsers::series_json::parse(&bytes) {
         Ok(s) => Some(s.metadata),
         Err(e) => {

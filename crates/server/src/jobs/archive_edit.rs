@@ -368,6 +368,14 @@ pub enum EditError {
     Archive(#[from] ArchiveError),
 }
 
+impl EditError {
+    /// The file itself was refused (a link, not a regular file, outside
+    /// the root, the `.cbz` name taken): nothing was written.
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Self::Rewrite(e) if e.is_refusal())
+    }
+}
+
 /// Core edit path. Caller holds the per-issue rewrite mutex. Dispatches
 /// on the source format: CBZ/CBT rewrite in place; CBR converts to a
 /// sibling `.cbz` (RAR has no writer) and reports the new path via
@@ -427,16 +435,24 @@ pub async fn edit_one_issue(
     // A CBR converts to a new name: the result holds the original at its
     // old name too (`archive_rewrite::Converted`) until the row is
     // repointed below; `pending` is settled after the commit (or undone).
+    //
+    // The new archive's page hashes (for re-stamping anchors) are taken from
+    // the staged file through its handle, before it is renamed into place,
+    // so the time between the rename and the row update stays short.
+    use crate::reading::page_remap::issue_has_anchors;
+    let has_anchors = issue_has_anchors(&state.db, &row.id).await?;
     type Edited = (
         Option<PathBuf>,
         usize,
         usize,
+        Option<Vec<String>>,
         Option<archive_rewrite::Converted>,
     );
-    let (backup, before, after, pending) =
+    let (backup, before, after, new_hashes, pending) =
         tokio::task::spawn_blocking(move || -> Result<Edited, EditError> {
             let mut before = 0usize;
             let mut after = 0usize;
+            let mut hashes = None;
             let mut pending = None;
             let backup = match format {
                 EditFormat::Cbz => {
@@ -463,6 +479,9 @@ pub async fn edit_one_issue(
                                 limits,
                             )
                             .map_err(RewriteError::ArchiveErr)?;
+                            if has_anchors {
+                                hashes = hash_staged(io, limits);
+                            }
                             Ok(())
                         })?;
                     outcome.backup
@@ -484,6 +503,9 @@ pub async fn edit_one_issue(
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
                             cbt_write::write_pages(mats, extras, io.staging_file()?, limits)
                                 .map_err(RewriteError::ArchiveErr)?;
+                            if has_anchors {
+                                hashes = hash_staged(io, limits);
+                            }
                             Ok(())
                         })?;
                     outcome.backup
@@ -510,6 +532,9 @@ pub async fn edit_one_issue(
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
                             cbz_write::write_pages(mats, extras, io.staging_file()?, limits)
                                 .map_err(RewriteError::ArchiveErr)?;
+                            if has_anchors {
+                                hashes = hash_staged(io, limits);
+                            }
                             Ok(())
                         },
                     )?;
@@ -518,15 +543,16 @@ pub async fn edit_one_issue(
                     backup
                 }
             };
-            Ok((backup, before, after, pending))
+            Ok((backup, before, after, hashes, pending))
         })
         .await
         .map_err(|e| EditError::Image(format!("join: {e}")))??;
 
     // Everything from here to the commit repoints the row; a CBR
-    // conversion's old name is removed only once that committed, and the
-    // conversion is undone if it did not, so the row never names a file
-    // that is not there.
+    // conversion's old name is removed only once that committed. When it
+    // reports an error the row is read again (the commit may have been
+    // applied all the same) and the conversion is settled by what the row
+    // names, so the row never names a file that is not there.
     let committed = finish_edit(
         state,
         job,
@@ -535,8 +561,8 @@ pub async fn edit_one_issue(
         format,
         &archive_path,
         &dst_path,
-        before,
-        after,
+        (before, after),
+        new_hashes,
     )
     .await;
     match (committed, pending) {
@@ -558,7 +584,7 @@ pub async fn edit_one_issue(
         }
         (Err(e), pending) => {
             if let Some(c) = pending {
-                let _ = tokio::task::spawn_blocking(move || c.abandon()).await;
+                archive_rewrite::settle_unclear_repoint(&state.db, &row.id, c).await;
             }
             Err(e)
         }
@@ -577,8 +603,8 @@ async fn finish_edit(
     format: EditFormat,
     archive_path: &Path,
     dst_path: &Path,
-    before: usize,
-    after: usize,
+    (before, after): (usize, usize),
+    new_hashes: Option<Vec<String>>,
 ) -> Result<crate::reading::page_remap::RemapOutcome, EditError> {
     let cfg = state.cfg();
 
@@ -643,7 +669,7 @@ async fn finish_edit(
     // ordinal. Otherwise the follow-up rescan would read the rotated
     // page's markers as drifted. The rewritten archive is hashed only
     // when the issue has anchors to re-stamp.
-    use crate::reading::page_remap::{Authority, PageMap, issue_has_anchors, reanchor_issue};
+    use crate::reading::page_remap::{Authority, PageMap, reanchor_issue};
     let map = if structural {
         let final_ops = match job.bulk_op {
             Some(b) => b.lower(before),
@@ -661,16 +687,7 @@ async fn finish_edit(
     } else {
         Some(PageMap::truncation(before, after))
     };
-    let new_hashes = if map.is_some() && issue_has_anchors(&state.db, &row.id).await? {
-        crate::reading::page_hash::hash_all_pages(
-            state,
-            Path::new(&lib.root_path),
-            dst_path.to_path_buf(),
-        )
-        .await
-    } else {
-        None
-    };
+    let new_hashes = if map.is_some() { new_hashes } else { None };
     use sea_orm::TransactionTrait;
     let txn = state.db.begin().await?;
     let anchors = match map {
@@ -704,6 +721,23 @@ async fn finish_edit(
     }
 
     Ok(anchors)
+}
+
+/// Page hashes of the staged archive, read through its handle (the same
+/// bytes the rename puts in place). `None` when it can't be read: anchors
+/// then fall back to ordinals, as when the hash read failed before.
+fn hash_staged(
+    io: &archive_rewrite::RewriteIo<'_>,
+    limits: archive::ArchiveLimits,
+) -> Option<Vec<String>> {
+    let staged = io.staged_archive().ok()?;
+    match crate::reading::page_hash::hash_all_pages_blocking(staged, limits) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::warn!(error = %e, "archive edit: staged archive not hashed; anchors fall back to ordinals");
+            None
+        }
+    }
 }
 
 /// Map an [`OpError`]/[`EditError`] raised inside the rewrite closure back
@@ -1105,11 +1139,19 @@ async fn record_edit_manifest(
                     Category::Archive,
                     Action::Errored,
                     Severity::Error,
-                    format!("Archive rewrite failed for {}", row.slug),
+                    // A refusal reaches the admin the same way a failed
+                    // edit does (this error event in the library log), with
+                    // the reason in its detail; the summary says which.
+                    if e.is_refusal() {
+                        format!("Archive edit refused for {}", row.slug)
+                    } else {
+                        format!("Archive rewrite failed for {}", row.slug)
+                    },
                 )
                 .entity("issue", row.id.clone(), Some(row.slug.clone()))
                 .detail(serde_json::json!({
                     "error": e.to_string(),
+                    "refused": e.is_refusal(),
                     "series": series,
                     "path": row.file_path,
                 })),

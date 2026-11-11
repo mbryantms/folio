@@ -332,3 +332,38 @@ fn crc32(data: &[u8]) -> u32 {
     }
     !crc
 }
+
+/// A corrupt RAR opened through a working `/proc/self/fd` reports UnRAR's
+/// own error, the same one an ordinary open of an identical copy gives,
+/// and never moves to the by-name fallback: the display path here no
+/// longer exists, so the fallback would fail with a different, I/O error.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_corrupt_rar_keeps_the_proc_path_and_its_error() {
+    if !Path::new("/proc/self/fd").is_dir() {
+        return; // no /proc here: the fallback is the only path
+    }
+    let mut bytes = std::fs::read(fixture("synthetic-3page.cbr")).unwrap();
+    // Keep the RAR5 signature, wreck everything after it.
+    for b in bytes.iter_mut().skip(8).take(64) {
+        *b ^= 0xA5;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let reference = dir.path().join("reference.cbr");
+    std::fs::write(&reference, &bytes).unwrap();
+    let expected = archive::cbr::Cbr::open_path_unchecked(&reference, ArchiveLimits::default())
+        .expect_err("a corrupt RAR does not open");
+
+    let path = dir.path().join("issue.cbr");
+    std::fs::write(&path, &bytes).unwrap();
+    let handle = std::fs::File::open(&path).unwrap();
+    std::fs::rename(&path, dir.path().join("moved.cbr")).unwrap();
+    let err =
+        archive::cbr::Cbr::open_file(ArchiveFile::new(handle, &path), ArchiveLimits::default())
+            .expect_err("a corrupt RAR does not open");
+    assert!(
+        matches!(err, archive::ArchiveError::Malformed(_)),
+        "UnRAR's error, not the fallback's: {err}"
+    );
+    assert_eq!(err.to_string(), expected.to_string());
+}

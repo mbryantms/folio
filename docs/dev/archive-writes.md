@@ -94,20 +94,38 @@ each step. The row is only ever changed by the caller, after the call.
 | `rename_into_place` (scan, a ZIP that wore `.cbr`) | hard link made | the same file at both names | original |
 | | `finish` | the file at the new name only | new file |
 
-There is no window in which the row names a file that is not there: a
-conversion removes the original's old name only in
-`Converted::finish`, which each caller runs after its row is repointed
-(the page editor after its transaction commits, the sidecar job after
-its row update; the scanner has no row to repoint, it ingests the new
-`.cbz` and reconciles a row for the old name as missing). A caller that
-could not repoint its row calls `Converted::abandon`, which removes the
-new file so the original is again the only copy at its name and a retry
-starts from the same state. A crash between the rename and the row
-update leaves both names; the next attempt then finds the new name taken
-and is refused (`DestinationExists`, below) until the operator removes
-one of the two. One window remains where the filesystem refuses hard
-links: `rename_into_place` then renames (no-replace) instead, and the row
-names the old path from that rename until the caller's update.
+While both files exist, the row names one of them: a conversion
+removes the original's old name only in `Converted::finish`, which each
+caller runs after its row is repointed (the page editor after its
+transaction commits, the sidecar job after its row update; the scanner
+has no row to repoint, it ingests the new `.cbz` and reconciles a row
+for the old name as missing). When the row update reports an error, the
+caller does not guess: the update (or its commit) may have been applied
+on the server although the client saw an error, so it reads the row's
+`file_path` again on a fresh statement (`settle_unclear_repoint`). If
+the row names the new file, `finish`; if it still names the original,
+`abandon` (the new file is removed and a retry starts from the same
+state); if the re-read fails or the row names neither, both files are
+kept and both paths are logged at ERROR. A `Converted` dropped without
+either logs both paths at WARN and deletes nothing. The page editor
+hashes the new archive's pages from the staged file before the rename,
+so the time between the rename and the row update is short.
+
+One window remains in which the row names a file that is not there:
+where the filesystem refuses hard links, `rename_into_place` renames
+(no-replace) instead, and the row names the old path from that rename
+until the caller's update.
+
+**Recovering from an unfinished conversion.** A crash between the rename
+and the row update leaves both files and the row on the original. The
+next scan keeps that row (nothing destructive) and ingests the new file
+as a *second* issue row; every retry of the conversion is refused with
+`DestinationExists`. To recover, remove the **new** file (the `.cbz` that
+Folio wrote during the conversion that did not finish; the original and
+its `.bak` hold the original bytes) and retry. Do not remove the
+original: its row carries the reading progress, markers and metadata,
+and the duplicate row would be the one that survives. The refusal's
+message, which reaches the failed run and the audit row, says the same.
 
 ### Never over another file
 

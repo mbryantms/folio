@@ -215,15 +215,18 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     a refusal and fails the run that queued it. The scanner stores the
     file's size and modification time from the same handle it hashes
     and parses (`fstat`), so the row's fingerprint describes that file.
-    `series.json` is read through the folder handle too, at most 1 MiB.
+    `series.json` is read through the folder handle too, at most 1 MiB
+    (a larger one is ignored with a WARN naming its path and size).
     Presence and fingerprint checks that only decide whether to look at
     a file (`exists()`, `metadata()` in the folder walk and the
     unchanged-file fast path) may follow links; every read does not.
   - **Multi-part RAR.** A RAR that is one part of a multi-part set is
     not read: its other parts would be opened by name, which no checked
-    handle covers. The scan reports it as `MalformedArchive` with the
-    reason ("multi-part RAR archives are not supported … repack the
-    parts as one archive"); repack the parts into a single archive.
+    handle covers. In a library with CBR conversion on, the scan reports
+    it as `MalformedArchive` with the reason ("multi-part RAR archives
+    are not supported … repack the parts as one archive"); with
+    conversion off a `.cbr` gets the `UnsupportedArchiveFormat` finding,
+    as before. Repack the parts into a single archive.
   - **Hard links** cannot be told apart from ordinary files and are
     deliberately not refused: download tools commonly hard-link finished
     files into a library.

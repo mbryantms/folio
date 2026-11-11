@@ -14,7 +14,7 @@
 //! CB7 read the handle with positioned reads (independent cursors over one
 //! descriptor); CBR goes through the UnRAR library, which opens by name,
 //! so it is given `/proc/self/fd/<n>` for the handle on Linux and otherwise
-//! (or when UnRAR cannot open that name) checks the name's device and
+//! (where this process cannot reopen descriptors through `/proc`) checks the name's device and
 //! inode against the handle around each pass (see
 //! [`source::ArchiveFile::rar_name`]). A multi-part RAR set is refused
 //! ([`ArchiveError::is_multi_volume_rar`]). The writers take an open

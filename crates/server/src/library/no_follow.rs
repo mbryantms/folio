@@ -611,6 +611,13 @@ pub fn read_sidecar(root: &Path, path: &Path) -> std::io::Result<Vec<u8>> {
     };
     let (dir, name) = open_library_parent(root, path).map_err(refused)?;
     let f = dir.open_regular(&name).map_err(refused)?;
+    let size = f.metadata()?.len();
+    if size > MAX_SIDECAR_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("sidecar is {size} bytes, over the 1 MiB cap"),
+        ));
+    }
     let mut out = Vec::new();
     f.take(MAX_SIDECAR_BYTES + 1).read_to_end(&mut out)?;
     if out.len() as u64 > MAX_SIDECAR_BYTES {

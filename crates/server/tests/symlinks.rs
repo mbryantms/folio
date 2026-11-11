@@ -1162,6 +1162,36 @@ async fn page_editor_never_converts_a_cbr_over_an_existing_cbz() {
     let res = server::jobs::archive_edit::edit_one_issue(&app.state(), &edit_job(&issue_id)).await;
     let err = res.err().expect("refused");
     assert!(err.to_string().contains("already exists"), "{err}");
+    assert!(err.is_refusal());
+    // Through the job: the refusal reaches the library event log as an
+    // error event, the way a failed edit does.
+    server::jobs::archive_edit::handle(
+        edit_job(&issue_id),
+        apalis::prelude::Data::new(app.state()),
+    )
+    .await
+    .unwrap();
+    let events = entity::library_event::Entity::find()
+        .filter(entity::library_event::Column::EntityId.eq(issue_id.clone()))
+        .filter(entity::library_event::Column::Action.eq("errored"))
+        .all(&app.state().db)
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].severity, "error");
+    assert!(
+        events[0].summary.contains("refused"),
+        "{}",
+        events[0].summary
+    );
+    let detail = events[0].detail.clone().expect("detail");
+    assert!(
+        detail["error"]
+            .as_str()
+            .unwrap()
+            .contains("remove that file and retry"),
+        "{detail}"
+    );
     assert_eq!(std::fs::read(&sibling).unwrap(), sibling_bytes);
     assert_eq!(
         std::fs::read(root.join("Saga").join("Saga 001.cbr")).unwrap(),
@@ -1205,4 +1235,61 @@ async fn page_editor_converts_a_cbr_and_repoints_the_row() {
         .unwrap()
         .unwrap();
     assert_eq!(row.file_path, dir.join("Saga 001.cbz").to_string_lossy());
+}
+
+/// A conversion whose row update reported an error is settled by what the
+/// row names when read again: the new name means the update was applied
+/// (finish: the old name goes), the old name means it was not (abandon:
+/// the new file goes). Driven directly, with the row in each state, as an
+/// "error after the update was applied" would leave it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unclear_row_update_is_settled_by_what_the_row_names() {
+    use server::archive_rewrite::{Settle, convert_atomic, settle_unclear_repoint};
+    use std::io::Write as _;
+    for applied in [true, false] {
+        let app = TestApp::spawn().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("library");
+        let cbr_bytes = fixture("synthetic-3page.cbr");
+        let (_lib_id, issue_id) = seeded_issue(&app, &root, "Saga 001.cbr", &cbr_bytes).await;
+        let dir = root.join("Saga");
+        let cbr = dir.join("Saga 001.cbr");
+        let cbz = dir.join("Saga 001.cbz");
+        let lib_root = server::library::no_follow::LibraryRoot::resolve(&root);
+        let converted = convert_atomic(&lib_root, &cbr, &cbz, |io| {
+            io.staging_file()?.write_all(b"PK-new")?;
+            Ok(())
+        })
+        .unwrap();
+        if applied {
+            let mut am: issue::ActiveModel = issue::Entity::find_by_id(issue_id.clone())
+                .one(&app.state().db)
+                .await
+                .unwrap()
+                .unwrap()
+                .into();
+            am.file_path = Set(cbz.to_string_lossy().into_owned());
+            am.update(&app.state().db).await.unwrap();
+        }
+        let did = settle_unclear_repoint(&app.state().db, &issue_id, converted).await;
+        if applied {
+            assert_eq!(did, Settle::Finish);
+            assert!(
+                !cbr.exists(),
+                "the old name goes once the row names the new file"
+            );
+            assert_eq!(std::fs::read(&cbz).unwrap(), b"PK-new");
+        } else {
+            assert_eq!(did, Settle::Abandon);
+            assert!(
+                !cbz.exists(),
+                "the new file goes while the row names the original"
+            );
+            assert_eq!(std::fs::read(&cbr).unwrap(), cbr_bytes);
+        }
+        assert_eq!(
+            std::fs::read(dir.join("Saga 001.cbr.bak")).unwrap(),
+            cbr_bytes
+        );
+    }
 }

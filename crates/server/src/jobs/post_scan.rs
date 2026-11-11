@@ -211,6 +211,13 @@ pub async fn handle_thumbs(job: ThumbsJob, state: Data<AppState>) -> Result<(), 
             // archive. Opened only once the permit is held, so queued jobs
             // hold no descriptor while they wait.
             let opened = crate::library::no_follow::open_issue_archive(&app, &row).await;
+            // A database fault looking up the library says nothing about
+            // the file: no thumbnail failure is stamped, and the job is
+            // returned as an error so it is retried.
+            if let Err(crate::library::no_follow::Refusal::Lookup(e)) = &opened {
+                tracing::error!(issue_id = %row.id, error = %e, "thumbs job: library lookup failed");
+                return Err(format!("thumbs job: library lookup failed: {e}").into());
+            }
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let source = opened.map_err(|r| {

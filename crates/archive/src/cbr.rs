@@ -30,12 +30,13 @@
 //! passes a name that reaches the handle instead
 //! ([`ArchiveFile::rar_name`]): `/proc/self/fd/<n>` on Linux, which reopens
 //! exactly the file the caller opened whatever happened to its path since.
-//! Where `/proc/self/fd` is unavailable, or UnRAR cannot open the `/proc`
-//! name (a sandbox that forbids reopening descriptors that way), the
+//! Where `/proc/self/fd` cannot reopen descriptors (another platform,
+//! `/proc` not mounted, or a sandbox that forbids it; probed once per
+//! process with an ordinary open, never by how an archive opens), the
 //! display path is used instead and its device and inode are checked
 //! against the handle before and after every pass, refusing a link or a
-//! different file. The choice is made once, at open, and kept for every
-//! later pass.
+//! different file. The choice is made at open and kept for every later
+//! pass.
 //!
 //! Multi-part (multi-volume) RAR sets are not read: UnRAR would open the
 //! sibling volumes by name, which no checked handle can cover. Opening one
@@ -261,8 +262,10 @@ struct RarName {
 }
 
 /// Open the listing pass and settle the name every later pass uses:
-/// `/proc/self/fd/<n>` when [`ArchiveFile::rar_name`] offers it and UnRAR
-/// can open it, else the display path under the identity check.
+/// `/proc/self/fd/<n>` when [`ArchiveFile::rar_name`] offers it (the
+/// process can reopen descriptors that way), else the display path under
+/// the identity check. UnRAR's own error opening the archive is returned
+/// as it is: a corrupt archive never moves the reader to the other path.
 fn open_listing(
     source: &ArchiveFile,
 ) -> Result<
@@ -273,25 +276,13 @@ fn open_listing(
     ArchiveError,
 > {
     let (name, check) = source.rar_name();
-    if !check {
-        match Archive::new(&name).open_for_listing() {
-            Ok(listing) => return Ok((listing, RarName { name, check: false })),
-            Err(e) => tracing::debug!(
-                path = %source.display_path().display(),
-                error = %e,
-                "cbr: opening through /proc/self/fd failed; using the checked path",
-            ),
-        }
+    if check {
+        source.check_rar_name()?;
     }
-    let rar = RarName {
-        name: source.display_path().to_path_buf(),
-        check: true,
-    };
-    source.check_rar_name()?;
-    let listing = Archive::new(&rar.name)
+    let listing = Archive::new(&name)
         .open_for_listing()
         .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
-    Ok((listing, rar))
+    Ok((listing, RarName { name, check }))
 }
 
 impl RarName {

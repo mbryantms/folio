@@ -167,14 +167,18 @@ impl ArchiveFile {
     /// [`ArchiveFile::check_rar_name`] must be called before and after
     /// each pass: it refuses the read when the name no longer leads to the
     /// same file (device and inode) or is a symbolic link. That fallback
-    /// narrows the window to the pass itself rather than closing it. The
-    /// RAR reader also falls back when UnRAR cannot open the `/proc` name
-    /// (a sandbox that forbids reopening descriptors through `/proc`).
+    /// narrows the window to the pass itself rather than closing it.
+    ///
+    /// Whether `/proc/self/fd` can be used is decided once per process,
+    /// independently of any archive: by reopening a descriptor through it
+    /// with an ordinary open ([`proc_fd_usable`]). A sandbox that mounts
+    /// `/proc` but forbids that reopen gets the fallback; a corrupt archive
+    /// never changes the choice.
     pub fn rar_name(&self) -> (PathBuf, bool) {
         #[cfg(target_os = "linux")]
         {
             use std::os::fd::AsRawFd;
-            if self.proc_fd && Path::new("/proc/self/fd").is_dir() {
+            if self.proc_fd && proc_fd_usable(&self.file) {
                 return (
                     PathBuf::from(format!("/proc/self/fd/{}", self.file.as_raw_fd())),
                     false,
@@ -209,6 +213,22 @@ impl ArchiveFile {
             "RAR archives need /proc/self/fd or a Unix identity check",
         ))
     }
+}
+
+/// Whether reopening a descriptor through `/proc/self/fd/<n>` works in this
+/// process. Probed once, with `file`'s descriptor and an ordinary open,
+/// and cached for the life of the process.
+#[cfg(target_os = "linux")]
+fn proc_fd_usable(file: &File) -> bool {
+    use std::os::fd::AsRawFd;
+    static USABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *USABLE.get_or_init(|| {
+        let usable = File::open(format!("/proc/self/fd/{}", file.as_raw_fd())).is_ok();
+        if !usable {
+            tracing::info!("/proc/self/fd cannot reopen descriptors here; RAR archives are read by checked path");
+        }
+        usable
+    })
 }
 
 #[cfg(unix)]
