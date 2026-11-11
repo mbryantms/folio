@@ -1,0 +1,223 @@
+# Weekly query-plan gate: `just perf-explain` on a hosted runner.
+#
+# The harness (scripts/perf/perf-explain.sh, docs/dev/load-testing.md)
+# builds the server, generates the 50,000-issue stress fixture, scans it
+# into a throwaway Postgres 18 + Redis, drives every endpoint in
+# scripts/perf/endpoints.txt and endpoints-m7.txt with auto_explain on, and
+# exits 1 when a plan seq-scans a table of 5,000 rows or more that is not a
+# reviewed exception in scripts/perf/expected_seqscans.txt. It is too slow
+# for a per-PR check, and until this workflow existed nobody ran it, so a
+# new whole-table scan stayed unseen until the next audit.
+#
+# Like advisories.yml, the result folds into ONE tracking issue
+# ("Query-plan gate: attention needed"):
+#
+#   - created when the gate or the harness goes red  -> GitHub notifies you
+#   - body rewritten while it stays red              -> no notification spam
+#   - commented when the set of flagged plans changes -> notified again
+#   - closed with a comment when the gate is green
+#
+# The full report (summary.md, every endpoint's plans, the server log) is
+# uploaded as the `perf-plans-<run id>` artifact on every run.
+#
+# Scale: the default 2,500 series x 20 issues (50,000 issues), the same
+# library the documented baseline uses, with the default 5,000-row gate.
+# A smaller library would push the issue-scale junction tables
+# (`series_characters` is 7,799 rows at full scale) under the threshold and
+# the gate would stop seeing them, and lowering the threshold to match
+# would start flagging `series` (2,500 rows), where the planner rightly
+# prefers a scan. The full run fits a standard 4-vCPU / 16 GB hosted
+# runner. Measured on a 32-thread workstation (2026-11-10, debug build,
+# CARGO_BUILD_JOBS=6): fixture 45 s (~200 MB), cold server build 3.5 min
+# (7 GB target dir), scan 413 s, everything after the scan under 2 min,
+# 701 s in all. Allowing 3-4x for the runner's cores puts the scan near
+# 30 min, and a cold dependency build (cache miss) near 30 min more, so
+# the 120-minute timeout leaves room; the server build normally reuses the
+# test shards' dependency cache.
+name: Query plans (weekly)
+
+on:
+  schedule:
+    - cron: "23 5 * * 1" # Mondays, before the working day (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-plans
+  cancel-in-progress: false
+
+jobs:
+  explain:
+    name: perf-explain (50,000 issues)
+    runs-on: ubuntu-26.04
+    # Cold dependency build (~30 min on a cache miss) + fixture + scan +
+    # both endpoint phases, with room to spare.
+    timeout-minutes: 120
+    outputs:
+      status: ${{ steps.run.outputs.status }}
+      flagged: ${{ steps.run.outputs.flagged }}
+    env:
+      # Identical to the rust-test shards in ci.yml so their dependency
+      # cache (shared-key rust-test) is reusable; a profile change would
+      # re-fingerprint every crate. The harness builds the dev profile.
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_DEV_STRIP: symbols
+      # The harness starts its own containers with `docker run`. Pull the
+      # same images ci.yml's service containers use, through mirror.gcr.io
+      # (Docker Hub's anonymous pull limit 429s the shared runner IPs).
+      # Keep these digests in step with ci.yml.
+      PERF_PG_IMAGE: mirror.gcr.io/library/postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+      PERF_REDIS_IMAGE: mirror.gcr.io/library/redis:8-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The restored target dir plus a cold link can overflow a 72 GB
+      # runner; same script and reasoning as the rust-test shards.
+      - name: free runner disk
+        run: scripts/ci/free-runner-disk.sh
+      - uses: dtolnay/rust-toolchain@1.96.0
+      # Read the test shards' cache; never write it (the shards own it).
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: rust-test
+          save-if: false
+      # What the harness needs beyond the image: `psql` (seeding, polling,
+      # auto_explain toggles), Pillow (fixtures/build.py), jq and curl.
+      # Docker and python3 are on the image.
+      - name: install harness tools
+        run: |
+          missing=""
+          command -v psql >/dev/null || missing="$missing postgresql-client"
+          python3 -c 'import PIL' 2>/dev/null || missing="$missing python3-pil"
+          command -v jq >/dev/null || missing="$missing jq"
+          command -v curl >/dev/null || missing="$missing curl"
+          if [ -n "$missing" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends $missing
+          fi
+          psql --version
+          python3 -c 'import PIL; print("Pillow", PIL.__version__)'
+          docker version --format 'docker {{.Server.Version}}'
+      # Exit 0 = gate green, 1 with a summary.md = the gate flagged a plan,
+      # anything else (or no summary.md) = the harness itself failed. The
+      # step never fails the job, so the artifact upload and the tracking
+      # issue always run; the report job fails the run when it is red.
+      - name: perf-explain
+        id: run
+        run: |
+          set +e
+          start=$(date +%s)
+          scripts/perf/perf-explain.sh 2>&1 | tee perf-explain.log
+          rc=${PIPESTATUS[0]}
+          elapsed=$(($(date +%s) - start))
+          set -e
+          out=$(ls -d perf-out/explain-* 2>/dev/null | tail -1)
+          if [ "$rc" = "0" ]; then
+            status=green
+          elif [ "$rc" = "1" ] && [ -n "$out" ] && [ -f "$out/summary.md" ]; then
+            status=gate
+          else
+            status=harness
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          # The flagged rows: every summary row whose gate column is not "—".
+          {
+            echo "flagged<<EOD"
+            if [ -n "$out" ] && [ -f "$out/summary.md" ]; then
+              awk -F' \\| ' '/^\| / && NR > 4 && $7 != "—" { sub(/^\| /, "", $1); print "- `" $1 "`: " $7 }' "$out/summary.md"
+            fi
+            echo "EOD"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### perf-explain: $status (exit $rc, ${elapsed}s)"
+            echo
+            if [ -n "$out" ] && [ -f "$out/summary.md" ]; then cat "$out/summary.md"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp perf-explain.log "${out:-perf-out}/" 2>/dev/null || true
+      # The per-run directory only: the response bodies and the fixture
+      # stay behind (the fixture is outside perf-out/ anyway).
+      - name: upload report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf-plans-${{ github.run_id }}
+          path: |
+            perf-out/explain-*/
+            !perf-out/explain-*/resp-*.json
+            !perf-out/explain-*/cookies.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+  report:
+    name: Tracking issue
+    needs: [explain]
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      STATUS: ${{ needs.explain.outputs.status }}
+      FLAGGED: ${{ needs.explain.outputs.flagged }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      # `gh issue create --label` fails outright if the label does not
+      # exist. Idempotent: --force only refreshes colour and description.
+      - name: Ensure the performance label exists
+        run: gh label create performance --repo "$REPO" --color FBCA04 --description "Query plans, load and latency" --force
+      - name: Open, update, or close the tracking issue
+        run: |
+          set -euo pipefail
+          TITLE="Query-plan gate: attention needed"
+          EXISTING=$(gh issue list --repo "$REPO" --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
+          TODAY=$(date -u +%F)
+          # An empty status means the explain job died before its step ran
+          # (cancelled, runner lost, timeout): report it as a harness failure.
+          STATUS=${STATUS:-harness}
+
+          if [ "$STATUS" = "green" ]; then
+            if [ -n "$EXISTING" ]; then
+              gh issue close --repo "$REPO" "$EXISTING" --comment "The query-plan gate is green again as of $TODAY ([run]($RUN_URL))."
+            fi
+            echo "green"; exit 0
+          fi
+
+          # The marker the next run diffs against: the flagged rows, or
+          # "harness" when there is no report to read.
+          if [ "$STATUS" = "gate" ]; then KEY=$(printf '%s' "$FLAGGED" | sort | tr '\n' ' ' | sed 's/ $//'); else KEY=harness; fi
+          {
+            echo "<!-- flagged: $KEY -->"
+            echo "The weekly query-plan gate (\`just perf-explain\` at 50,000 issues) is red on \`main\` as of $TODAY ([run log]($RUN_URL)). This issue is rewritten every week it stays red and closed automatically when the gate is green again."
+            echo
+            if [ "$STATUS" = "gate" ]; then
+              echo "### Flagged plans"
+              echo
+              echo "Each endpoint below seq-scans a table of 5,000 rows or more that is not a reviewed exception:"
+              echo
+              echo "$FLAGGED"
+              echo
+              echo "The run's \`perf-plans-<run id>\` artifact holds \`summary.md\` and every plan (\`plans/<label>.txt\`). For each one, either fix the query or index, or, when a full scan is the right plan (a whole-table aggregate, a filter that matches the whole fixture), add \`label | table | reason\` to \`scripts/perf/expected_seqscans.txt\` with a specific reason."
+            else
+              echo "### The harness failed"
+              echo
+              echo "\`scripts/perf/perf-explain.sh\` did not produce a report (build, fixture, container, scan or login failure, or the job was cancelled or timed out). The run log and the artifact's \`perf-explain.log\` / \`server.log\` show where it stopped."
+            fi
+            echo
+            echo "Runbook: \`docs/dev/load-testing.md\`, \"The weekly gate\"."
+          } > body.md
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create --repo "$REPO" --title "$TITLE" --body-file body.md --label performance
+          else
+            PREV=$(gh issue view --repo "$REPO" "$EXISTING" --json body --jq .body | sed -n 's/^<!-- flagged: \(.*\) -->$/\1/p' | head -1)
+            gh issue edit --repo "$REPO" "$EXISTING" --body-file body.md
+            if [ "$PREV" != "$KEY" ]; then
+              gh issue comment --repo "$REPO" "$EXISTING" --body "What the gate flags changed on $TODAY. See the updated issue body and the [run log]($RUN_URL)."
+            fi
+          fi
+          # A red gate is a red run, so the Actions tab shows it too.
+          exit 1

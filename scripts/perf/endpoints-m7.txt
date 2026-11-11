@@ -35,3 +35,10 @@ suggestions-page2       | /api/admin/relationship-suggestions?limit=50&cursor={c
 suggestions-library     | /api/admin/relationship-suggestions?library_id={library_id}&bucket=medium&limit=50
 suggestions-all         | /api/admin/relationship-suggestions?status=all&limit=50
 suggestions-series      | /api/series/{typical_slug}/relationship-suggestions
+
+# Story-arc index (audit 2026-11, P-06): the seeded arcs (100, one per
+# perf-arc-N, named after a series) as an A–Z browse, a keyset page and
+# the name filter.
+arcs-list               | /api/arcs?limit=60
+arcs-page2              | /api/arcs?limit=60&cursor={cursor:arcs-list}
+arcs-search             | /api/arcs?q=crimson&limit=60
