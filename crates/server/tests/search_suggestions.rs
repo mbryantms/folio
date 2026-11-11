@@ -25,9 +25,10 @@ use sea_orm::{
     EntityTrait, QueryFilter, QueryTrait, Set, TransactionTrait, Unchanged,
 };
 use server::api::series::{
-    SUGGESTION_LIMIT, SUGGESTION_WORD_SIMILARITY_SQL, series_suggestion_select,
+    SUGGESTION_LIMIT, SUGGESTION_WORD_SIMILARITY_SQL, apply_series_visibility,
+    series_suggestion_select,
 };
-use server::library::access::{self, VisibleLibraries};
+use server::library::access::VisibleLibraries;
 use std::collections::{HashMap, HashSet};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -505,7 +506,18 @@ async fn removed_series_are_not_suggested() {
 
 /// EXPLAIN guard at stress-library size: the suggestion query answers from
 /// the `series_normalized_name_trgm` GIN index and never seq-scans
-/// `series`, for an unrestricted caller and for a capped reader.
+/// `series`.
+///
+/// What it guards: the exact SQL the handler runs for a request with no
+/// facet filters — `series_suggestion_select` over the handler's own
+/// visibility step (`apply_series_visibility`: active series, the grant's
+/// `library_id IN (…)` or `?library=`, the age-cap predicate), for an
+/// unrestricted caller, a capped reader, and a capped reader with
+/// `?library=`. That is every all-results `/search` request and the
+/// search sheet. What it does not guard: requests that add facet filters
+/// (the series category grid's sheet); those subquery predicates join the
+/// same `WHERE` and leave the trigram condition as the index entry point,
+/// but their plans are not asserted here.
 #[tokio::test]
 async fn suggestion_query_uses_the_trigram_index() {
     let app = TestApp::spawn().await;
@@ -563,11 +575,24 @@ async fn suggestion_query_uses_the_trigram_index() {
         allowed: HashSet::from([lib]),
         caps: HashMap::from([(lib, "Teen".to_owned())]),
     };
+    let unrestricted = VisibleLibraries::unrestricted();
+    let find = entity::series::Entity::find;
     let bases = [
-        ("unrestricted", access::active_series_select()),
-        ("capped reader", access::visible_series_select(&capped)),
+        (
+            "unrestricted",
+            apply_series_visibility(find(), &unrestricted, None),
+        ),
+        (
+            "capped reader",
+            apply_series_visibility(find(), &capped, None),
+        ),
+        (
+            "capped reader, ?library=",
+            apply_series_visibility(find(), &capped, Some(lib)),
+        ),
     ];
     for (label, base) in bases {
+        let base = base.expect("visible");
         let stmt =
             series_suggestion_select(base, &normalize_name("phantm")).build(DbBackend::Postgres);
         let txn = db.begin().await.unwrap();
@@ -595,5 +620,215 @@ async fn suggestion_query_uses_the_trigram_index() {
         let found = txn.query_all_raw(stmt).await.unwrap();
         assert_eq!(found.len(), 1, "{label}: one suggestion for the typo");
         txn.rollback().await.unwrap();
+    }
+}
+
+/// The request's own scope reaches the suggestion query: a search narrowed
+/// to library A, or to another status, is never offered a name that the
+/// same narrowed search would not find.
+#[tokio::test]
+async fn suggestions_respect_the_requests_library_and_facets() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@facet.test").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib_a = seed_library(&db, "facet-a").await;
+    let lib_b = seed_library(&db, "facet-b").await;
+    seed_series(&db, lib_a, "Saga", None, false).await;
+    seed_series(
+        &db,
+        lib_b,
+        "The Sandman Overture Deluxe Edition",
+        None,
+        false,
+    )
+    .await;
+
+    // Positive control: unscoped, the admin is offered it.
+    let body = get_json(&app, &search_uri("sandmn"), &admin).await;
+    assert_eq!(
+        suggestion_names(&body),
+        vec!["The Sandman Overture Deluxe Edition"]
+    );
+    // `?library=` A: the only close name lives in B.
+    let body = get_json(
+        &app,
+        &format!("{}&library={lib_a}", search_uri("sandmn")),
+        &admin,
+    )
+    .await;
+    assert_eq!(body["total"], 0);
+    assert!(body.get("suggestions").is_none(), "{body}");
+    // `?library=` B still offers it.
+    let body = get_json(
+        &app,
+        &format!("{}&library={lib_b}", search_uri("sandmn")),
+        &admin,
+    )
+    .await;
+    assert_eq!(
+        suggestion_names(&body),
+        vec!["The Sandman Overture Deluxe Edition"]
+    );
+    // A facet: the close series is `continuing`, the search asks for `ended`.
+    let body = get_json(
+        &app,
+        &format!("{}&status=ended", search_uri("sandmn")),
+        &admin,
+    )
+    .await;
+    assert_eq!(body["total"], 0);
+    assert!(body.get("suggestions").is_none(), "{body}");
+    // Its own status still offers it.
+    let body = get_json(
+        &app,
+        &format!("{}&status=continuing", search_uri("sandmn")),
+        &admin,
+    )
+    .await;
+    assert_eq!(
+        suggestion_names(&body),
+        vec!["The Sandman Overture Deluxe Edition"]
+    );
+}
+
+/// The lowered threshold is `SET LOCAL`: it never outlives the suggestion
+/// transaction on a pooled connection. And only the first page of a search
+/// asks for suggestions.
+#[tokio::test]
+async fn threshold_stays_local_and_cursor_pages_carry_no_suggestions() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@local.test").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let lib = seed_library(&db, "local").await;
+    seed_series(&db, lib, "The Sandman Overture Deluxe Edition", None, false).await;
+
+    // Several suggestion requests, so more than one pooled connection has
+    // run the `SET LOCAL`.
+    for _ in 0..8 {
+        let body = get_json(&app, &search_uri("sandmn"), &admin).await;
+        assert_eq!(suggestion_names(&body).len(), 1);
+    }
+
+    // Hold up to every connection of the app's pool (6 in the harness) at
+    // once and read the setting on each.
+    let state = app.state();
+    let mut held = Vec::new();
+    for _ in 0..6 {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), state.db.begin()).await {
+            Ok(txn) => held.push(txn.unwrap()),
+            Err(_) => break,
+        }
+    }
+    assert!(held.len() >= 2, "held {} connections", held.len());
+    for txn in &held {
+        let row = txn
+            .query_one_raw(sea_orm::Statement::from_string(
+                DbBackend::Postgres,
+                // Load pg_trgm in this session first so the setting exists.
+                "SELECT word_similarity('a', 'a')::float8, \
+                 current_setting('pg_trgm.word_similarity_threshold')",
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let threshold: String = row.try_get_by_index(1).unwrap();
+        assert_eq!(
+            threshold, "0.6",
+            "pooled connection kept the lowered threshold"
+        );
+    }
+    drop(held);
+
+    // A cursor page (the offset cursor of a search) never carries them.
+    use base64::Engine;
+    let cursor = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("offset:50");
+    let body = get_json(
+        &app,
+        &format!("{}&cursor={cursor}", search_uri("sandmn")),
+        &admin,
+    )
+    .await;
+    assert_eq!(body["items"], serde_json::json!([]));
+    assert!(body.get("total").is_none(), "{body}");
+    assert!(body.get("suggestions").is_none(), "{body}");
+}
+
+/// The figures the `SUGGESTION_WORD_SIMILARITY_SQL` comment and
+/// docs/dev/search.md quote, measured on the server's own pg_trgm.
+/// `word_similarity` is the best score of the query against one contiguous
+/// run of the name's trigrams (shared / (query + run - shared)), so what a
+/// typo costs depends on the intact run around it, not on word length.
+#[tokio::test]
+async fn documented_word_similarity_scores() {
+    let app = TestApp::spawn().await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let cases: [(&str, &str, f64, bool); 13] = [
+        // (query, normalized name, score, clears 0.4)
+        (
+            "sandmn",
+            "the sandman overture deluxe edition",
+            0.7143,
+            true,
+        ),
+        (
+            "helboy",
+            "hellboy in hell library edition volume one",
+            0.6667,
+            true,
+        ),
+        (
+            "invisble",
+            "the invisible kingdom deluxe edition",
+            0.5833,
+            true,
+        ),
+        (
+            "wolverne",
+            "wolverine origins ultimate collection",
+            0.6667,
+            true,
+        ),
+        ("daredevl", "daredevil born again collection", 0.7778, true),
+        (
+            "batnan",
+            "batman the long halloween absolute edition",
+            0.4286,
+            true,
+        ),
+        ("titnas", "teen titans go big collection", 0.4286, true),
+        // Short words: a typo at the end keeps a run, one near the start
+        // does not.
+        ("hulc", "hulk", 0.6, true),
+        ("spawm", "spawn", 0.6667, true),
+        ("thur", "thor", 0.4, true),
+        ("sega", "saga", 0.25, false),
+        // Noise.
+        ("zzzzqq", "zuzu", 0.1667, false),
+        (
+            "qwrtpz",
+            "batman the long halloween absolute edition",
+            0.0,
+            false,
+        ),
+    ];
+    for (q, name, want, clears) in cases {
+        let txn = db.begin().await.unwrap();
+        txn.execute_unprepared(SUGGESTION_WORD_SIMILARITY_SQL)
+            .await
+            .unwrap();
+        let row = txn
+            .query_one_raw(sea_orm::Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT word_similarity($1, $2)::float8, $2 %> $1",
+                [q.into(), name.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        txn.rollback().await.unwrap();
+        let got: f64 = row.try_get_by_index(0).unwrap();
+        let passes: bool = row.try_get_by_index(1).unwrap();
+        assert!((got - want).abs() < 0.001, "{q} vs {name}: {got}");
+        assert_eq!(passes, clears, "{q} vs {name} at the suggestion threshold");
     }
 }

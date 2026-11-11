@@ -1679,12 +1679,15 @@ pub const SUGGESTION_LIMIT: u64 = 3;
 /// trigrams and would match half the library.
 pub const SUGGESTION_MIN_CHARS: usize = 3;
 /// `pg_trgm.word_similarity_threshold` for the suggestion query (the
-/// default is 0.6). Word similarity scores the query against the best
-/// contiguous run of the name's trigrams, so a one-letter typo in a word
-/// of five or more letters scores 0.43 to 0.7 (`batnan` 0.43, `sandmn`
-/// 0.5, `helboy` 0.67), while a random string shares a trigram or two
-/// with a name and scores under 0.3. (A typo in a word of four letters or
-/// fewer scores about 0.25, level with noise: out of reach of trigrams.)
+/// default is 0.6). `word_similarity` is the best score of the query
+/// against one contiguous run of the name's trigrams (shared / (query +
+/// run - shared)), so a typo costs what it breaks of that run, not what
+/// length the word has. Measured (`documented_word_similarity_scores` in
+/// `tests/search_suggestions.rs`): `sandmn` 0.71, `helboy` 0.67,
+/// `invisble` 0.58, `batnan` 0.43, `hulc` 0.6, `thur` 0.4 clear it; noise
+/// stays well under (`zzzzqq` vs "zuzu" 0.17, `qwrtpz` 0). A typo near
+/// the start of a short word leaves no run (`sega` vs "saga" 0.25, level
+/// with noise), so that case stays out of reach.
 pub const SUGGESTION_WORD_SIMILARITY_SQL: &str =
     "SET LOCAL pg_trgm.word_similarity_threshold = 0.4";
 
@@ -1862,7 +1865,11 @@ fn validate_list_series_query_params(q: &ListSeriesQuery) -> Result<(), &'static
     Ok(())
 }
 
-fn apply_series_visibility(
+/// The visibility step of the series list (and of its search and
+/// suggestion queries): active series, the caller's library grant or the
+/// `?library=` it asked for, and the age cap. `None` when the caller can
+/// see nothing. Public so the suggestion EXPLAIN guard plans the same base.
+pub fn apply_series_visibility(
     mut select: sea_orm::Select<series::Entity>,
     visible: &access::VisibleLibraries,
     library: Option<Uuid>,

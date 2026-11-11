@@ -42,6 +42,13 @@ import { useSearchActions } from "@/lib/search/use-search-actions";
 import { SEARCH_CATEGORIES, type SearchHit } from "@/lib/search/types";
 
 const MAX_PER_CATEGORY = 5;
+/** cmdk value prefix of a "Did you mean" item. */
+const SUGGESTION_VALUE_PREFIX = "suggest:";
+/** cmdk value meaning "nothing highlighted" (matches no item). */
+const NO_HIGHLIGHT = "\u0000none:";
+/** Keys cmdk moves the highlight with; `CTRL_NAV_KEYS` only with Ctrl. */
+const NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+const CTRL_NAV_KEYS = new Set(["j", "k", "n", "p"]);
 const QUERY_DEBOUNCE_MS = 200;
 
 /**
@@ -127,10 +134,40 @@ export function SearchModal({
   const noResults = !commandMode && enabled && !isLoading && total === 0;
   const suggestionItems = noResults ? suggestions : [];
 
+  // Suggestions are not results: plain Enter with no result keeps opening
+  // the full search page, so they stay out of this count.
   const hasItems =
-    actions.length > 0 ||
-    suggestionItems.length > 0 ||
-    contentSections.some((s) => s.hits.length > 0);
+    actions.length > 0 || contentSections.some((s) => s.hits.length > 0);
+
+  // cmdk's highlighted item, controlled so a suggestion is highlighted only
+  // when the user moves onto it with the keyboard. cmdk highlights the
+  // first item on its own as items mount, and on pointer hover; for a
+  // suggestion either would make plain Enter replace the user's query
+  // with a name they never chose, depending on whether the suggestions
+  // had arrived yet. A rejected suggestion leaves a "nothing highlighted"
+  // marker scoped to this query (a fresh one each time, so cmdk's internal
+  // value is always overwritten); a new query drops it, so its results get
+  // cmdk's usual first-item highlight.
+  const [highlighted, setHighlighted] = useState("");
+  const keyboardNav = useRef(false);
+  const noHighlightSeq = useRef(0);
+  const noHighlightPrefix = `${NO_HIGHLIGHT}${contentQuery}\u0000`;
+  const commandValue =
+    highlighted.startsWith(NO_HIGHLIGHT) &&
+    !highlighted.startsWith(noHighlightPrefix)
+      ? ""
+      : highlighted;
+  function onCommandValueChange(next: string) {
+    if (next.startsWith(SUGGESTION_VALUE_PREFIX) && !keyboardNav.current) {
+      noHighlightSeq.current += 1;
+      setHighlighted(`${noHighlightPrefix}${noHighlightSeq.current}`);
+      return;
+    }
+    setHighlighted(next);
+  }
+  const suggestionHighlighted = commandValue.startsWith(
+    SUGGESTION_VALUE_PREFIX,
+  );
   // Empty-input states: recents chips (if any) or a short hint, above the
   // suggested commands. Shown only when there's nothing to search yet
   // (not enabled, not command mode).
@@ -193,12 +230,22 @@ export function SearchModal({
   // the input (stopping propagation so cmdk doesn't also act): Mod+Enter
   // → full search, and plain Enter with no quick hits → full search.
   function onInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // Runs before cmdk's own handler on the root: arrow-key moves may
+    // highlight a suggestion, anything else (typing, hover) may not.
+    keyboardNav.current =
+      NAV_KEYS.has(e.key) || (e.ctrlKey && CTRL_NAV_KEYS.has(e.key));
     if (e.key !== "Enter") return;
     if (!commandMode && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       e.stopPropagation();
       commitFullSearch();
-    } else if (!commandMode && enabled && !hasItems) {
+    } else if (
+      !commandMode &&
+      enabled &&
+      !hasItems &&
+      // A suggestion the user arrowed onto: cmdk's Enter runs it.
+      !suggestionHighlighted
+    ) {
       e.preventDefault();
       e.stopPropagation();
       commitFullSearch();
@@ -231,6 +278,8 @@ export function SearchModal({
         <Command
           shouldFilter={false}
           loop
+          value={commandValue}
+          onValueChange={onCommandValueChange}
           className="flex min-h-0 flex-1 flex-col gap-0 bg-transparent"
         >
           <div className="flex items-start [&>[data-slot=command-input-wrapper]]:min-w-0 [&>[data-slot=command-input-wrapper]]:flex-1">
@@ -273,7 +322,12 @@ export function SearchModal({
           {showVisits ? (
             <RecentVisitsHeader onClear={recentVisits.clear} />
           ) : null}
-          <CommandList className="min-h-0 flex-1 max-sm:max-h-none">
+          <CommandList
+            className="min-h-0 flex-1 max-sm:max-h-none"
+            onPointerMove={() => {
+              keyboardNav.current = false;
+            }}
+          >
             {isLoading && !hasItems ? (
               <p
                 role="status"
@@ -296,25 +350,6 @@ export function SearchModal({
                   Browse the library
                 </Link>
               </div>
-            ) : null}
-            {suggestionItems.length > 0 ? (
-              <CommandGroup heading="Did you mean">
-                {suggestionItems.map((name) => (
-                  <CommandItem
-                    key={name}
-                    value={`suggest:${name}`}
-                    onSelect={() => runSuggestion(name)}
-                    aria-label={`Search for ${name}`}
-                    className="gap-3 px-3 py-2"
-                  >
-                    <Search
-                      className="text-muted-foreground size-4 shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span className="truncate">{name}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
             ) : null}
             {showHint || showRecents || showVisits || noResults ? null : (
               <CommandEmpty>
@@ -380,6 +415,28 @@ export function SearchModal({
                 ))}
               </CommandGroup>
             ))}
+            {/* After the actions: cmdk's automatic first-item highlight
+                lands on a "Jump to…" action as before, never on a
+                suggestion. */}
+            {suggestionItems.length > 0 ? (
+              <CommandGroup heading="Did you mean">
+                {suggestionItems.map((name) => (
+                  <CommandItem
+                    key={name}
+                    value={`${SUGGESTION_VALUE_PREFIX}${name}`}
+                    onSelect={() => runSuggestion(name)}
+                    aria-label={`Search for ${name}`}
+                    className="gap-3 px-3 py-2"
+                  >
+                    <Search
+                      className="text-muted-foreground size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ) : null}
           </CommandList>
           {showHint ? <SearchHints /> : null}
           <SearchFooter

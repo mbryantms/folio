@@ -106,10 +106,13 @@ trigrams with the whole name, so the page used to be a dead end.
   `series_normalized_name_trgm`), grouped by name, ordered by
   `word_similarity` then `similarity`, `LIMIT` bound. The threshold is
   lowered to 0.4 with `SET LOCAL` inside a one-statement transaction
-  (default 0.6): a one-letter typo in a word of five or more letters
-  scores 0.43 to 0.7, a random string under 0.3. Typos in words of four
-  letters or fewer (~0.25) stay out of reach. Queries under 3
-  letters/digits get no suggestions.
+  (default 0.6). `word_similarity` scores the query against the best
+  contiguous run of the name's trigrams, so a typo costs what it breaks of
+  that run: `sandmn` 0.71, `helboy` 0.67, `batnan` 0.43, `hulc` (hulk)
+  0.6, `thur` (thor) 0.4 clear it; noise stays under 0.2. A typo near the
+  start of a short word leaves no run (`sega` vs "saga" 0.25) and stays
+  out of reach. Figures are pinned by `documented_word_similarity_scores`.
+  Queries under 3 letters/digits get no suggestions.
 - It starts from the same select as the search (visibility via
   `apply_series_visibility`: active series, library grant, age cap, plus
   the request's facet filters), so a suggestion is always a series the
@@ -119,8 +122,12 @@ trigrams with the whole name, so the page used to be a dead end.
 - Web: `useGlobalSearch().suggestions` is non-empty only when every
   category came back empty. `/search` renders `SearchNoResults`
   (suggestion buttons that run the search + a Browse link); the search
-  sheet (`SearchModal`) lists them as "Did you mean" items and links
-  Browse. Names render as text. The desktop inline dropdown sends Enter
+  sheet (`SearchModal`) lists them as "Did you mean" items (after any
+  "Jump to…" actions) and links Browse. A suggestion is highlighted only
+  when the user arrows onto it: cmdk's automatic first-item highlight and
+  pointer hover skip suggestions (cmdk's value is controlled), so plain
+  Enter on a zero-hit query always opens the full page and never swaps the
+  query; a click still runs a suggestion. Names render as text. The desktop inline dropdown sends Enter
   to `/search`, which shows them.
 
 ## `>` command prefix

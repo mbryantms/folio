@@ -153,43 +153,69 @@ describe("useGlobalSearch suggestions", () => {
 
 // ───── the search sheet (phone Search tab, ⌘K) ─────
 
-describe("SearchModal no-results state", () => {
-  it("lists the suggestions as items that run the search, with a Browse link", async () => {
-    vi.resetModules();
-    const calls: string[] = [];
-    vi.doMock("next/navigation", () => ({
-      useRouter: () => ({ push: vi.fn() }),
-      usePathname: () => "/",
-    }));
-    vi.doMock("@/lib/search/use-search-actions", () => ({
-      useSearchActions: () => ({
-        actions: [],
-        run: vi.fn(),
-        detailFor: () => null,
-        keyHintFor: () => null,
-      }),
-    }));
-    const { SEARCH_CATEGORIES } = await import("@/lib/search/types");
-    const groups = Object.fromEntries(
-      SEARCH_CATEGORIES.map((def) => [def.key, []]),
-    );
-    vi.doMock("@/lib/search/use-search", () => ({
-      useGlobalSearch: (q: string) => {
-        calls.push(q);
-        const enabled = q.length >= 2;
-        return {
-          enabled,
-          isLoading: false,
-          groups,
-          total: 0,
-          suggestions: q === "sega" ? ["Saga"] : [],
-        };
-      },
-    }));
-    const { SearchModal } = await import("@/components/SearchModal");
-    render(<SearchModal open onOpenChange={vi.fn()} />);
+const sheet = vi.hoisted(() => ({
+  push: vi.fn(),
+  calls: [] as string[],
+}));
 
-    const input = screen.getByPlaceholderText(/^Search series/);
+/** Load SearchModal against a fake `useGlobalSearch`: "sega" finds nothing
+ *  and suggests "Saga"; "zzzzqq" finds nothing; "saga" finds one series. */
+async function loadSheet() {
+  vi.resetModules();
+  vi.doMock("next/navigation", () => ({
+    useRouter: () => ({ push: sheet.push }),
+    usePathname: () => "/",
+  }));
+  vi.doMock("@/lib/search/use-search-actions", () => ({
+    useSearchActions: () => ({
+      actions: [],
+      run: vi.fn(),
+      detailFor: () => null,
+      keyHintFor: () => null,
+    }),
+  }));
+  const { SEARCH_CATEGORIES } = await import("@/lib/search/types");
+  const empty = Object.fromEntries(
+    SEARCH_CATEGORIES.map((def) => [def.key, []]),
+  );
+  vi.doMock("@/lib/search/use-search", () => ({
+    useGlobalSearch: (q: string) => {
+      sheet.calls.push(q);
+      const hit = q === "saga";
+      return {
+        enabled: q.length >= 2,
+        isLoading: false,
+        groups: hit
+          ? {
+              ...empty,
+              series: [
+                {
+                  kind: "series",
+                  id: "s1",
+                  title: "Saga",
+                  href: "/series/saga",
+                },
+              ],
+            }
+          : empty,
+        total: hit ? 1 : 0,
+        suggestions: q === "sega" ? ["Saga"] : [],
+      };
+    },
+  }));
+  const { SearchModal } = await import("@/components/SearchModal");
+  render(<SearchModal open onOpenChange={vi.fn()} />);
+  return screen.getByPlaceholderText(/^Search series/) as HTMLInputElement;
+}
+
+describe("SearchModal no-results state", () => {
+  beforeEach(() => {
+    sheet.push.mockClear();
+    sheet.calls.length = 0;
+  });
+
+  it("lists the suggestions with nothing highlighted, and a Browse link", async () => {
+    const input = await loadSheet();
     fireEvent.change(input, { target: { value: "sega" } });
     const item = await screen.findByRole("option", { name: "Search for Saga" });
     expect(screen.getByText(/No matches for/).textContent).toContain("sega");
@@ -198,21 +224,77 @@ describe("SearchModal no-results state", () => {
         .getByRole("link", { name: "Browse the library" })
         .getAttribute("href"),
     ).toBe("/browse");
+    // cmdk would highlight the first item on its own; not a suggestion.
+    await waitFor(() =>
+      expect(item.getAttribute("aria-selected")).toBe("false"),
+    );
+  });
 
+  it("plain Enter with only suggestions opens the full search page", async () => {
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "sega" } });
+    await screen.findByRole("option", { name: "Search for Saga" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sheet.push).toHaveBeenCalledWith("/search?q=sega");
+    // The query was not swapped for the suggestion.
+    expect(sheet.calls).not.toContain("Saga");
+  });
+
+  it("hovering a suggestion does not make Enter pick it", async () => {
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "sega" } });
+    const item = await screen.findByRole("option", { name: "Search for Saga" });
+    fireEvent.pointerMove(item);
+    expect(item.getAttribute("aria-selected")).toBe("false");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sheet.push).toHaveBeenCalledWith("/search?q=sega");
+  });
+
+  it("ArrowDown then Enter runs the suggested search", async () => {
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "sega" } });
+    const item = await screen.findByRole("option", { name: "Search for Saga" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    await waitFor(() =>
+      expect(item.getAttribute("aria-selected")).toBe("true"),
+    );
+    act(() => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    await waitFor(() => expect(sheet.calls.at(-1)).toBe("Saga"));
+    expect(input.value).toBe("Saga");
+    expect(sheet.push).not.toHaveBeenCalled();
+  });
+
+  it("clicking a suggestion runs that search", async () => {
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "sega" } });
+    const item = await screen.findByRole("option", { name: "Search for Saga" });
     act(() => {
       fireEvent.click(item);
     });
-    await waitFor(() => expect(calls.at(-1)).toBe("Saga"));
-    expect((input as HTMLInputElement).value).toBe("Saga");
+    await waitFor(() => expect(sheet.calls.at(-1)).toBe("Saga"));
+    expect(input.value).toBe("Saga");
   });
 
-  it("shows the plain message and Browse, no suggestion items, when there are none", async () => {
-    const { SearchModal } = await import("@/components/SearchModal");
-    render(<SearchModal open onOpenChange={vi.fn()} />);
-    const input = screen.getByPlaceholderText(/^Search series/);
+  it("a real result keeps the first-item highlight and Enter opens it", async () => {
+    const input = await loadSheet();
+    fireEvent.change(input, { target: { value: "saga" } });
+    const hit = await screen.findByRole("option", { name: /Saga/ });
+    await waitFor(() => expect(hit.getAttribute("aria-selected")).toBe("true"));
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(sheet.push).toHaveBeenCalledWith("/series/saga"),
+    );
+  });
+
+  it("shows the plain message and Browse, no items, when there are no suggestions", async () => {
+    const input = await loadSheet();
     fireEvent.change(input, { target: { value: "zzzzqq" } });
     await screen.findByRole("link", { name: "Browse the library" });
     expect(screen.queryByRole("option")).toBeNull();
     expect(screen.getAllByText(/No matches for/)).toHaveLength(1);
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(sheet.push).toHaveBeenCalledWith("/search?q=zzzzqq");
   });
 });
