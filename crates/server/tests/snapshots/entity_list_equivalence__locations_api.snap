@@ -29,7 +29,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -223,7 +223,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -486,7 +486,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -701,7 +701,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -852,7 +852,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -1025,7 +1025,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -1289,7 +1289,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -1465,7 +1465,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -1647,7 +1647,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -1882,7 +1882,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -2038,7 +2038,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -2205,7 +2205,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 5,
+          "issue_count": 6,
           "name": "Batman",
           "series_count": 3,
           "slug": "batman"
@@ -2383,7 +2383,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -2521,7 +2521,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -2688,7 +2688,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -2847,7 +2847,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -2977,7 +2977,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -3122,7 +3122,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -3310,7 +3310,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -3455,7 +3455,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -3594,7 +3594,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -3763,7 +3763,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -3893,7 +3893,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -4032,7 +4032,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 2,
           "slug": "batman"
@@ -4154,7 +4154,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -4320,7 +4320,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -4535,7 +4535,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -4722,7 +4722,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -4866,7 +4866,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -5039,7 +5039,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -5265,7 +5265,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -5434,7 +5434,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -5616,7 +5616,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -5818,7 +5818,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -5962,7 +5962,7 @@ expression: api
       "items": [
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"
@@ -6129,7 +6129,7 @@ expression: api
         },
         {
           "id": "01940000-0000-7000-8000-000030000001",
-          "issue_count": 3,
+          "issue_count": 4,
           "name": "Batman",
           "series_count": 1,
           "slug": "batman"

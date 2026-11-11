@@ -373,6 +373,17 @@ pub async fn list(
     let bucket_sql = bucket(&mut params);
     // L-4 (WP-6.3): bound, not interpolated.
     params.push(Value::from((limit + 1) as i64));
+    // Order invariant: `page` has no ORDER BY on purpose — sorting the walk
+    // would make Postgres evaluate all of it before the LIMIT, which is the
+    // scan this replaces. Its LIMIT keeps the first `limit + 1` visible
+    // names because the recursive walk emits names in strictly increasing
+    // `person` order and the lateral probe is a nested loop that preserves
+    // the order of its outer input. Only the choice of rows depends on that;
+    // the rows themselves are returned by the explicit `ORDER BY pg.person`
+    // below. `entity_list_equivalence::creators_index_is_unchanged` walks
+    // every cursor at limits 1 and 3 against snapshots of the old
+    // aggregate-then-sort query, so a page that was not the first visible
+    // names after the cursor would fail it.
     let sql = format!(
         "{names}, \
          page AS MATERIALIZED ( \

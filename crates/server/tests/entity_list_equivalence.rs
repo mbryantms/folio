@@ -505,6 +505,10 @@ async fn seed_name_kind(f: &Fixture, k: &NameKind, fillers: u128) {
             IssueFk(&h[0], "Batman"),
             IssueName(&c[0], "BATMAN"),
             SeriesFk(f.s_alpha, "Batman"),
+            // FK says Batman, the raw name normalises to Joker: the row is
+            // Batman's only (the name arm requires `fk IS NULL`), so it must
+            // not make Joker visible to a reader of library A.
+            IssueFk(&a[2], "joker "),
         ],
     )
     .await;

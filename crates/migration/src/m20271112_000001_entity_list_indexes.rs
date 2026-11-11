@@ -21,8 +21,11 @@
 //!   table), and read one name's credits for its aggregate. The existing
 //!   `(role, person)` and trigram indexes cannot return names in order.
 //! - `issue_locations_norm_name_idx`, `series_locations_norm_name_idx` —
-//!   `btrim(lower(location))`, the name-fallback arm of a location's
-//!   membership (a junction row with `location_id IS NULL`). The character
+//!   `btrim(lower(location)) WHERE location_id IS NULL`, the name-fallback
+//!   arm of a location's membership (`location_id IS NULL AND
+//!   btrim(lower(location)) = …`, which implies the partial predicate).
+//!   Partial, so a probe for a popular name never fetches and discards the
+//!   FK-linked rows that share it. The character
 //!   and team twins exist since `m20270305_000001_entity_pages`; locations
 //!   were added later without them, and the per-entity probe would
 //!   otherwise read the whole location junction for every listed entity.
@@ -47,11 +50,11 @@ const INDEXES: &[(&str, &str)] = &[
     ("series_credits_person_idx", "ON series_credits (person)"),
     (
         "issue_locations_norm_name_idx",
-        "ON issue_locations (btrim(lower(location)))",
+        "ON issue_locations (btrim(lower(location))) WHERE location_id IS NULL",
     ),
     (
         "series_locations_norm_name_idx",
-        "ON series_locations (btrim(lower(location)))",
+        "ON series_locations (btrim(lower(location))) WHERE location_id IS NULL",
     ),
 ];
 

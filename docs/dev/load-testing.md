@@ -206,6 +206,24 @@ and cursors for an admin, a partially granted reader and a capped
 reader — is pinned by `crates/server/tests/entity_list_equivalence.rs`,
 whose snapshots were recorded against the old queries.
 
+Limits of the rewrite:
+
+- **The table is for an unrestricted caller** (the harness signs in as
+  the admin). For a reader who can see little, every page walks past and
+  probes each entity or credit name they cannot see until it has
+  `limit + 1` visible ones, and the first-page `total` walks them all. Their
+  cost follows the hidden part of the entity list as index lookups — about
+  the same order as before the change, not better.
+- **`/people`** is ranked by similarity, then credit count, so it cannot
+  stop at a page: its cost follows the number of distinct credit names
+  (two index probes each) plus the credits of the names in the top
+  similarity tier.
+- **Cursor caveat (pre-existing, not changed here):** the entity-index
+  cursor key is lowercased in Rust (`str::to_lowercase`) while the keyset
+  compares it with Postgres `lower(name)`. The two can disagree for
+  non-ASCII names, depending on the database's ctype, which can repeat or
+  skip a row at a page boundary.
+
 ### Dataset at stress scale
 
 | table | rows | size (heap + indexes) |
