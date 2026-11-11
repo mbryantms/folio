@@ -155,8 +155,10 @@ async fn change_password_validates_current() {
         r#"{"current_password":"wrong-password-xx","new_password":"new-password-stronger-9"}"#,
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // 403, not 401: the web client reads a 401 as an expired session.
+    assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "auth.invalid");
+    assert_eq!(body["error"]["details"][0]["field"], "current_password");
 }
 
 #[tokio::test]
@@ -199,13 +201,28 @@ async fn email_change_round_trip_and_uniqueness() {
     let _other = register(&app, "taken@example.com", "correctly-horse-battery").await;
     let auth = register(&app, "renamer@example.com", "correctly-horse-battery").await;
 
-    // Conflict with another user's email
+    // Conflict with another user's email (reported only past the password
+    // check; without one the missing password is the answer).
     let (status, body) = patch_account(&app, &auth, r#"{"email":"taken@example.com"}"#).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["details"][0]["field"], "current_password");
+    let (status, body) = patch_account(
+        &app,
+        &auth,
+        r#"{"email":"Taken@Example.com","current_password":"correctly-horse-battery"}"#,
+    )
+    .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "conflict");
 
-    // Successful change
-    let (status, body) = patch_account(&app, &auth, r#"{"email":"new-name@example.com"}"#).await;
+    // Successful change (no mail configured: applies at once once the
+    // current password checks out; see tests/account_email_change.rs).
+    let (status, body) = patch_account(
+        &app,
+        &auth,
+        r#"{"email":"new-name@example.com","current_password":"correctly-horse-battery"}"#,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["email"], "new-name@example.com");
 }
@@ -359,4 +376,17 @@ async fn password_change_revokes_other_sessions_but_keeps_caller() {
         StatusCode::OK,
         "the caller's own refresh must survive the password change",
     );
+}
+
+/// An account update keeps the caller's CSRF value (see
+/// `preferences_keep_the_csrf_value`), on the no-op path and on a change.
+#[tokio::test]
+async fn account_updates_keep_the_csrf_value() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "keep-csrf@example.com", "correctly-horse-battery").await;
+    for body in ["{}", r#"{"display_name":"Kept"}"#] {
+        let (status, json) = patch_account(&app, &auth, body).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(json["csrf_token"], auth.csrf.as_str(), "{body}");
+    }
 }

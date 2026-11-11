@@ -25,7 +25,8 @@ import { readStateFor } from "@/lib/reading-state";
 import { jsonFetch, queryKeys } from "../queries";
 import type { ContinueReadingView, ProgressView } from "../types";
 import { apiMutate } from "./_core";
-import { invalidateRails } from "./rails";
+import { invalidateRails, invalidateSeriesProgress } from "./rails";
+import { apiPath } from "../path";
 
 export type ProgressMap = Map<string, ProgressView>;
 
@@ -157,7 +158,7 @@ export async function capturePriorProgress(
   if (missing.length === 1) {
     const id = missing[0]!;
     const resp = await jsonFetch<{ records: ProgressView[] }>(
-      `/progress?issue_id=${encodeURIComponent(id)}`,
+      apiPath`/progress?issue_id=${id}`,
     );
     prior.set(id, resp.records.find((r) => r.issue_id === id) ?? null);
   } else if (missing.length > 1) {
@@ -234,6 +235,7 @@ export async function restoreProgress(
     }
     qc.invalidateQueries({ queryKey: queryKeys.userProgress });
     invalidateRails(qc);
+    invalidateSeriesProgress(qc);
   }
 }
 

@@ -58,6 +58,10 @@ pub struct Inner {
     /// Caches `SHA-256(app-password) → row id` so repeat OPDS/Bearer auths skip
     /// the argon2 scan (PERF-1). See [`crate::auth::app_password::verify`].
     pub app_password_cache: crate::auth::app_password::AppPasswordCache,
+    /// Concurrency gate (and verification count) for app-password argon2.
+    pub app_password_gate: crate::auth::app_password::AppPasswordGate,
+    /// Short-lived cache of refused app-password digests (no query, no count).
+    pub app_password_refusals: crate::auth::app_password::AppPasswordRefusals,
     pub prometheus: PrometheusHandle,
     /// Process/runtime gauge sampler (`folio_process_*`). The `/metrics`
     /// handler calls `.collect()` per scrape before rendering.
@@ -152,10 +156,21 @@ pub struct Inner {
     /// burst of archive opens starts at most one task per issue. See
     /// [`crate::reading::page_hash_backfill`].
     pub page_hash_backfill_inflight: Arc<std::sync::Mutex<HashSet<String>>>,
+    /// What the last progress write left in each recently written
+    /// `progress_records` row, so a write that will not store a page hash
+    /// skips reading the page (audit 2026-11 P-08). A prediction only:
+    /// [`crate::api::progress`] corrects a wrong guess after the write. See
+    /// [`crate::reading::page_hash::ProgressHashHints`].
+    pub progress_hash_hints: Arc<crate::reading::page_hash::ProgressHashHints>,
     /// Per-library memo of the Duplicates page's groups (audit 2026-11,
     /// N-L3). Invalidated by catalogue-changing scans, duplicate decisions
     /// and Removed-tab restores. See [`crate::api::duplicates`].
     pub duplicates: Arc<crate::api::duplicates::DuplicateGroupsCache>,
+    /// Library id → configured and canonical root, for the no-symlink
+    /// serving check (`library::no_follow`). Invalidated when a library's
+    /// settings are saved or it is deleted; entries also expire after a
+    /// minute.
+    pub library_roots: Arc<crate::library::no_follow::LibraryRoots>,
     /// Per-job start/finish hub behind the admin queue lanes (Flair phase 5
     /// B3): the jobs executing now, the last completions per queue, and the
     /// aggregated `queue.activity` events. Fed by the jobs' metrics layer.
@@ -214,10 +229,13 @@ impl AppState {
         // from Next is forwarded to the originating client unchanged.
         // `pool_idle_timeout` keeps keepalive connections warm for
         // chained SSR requests (Next's RSC pipeline often emits several
-        // sub-requests for a single page load).
+        // sub-requests for a single page load). `tcp_nodelay(true)` is
+        // reqwest 0.12's default; it is stated here so the proxied hop
+        // never picks up Nagle's delay on small writes if that changes.
         let web_proxy_client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .tcp_nodelay(true)
             .build()
             .expect("build proxy client");
         Self(Arc::new(Inner {
@@ -230,6 +248,8 @@ impl AppState {
             started_at: chrono::Utc::now(),
             zip_lru,
             app_password_cache,
+            app_password_gate: crate::auth::app_password::AppPasswordGate::new(),
+            app_password_refusals: crate::auth::app_password::AppPasswordRefusals::new(),
             prometheus,
             process_metrics,
             log_buffer,
@@ -255,7 +275,9 @@ impl AppState {
             watchers: Arc::new(crate::library::watcher::WatcherRegistry::new()),
             similarity: Arc::new(crate::similarity::SimilarityCache::new()),
             page_hash_backfill_inflight: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            progress_hash_hints: Arc::new(crate::reading::page_hash::ProgressHashHints::new()),
             duplicates: Arc::new(crate::api::duplicates::DuplicateGroupsCache::new()),
+            library_roots: Arc::new(crate::library::no_follow::LibraryRoots::new()),
             job_activity: Arc::new(crate::jobs::activity::JobActivity::new()),
             scan_progress: Arc::new(crate::library::scanner::pacer::ProgressPacers::default()),
         }))

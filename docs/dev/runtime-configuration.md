@@ -48,11 +48,12 @@ config.
 | Key (`app_setting` table) | Admin page | Effect |
 |---|---|---|
 | `smtp.{host,port,tls,username,password,from}` | `/admin/email` | Live — the `EmailSender` is rebuilt on save. |
-| `auth.mode` | `/admin/auth` → Mode | Live. |
+| `auth.mode` | `/admin/auth` → Mode | Live. Optional: with no row and no `COMIC_AUTH_MODE` the effective mode is `local` when no OIDC issuer / client id / client secret is set and `both` when all three are; only some set is an error naming the missing values ([`config::resolve_auth_mode`](../../crates/server/src/config.rs), run by `Config::resolve_auth` after env load, after the DB overlay and in the PATCH dry-run). An explicit `oidc` / `both` without all three is rejected. The admin page shows the effective mode and whether it was saved or defaulted. |
 | `auth.local.registration_open` | `/admin/auth` → Local | Live. |
 | `auth.oidc.{issuer,client_id,client_secret,trust_unverified_email,link_local_by_verified_email,auto_redirect,grant_all_libraries}` | `/admin/auth` → OIDC | Live; OIDC discovery cache is evicted on save. |
-| `auth.jwt.{access_ttl,refresh_ttl}` | `/admin/auth` → Tokens | Live for newly-minted tokens; existing tokens keep their original `exp`. |
-| `auth.rate_limit_enabled` | `/admin/server` → Hardening | Live, but only affects the failed-auth Redis lockout. The per-route `tower_governor` buckets are sized at boot. |
+| `auth.jwt.{access_ttl,refresh_ttl}` | `/admin/auth` → Tokens | Live for newly-minted tokens; existing tokens keep their original `exp`. Defaults `1h` / `30d` (the access default was `24h` before; installs that saved a value keep it). |
+| `auth.session.max_age` | `/admin/auth` → Tokens | Live — checked at every `/auth/refresh`: a refresh session cannot be rotated past `created_at` + this, whatever its sliding expiry says (401 `auth.invalid`, row revoked). Default `90d`, floor `1d`, ceiling `3650d` (the access and refresh TTLs share that ceiling; larger values answer 422, and a stored value above it is clamped), must be ≥ the access TTL. Also clamps the refresh and CSRF cookie Max-Age, and hides older sessions from `/me/sessions`. No bootstrap row: a missing row means the env baseline. `COMIC_SESSION_MAX_AGE` is read through the generic `COMIC_` prefix (figment `Env::prefixed`) and is that baseline, validated at startup; a saved row wins over it. It works, but prefer the admin setting like the other policy keys; the env value is never copied into the table. |
+| `auth.rate_limit_enabled` | `/admin/server` → Hardening | Live, but only affects the failed-auth Redis lockout and the CBL import quota's hourly window. The per-route `tower_governor` buckets are sized at boot and stay on when it is `false`. |
 | `observability.log_level` | `/admin/server` → Diagnostics | Live via `tracing_subscriber::reload::Handle`. |
 | `library.hard_purge_multiplier` | `/admin/server` → Removed-file purge | Live — the 04:15 hard-purge sweep reads it each run. Confirmed-removed rows are deleted after `soft_delete_days × this` days; `0` disables; range `[0, 100]`, default `2` (WP-3.5, see [library-scanner.md](library-scanner.md#removal-lifecycle)). Env bootstrap: `COMIC_LIBRARY_HARD_PURGE_MULTIPLIER`. |
 | `audit_log.retention_days` | `/admin/server` → Audit log retention | Live — the 03:45 UTC sweep ([`jobs::audit_log_retention`](../../crates/server/src/jobs/audit_log_retention.rs)) reads it each run. `0` (default) keeps every `audit_log` row forever. When set (floor `90`, ceiling `36500`), rows older than this many days are first exported as newline-delimited JSON to `${COMIC_DATA_PATH}/audit-log-exports/audit-log-<timestamp>.ndjson` (fsync + atomic rename) and only then deleted in batches of 1000; a failed export deletes nothing. The job is the one sanctioned deleter of `audit_log` — handlers stay append-only ([observability.md](observability.md#server-stream)). Env bootstrap: `COMIC_AUDIT_LOG_RETENTION_DAYS` (audit 2026-11 E1). |
@@ -85,10 +86,12 @@ the only way to indicate "no change."
 ### Dry-run validation
 
 Every `PATCH /admin/settings` runs the proposed Config through
-`Config::validate` *before* writing to DB. Invalid combinations
-(`auth.mode=oidc` without OIDC creds; `refresh_ttl < access_ttl`;
-worker counts out of `[1, 64]`; bogus `EnvFilter` directive) return
-`400 settings.invalid_combination` and persist nothing.
+`Config::resolve_auth` + `Config::validate` *before* writing to DB.
+Invalid combinations (`auth.mode=oidc` without OIDC creds; part of the
+OIDC block saved while no mode is chosen; `refresh_ttl < access_ttl`;
+`session_max_age` under `1d` or under the access TTL; worker counts out
+of `[1, 64]`; bogus `EnvFilter` directive) return
+`422 settings.invalid_combination` and persist nothing.
 
 ### Bootstrap (env → DB on first boot)
 
@@ -99,6 +102,11 @@ boots see the row and skip. This lets an existing
 `compose.prod.yml`-driven deployment upgrade in place without losing
 config — the admin UI sees the env-derived values and the operator can
 edit from there.
+
+The `auth.*` slice is the one exception to "copy the effective value":
+`auth.mode` is seeded only when `COMIC_AUTH_MODE` was set, so a defaulted
+mode stays unchosen and keeps following `resolve_auth_mode`. Its sentinel
+is `auth.mode` or `auth.local.registration_open`.
 
 ### Deferred (post-1.0)
 
@@ -115,7 +123,7 @@ edit from there.
   drains in-flight jobs; tracked as future work.
 - **Per-route `tower_governor` toggle**: the `auth.rate_limit_enabled`
   kill switch covers the failed-auth Redis lockout (the operationally
-  painful case) but the per-route buckets stay installed regardless.
+  painful case) and the CBL import quota's hourly window, but the per-route buckets stay installed regardless.
   Disabling them at runtime needs a custom tower `Service` wrapping each
   `GovernorLayer`. Tracked as future work.
 - ~~**OTLP exporter** (`COMIC_OTLP_ENDPOINT`)~~: **considered, not chosen
@@ -145,7 +153,10 @@ edit from there.
    [`admin_settings::update`](../../crates/server/src/api/admin_settings.rs)
    that fires after `replace_cfg`.
 4. Add range / cross-field validation to `Config::validate`. Dry-run
-   will surface it as a 400 before any write.
+   will surface it as a 422 before any write. A setting whose effective
+   value is *derived* when unset (as `auth.mode` is) keeps the operator's
+   choice in its own `Option` field and resolves it in one function called
+   from `load`, `overlay_db` and the dry-run, never per reader.
 5. Wire a bootstrap seeder in
    [`settings/bootstrap.rs`](../../crates/server/src/settings/bootstrap.rs)
    so a fresh upgrade from env populates the row on first boot.

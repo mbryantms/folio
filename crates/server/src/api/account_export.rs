@@ -377,7 +377,10 @@ pub async fn export(State(app): State<AppState>, user: CurrentUser) -> Response 
                 StatusCode::OK,
                 [(
                     header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{filename}\""),
+                    crate::util::content_disposition::content_disposition(
+                        crate::util::content_disposition::Disposition::Attachment,
+                        &filename,
+                    ),
                 )],
                 Json(doc),
             )

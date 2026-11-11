@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMode {
     Oidc,
@@ -109,7 +109,24 @@ pub struct Config {
     #[serde(default)]
     pub trusted_proxies: String,
 
-    #[serde(default = "default_auth_mode")]
+    /// The sign-in mode the operator chose: `COMIC_AUTH_MODE` at boot,
+    /// then the `auth.mode` row once the DB overlay applies. `None` means
+    /// nobody chose one; [`resolve_auth_mode`] then derives the mode from
+    /// whether single sign-on is configured. Blank env values count as
+    /// unset.
+    #[serde(
+        default,
+        rename = "auth_mode",
+        deserialize_with = "deserialize_auth_mode_choice"
+    )]
+    pub auth_mode_choice: Option<AuthMode>,
+
+    /// The effective sign-in mode. Every reader (login, register, the
+    /// OIDC routes, `/auth/config`, the admin auth page) uses this field.
+    /// Never read from env directly: [`Config::resolve_auth`] sets it from
+    /// `auth_mode_choice` + the OIDC settings in `load`, `overlay_db` and
+    /// the settings dry-run.
+    #[serde(skip, default = "default_auth_mode")]
     pub auth_mode: AuthMode,
 
     /// Upstream URL of the Next.js standalone server. Used by the
@@ -161,6 +178,11 @@ pub struct Config {
     pub jwt_access_ttl: String,
     #[serde(default = "default_jwt_refresh")]
     pub jwt_refresh_ttl: String,
+    /// Absolute session lifetime: a refresh session cannot be rotated past
+    /// `created_at + session_max_age`, however often it is refreshed. DB
+    /// setting `auth.session.max_age` (live for the next refresh).
+    #[serde(default = "default_session_max_age")]
+    pub session_max_age: String,
 
     #[serde(default = "default_true")]
     pub rate_limit_enabled: bool,
@@ -316,6 +338,14 @@ pub struct Config {
     /// [`HashCost::TEST`]. See `auth::password`.
     #[serde(skip)]
     pub password_hash_cost: crate::auth::password::HashCost,
+
+    /// `statement_timeout` for queries compiled from a saved-view filter
+    /// (`views::timebox`). `#[serde(skip)]`: not an operator knob — every
+    /// real server gets [`crate::views::timebox::FILTER_STATEMENT_TIMEOUT`];
+    /// only the integration-test harness shortens it to exercise the
+    /// cancellation path without a slow query.
+    #[serde(skip, default = "default_filter_statement_timeout")]
+    pub filter_statement_timeout: std::time::Duration,
 
     // Metadata providers (metadata-providers-1.0 M1)
     /// ComicVine API key. Per-site key, account-bound. Always loaded
@@ -553,6 +583,7 @@ impl std::fmt::Debug for Config {
             .field("log_level", &self.log_level)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("auth_mode", &self.auth_mode)
+            .field("auth_mode_choice", &self.auth_mode_choice)
             .field("web_upstream_url", &self.web_upstream_url)
             .field("oidc_issuer", &self.oidc_issuer)
             .field("oidc_client_id", &self.oidc_client_id)
@@ -570,6 +601,7 @@ impl std::fmt::Debug for Config {
             .field("local_registration_open", &self.local_registration_open)
             .field("jwt_access_ttl", &self.jwt_access_ttl)
             .field("jwt_refresh_ttl", &self.jwt_refresh_ttl)
+            .field("session_max_age", &self.session_max_age)
             .field("rate_limit_enabled", &self.rate_limit_enabled)
             .field("check_upstream_releases", &self.check_upstream_releases)
             .field("opds_panels_mode", &self.opds_panels_mode)
@@ -619,18 +651,100 @@ impl std::fmt::Debug for Config {
             .field("comicvine_local_path", &self.comicvine_local_path)
             .field("comicvine_local_mode", &self.comicvine_local_mode)
             .field("password_hash_cost", &self.password_hash_cost)
+            .field("filter_statement_timeout", &self.filter_statement_timeout)
             .finish()
     }
 }
 
+fn default_filter_statement_timeout() -> std::time::Duration {
+    crate::views::timebox::FILTER_STATEMENT_TIMEOUT
+}
 fn default_bind() -> SocketAddr {
     "0.0.0.0:8080".parse().unwrap()
 }
 fn default_log_level() -> String {
     "info".into()
 }
+/// Placeholder until [`Config::resolve_auth`] runs; the effective default
+/// is decided by [`resolve_auth_mode`], not here.
 fn default_auth_mode() -> AuthMode {
-    AuthMode::Both
+    AuthMode::Local
+}
+
+/// `COMIC_AUTH_MODE` → `Option<AuthMode>`; an empty or blank value is
+/// "not chosen" (compose files often pass `${VAR:-}` through).
+fn deserialize_auth_mode_choice<'de, D>(d: D) -> Result<Option<AuthMode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(d)?;
+    match raw.as_deref().map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(s) => AuthMode::parse(s).map(Some).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "invalid auth mode `{s}`: expected one of local, oidc, both"
+            ))
+        }),
+    }
+}
+
+/// Decide the effective sign-in mode. The one rule every reader agrees on
+/// (via [`Config::resolve_auth`]):
+///
+/// | chosen mode     | OIDC issuer / client id / secret | effective          |
+/// |-----------------|----------------------------------|--------------------|
+/// | none            | none set                         | `local`            |
+/// | none            | all three set                    | `both`             |
+/// | none            | some but not all                 | error, names gaps  |
+/// | `local`         | anything                         | `local`            |
+/// | `oidc` / `both` | all three set                    | the chosen mode    |
+/// | `oidc` / `both` | any missing                      | error, names gaps  |
+///
+/// A partial single sign-on setup is an error rather than a silent fall
+/// back to local sign-in, so a typo in one value is caught at boot (or by
+/// the settings dry-run) instead of quietly hiding the SSO button.
+pub fn resolve_auth_mode(
+    choice: Option<AuthMode>,
+    oidc_issuer: Option<&str>,
+    oidc_client_id: Option<&str>,
+    oidc_client_secret: Option<&str>,
+) -> anyhow::Result<AuthMode> {
+    let is_set = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
+    let fields = [
+        ("issuer (COMIC_OIDC_ISSUER)", is_set(oidc_issuer)),
+        ("client id (COMIC_OIDC_CLIENT_ID)", is_set(oidc_client_id)),
+        (
+            "client secret (COMIC_OIDC_CLIENT_SECRET)",
+            is_set(oidc_client_secret),
+        ),
+    ];
+    let missing: Vec<&str> = fields
+        .iter()
+        .filter(|(_, set)| !set)
+        .map(|(name, _)| *name)
+        .collect();
+    match choice {
+        Some(AuthMode::Local) => Ok(AuthMode::Local),
+        Some(mode @ (AuthMode::Oidc | AuthMode::Both)) => {
+            if missing.is_empty() {
+                Ok(mode)
+            } else {
+                anyhow::bail!(
+                    "auth_mode `{mode}` includes oidc but COMIC_OIDC_ISSUER / CLIENT_ID / \
+                     CLIENT_SECRET are not all set; missing OIDC {}",
+                    missing.join(", ")
+                )
+            }
+        }
+        None if missing.is_empty() => Ok(AuthMode::Both),
+        None if missing.len() == fields.len() => Ok(AuthMode::Local),
+        None => anyhow::bail!(
+            "single sign-on is partly configured: missing OIDC {}. Set the missing \
+             values, remove the others, or choose a sign-in mode explicitly \
+             (auth.mode under /admin/auth, or COMIC_AUTH_MODE)",
+            missing.join(", ")
+        ),
+    }
 }
 fn default_web_upstream_url() -> String {
     "http://localhost:3000".into()
@@ -639,12 +753,12 @@ fn default_true() -> bool {
     true
 }
 fn default_jwt_access() -> String {
-    // Long-lived access cookie. Comic reading sessions are content-consumption
-    // workloads — getting kicked back to sign-in mid-issue is friction with no
-    // proportional security win. The refresh cookie still rotates on every
-    // refresh and is bound by `jwt_refresh_ttl`, so a leaked access cookie
-    // window is at most 24h before the next forced rotation.
-    "24h".into()
+    // One hour. Sign-out revokes the refresh session but cannot recall an
+    // access token already issued (there is no per-request session lookup),
+    // so this TTL is how long a copied access cookie keeps working after
+    // sign-out. The web client refreshes silently on a 401, so a reader is
+    // never sent back to sign-in when it lapses mid-issue.
+    "1h".into()
 }
 fn default_jwt_refresh() -> String {
     // Refresh-token TTL (the "stay signed in for a month" budget). The web
@@ -653,6 +767,19 @@ fn default_jwt_refresh() -> String {
     // within this window.
     "30d".into()
 }
+fn default_session_max_age() -> String {
+    // Absolute session lifetime: re-enter the password at least this often,
+    // however regularly the session is refreshed.
+    "90d".into()
+}
+/// Floor for `session_max_age`: shorter than a day would sign users out
+/// mid-day on a typo such as `1h`.
+pub const SESSION_MAX_AGE_FLOOR: Duration = Duration::from_secs(24 * 60 * 60);
+/// Ceiling for the access and refresh lifetimes and `session_max_age`
+/// (3650 days). Larger values overflow timestamp arithmetic in Postgres and
+/// chrono; the PATCH answers 422 above it and the accessors clamp to it, so
+/// a row saved before the cap still cannot overflow.
+pub const AUTH_DURATION_CAP: Duration = Duration::from_secs(3650 * 24 * 60 * 60);
 fn default_smtp_port() -> u16 {
     587
 }
@@ -769,12 +896,27 @@ pub enum Provenance {
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
         // Env > config.toml > defaults.
-        let cfg: Config = Figment::new()
+        let mut cfg: Config = Figment::new()
             .merge(Toml::file("config.toml"))
             .merge(Env::prefixed("COMIC_"))
             .extract()?;
+        cfg.resolve_auth()?;
         cfg.validate()?;
         Ok(cfg)
+    }
+
+    /// Set the effective [`Config::auth_mode`] from the chosen mode and
+    /// the OIDC settings ([`resolve_auth_mode`]). Runs after every step
+    /// that can change either input: env load, the DB overlay, and the
+    /// `PATCH /admin/settings` dry-run.
+    pub fn resolve_auth(&mut self) -> anyhow::Result<()> {
+        self.auth_mode = resolve_auth_mode(
+            self.auth_mode_choice,
+            self.oidc_issuer.as_deref(),
+            self.oidc_client_id.as_deref(),
+            self.oidc_client_secret.as_deref(),
+        )?;
+        Ok(())
     }
 
     /// True when the OPDS feed should present as Komga (and the
@@ -842,14 +984,54 @@ impl Config {
         secrets: &crate::secrets::Secrets,
     ) -> anyhow::Result<()> {
         let rows = crate::settings::read_all(db, secrets).await?;
+        // Build on a copy so a failed overlay leaves `self` untouched (the
+        // boot path then really does keep the env-only Config, with its
+        // effective auth mode matching its own inputs).
+        let mut next = self.clone();
         for r in rows {
-            apply_overlay_row(self, &r);
+            apply_overlay_row(&mut next, &r);
         }
-        self.validate()?;
+        next.clamp_stored_auth_durations();
+        next.resolve_auth()?;
+        next.validate()?;
+        *self = next;
         Ok(())
     }
 
+    /// Read a stored auth duration above [`AUTH_DURATION_CAP`] as the cap,
+    /// with a warning. Such a row can predate the cap or have been written
+    /// to the table by hand; refusing it would fail validation of the whole
+    /// overlay and drop every saved setting. Only the load path does this:
+    /// a settings change through the API is validated as written and
+    /// answers 422. Values that do not parse are left for `validate`.
+    fn clamp_stored_auth_durations(&mut self) {
+        for (key, value) in [
+            ("auth.jwt.access_ttl", &mut self.jwt_access_ttl),
+            ("auth.jwt.refresh_ttl", &mut self.jwt_refresh_ttl),
+            ("auth.session.max_age", &mut self.session_max_age),
+        ] {
+            if Self::parse_duration(value).is_ok_and(|d| d > AUTH_DURATION_CAP) {
+                tracing::warn!(
+                    key,
+                    stored = %value,
+                    "stored duration is above the 3650d ceiling; using 3650d"
+                );
+                *value = "3650d".to_owned();
+            }
+        }
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
+        // The chosen mode + OIDC settings must resolve (partial SSO and an
+        // explicit oidc/both without credentials are errors) …
+        resolve_auth_mode(
+            self.auth_mode_choice,
+            self.oidc_issuer.as_deref(),
+            self.oidc_client_id.as_deref(),
+            self.oidc_client_secret.as_deref(),
+        )?;
+        // … and the effective mode must be usable, which also covers a
+        // hand-built Config that skipped `resolve_auth`.
         match self.auth_mode {
             AuthMode::Oidc | AuthMode::Both => {
                 if self.oidc_issuer.is_none()
@@ -899,15 +1081,43 @@ impl Config {
             );
         }
         // Fail fast on misconfigured TTL strings rather than at first sign-in.
-        Self::parse_duration(&self.jwt_access_ttl)
+        let access = Self::parse_duration(&self.jwt_access_ttl)
             .map_err(|e| anyhow::anyhow!("jwt_access_ttl: {e}"))?;
         let refresh = Self::parse_duration(&self.jwt_refresh_ttl)
             .map_err(|e| anyhow::anyhow!("jwt_refresh_ttl: {e}"))?;
-        let access = Self::parse_duration(&self.jwt_access_ttl)?;
+        for (name, value, parsed) in [
+            ("jwt_access_ttl", &self.jwt_access_ttl, access),
+            ("jwt_refresh_ttl", &self.jwt_refresh_ttl, refresh),
+        ] {
+            if parsed > AUTH_DURATION_CAP {
+                anyhow::bail!("{name} ({value}) must be at most 3650d");
+            }
+        }
         if refresh < access {
             anyhow::bail!(
                 "jwt_refresh_ttl ({}) must be ≥ jwt_access_ttl ({}); otherwise the refresh cookie expires before the access cookie and users get stuck on a hard logout",
                 self.jwt_refresh_ttl,
+                self.jwt_access_ttl,
+            );
+        }
+        let max_age = Self::parse_duration(&self.session_max_age)
+            .map_err(|e| anyhow::anyhow!("session_max_age: {e}"))?;
+        if max_age > AUTH_DURATION_CAP {
+            anyhow::bail!(
+                "session_max_age ({}) must be at most 3650d",
+                self.session_max_age
+            );
+        }
+        if max_age < SESSION_MAX_AGE_FLOOR {
+            anyhow::bail!(
+                "session_max_age ({}) must be at least 1d",
+                self.session_max_age
+            );
+        }
+        if max_age < access {
+            anyhow::bail!(
+                "session_max_age ({}) must be ≥ jwt_access_ttl ({}); an access token must not outlive its session",
+                self.session_max_age,
                 self.jwt_access_ttl,
             );
         }
@@ -999,27 +1209,52 @@ impl Config {
     }
 
     /// Access-cookie + access-JWT TTL. Validated at startup so unwrap is safe
-    /// once the server is running.
+    /// once the server is running; never above [`AUTH_DURATION_CAP`].
     pub fn access_ttl(&self) -> Duration {
-        Self::parse_duration(&self.jwt_access_ttl).expect("jwt_access_ttl validated at startup")
+        Self::parse_duration(&self.jwt_access_ttl)
+            .expect("jwt_access_ttl validated at startup")
+            .min(AUTH_DURATION_CAP)
     }
 
-    /// Refresh-cookie + DB session TTL. Validated at startup.
+    /// Refresh-cookie + DB session TTL. Validated at startup; never above
+    /// [`AUTH_DURATION_CAP`].
     pub fn refresh_ttl(&self) -> Duration {
-        Self::parse_duration(&self.jwt_refresh_ttl).expect("jwt_refresh_ttl validated at startup")
+        Self::parse_duration(&self.jwt_refresh_ttl)
+            .expect("jwt_refresh_ttl validated at startup")
+            .min(AUTH_DURATION_CAP)
+    }
+
+    /// Absolute refresh-session lifetime, counted from the session's
+    /// `created_at`. Validated at startup; never above [`AUTH_DURATION_CAP`].
+    pub fn session_max_age(&self) -> Duration {
+        Self::parse_duration(&self.session_max_age)
+            .expect("session_max_age validated at startup")
+            .min(AUTH_DURATION_CAP)
     }
 
     pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
-        // Accepts `15m`, `30d`, `60s`, `1h`. Anything else errors.
-        let (num, unit) = s.split_at(s.len() - 1);
-        let n: u64 = num.parse()?;
-        Ok(match unit {
-            "s" => Duration::from_secs(n),
-            "m" => Duration::from_secs(n * 60),
-            "h" => Duration::from_secs(n * 60 * 60),
-            "d" => Duration::from_secs(n * 60 * 60 * 24),
+        // Accepts `15m`, `30d`, `60s`, `1h` (surrounding whitespace is
+        // ignored). Anything else errors — never panics, whatever the input.
+        let t = s.trim();
+        let Some((split, unit)) = t.char_indices().last() else {
+            anyhow::bail!("empty duration (use a number and s|m|h|d, e.g. 15m)");
+        };
+        let multiplier: u64 = match unit {
+            's' => 1,
+            'm' => 60,
+            'h' => 60 * 60,
+            'd' => 60 * 60 * 24,
             _ => anyhow::bail!("invalid duration unit (use s|m|h|d): {s}"),
-        })
+        };
+        let num = &t[..split];
+        if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+            anyhow::bail!("invalid duration number (use digits then s|m|h|d): {s}");
+        }
+        let n: u64 = num.parse()?;
+        let secs = n
+            .checked_mul(multiplier)
+            .ok_or_else(|| anyhow::anyhow!("duration too large: {s}"))?;
+        Ok(Duration::from_secs(secs))
     }
 }
 
@@ -1156,11 +1391,14 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
         "auth.mode" => match row.value.as_str() {
             Some(s) => match AuthMode::parse(s) {
                 Some(mode) => {
-                    let prev_str = cfg.auth_mode.to_string();
-                    if prev_str != s {
-                        tracing::debug!(env = %prev_str, db = %s, "auth.mode overridden by DB");
+                    if let Some(prev) = cfg.auth_mode_choice
+                        && prev != mode
+                    {
+                        tracing::debug!(env = %prev, db = %s, "auth.mode overridden by DB");
                     }
-                    cfg.auth_mode = mode;
+                    // Only the choice: `resolve_auth` derives the effective
+                    // mode once every row (incl. the OIDC ones) is applied.
+                    cfg.auth_mode_choice = Some(mode);
                 }
                 None => tracing::warn!(
                     key = "auth.mode",
@@ -1290,6 +1528,13 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.jwt_refresh_ttl.as_str()), s);
                 cfg.jwt_refresh_ttl = s.to_owned();
+            }
+            None => bad_type(&row.key, "duration", &row.value),
+        },
+        "auth.session.max_age" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, Some(cfg.session_max_age.as_str()), s);
+                cfg.session_max_age = s.to_owned();
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
@@ -1664,6 +1909,143 @@ pub fn restart_setting_value(cfg: &Config, key: &str) -> Option<serde_json::Valu
 mod tests {
     use super::*;
 
+    const FULL_OIDC: (Option<&str>, Option<&str>, Option<&str>) = (
+        Some("https://idp.example.test"),
+        Some("folio"),
+        Some("client-secret"),
+    );
+    const NO_OIDC: (Option<&str>, Option<&str>, Option<&str>) = (None, None, None);
+
+    fn resolve(
+        choice: Option<AuthMode>,
+        (iss, cid, secret): (Option<&str>, Option<&str>, Option<&str>),
+    ) -> anyhow::Result<AuthMode> {
+        resolve_auth_mode(choice, iss, cid, secret)
+    }
+
+    #[test]
+    fn auth_mode_unset_without_oidc_is_local() {
+        assert_eq!(resolve(None, NO_OIDC).unwrap(), AuthMode::Local);
+        // Blank strings (e.g. `COMIC_OIDC_ISSUER=` in a compose file) are
+        // "not configured", not a partial setup.
+        assert_eq!(
+            resolve(None, (Some(""), Some("  "), None)).unwrap(),
+            AuthMode::Local
+        );
+    }
+
+    #[test]
+    fn auth_mode_unset_with_full_oidc_is_both() {
+        assert_eq!(resolve(None, FULL_OIDC).unwrap(), AuthMode::Both);
+    }
+
+    #[test]
+    fn auth_mode_unset_with_partial_oidc_names_the_missing_values() {
+        let err = resolve(None, (Some("https://idp.example.test"), None, None))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("partly configured"), "{err}");
+        assert!(err.contains("client id (COMIC_OIDC_CLIENT_ID)"), "{err}");
+        assert!(
+            err.contains("client secret (COMIC_OIDC_CLIENT_SECRET)"),
+            "{err}"
+        );
+        assert!(!err.contains("issuer (COMIC_OIDC_ISSUER)"), "{err}");
+
+        let err = resolve(None, (Some("https://idp"), Some("folio"), Some(" ")))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("client secret"), "{err}");
+        assert!(!err.contains("client id"), "{err}");
+    }
+
+    #[test]
+    fn auth_mode_explicit_both_without_oidc_is_an_error() {
+        let err = resolve(Some(AuthMode::Both), NO_OIDC)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("includes oidc"), "{err}");
+        assert!(err.contains("issuer (COMIC_OIDC_ISSUER)"), "{err}");
+        assert!(
+            resolve(Some(AuthMode::Oidc), (Some("https://idp"), None, None)).is_err(),
+            "explicit oidc with partial settings must not boot"
+        );
+    }
+
+    #[test]
+    fn auth_mode_explicit_local_with_full_oidc_stays_local() {
+        assert_eq!(
+            resolve(Some(AuthMode::Local), FULL_OIDC).unwrap(),
+            AuthMode::Local
+        );
+        // An explicit local ignores a half-filled OIDC block (pre-existing
+        // behaviour: the values are inert until a mode uses them).
+        assert_eq!(
+            resolve(Some(AuthMode::Local), (Some("https://idp"), None, None)).unwrap(),
+            AuthMode::Local
+        );
+    }
+
+    #[test]
+    fn auth_mode_explicit_oidc_with_full_oidc_is_oidc() {
+        assert_eq!(
+            resolve(Some(AuthMode::Oidc), FULL_OIDC).unwrap(),
+            AuthMode::Oidc
+        );
+        assert_eq!(
+            resolve(Some(AuthMode::Both), FULL_OIDC).unwrap(),
+            AuthMode::Both
+        );
+    }
+
+    /// The overlay records the DB row as the *choice*; `resolve_auth`
+    /// turns it into the effective mode, so a DB `local` beats an env
+    /// default that would otherwise have resolved to `both`.
+    #[test]
+    fn overlay_row_sets_choice_and_resolve_applies_it() {
+        let mut cfg = Config {
+            auth_mode_choice: None,
+            oidc_issuer: Some("https://idp.example.test".into()),
+            oidc_client_id: Some("folio".into()),
+            oidc_client_secret: Some("client-secret".into()),
+            ..test_config_skeleton()
+        };
+        cfg.resolve_auth().unwrap();
+        assert_eq!(cfg.auth_mode, AuthMode::Both);
+
+        apply_overlay_row(
+            &mut cfg,
+            &crate::settings::Resolved {
+                key: "auth.mode".into(),
+                value: serde_json::json!("local"),
+                is_secret: false,
+            },
+        );
+        assert_eq!(cfg.auth_mode_choice, Some(AuthMode::Local));
+        cfg.resolve_auth().unwrap();
+        assert_eq!(cfg.auth_mode, AuthMode::Local);
+        cfg.validate().unwrap();
+    }
+
+    /// `COMIC_AUTH_MODE` parsing: absent or blank = not chosen; a known
+    /// value is the choice; anything else fails the boot.
+    #[test]
+    fn auth_mode_choice_deserializes_blank_as_unset() {
+        #[derive(Deserialize)]
+        struct Probe {
+            #[serde(default, deserialize_with = "deserialize_auth_mode_choice")]
+            auth_mode: Option<AuthMode>,
+        }
+        let parse = |v: serde_json::Value| serde_json::from_value::<Probe>(v).map(|p| p.auth_mode);
+        assert_eq!(parse(serde_json::json!({})).unwrap(), None);
+        assert_eq!(parse(serde_json::json!({ "auth_mode": "" })).unwrap(), None);
+        assert_eq!(
+            parse(serde_json::json!({ "auth_mode": "oidc" })).unwrap(),
+            Some(AuthMode::Oidc)
+        );
+        assert!(parse(serde_json::json!({ "auth_mode": "sso" })).is_err());
+    }
+
     /// Auth-hardening Phase B B2 (security-audit.md H-2): `Config`
     /// must not leak credentials through `{:?}` / `dbg!()` / panic
     /// captures. Seed every secret field with a unique, easily-grepped
@@ -1750,6 +2132,7 @@ mod tests {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "info".into(),
             trusted_proxies: String::new(),
+            auth_mode_choice: Some(AuthMode::Local),
             auth_mode: AuthMode::Local,
             web_upstream_url: "http://127.0.0.1:0".into(),
             oidc_issuer: None,
@@ -1760,8 +2143,9 @@ mod tests {
             oidc_auto_redirect: false,
             oidc_grant_all_libraries: false,
             local_registration_open: true,
-            jwt_access_ttl: "24h".into(),
+            jwt_access_ttl: "1h".into(),
             jwt_refresh_ttl: "30d".into(),
+            session_max_age: "90d".into(),
             rate_limit_enabled: true,
             check_upstream_releases: true,
             otlp_endpoint: None,
@@ -1791,6 +2175,7 @@ mod tests {
             smtp_from: None,
             metrics_token: None,
             password_hash_cost: crate::auth::password::HashCost::PRODUCTION,
+            filter_statement_timeout: default_filter_statement_timeout(),
             metrics_open: false,
             opds_panels_mode: "off".into(),
             comicvine_api_key: None,
@@ -1842,5 +2227,158 @@ mod tests {
             restart_setting_value(&cfg, "smtp.host").is_none(),
             "non-restart key must not map to a restart value"
         );
+    }
+
+    /// Defaults for the token lifetimes, as a fresh install (no env, no DB
+    /// rows) loads them: a 1 h access token, a 30 d sliding refresh session
+    /// and a 90 d absolute session age.
+    #[test]
+    fn default_token_lifetimes() {
+        let cfg: Config = Figment::new()
+            .merge(Toml::string(
+                "database_url = 'postgres://x'\nredis_url = 'redis://x'\n\
+                 library_path = '/l'\ndata_path = '/d'\npublic_url = 'http://localhost'\n",
+            ))
+            .extract()
+            .expect("minimal config extracts");
+        assert_eq!(cfg.access_ttl(), Duration::from_secs(60 * 60));
+        assert_eq!(cfg.refresh_ttl(), Duration::from_secs(30 * 24 * 60 * 60));
+        assert_eq!(
+            cfg.session_max_age(),
+            Duration::from_secs(90 * 24 * 60 * 60)
+        );
+        cfg.validate().expect("defaults validate");
+    }
+
+    #[test]
+    fn session_max_age_has_a_floor_and_bounds_the_access_ttl() {
+        let mut cfg = test_config_skeleton();
+        cfg.session_max_age = "23h".into();
+        assert!(cfg.validate().is_err(), "under the 1 d floor");
+        cfg.session_max_age = "1d".into();
+        cfg.validate().expect("the floor itself is accepted");
+        cfg.jwt_access_ttl = "2d".into();
+        assert!(
+            cfg.validate().is_err(),
+            "access TTL longer than the max age"
+        );
+        cfg.jwt_access_ttl = "1h".into();
+        cfg.session_max_age = "ninety days".into();
+        assert!(cfg.validate().is_err(), "unparseable");
+    }
+
+    #[test]
+    fn parse_duration_accepts_the_four_units() {
+        assert_eq!(
+            Config::parse_duration("60s").unwrap(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            Config::parse_duration("15m").unwrap(),
+            Duration::from_secs(900)
+        );
+        assert_eq!(
+            Config::parse_duration("1h").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            Config::parse_duration("90d").unwrap(),
+            Duration::from_secs(90 * 86_400)
+        );
+    }
+
+    #[test]
+    fn parse_duration_refuses_empty_input_without_panicking() {
+        for s in ["", " ", "\t", "d", "h"] {
+            assert!(Config::parse_duration(s).is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn parse_duration_refuses_non_ascii_without_panicking() {
+        for s in ["1日", "日", "1é", "１h", "1ｈ", "-1h", "+1h"] {
+            assert!(Config::parse_duration(s).is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn parse_duration_refuses_overflow() {
+        assert!(Config::parse_duration("18446744073709551615d").is_err());
+        assert!(Config::parse_duration("99999999999999999999s").is_err());
+        assert_eq!(
+            Config::parse_duration("18446744073709551615s").unwrap(),
+            Duration::from_secs(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn parse_duration_trims_outer_whitespace_only() {
+        assert_eq!(
+            Config::parse_duration(" 1h ").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            Config::parse_duration("1h\n").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert!(Config::parse_duration("1 h").is_err());
+        assert!(Config::parse_duration("1h 2m").is_err());
+    }
+
+    #[test]
+    fn auth_durations_above_the_cap_are_refused_and_clamped() {
+        let mut cfg = test_config_skeleton();
+        cfg.jwt_access_ttl = "1h".into();
+        for bad in ["10000000000d", "18446744073709551615s", "3651d"] {
+            cfg.session_max_age = bad.into();
+            assert!(cfg.validate().is_err(), "{bad}");
+            // A value that bypassed validation is clamped, never wrapped.
+            assert_eq!(cfg.session_max_age(), AUTH_DURATION_CAP, "{bad}");
+        }
+        cfg.session_max_age = "3650d".into();
+        assert!(cfg.validate().is_ok());
+        cfg.jwt_refresh_ttl = "3651d".into();
+        assert!(cfg.validate().is_err());
+        assert_eq!(cfg.refresh_ttl(), AUTH_DURATION_CAP);
+    }
+
+    #[test]
+    fn a_stored_duration_above_the_cap_is_read_as_the_cap() {
+        let mut cfg = test_config_skeleton();
+        for key in [
+            "auth.jwt.access_ttl",
+            "auth.jwt.refresh_ttl",
+            "auth.session.max_age",
+        ] {
+            apply_overlay_row(
+                &mut cfg,
+                &crate::settings::Resolved {
+                    key: key.to_owned(),
+                    value: serde_json::Value::String("10000000000d".to_owned()),
+                    is_secret: false,
+                },
+            );
+        }
+        // As written, the rows fail validation: a settings change through
+        // the API is refused.
+        assert!(cfg.validate().is_err());
+        // The load path reads them as the cap, so the overlay validates
+        // and the other saved settings still load.
+        cfg.clamp_stored_auth_durations();
+        assert_eq!(cfg.jwt_access_ttl, "3650d");
+        assert_eq!(cfg.jwt_refresh_ttl, "3650d");
+        assert_eq!(cfg.session_max_age, "3650d");
+        assert!(cfg.validate().is_ok());
+        // An ordinary value is left as written.
+        apply_overlay_row(
+            &mut cfg,
+            &crate::settings::Resolved {
+                key: "auth.session.max_age".to_owned(),
+                value: serde_json::Value::String("30d".to_owned()),
+                is_secret: false,
+            },
+        );
+        cfg.clamp_stored_auth_durations();
+        assert_eq!(cfg.session_max_age, "30d");
     }
 }

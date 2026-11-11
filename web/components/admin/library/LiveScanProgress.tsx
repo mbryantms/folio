@@ -60,6 +60,7 @@ import {
   statusToneText,
 } from "@/lib/ui/status-tone";
 import { cn } from "@/lib/utils";
+import { scanRunStateTone } from "@/components/admin/status-tones";
 import { ScanModeMenu } from "./ScanModeMenu";
 
 type Status =
@@ -1431,23 +1432,9 @@ function thumbLabelFor(event: ScanEvent): string {
 }
 
 function StatusPill({ status }: { status: Status }) {
-  const tone = (() => {
-    switch (status) {
-      case "running":
-      case "thumbnailing":
-        return statusTone("success");
-      case "queued":
-        return statusTone("warning");
-      case "completed":
-        return statusTone("success");
-      case "failed":
-        return statusTone("error");
-      // Cancelled is operator-initiated, not an error — neutral tone.
-      case "cancelled":
-      default:
-        return statusTone("neutral");
-    }
-  })();
+  // Running / queued / thumbnailing are info, completed and the
+  // operator's own cancel are neutral, only a failure is red.
+  const tone = statusTone(scanRunStateTone(status));
   const Icon = (() => {
     switch (status) {
       case "running":

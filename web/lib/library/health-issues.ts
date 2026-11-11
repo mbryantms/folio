@@ -58,8 +58,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Re-tag the archive.",
   },
   MalformedArchive: {
-    label: "Corrupt or unrecognized archive",
-    hint: "The file isn't a readable ZIP, TAR, RAR or 7z. Replace it from a good copy.",
+    // The API calls this kind "malformed", not "corrupt": the row also
+    // covers files the reader refused, so the copy does not claim damage.
+    label: "Malformed or unrecognized archive",
+    hint: "Folio could not open the file as a ZIP, TAR, RAR or 7z; the error says why. Replace a damaged file from a good copy.",
   },
   EncryptedArchive: {
     label: "Password-protected archive",
@@ -94,6 +96,10 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Two files claim the same provider id; only one can hold it. Remove the extra copy, or fix the id on the file that is tagged wrong, then rescan.",
   },
   MetadataDriftFromXml: { label: "Edits not written to XML" },
+  SymlinkSkipped: {
+    label: "Symbolic link skipped",
+    hint: "Folio never follows symbolic links, so nothing behind this one is imported. Put the real folder or file in the library (or bind-mount it there), or add its location as its own library.",
+  },
 } satisfies Record<HealthIssueKind, KindCopy>;
 
 /** Human title for a health kind (falls back to the raw kind). */

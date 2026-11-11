@@ -10,6 +10,7 @@ export type MainNavIconKey =
   | "Bookmark"
   | "Heart"
   | "ListPlus"
+  | "ListOrdered"
   | "Folder"
   | "Sparkles"
   | "Calendar"

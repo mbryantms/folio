@@ -7,6 +7,7 @@ import {
   Home,
   LayoutGrid,
   Library,
+  ListOrdered,
   ListPlus,
   ScrollText,
   Sparkles,
@@ -38,6 +39,9 @@ export const mainNavIcons: Record<MainNavItem["icon"], LucideIcon> = {
   // "Browse" builtin (WP-5.5) — the tabbed characters / teams / arcs /
   // publishers / creators index.
   Compass,
+  // "Reading lists" builtin: imported CBL lists, the same glyph a pinned
+  // reading-list row uses.
+  ListOrdered,
   // The remaining IconName values from admin/nav.ts — not used today by the
   // library shell, but having them in the map keeps `MainNavItem.icon: IconName |
   // …` typesafe without admin nav imports needing to know about us.

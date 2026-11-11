@@ -5,12 +5,15 @@ on the Rust origin (e.g. `http://localhost:8080/metrics`). Every series carries 
 `service="folio"` label; all metric names use the `folio_` prefix.
 
 The recorder is installed once at boot ([`observability::init`](../../crates/server/src/observability.rs));
-the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs).
+the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs). A background
+task (`observability::spawn_metrics_upkeep`, every 5 s, stopped with the server) runs the
+recorder's upkeep, which drains histogram samples into their buckets; without it, histogram
+memory grows with request count whenever nothing scrapes `/metrics`.
 
 > **Lazy registration:** counters/histograms appear only after the relevant code
 > path runs at least once. Boot-time gauges (`folio_process_*`,
 > `folio_jobs_queue_depth`, `folio_metadata_writeback_libraries_remaining`,
-> `folio_thumbs_bytes`) show immediately (`folio_thumbs_bytes` once the boot
+> `folio_auth_app_password_legacy_remaining`, `folio_thumbs_bytes`) show immediately (`folio_thumbs_bytes` once the boot
 > walk of `thumbs/` finishes).
 
 ## Catalogue
@@ -22,8 +25,11 @@ the endpoint is served by [`api::meta`](../../crates/server/src/api/meta.rs).
 | `folio_http_request_duration_seconds` | histogram | `method`, `route` |
 
 `route` is the matched route **pattern** (e.g. `/series/{series_slug}/issues/{issue_slug}`),
-never the raw URI — unmatched/proxied requests bucket under `"<unmatched>"`. The
-`/metrics` scrape itself is not counted.
+never the raw URI — unmatched/proxied requests bucket under `"<unmatched>"`.
+`method` is one of `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, or
+`OTHER` for any other method token, so a client cannot mint series by sending
+made-up methods. `status` is the numeric response status. The `/metrics` scrape
+itself is not counted.
 
 ### Process / runtime — `metrics-process` collector, sampled per scrape
 `folio_process_cpu_seconds_total`, `folio_process_resident_memory_bytes`,
@@ -58,6 +64,19 @@ The eviction counter only moves when the optional `cache.thumbs_budget_mb`
 budget is set — see [runtime-configuration.md](runtime-configuration.md).
 Alert idea: `folio_thumbs_bytes` growing toward the data volume's free space.
 
+### App-password lookup digest — [`auth::app_password`](../../crates/server/src/auth/app_password.rs)
+| Metric | Type | Labels |
+|---|---|---|
+| `folio_auth_app_password_legacy_remaining` | gauge | — |
+
+Active app passwords created before the lookup digest existed, which the
+extractor can only find by the bounded legacy scan (at most 20 argon2
+checks per unmatched token; see [opds.md](opds.md#how-a-token-is-verified)).
+Each is upgraded on its first successful use. Set at boot and refreshed when
+an app password is created, revoked or upgraded, never per request (rows
+removed by a user deletion are reflected at the next refresh). Once it stays
+at 0, a wrong token costs one indexed lookup and no hashing.
+
 ### Audit-log retention — [`jobs::audit_log_retention`](../../crates/server/src/jobs/audit_log_retention.rs) (audit 2026-11 E1)
 | Metric | Type | Labels |
 |---|---|---|
@@ -76,7 +95,9 @@ failed — check the server log for `folio::audit_log_retention` errors.
 `folio_zip_lru_{hits,misses,evictions}_total`, `folio_zip_lru_open_fds`,
 `folio_ocr_{pipeline,recognize}_seconds`, `folio_ocr_{cache,detect_cache}_{hits,misses}_total`,
 `folio_auth_lockout_total`, `folio_auth_lockout_email_total`,
-`folio_rate_limit_denied_total`, `folio_csp_violations_total`,
+`folio_auth_lockout_app_password_total`,
+`folio_rate_limit_denied_total`, `folio_csp_violations_total` (one per logged
+violation), `folio_csp_reports_rejected_total` (report bodies in no known shape),
 `folio_metadata_writeback_libraries_remaining`.
 
 Histograms named `*_seconds` use buckets

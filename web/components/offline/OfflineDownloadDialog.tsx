@@ -19,7 +19,7 @@ import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useMe } from "@/lib/api/queries";
 import type { IssueDetailView, PageInfo } from "@/lib/api/types";
-import { formatBytes, formatIssueHeading } from "@/lib/format";
+import { formatBytes, issueLabel } from "@/lib/format";
 import {
   defaultDownloadTier,
   estimateIssueBytes,
@@ -205,9 +205,9 @@ export function OfflineDownloadDialog({
           seriesName: target.seriesName ?? null,
         });
         track(
-          formatIssueHeading(
+          issueLabel(
             { title: target.issue.title, number: target.issue.number },
-            target.seriesName ?? null,
+            { seriesName: target.seriesName },
           ),
         );
       } else if (target.kind === "series") {

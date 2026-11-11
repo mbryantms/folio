@@ -33,6 +33,14 @@
 //! rating. An entity with no visible appearance for the caller is a 404
 //! on the detail route and absent from the browse index, so a restricted
 //! user can't learn names that only occur in hidden libraries.
+//!
+//! The series-level cast rows (`series_characters` / `series_teams` /
+//! `series_locations`) are a rollup of every issue in the series, so for
+//! a caller whose cap hides anything they are not read at all: membership
+//! and counts come from the issue junctions over the issues that caller
+//! can see. `series_arcs` and the series publisher describe the series
+//! itself and follow series visibility. Uncapped callers and admins keep
+//! the rollup arms (same SQL as before).
 
 use axum::{Json, http::StatusCode, response::IntoResponse, response::Response};
 use sea_orm::{
@@ -164,9 +172,10 @@ pub struct EntityDetailView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EnrichmentStatus {
-    /// No provider is configured, or this kind has no provider records.
+    /// No provider is configured, this kind has no provider records, or
+    /// nothing is cached and the caller may not queue a fetch.
     Unavailable,
-    /// Queued (by this page view or earlier) and not fetched yet.
+    /// Queued (by an admin's page view or Refresh) and not fetched yet.
     Pending,
     Done,
     Failed,
@@ -333,6 +342,11 @@ struct AclSql {
     lib: String,
     issue_cap: String,
     series_cap: String,
+    /// Some cap hides a rung ([`VisibleLibraries::hides_any`]): the
+    /// `series_characters` / `series_teams` / `series_locations` rollups
+    /// (the union of every issue in the series, hidden ones included) are
+    /// not consulted; the issue junctions over visible issues decide.
+    capped: bool,
 }
 
 /// `None` when the caller is restricted to an empty library set (no
@@ -355,16 +369,15 @@ fn acl_sql(visible: &VisibleLibraries, params: &mut Vec<Value>) -> Option<AclSql
             .collect();
         format!(" AND s.library_id IN ({})", placeholders.join(","))
     };
-    let issue_cap = visible.raw_cap_clause(
-        "s.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        params,
-    );
+    // Entity surfaces: the issue's rating AND its series' own rating, so a
+    // visible-rated issue of a hidden series never counts.
+    let issue_cap = visible.entity_issue_cap_sql("i", "s", params);
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", params);
     Some(AclSql {
         lib,
         issue_cap,
         series_cap,
+        capped: visible.hides_any(),
     })
 }
 
@@ -513,6 +526,9 @@ fn series_junction(kind: EntityKind) -> &'static str {
 fn series_members_one(kind: EntityKind, e: usize, n: usize, acl: &AclSql) -> String {
     let hits = issue_hits_one(kind, e, n, acl);
     let extra = match kind {
+        // Capped caller: the cast rollups would name issues it can't see;
+        // the issue hits above already cover every visible appearance.
+        EntityKind::Character | EntityKind::Team | EntityKind::Location if acl.capped => None,
         EntityKind::Character => Some(format!(
             "SELECT sj.series_id FROM series_characters sj \
               WHERE sj.character_id = ${e} \
@@ -552,15 +568,22 @@ fn hits_all(kind: EntityKind, acl: &AclSql) -> String {
     match kind {
         EntityKind::Character | EntityKind::Team | EntityKind::Location => {
             let (junction, fk, name) = junction_cols(kind);
-            let series_junction = series_junction(kind);
-            format!(
+            let issue_arm = format!(
                 "SELECT COALESCE(j.{fk}, e.id) AS eid, i.id AS issue_id, i.series_id AS series_id \
                    FROM {junction} j \
                    JOIN issues i ON i.id = j.issue_id \
                    JOIN series s ON s.id = i.series_id \
                    LEFT JOIN {table} e ON j.{fk} IS NULL \
                         AND e.normalized_name = btrim(lower(j.{name})) \
-                  WHERE {ivis} \
+                  WHERE {ivis}"
+            );
+            // Capped caller: issue hits only (see `AclSql::capped`).
+            if acl.capped {
+                return issue_arm;
+            }
+            let series_junction = series_junction(kind);
+            format!(
+                "{issue_arm} \
                  UNION ALL \
                  SELECT COALESCE(sj.{fk}, e.id), NULL::text, s.id \
                    FROM {series_junction} sj \
@@ -1146,7 +1169,10 @@ pub(crate) async fn detail_handler(
                 .collect()
         })
         .unwrap_or_default();
-    let (profile, enrichment, enrichment_error) = profile_state(app, kind, row.id).await;
+    // Only an admin's view may queue a provider fetch: it spends the
+    // admin's provider budget. A reader is served whatever is cached.
+    let may_fetch = user.role == entity::user::UserRole::Admin;
+    let (profile, enrichment, enrichment_error) = profile_state(app, kind, row.id, may_fetch).await;
     let links = entity_links(app, kind, row.id).await;
     Json(EntityDetailView {
         kind: kind.path().to_owned(),
@@ -1179,14 +1205,19 @@ fn profile_kind(kind: EntityKind) -> Option<ProfileKind> {
     }
 }
 
-/// Read the profile row and queue a fetch when the page is seen for the
-/// first time (or an earlier request never completed). The queueing is
-/// best effort: a Redis hiccup leaves the page reporting "pending" and
-/// the next view tries again.
+/// Read the profile row and, when `may_fetch` (an admin's view), queue a
+/// fetch when the page is seen for the first time (or an earlier request
+/// never completed). The queueing is best effort: a Redis hiccup leaves
+/// the page reporting "pending" and the next view tries again.
+///
+/// A reader's view (`may_fetch = false`) never queues provider traffic:
+/// it gets the cached profile, "pending" while a fetch an admin queued is
+/// still in flight, and "unavailable" when nothing is cached or coming.
 async fn profile_state(
     app: &AppState,
     kind: EntityKind,
     entity_id: Uuid,
+    may_fetch: bool,
 ) -> (Option<EntityProfileView>, EnrichmentStatus, Option<String>) {
     let Some(pk) = profile_kind(kind) else {
         return (None, EnrichmentStatus::Unavailable, None);
@@ -1209,6 +1240,9 @@ async fn profile_state(
         })
     });
     if !fetched && stale_request {
+        if !may_fetch {
+            return (None, EnrichmentStatus::Unavailable, None);
+        }
         if let Err(e) = crate::jobs::entity_enrich::enqueue(app, pk, entity_id, false).await {
             tracing::warn!(entity_id = %entity_id, error = %e, "entity profile: enqueue failed");
         }
@@ -1608,7 +1642,7 @@ pub(crate) async fn series_handler(
             Err(e) => return internal(e, "series hydrate"),
         }
     };
-    let mut by_id: HashMap<String, SeriesView> = hydrate_series(app, models, user.id)
+    let mut by_id: HashMap<String, SeriesView> = hydrate_series(app, models, user.id, &visible)
         .await
         .into_iter()
         .map(|s| (s.id.clone(), s))

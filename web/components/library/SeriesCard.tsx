@@ -18,7 +18,10 @@ import { useCoverLongPressActions } from "@/components/CoverLongPressActions";
 import { useCoverMenuCollectionActions } from "@/components/collections/useCoverMenuCollectionActions";
 import { SeriesPlayOverlay } from "@/components/QuickReadOverlay";
 import { CoverMorph } from "@/components/library/CoverMorph";
-import { BulkMarkReadDialog } from "@/components/library/BulkMarkReadDialog";
+import {
+  BulkMarkReadDialog,
+  BulkMarkUnreadDialog,
+} from "@/components/library/BulkMarkReadDialog";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SeriesHoverPreview } from "@/components/library/CardHoverPreview";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
@@ -28,7 +31,7 @@ import {
   HoverCardTrigger,
 } from "@/components/folio/hover-card";
 import { Badge } from "@/components/ui/badge";
-import { jsonFetch } from "@/lib/api/queries";
+import { jsonFetch, useMe } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
 import type { SeriesResumeView, SeriesView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -101,6 +104,7 @@ function SeriesCardImpl({
   const router = useRouter();
   const upsertSeriesProgress = useUpsertSeriesProgress(series.id);
   const [markAllReadOpen, setMarkAllReadOpen] = useState(false);
+  const [markAllUnreadOpen, setMarkAllUnreadOpen] = useState(false);
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "series",
     ref_id: series.id,
@@ -117,7 +121,9 @@ function SeriesCardImpl({
     },
     {
       label: "Mark all unread",
-      onSelect: () => upsertSeriesProgress.mutate({ finished: false }),
+      // Resets every issue's read state and saved page with no Undo —
+      // confirm first, like every destructive mutation.
+      onSelect: () => setMarkAllUnreadOpen(true),
     },
     ...collectionActions.actions,
     {
@@ -328,6 +334,18 @@ function SeriesCardImpl({
         }
         isPending={upsertSeriesProgress.isPending}
       />
+      <BulkMarkUnreadDialog
+        open={markAllUnreadOpen}
+        onOpenChange={setMarkAllUnreadOpen}
+        title={`Mark every issue in ${series.name} as unread?`}
+        onConfirm={() =>
+          upsertSeriesProgress.mutate(
+            { finished: false },
+            { onSuccess: () => setMarkAllUnreadOpen(false) },
+          )
+        }
+        isPending={upsertSeriesProgress.isPending}
+      />
     </>
   );
 }
@@ -399,6 +417,9 @@ export function MetaNeedsBadge({
 }) {
   const dotPref = useCoverCollectionDot();
   const router = useRouter();
+  // Admin hint: the fix is the admin-only match dialog.
+  const isAdmin = useMe().data?.role === "admin";
+  if (!isAdmin) return null;
   if (!dotPref.enabled) return null;
   if (series.metadata_completeness_tier !== "needs_metadata") return null;
   const badgeClass = cn(

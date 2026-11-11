@@ -8,7 +8,12 @@
 //!     (the dev path: page is on :3000, API is on :8080, so the auth cookie
 //!     can't ride along on the cross-origin upgrade).
 //!   - cookie session — the prod path, when the page is served same-origin
-//!     by the Rust binary.
+//!     by the Rust binary. A cookie-authenticated upgrade must carry an
+//!     `Origin` equal to the configured public origin (`public_url`):
+//!     WebSocket upgrades are outside both the CSRF header check and CORS,
+//!     and `SameSite=Lax` still sends the cookie from a sibling subdomain.
+//!     A ticket-authenticated upgrade has no Origin requirement — the
+//!     ticket is the credential and non-browser clients send no Origin.
 //!
 //! On lagged receivers (broadcast channel overflow), we send a `lagged`
 //! ping frame and continue; clients that care can refresh.
@@ -20,7 +25,7 @@ use axum::{
         Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
+    http::{StatusCode, header},
     response::IntoResponse,
     routing::get,
 };
@@ -31,6 +36,7 @@ use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
 use crate::auth::extractor::{AuthRejection, admit_state};
+use crate::auth::origin::origin_is_public;
 use crate::auth::{CurrentUser, ws_ticket};
 use crate::state::AppState;
 use server_macros::handler;
@@ -83,7 +89,21 @@ pub async fn scan_events(
             }
         },
         None => match cookie_user {
-            Ok(cu) => cu.id,
+            Ok(cu) => {
+                let origin = req.headers().get(header::ORIGIN);
+                if !origin_is_public(origin, &app.cfg().public_url) {
+                    tracing::debug!(
+                        origin = ?origin,
+                        "ws_scan_events: cookie upgrade from a foreign or missing origin"
+                    );
+                    return super::error(
+                        StatusCode::FORBIDDEN,
+                        "auth.permission_denied",
+                        "WebSocket upgrade must come from the app's own origin",
+                    );
+                }
+                cu.id
+            }
             Err(_) => return unauthorized(),
         },
     };

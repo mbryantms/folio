@@ -54,6 +54,12 @@ const QUERY_DEBOUNCE_MS = 200;
  *    matching the modal's behaviour.
  *  - Clicking outside the panel closes it (input stays focused
  *    until blur).
+ *  - Focus leaving the search root (Tab, Shift+Tab, a programmatic
+ *    focus elsewhere, the window losing focus) closes it. The rows are
+ *    reached with ↑/↓ from the input (`aria-activedescendant`), so they
+ *    sit out of the Tab order. The panel's other controls (Clear, the
+ *    recent-search chips, the footer link) have no arrow-key path, so
+ *    they stay tabbable; the panel stays open while focus is on one.
  */
 export function TopbarSearchInline({ className }: { className?: string }) {
   const router = useRouter();
@@ -65,6 +71,11 @@ export function TopbarSearchInline({ className }: { className?: string }) {
   const [highlighted, setHighlighted] = React.useState(0);
   const rootRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  // Set while a pointer is down inside the root. A click on a row that
+  // the browser doesn't focus (Safari buttons, the panel's scrollbar)
+  // blurs the input with a null `relatedTarget`; that must not close
+  // the panel before the row's click lands.
+  const pointerInsideRef = React.useRef(false);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebounced(raw.trim()), QUERY_DEBOUNCE_MS);
@@ -141,6 +152,48 @@ export function TopbarSearchInline({ className }: { className?: string }) {
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
+
+  // Focus-out close, Escape from inside the panel, and the
+  // pointer-inside flag. Native listeners on the root: the root carries
+  // the `combobox` role, and handlers on it would make it an interactive
+  // element that has to be focusable itself.
+  React.useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    function onFocusOut(e: FocusEvent) {
+      const next = e.relatedTarget as Node | null;
+      if (next && root!.contains(next)) return;
+      if (!next && pointerInsideRef.current) return;
+      setOpen(false);
+    }
+    // The input handles its own Escape; from a control inside the panel,
+    // close and hand focus back to the field. Focus first: the input's
+    // `onFocus` reopens, the close then wins.
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" || e.target === inputRef.current) return;
+      e.preventDefault();
+      inputRef.current?.focus();
+      setOpen(false);
+    }
+    function onPointerDown() {
+      pointerInsideRef.current = true;
+    }
+    function onPointerUp() {
+      pointerInsideRef.current = false;
+    }
+    root.addEventListener("focusout", onFocusOut);
+    root.addEventListener("keydown", onKeyDown);
+    root.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    return () => {
+      root.removeEventListener("focusout", onFocusOut);
+      root.removeEventListener("keydown", onKeyDown);
+      root.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+    };
+  }, []);
 
   // Reset highlight when the result set changes so the cursor doesn't
   // stick on a removed row after a keystroke.
@@ -249,6 +302,9 @@ export function TopbarSearchInline({ className }: { className?: string }) {
           aria-label="Search the library"
           aria-autocomplete="list"
           aria-controls={open ? "topbar-search-panel" : undefined}
+          aria-activedescendant={
+            open && flat.length > 0 ? optionId(safeHighlighted) : undefined
+          }
           className="border-border bg-muted/40 focus-visible:ring-ring h-9 w-full rounded-md border pr-8 pl-8 text-sm transition-colors focus:bg-transparent focus-visible:ring-2 focus-visible:outline-none"
         />
         {raw ? (
@@ -349,6 +405,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                 {visits.map((visit, idx) => (
                   <ResultRow
                     key={`${visit.kind}:${visit.id}`}
+                    id={optionId(idx)}
                     selected={idx === safeHighlighted}
                     onHover={() => setHighlighted(idx)}
                     onSelect={() => commitRow(visit, idx)}
@@ -370,6 +427,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                   return (
                     <ResultRow
                       key={action.id}
+                      id={optionId(idx)}
                       selected={idx === safeHighlighted}
                       onHover={() => setHighlighted(idx)}
                       onSelect={() => commitRow(action, idx)}
@@ -403,6 +461,7 @@ export function TopbarSearchInline({ className }: { className?: string }) {
                       return (
                         <ResultRow
                           key={hit.id}
+                          id={optionId(idx)}
                           selected={idx === safeHighlighted}
                           onHover={() => setHighlighted(idx)}
                           onSelect={() => commitRow(hit, idx)}
@@ -438,6 +497,10 @@ export function TopbarSearchInline({ className }: { className?: string }) {
   );
 }
 
+function optionId(index: number): string {
+  return `topbar-search-option-${index}`;
+}
+
 function ResultSection({
   title,
   children,
@@ -456,11 +519,13 @@ function ResultSection({
 }
 
 function ResultRow({
+  id,
   selected,
   onHover,
   onSelect,
   children,
 }: {
+  id: string;
   selected: boolean;
   onHover: () => void;
   onSelect: () => void;
@@ -476,8 +541,11 @@ function ResultRow({
     <li>
       <button
         ref={ref}
+        id={id}
         type="button"
         role="option"
+        // Reached with ↑/↓ from the input, not with Tab.
+        tabIndex={-1}
         aria-selected={selected}
         onMouseEnter={onHover}
         onClick={onSelect}

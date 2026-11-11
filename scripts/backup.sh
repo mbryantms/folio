@@ -15,12 +15,20 @@
 
 set -euo pipefail
 
+# Backups hold the full database and the server's signing, pepper and
+# encryption keys (the `secrets/` dir in comic_data), so everything this
+# script writes is owner-only: new dirs 0700, new files 0600.
+umask 077
+
 MODE="${1:-nightly}"
 FOLIO_HOME="${FOLIO_HOME:-/opt/folio}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/folio}"
 COMPOSE_FILE="${COMPOSE_FILE:-$FOLIO_HOME/compose.prod.yml}"
 POSTGRES_RETAIN="${POSTGRES_RETAIN:-14}"
 DATA_RETAIN="${DATA_RETAIN:-56}"
+
+# Same pinned digest as the `app-init` service in compose.prod.yml.
+HELPER_IMAGE="alpine:3@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a"
 
 DATE="$(date +%F)"
 TS="$(date +%FT%H%M%S)"
@@ -31,7 +39,9 @@ die() { log "ERROR: $*" >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || die "compose file not found: $COMPOSE_FILE"
 command -v docker >/dev/null || die "docker not in PATH"
 
-mkdir -p "$BACKUP_DIR"
+# -m applies only when the directory is created here; an existing
+# directory keeps the mode its owner chose.
+mkdir -p -m 700 "$BACKUP_DIR"
 
 # ───────────── Postgres dump ─────────────
 postgres_dump() {
@@ -39,6 +49,9 @@ postgres_dump() {
     log "postgres: pg_dump → $out"
     docker compose -f "$COMPOSE_FILE" exec -T postgres \
         pg_dump -U comic -Fc comic_reader > "$out.tmp"
+    # A .tmp left by an earlier failed run keeps its old mode when the
+    # redirect truncates it, so set the mode explicitly.
+    chmod 600 "$out.tmp"
     mv "$out.tmp" "$out"
     log "postgres: $(stat -c%s "$out" 2>/dev/null || stat -f%z "$out") bytes"
 
@@ -52,11 +65,16 @@ data_tar() {
     log "data:     tar → $out"
     # `:ro` on the volume avoids any in-flight writes corrupting the tar.
     # alpine + tar is ~5MB, fast to pull, no host deps.
+    # The tar is written by root inside the helper container, where the
+    # host umask does not apply, so the container sets its own umask,
+    # chmods the file to 0600 and hands it to the user running this
+    # script, who could not otherwise read a root-owned 0600 file.
     docker run --rm \
         -v folio_comic_data:/d:ro \
         -v "$BACKUP_DIR:/b" \
-        alpine \
-        tar czf "/b/data-$DATE.tgz.tmp" -C /d .
+        "$HELPER_IMAGE" \
+        sh -c 'umask 077 && tar czf "$1" -C /d . && chmod 600 "$1" && chown "$2:$3" "$1"' \
+        sh "/b/data-$DATE.tgz.tmp" "$(id -u)" "$(id -g)"
     mv "$out.tmp" "$out"
     log "data:     $(stat -c%s "$out" 2>/dev/null || stat -f%z "$out") bytes"
 

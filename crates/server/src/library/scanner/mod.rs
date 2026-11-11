@@ -79,7 +79,59 @@ pub async fn scan_library_with_run_id(
     force: bool,
     requested_scan_id: Option<Uuid>,
 ) -> anyhow::Result<ScanStats> {
-    scan_library_inner(state, library_id, force, requested_scan_id, None).await
+    scan_library_inner(state, library_id, force, requested_scan_id, None, None).await
+}
+
+/// [`scan_library_with_run_id`] for the scan job, which holds the library's
+/// coalescing key as a lease (`jobs::scan_lease`). When `lease_lost` is set
+/// (another run took the key) the scan stops through the cooperative-cancel
+/// path and the run closes as `cancelled` with the superseded reason.
+#[tracing::instrument(
+    skip_all,
+    name = "scan_library",
+    fields(library_id = %library_id, force = force, scan_id = tracing::field::Empty),
+)]
+pub async fn scan_library_leased(
+    state: &AppState,
+    library_id: Uuid,
+    force: bool,
+    requested_scan_id: Option<Uuid>,
+    lease_lost: Option<Arc<AtomicBool>>,
+) -> anyhow::Result<ScanStats> {
+    scan_library_inner(
+        state,
+        library_id,
+        force,
+        requested_scan_id,
+        None,
+        lease_lost,
+    )
+    .await
+}
+
+/// [`scan_library_scoped`] with the scan job's lease flag; see
+/// [`scan_library_leased`].
+#[tracing::instrument(
+    skip_all,
+    name = "scan_library_scoped",
+    fields(library_id = %library_id, scope_dirs = scope.len(), scan_id = tracing::field::Empty),
+)]
+pub async fn scan_library_scoped_leased(
+    state: &AppState,
+    library_id: Uuid,
+    scope: &[PathBuf],
+    requested_scan_id: Option<Uuid>,
+    lease_lost: Option<Arc<AtomicBool>>,
+) -> anyhow::Result<ScanStats> {
+    scan_library_inner(
+        state,
+        library_id,
+        false,
+        requested_scan_id,
+        Some(scope),
+        lease_lost,
+    )
+    .await
 }
 
 /// Watcher-scoped library scan (WP-3.1). Runs the same pipeline as a
@@ -101,7 +153,15 @@ pub async fn scan_library_scoped(
     scope: &[PathBuf],
     requested_scan_id: Option<Uuid>,
 ) -> anyhow::Result<ScanStats> {
-    scan_library_inner(state, library_id, false, requested_scan_id, Some(scope)).await
+    scan_library_inner(
+        state,
+        library_id,
+        false,
+        requested_scan_id,
+        Some(scope),
+        None,
+    )
+    .await
 }
 
 async fn scan_library_inner(
@@ -110,6 +170,7 @@ async fn scan_library_inner(
     force: bool,
     requested_scan_id: Option<Uuid>,
     scope: Option<&[PathBuf]>,
+    lease_lost: Option<Arc<AtomicBool>>,
 ) -> anyhow::Result<ScanStats> {
     let lib = library::Entity::find_by_id(library_id)
         .one(&state.db)
@@ -174,7 +235,12 @@ async fn scan_library_inner(
     // its heartbeat and sets this flag, which short-circuits not-yet-started
     // folders and skips the reconcile pass (reconciling a partial scan would
     // soft-delete every series the cancelled run never reached).
+    //
+    // The same flag stops a run whose coalescing-key lease was lost
+    // (`lease_lost`, R-03): another run of this library holds the key, so
+    // this one must not keep writing alongside it.
     let cancel = Arc::new(AtomicBool::new(false));
+    let lease_lost = lease_lost.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
     let result = run_phases(
         state,
         &lib,
@@ -185,13 +251,21 @@ async fn scan_library_inner(
         &mut health,
         &mut events,
         cancel.clone(),
+        &lease_lost,
         scope,
     )
     .await;
     let cancelled = cancel.load(Ordering::Relaxed);
+    let cause = if !cancelled {
+        CancelCause::NotCancelled
+    } else if lease_lost.load(Ordering::Relaxed) {
+        CancelCause::Superseded
+    } else {
+        CancelCause::Admin
+    };
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result, cancelled,
+        state, &lib, scan_id, started, &mut stats, health, events, &result, cause,
     )
     .await?;
 
@@ -241,6 +315,9 @@ struct PlannedFolder {
     /// non-empty the folder's walk is *incomplete*: it is processed, its
     /// files are seen, but it never authorises removal of the unseen ones.
     unreadable: Vec<enumerate::UnreadableFolder>,
+    /// Symbolic links the walk met and did not follow; each is reported as
+    /// `SymlinkSkipped`.
+    symlinks: Vec<PathBuf>,
     known_series_id: Option<Uuid>,
     skipped_unchanged: bool,
     /// Set when the series was discovered beneath a publisher container
@@ -467,23 +544,35 @@ pub async fn scan_series_folder(
     }
     let root_path = lib.root_path.clone();
     let folder_pb = folder.to_path_buf();
-    let canonicalized: anyhow::Result<(std::path::PathBuf, std::path::PathBuf)> =
-        tokio::task::spawn_blocking(move || {
-            let root_canon = std::fs::canonicalize(&root_path)
-                .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
-            let folder_canon = std::fs::canonicalize(&folder_pb)
-                .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
-            Ok((root_canon, folder_canon))
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("canonicalize task failed: {e}"))?;
-    let (root_canon, folder_canon) = canonicalized?;
-    if !folder_canon.starts_with(&root_canon) {
-        anyhow::bail!(
-            "series folder is not inside the library root: {}",
-            folder_canon.display()
-        );
-    }
+    let checked: anyhow::Result<()> = tokio::task::spawn_blocking(move || {
+        let root_canon = std::fs::canonicalize(&root_path)
+            .map_err(|e| anyhow::anyhow!("library root unreadable: {e}"))?;
+        let folder_canon = std::fs::canonicalize(&folder_pb)
+            .map_err(|e| anyhow::anyhow!("series folder unreadable: {e}"))?;
+        // Links below the root are never followed: the folder must be
+        // the root (its own links resolved) plus the same names, so no
+        // folder between the root and it, nor it, is a link.
+        let rel = folder_pb
+            .strip_prefix(&root_path)
+            .or_else(|_| folder_pb.strip_prefix(&root_canon))
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "series folder is not inside the library root: {}",
+                    folder_pb.display()
+                )
+            })?;
+        if !folder_canon.starts_with(&root_canon) || folder_canon != root_canon.join(rel) {
+            anyhow::bail!(
+                "series folder is not inside the library root, or is reached through \
+                     a symbolic link: {}",
+                folder_pb.display()
+            );
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("canonicalize task failed: {e}"))?;
+    checked?;
 
     let (scan_id, batch_id) = open_scan_run(
         state,
@@ -521,7 +610,10 @@ pub async fn scan_series_folder(
         &lib,
         scan_id,
         series_id,
-        &folder_canon,
+        // The stored spelling: with no link below the root it names the same
+        // folder as its canonical path, and it is the spelling the issue
+        // rows were written with (a root that is itself a link differs).
+        folder,
         &mut stats,
         &mut health,
         &mut events,
@@ -530,7 +622,15 @@ pub async fn scan_series_folder(
     .await;
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result, false,
+        state,
+        &lib,
+        scan_id,
+        started,
+        &mut stats,
+        health,
+        events,
+        &result,
+        CancelCause::NotCancelled,
     )
     .await?;
 
@@ -606,7 +706,15 @@ pub async fn scan_issue_file(
     .await;
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result, false,
+        state,
+        &lib,
+        scan_id,
+        started,
+        &mut stats,
+        health,
+        events,
+        &result,
+        CancelCause::NotCancelled,
     )
     .await?;
     result.map(|()| stats)
@@ -630,11 +738,26 @@ async fn open_scan_run(
         // it so every event/emission under the scan can carry the link.
         let batch_id = existing.batch_id;
         if existing.state == ScanRunState::Queued {
-            let mut am: ScanRunAM = existing.into();
-            am.state = Set(ScanRunState::Running);
-            am.started_at = Set(now);
-            am.error = Set(None);
-            am.update(&state.db).await?;
+            // Conditional on still being `queued`: a cancel that landed
+            // after the read above keeps the row `cancelled`, and the scan
+            // then stops at its cancel check.
+            ScanRunEntity::update_many()
+                .col_expr(
+                    entity::scan_run::Column::State,
+                    sea_orm::sea_query::Expr::value(ScanRunState::Running),
+                )
+                .col_expr(
+                    entity::scan_run::Column::StartedAt,
+                    sea_orm::sea_query::Expr::value(now),
+                )
+                .col_expr(
+                    entity::scan_run::Column::Error,
+                    sea_orm::sea_query::Expr::value(Option::<String>::None),
+                )
+                .filter(entity::scan_run::Column::Id.eq(scan_id))
+                .filter(entity::scan_run::Column::State.eq(ScanRunState::Queued))
+                .exec(&state.db)
+                .await?;
         }
         state.scan_progress.register(scan_id, batch_id);
         return Ok((scan_id, batch_id));
@@ -659,6 +782,89 @@ async fn open_scan_run(
     Ok((scan_id, None))
 }
 
+/// Test seam: hold a library's phase-3 folders before they start, so a test
+/// can act while a scan is certainly mid-way. Inert unless a test installed
+/// a gate (one relaxed atomic load per folder).
+#[doc(hidden)]
+pub mod folder_gate {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use uuid::Uuid;
+
+    static ANY: AtomicBool = AtomicBool::new(false);
+    static GATES: OnceLock<Mutex<HashMap<Uuid, Arc<FolderGate>>>> = OnceLock::new();
+
+    pub struct FolderGate {
+        entered: AtomicU64,
+        open: tokio::sync::watch::Sender<bool>,
+    }
+
+    impl FolderGate {
+        /// Folders that have reached the gate.
+        pub fn entered(&self) -> u64 {
+            self.entered.load(Ordering::Relaxed)
+        }
+        /// Let every held and later folder through.
+        pub fn open(&self) {
+            self.open.send_replace(true);
+        }
+    }
+
+    fn gates() -> &'static Mutex<HashMap<Uuid, Arc<FolderGate>>> {
+        GATES.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Hold `library_id`'s phase-3 folders until the gate is opened.
+    pub fn install(library_id: Uuid) -> Arc<FolderGate> {
+        let gate = Arc::new(FolderGate {
+            entered: AtomicU64::new(0),
+            open: tokio::sync::watch::channel(false).0,
+        });
+        gates()
+            .lock()
+            .expect("folder gate mutex")
+            .insert(library_id, gate.clone());
+        ANY.store(true, Ordering::Relaxed);
+        gate
+    }
+
+    /// Drop `library_id`'s gate.
+    pub fn remove(library_id: Uuid) {
+        gates()
+            .lock()
+            .expect("folder gate mutex")
+            .remove(&library_id);
+    }
+
+    pub(super) async fn pass(library_id: Uuid) {
+        if !ANY.load(Ordering::Relaxed) {
+            return;
+        }
+        let gate = gates()
+            .lock()
+            .expect("folder gate mutex")
+            .get(&library_id)
+            .cloned();
+        let Some(gate) = gate else {
+            return;
+        };
+        gate.entered.fetch_add(1, Ordering::Relaxed);
+        let mut rx = gate.open.subscribe();
+        let _ = rx.wait_for(|open| *open).await;
+    }
+}
+
+/// Why a run stopped early, for [`finalize_run`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CancelCause {
+    NotCancelled,
+    /// The cancel endpoint flipped the run to `cancelled` (D8).
+    Admin,
+    /// The run's coalescing-key lease was lost to another run (R-03).
+    Superseded,
+}
+
 /// Persist health issues, close the `scan_runs` row, emit the final WS event
 /// (Completed | Failed), and record Prometheus metrics. Shared by full and
 /// per-series scans so both paths produce identical observability output.
@@ -672,8 +878,9 @@ async fn finalize_run(
     health: HealthCollector,
     mut events: EventCollector,
     result: &anyhow::Result<()>,
-    cancelled: bool,
+    cause: CancelCause,
 ) -> anyhow::Result<()> {
+    let cancelled = cause != CancelCause::NotCancelled;
     // WP-7.4: a scan that changed the catalogue (or failed part-way,
     // possibly after writing) can move any series' neighbours — drop the
     // similar-series cache. Every scan kind funnels through here.
@@ -714,7 +921,20 @@ async fn finalize_run(
     // partial `result` — the endpoint already flipped the row + emitted the
     // terminal WS event, so here we just persist the partial stats and skip
     // re-emitting (see the event block below).
-    let (final_state, error) = if cancelled {
+    let run_row = ScanRunEntity::find_by_id(scan_id)
+        .one(&state.db)
+        .await?
+        .expect("scan run row");
+    // A superseded run (its coalescing-key lease was lost) also closes as
+    // `cancelled`, unless an admin cancel landed first; nobody emitted its
+    // terminal event yet, so it is emitted below.
+    let superseded = cause == CancelCause::Superseded && run_row.state != ScanRunState::Cancelled;
+    let (final_state, error) = if superseded {
+        (
+            ScanRunState::Cancelled,
+            Some(crate::jobs::scan::SUPERSEDED_REASON.to_string()),
+        )
+    } else if cancelled {
         (
             ScanRunState::Cancelled,
             Some("Cancelled by admin".to_string()),
@@ -726,10 +946,6 @@ async fn finalize_run(
         }
     };
 
-    let run_row = ScanRunEntity::find_by_id(scan_id)
-        .one(&state.db)
-        .await?
-        .expect("scan run row");
     let run_batch_id = run_row.batch_id;
     // Narrow-scan scope for the completion event (post-audit T1.6).
     let run_series_id = run_row.series_id;
@@ -748,8 +964,15 @@ async fn finalize_run(
     }
 
     // On cancel the endpoint already emitted the terminal `ScanEvent::Failed`,
-    // so don't double-emit here.
-    if !cancelled {
+    // so don't double-emit here. A superseded run had no endpoint.
+    if superseded {
+        state.events.emit(ScanEvent::Failed {
+            library_id,
+            scan_id,
+            error: crate::jobs::scan::SUPERSEDED_REASON.to_owned(),
+            batch_id: run_batch_id,
+        });
+    } else if !cancelled {
         match result {
             Ok(()) => state.events.emit(ScanEvent::Completed {
                 library_id,
@@ -781,8 +1004,15 @@ async fn finalize_run(
             Action::Cancelled,
             Severity::Warning,
             format!(
-                "Scan cancelled — partial: {} added, {} updated, {} removed",
-                stats.files_added, stats.files_updated, stats.issues_removed
+                "{} — partial: {} added, {} updated, {} removed",
+                if superseded {
+                    "Scan stopped: another scan of this library took over"
+                } else {
+                    "Scan cancelled"
+                },
+                stats.files_added,
+                stats.files_updated,
+                stats.issues_removed
             ),
         );
     } else {
@@ -945,8 +1175,57 @@ pub(crate) async fn fail_unstarted_run(
     let Some(scan_id) = requested_scan_id else {
         return;
     };
+    close_unstarted_run(
+        state,
+        library_id,
+        scan_id,
+        ScanRunState::Failed,
+        error,
+        false,
+    )
+    .await;
+}
+
+/// Close a run as `cancelled` without scanning: the scan job found that
+/// another run of the library holds the coalescing key (R-03). Closes a
+/// `queued` row, and also a `running` one: a job re-delivered after a crash
+/// finds its row still `running`, and since this run's id does not hold the
+/// key, any live copy of it sees the same and stops. Recorded like a run
+/// cancelled from the queue ([`cancel_queued_runs`]): `state='cancelled'`
+/// with `reason`, a terminal `ScanEvent::Failed`, and its scan-all batch
+/// finalized. No-op on a terminal row. Best-effort: failures are logged.
+pub(crate) async fn cancel_superseded_run(
+    state: &AppState,
+    library_id: Uuid,
+    scan_id: Uuid,
+    reason: &str,
+) {
+    close_unstarted_run(
+        state,
+        library_id,
+        scan_id,
+        ScanRunState::Cancelled,
+        reason,
+        true,
+    )
+    .await;
+}
+
+async fn close_unstarted_run(
+    state: &AppState,
+    library_id: Uuid,
+    scan_id: Uuid,
+    final_state: ScanRunState,
+    error: &str,
+    include_running: bool,
+) {
     let run = match ScanRunEntity::find_by_id(scan_id).one(&state.db).await {
-        Ok(Some(r)) if r.state == ScanRunState::Queued => r,
+        Ok(Some(r))
+            if r.state == ScanRunState::Queued
+                || (include_running && r.state == ScanRunState::Running) =>
+        {
+            r
+        }
         Ok(_) => return,
         Err(e) => {
             tracing::error!(error = %e, %scan_id, "scan: load unstarted run failed");
@@ -955,7 +1234,7 @@ pub(crate) async fn fail_unstarted_run(
     };
     let batch_id = run.batch_id;
     let mut am: ScanRunAM = run.into();
-    am.state = Set(ScanRunState::Failed);
+    am.state = Set(final_state);
     am.ended_at = Set(Some(Utc::now().fixed_offset()));
     am.error = Set(Some(error.to_owned()));
     if let Err(e) = am.update(&state.db).await {
@@ -1217,10 +1496,31 @@ async fn emit_progress(
     }
 }
 
+/// A reconcile that restored a soft-removed series changed what the
+/// catalogue lists even when no issue flipped (a series already hidden with
+/// live issues is healed without touching its issues, so
+/// `ScanStats::mutated` can stay false): drop the caches `finalize_run`
+/// drops for a mutating scan that read `series.removed_at`.
+fn invalidate_after_series_restore(state: &AppState, library_id: Uuid, series_restored: u64) {
+    if series_restored > 0 {
+        state.similarity.invalidate_all();
+        state.duplicates.invalidate(library_id);
+    }
+}
+
+/// What the planner knows about an existing series row, keyed by folder.
+#[derive(Debug, Clone, Copy)]
+struct KnownSeries {
+    id: Uuid,
+    last_scanned_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    /// The series row itself is soft-removed (its folder went missing).
+    removed: bool,
+}
+
 async fn known_series_by_folder(
     state: &AppState,
     lib: &library::Model,
-) -> anyhow::Result<HashMap<String, (Uuid, Option<chrono::DateTime<chrono::FixedOffset>>)>> {
+) -> anyhow::Result<HashMap<String, KnownSeries>> {
     let rows = entity::series::Entity::find()
         .filter(series::Column::LibraryId.eq(lib.id))
         .all(&state.db)
@@ -1228,10 +1528,51 @@ async fn known_series_by_folder(
     Ok(rows
         .into_iter()
         .filter_map(|s| {
-            s.folder_path
-                .map(|folder| (folder, (s.id, s.last_scanned_at)))
+            s.folder_path.map(|folder| {
+                (
+                    folder,
+                    KnownSeries {
+                        id: s.id,
+                        last_scanned_at: s.last_scanned_at,
+                        removed: s.removed_at.is_some(),
+                    },
+                )
+            })
         })
         .collect())
+}
+
+/// Paths named by the library's open (unresolved) `SymlinkSkipped`
+/// findings.
+async fn open_symlink_findings(
+    db: &sea_orm::DatabaseConnection,
+    library_id: Uuid,
+) -> anyhow::Result<HashSet<String>> {
+    use entity::library_health_issue as lhi;
+    let payloads: Vec<serde_json::Value> = lhi::Entity::find()
+        .select_only()
+        .column(lhi::Column::Payload)
+        .filter(lhi::Column::LibraryId.eq(library_id))
+        .filter(lhi::Column::Kind.eq(lhi::HealthIssueKind::SymlinkSkipped))
+        .filter(lhi::Column::ResolvedAt.is_null())
+        .into_tuple()
+        .all(db)
+        .await?;
+    Ok(payloads
+        .iter()
+        .filter_map(|p| p.get("data")?.get("path")?.as_str().map(str::to_owned))
+        .collect())
+}
+
+/// One INFO line and one `SymlinkSkipped` finding per symbolic link the
+/// scan met and did not follow.
+fn report_skipped_symlink(library_id: Uuid, path: PathBuf, health: &mut HealthCollector) {
+    tracing::info!(
+        %library_id,
+        path = %path.display(),
+        "scanner: symbolic link skipped (links are never followed)"
+    );
+    health.emit(crate::library::health::IssueKind::SymlinkSkipped { path });
 }
 
 async fn list_archives_for_plan(
@@ -1245,6 +1586,39 @@ async fn list_archives_for_plan(
     })
     .await
     .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))
+}
+
+/// Does an unchanged folder (mtime not past `last_scanned_at`) still need
+/// processing? `archives` is every archive the walk listed, `removed` is
+/// the series row's own soft-removal, `paths` its
+/// [`series_removal_paths`](crate::library::reconcile::series_removal_paths)
+/// entry. Paths compare as the reconcile's `seen_paths` do
+/// (`to_string_lossy` of the walked path against `issue.file_path`).
+///
+/// - Any series: a walked archive is the path of a restorable soft-removed
+///   issue (the folder went away and came back with its old mtime).
+/// - A removed series: a walked archive the series has no row for at all
+///   (its rows were hard-purged, or never existed). A removed series whose
+///   archives are all known rows (live issues, which the reconcile's last
+///   step heals without a walk, or sticky Duplicates-page removals) or
+///   that has no archive stays skipped.
+///
+/// A permanently deleted file matches no walked archive, so it never turns
+/// the skip off.
+fn walk_needs_processing(
+    archives: &[PathBuf],
+    removed: bool,
+    paths: Option<&crate::library::reconcile::SeriesRemovalPaths>,
+) -> bool {
+    archives.iter().any(|p| {
+        let p = p.to_string_lossy();
+        match paths {
+            Some(s) => {
+                s.restorable.contains(p.as_ref()) || (removed && !s.known.contains(p.as_ref()))
+            }
+            None => removed,
+        }
+    })
 }
 
 async fn build_library_scan_plan(
@@ -1261,6 +1635,18 @@ async fn build_library_scan_plan(
     };
 
     let known = known_series_by_folder(state, lib).await?;
+    // Paths of soft-removed issues a returning file would restore (and, for
+    // a removed series, every path it has a row for), one query per scan.
+    // Moving a folder away and back keeps its mtime, so the unchanged-folder
+    // skip below would leave those issues removed forever; a folder whose
+    // walk finds one of them is processed instead.
+    let removal_paths = crate::library::reconcile::series_removal_paths(&state.db, lib.id).await?;
+    let removal_paths = &removal_paths;
+    // Paths of the library's open `SymlinkSkipped` findings, one query per
+    // scan: the unchanged-folder skip below is turned off for a folder whose
+    // walk meets a link not reported yet.
+    let reported_links = open_symlink_findings(&state.db, lib.id).await?;
+    let reported_links = &reported_links;
     // Post-audit T1.2: folders in flight per scan are their own knob —
     // queue concurrency (`scan_worker_count`) × per-scan fan-out used to
     // multiply into up to n² open transactions.
@@ -1276,11 +1662,17 @@ async fn build_library_scan_plan(
             let folder = candidate.path.clone();
             let publisher_hint = candidate.publisher_hint.clone();
             let known_entry = known.get(&folder.to_string_lossy().into_owned()).copied();
+            let paths = known_entry.and_then(|k| removal_paths.get(&k.id));
             async move {
-                let mut known_series_id = known_entry.map(|(id, _)| id);
+                let mut known_series_id = known_entry.map(|k| k.id);
                 let mut skipped_unchanged = false;
                 let walk = if !force {
-                    if let Some((_id, Some(last))) = known_entry {
+                    if let Some(KnownSeries {
+                        last_scanned_at: Some(last),
+                        removed,
+                        ..
+                    }) = known_entry
+                    {
                         let folder_for_walk = folder.clone();
                         let ignore_for_walk = Arc::clone(&ignore);
                         let last_utc = last.to_utc();
@@ -1293,12 +1685,23 @@ async fn build_library_scan_plan(
                         })
                         .await
                         .map_err(|e| anyhow::anyhow!("archive walk task failed: {e}"))?;
-                        skipped_unchanged = !walk.changed_since;
+                        // A link the walk met that no open `SymlinkSkipped`
+                        // finding names yet turns the skip off once, so rows
+                        // indexed through it are reconciled and the finding
+                        // recorded; with the finding open, the folder is
+                        // skipped again as usual.
+                        let new_link = walk
+                            .symlinks
+                            .iter()
+                            .any(|l| !reported_links.contains(l.to_string_lossy().as_ref()));
+                        skipped_unchanged = !walk.changed_since
+                            && !new_link
+                            && !walk_needs_processing(&walk.archives, removed, paths);
                         walk
                     } else {
                         let walk = list_archives_for_plan(&folder, &ignore).await?;
-                        if let Some((id, _)) = known_entry {
-                            known_series_id = Some(id);
+                        if let Some(k) = known_entry {
+                            known_series_id = Some(k.id);
                         }
                         walk
                     }
@@ -1309,6 +1712,7 @@ async fn build_library_scan_plan(
                     path: folder,
                     archives: walk.archives,
                     unreadable: walk.unreadable,
+                    symlinks: walk.symlinks,
                     known_series_id,
                     skipped_unchanged,
                     publisher_hint,
@@ -1341,6 +1745,7 @@ async fn build_series_scan_plan(
             path: folder.to_path_buf(),
             archives: walk.archives,
             unreadable: walk.unreadable,
+            symlinks: walk.symlinks,
             known_series_id: Some(series_id),
             skipped_unchanged: false,
             publisher_hint: None,
@@ -1463,7 +1868,7 @@ async fn run_series_phases(
     )
     .await;
     let reconcile_started = Instant::now();
-    crate::library::reconcile::reconcile_series_seen(
+    let series_restored = crate::library::reconcile::reconcile_series_seen(
         &state.db,
         series_id,
         &seen_paths,
@@ -1472,6 +1877,7 @@ async fn run_series_phases(
         events,
     )
     .await?;
+    invalidate_after_series_restore(state, lib.id, series_restored);
     stats.record_phase("reconcile", reconcile_started.elapsed());
     progress.completed = progress.completed.saturating_add(1).min(progress.total);
     emit_progress(
@@ -1561,6 +1967,61 @@ async fn run_issue_phase(
     )
     .await;
     let path = PathBuf::from(&row.file_path);
+    // Links below the root are never followed, here either: a stored path
+    // that is (or runs through) a link is not ingested, and the row is left
+    // for the next full scan to reconcile. Missing / I/O errors fall through
+    // to the checks below, which already handle them.
+    let root = PathBuf::from(&lib.root_path);
+    let check_path = path.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        let canon = std::fs::canonicalize(&root).ok();
+        crate::library::no_follow::open_below_roots(&root, canon.as_deref(), &check_path).map(drop)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("issue path check task failed: {e}"))?;
+    let refused = match checked {
+        Err(crate::library::no_follow::Refusal::Symlink) => {
+            // Log only. The `SymlinkSkipped` finding is opened by the
+            // folder walk of a library or series scan, which also
+            // reconciles the row. Opening it here would make that walk
+            // treat the link as already reported and, on an unchanged
+            // folder, skip the reconcile.
+            tracing::info!(
+                library_id = %lib.id,
+                path = %path.display(),
+                "scanner: issue rescan skipped a symbolic link (links are never followed)"
+            );
+            true
+        }
+        Err(
+            reason @ (crate::library::no_follow::Refusal::NotRegular
+            | crate::library::no_follow::Refusal::OutsideRoot),
+        ) => {
+            health.emit(crate::library::health::IssueKind::UnreadableFile {
+                path: path.clone(),
+                error: reason.to_string(),
+            });
+            true
+        }
+        _ => false,
+    };
+    if refused {
+        stats.files_skipped += 1;
+        progress.completed = 1;
+        progress.health_issues = health.count() as u64;
+        emit_progress(
+            state,
+            lib.id,
+            scan_id,
+            &progress,
+            "complete",
+            "file",
+            Some(row.file_path.clone()),
+            stats,
+        )
+        .await;
+        return Ok(());
+    }
     // Post-audit T1.1: only `NotFound` is "the file is gone". A permission
     // or mount error leaves the file unknown — report it, don't remove it.
     if let Err(e) = std::fs::metadata(&path)
@@ -1723,6 +2184,12 @@ async fn run_issue_phase(
             am.removal_confirmed_at = Set(None);
             am.update(&state.db).await?;
             stats.issues_restored += 1;
+            crate::library::reconcile::restore_series_with_live_issues(
+                &state.db,
+                [updated.series_id],
+                events,
+            )
+            .await?;
         }
         let _ = crate::jobs::post_scan::enqueue_thumb_job(
             state,
@@ -1783,10 +2250,22 @@ async fn run_phases(
     health: &mut HealthCollector,
     events: &mut EventCollector,
     cancel: Arc<AtomicBool>,
+    lease_lost: &AtomicBool,
     scope: Option<&[PathBuf]>,
 ) -> anyhow::Result<()> {
     use crate::library::health::IssueKind;
     let root = PathBuf::from(&lib.root_path);
+    // Lease check (R-03) at each phase boundary and on the phase-3
+    // heartbeat: a lost lease raises the cooperative-cancel flag.
+    let lease_check = || {
+        if lease_lost.load(Ordering::Relaxed) && !cancel.swap(true, Ordering::Relaxed) {
+            tracing::warn!(scan_id = %scan_id, "scan: coalescing key lost to another run — stopping");
+        }
+    };
+    lease_check();
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(());
+    }
 
     // Compile ignore rules once per scan.
     let ignore = crate::library::ignore::IgnoreRules::for_library(lib)
@@ -1846,6 +2325,7 @@ async fn run_phases(
         (layout, present, None)
     };
     stats.record_phase("enumerate", enumerate_started.elapsed());
+    lease_check();
     // Narrow scans never run the library-wide auto-resolve; tell the
     // collector which tops were read so a cleared `UnreadableFolder`
     // under them resolves (post-audit T1.1).
@@ -1874,6 +2354,11 @@ async fn run_phases(
             skipped_archive_count: ambiguous.skipped_archive_count,
         });
     }
+    // Links are never followed: a series reached only through one is not in
+    // `present_folders`, so the reconcile below reports it missing.
+    for link in &layout.symlinks {
+        report_skipped_symlink(lib.id, link.clone(), health);
+    }
     // Post-audit T1.1: an unreadable scope is unknown, not absent. Raise a
     // health row per folder and keep every series at or under it out of
     // the "folder missing" sweep below.
@@ -1895,6 +2380,7 @@ async fn run_phases(
     let plan_started = Instant::now();
     let plan = build_library_scan_plan(state, lib, &layout, force, &ignore).await?;
     stats.record_phase("plan", plan_started.elapsed());
+    lease_check();
     progress = ProgressState::new(
         ScanKind::Library,
         plan.total_work(),
@@ -1984,6 +2470,7 @@ async fn run_phases(
                 // `process_planned_folder`.
                 let folder_path_str = planned.path.to_string_lossy().into_owned();
                 let work_units = 1 + planned.archives.len() as u64;
+                folder_gate::pass(lib.id).await;
                 // Cooperative cancel (D8): folders already in flight finish
                 // normally; folders not yet started no-op the moment the
                 // cancel flag is set, so the buffered stream drains fast
@@ -2129,6 +2616,7 @@ async fn run_phases(
         }
             }
             _ = heartbeat.tick() => {
+                lease_check();
                 // Cooperative cancel poll (D8): the cancel endpoint flips the
                 // run to `state='cancelled'`; pick that up here and raise the
                 // shared flag so not-yet-started folders stop. A single-column
@@ -2186,6 +2674,7 @@ async fn run_phases(
     // walked part of the library, so `seen_paths` is incomplete — running
     // `reconcile_library_seen` here would soft-delete every series the scan
     // never reached. The caller finalizes the run as `cancelled`.
+    lease_check();
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
     }
@@ -2204,7 +2693,11 @@ async fn run_phases(
         stats,
     )
     .await;
-    if let Err(e) = crate::library::reconcile::reconcile_library_seen(
+    // The reconcile checks the lease at entry, between series of its
+    // folder-missing sweep and before its final series restore (R-03); the
+    // work for the series this run scanned always completes once started.
+    let lease_stop = || lease_lost.load(Ordering::Relaxed);
+    match crate::library::reconcile::reconcile_library_seen_until(
         &state.db,
         lib.id,
         &scanned_series,
@@ -2215,10 +2708,23 @@ async fn run_phases(
         &unreadable_folders,
         stats,
         events,
+        Some(&lease_stop),
     )
     .await
     {
-        tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
+        Ok(series_restored) => invalidate_after_series_restore(state, lib.id, series_restored),
+        Err(e) if lease_lost.load(Ordering::Relaxed) => {
+            // Superseded: the reconcile stopped on purpose; the next
+            // holder's reconcile completes the library-wide work.
+            tracing::info!(library_id = %lib.id, reason = %e, "scanner: reconcile stopped, scan superseded");
+        }
+        Err(e) => {
+            tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
+        }
+    }
+    lease_check();
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(());
     }
     if let Err(e) =
         reconcile_status::reconcile_series_status_many(&state.db, &status_reconcile_entries).await
@@ -2368,6 +2874,9 @@ async fn process_planned_folder(
             path: u.path,
             error: u.error,
         });
+    }
+    for link in planned.symlinks {
+        report_skipped_symlink(lib.id, link, health);
     }
 
     // Read series.json up-front so the early-skip branches can still
@@ -2844,10 +3353,14 @@ async fn process_planned_folder(
     // per library by the broadcaster (spec §14.3); the cover lookup (one
     // indexed query) only runs for an event that will go out.
     if state.events.series_updated_due(lib.id, series_created) {
-        let cover_url = crate::api::series::series_cover_issue_ids(&state.db, &[series_id])
-            .await
-            .remove(&series_id)
-            .map(|issue_id| format!("/issues/{issue_id}/pages/0/thumb"));
+        let cover_url = crate::api::series::series_cover_issue_ids(
+            &state.db,
+            &[series_id],
+            &crate::library::access::VisibleLibraries::unrestricted(),
+        )
+        .await
+        .remove(&series_id)
+        .map(|issue_id| format!("/issues/{issue_id}/pages/0/thumb"));
         state.events.emit(ScanEvent::SeriesUpdated {
             library_id: lib.id,
             series_id,

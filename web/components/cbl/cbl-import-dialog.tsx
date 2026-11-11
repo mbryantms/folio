@@ -47,6 +47,7 @@ import {
 } from "@/lib/api/mutations";
 import type { CblListView, CatalogEntryView } from "@/lib/api/types";
 import { statusToneText } from "@/lib/ui/status-tone";
+import { RailError } from "@/components/saved-views/RailError";
 
 const REFRESH_OPTIONS: { value: string; label: string }[] = [
   { value: "manual", label: "Manual only" },
@@ -339,9 +340,11 @@ function CatalogList({
   }
   if (entries.isError) {
     return (
-      <div className="text-destructive rounded-md border p-4 text-sm">
-        Failed to load catalog: {String(entries.error)}
-      </div>
+      <RailError
+        message="Couldn't load the catalog."
+        onRetry={() => void entries.refetch()}
+        className="rounded-md border p-4"
+      />
     );
   }
   if (!entries.data || !tree || !currentNode) return null;
@@ -788,7 +791,6 @@ function SaveStep({
       // detail page Settings tab.
       void schedule;
       if (!view) throw new Error("Saved-view create returned empty");
-      toast.success("View created");
       onSaved(view.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to create view");

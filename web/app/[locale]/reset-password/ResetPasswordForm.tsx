@@ -26,6 +26,7 @@ import {
   FormMessage,
 } from "@/components/folio/form";
 import { Input } from "@/components/ui/input";
+import { authErrorText } from "@/lib/auth/error-text";
 
 const schema = z
   .object({
@@ -38,13 +39,22 @@ const schema = z
   });
 type Values = z.infer<typeof schema>;
 
-export function ResetPasswordForm({ token }: { token: string | null }) {
+export function ResetPasswordForm({
+  token,
+  errorCode = null,
+}: {
+  token: string | null;
+  /** `?error=` from a refused no-JS form post; shown until the next try. */
+  errorCode?: string | null;
+}) {
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: { new_password: "", confirm_password: "" },
   });
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    authErrorText(errorCode),
+  );
   const [submitting, setSubmitting] = useState(false);
 
   if (!token) {

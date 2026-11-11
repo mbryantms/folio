@@ -13,7 +13,6 @@ import Link from "next/link";
 import { ViewTransition } from "react";
 
 import { CountUp } from "@/components/CountUp";
-import { FillProgress } from "@/components/FillProgress";
 import { HeroBackdrop } from "@/components/library/HeroBackdrop";
 import { MorphLink } from "@/components/library/MorphLink";
 import { RecordVisit } from "@/components/search/RecordVisit";
@@ -58,7 +57,6 @@ import {
   formatPageCount,
   formatPublicationStatus,
   formatReadingTime,
-  formatReadingTimeCompact,
   formatRelativeDate,
 } from "@/lib/format";
 import {
@@ -82,9 +80,11 @@ import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { IssuesPanel } from "./IssuesPanel";
 import { SeriesActions } from "./SeriesActions";
 import { SeriesMetadataTab } from "./SeriesMetadataTab";
+import { SeriesProgressStats } from "./SeriesProgressStats";
 import { SeriesTabs } from "./SeriesTabs";
 import { SeriesSourcesFooter } from "./SeriesSourcesFooter";
 import { entityHrefFor } from "@/lib/entities";
+import { apiPath, routeParam } from "@/lib/api/path";
 
 export default async function SeriesPage({
   params,
@@ -93,7 +93,7 @@ export default async function SeriesPage({
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ q?: string; tab?: string; match?: string }>;
 }) {
-  const { slug } = await params;
+  const slug = routeParam((await params).slug);
   const { q: initialQuery, tab, match } = await searchParams;
   // `?match=1` (the needs-metadata worklist's "Find metadata") lands on the
   // Metadata tab, where the match dialog opens.
@@ -107,18 +107,16 @@ export default async function SeriesPage({
   // only drives the optional "Appears in" tab). Awaited after the try so a
   // failure here never 404s the page.
   const appearancesPromise = apiGet<AppearancesView>(
-    `/series/${slug}/appearances`,
+    apiPath`/series/${slug}/appearances`,
   ).catch(() => null);
-  const seriesPromise = apiGet<SeriesView>(`/series/${slug}`);
+  const seriesPromise = apiGet<SeriesView>(apiPath`/series/${slug}`);
   // "Your notes" tab only shows when the caller has a marker in this
   // series — a one-row probe of the same list the tab renders. Chained
   // off the series fetch (it needs the id) so it overlaps the other
   // critical fetches; non-fatal.
   const hasNotesPromise = seriesPromise
     .then((s) =>
-      apiGet<MarkerListView>(
-        `/me/markers?series_id=${encodeURIComponent(s.id)}&limit=1`,
-      ),
+      apiGet<MarkerListView>(apiPath`/me/markers?series_id=${s.id}&limit=1`),
     )
     .then((page) => page.items.length > 0)
     .catch(() => false);
@@ -131,8 +129,8 @@ export default async function SeriesPage({
     // resolves the breadcrumb's library segment by `series.library_id`.
     [series, firstIssuePage, resume, libraries] = await Promise.all([
       seriesPromise,
-      apiGet<IssueListView>(`/series/${slug}/issues?limit=200`),
-      apiGet<SeriesResumeView>(`/series/${slug}/resume`),
+      apiGet<IssueListView>(apiPath`/series/${slug}/issues?limit=200`),
+      apiGet<SeriesResumeView>(apiPath`/series/${slug}/resume`),
       apiGet<LibraryView[]>(`/libraries`),
     ]);
   } catch (e) {
@@ -414,11 +412,7 @@ export default async function SeriesPage({
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Status" value={status} />
         <Stat label="Released" value={releasedLabel} />
-        <ReadingLoadStat
-          totalPages={series.total_page_count ?? null}
-          finishedPages={series.progress_summary?.finished_pages ?? 0}
-        />
-        <ReadProgressStat read={finishedCount} total={totalCount} />
+        <SeriesProgressStats series={series} />
       </section>
 
       {/* WP-7.7: the strip is a client wrapper so `?tab=` deep-links and
@@ -935,109 +929,6 @@ function formatCollectionHint(series: SeriesView): string | null {
       ? "Complete collection"
       : "Incomplete collection";
   return [verdict, extras].filter(Boolean).join(" · ") || null;
-}
-
-/**
- * Read-progress card for the stats grid. Replaces the duplicative
- * "Total pages" / "Reading time" / "Last updated" tiles with a meaningful
- * per-user metric: how many of this series's active issues the user has
- * finished. Empty bar at 0/N, full + accent label at N/N. Total pages and
- * reading time still live in the Details tab for editors who want them.
- */
-function ReadProgressStat({ read, total }: { read: number; total: number }) {
-  const pct =
-    total > 0
-      ? Math.max(0, Math.min(100, Math.round((read / total) * 100)))
-      : 0;
-  const complete = total > 0 && read === total;
-  return (
-    <div className="border-border bg-card flex flex-col gap-2 rounded-md border px-4 py-3">
-      <div className="flex items-baseline justify-between">
-        <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          Read progress
-        </span>
-        <span className="text-muted-foreground text-xs">
-          {total > 0 ? <CountUp value={pct} format="percent" /> : "—"}
-        </span>
-      </div>
-      <span className="text-lg leading-tight font-semibold">
-        {total > 0 ? (
-          <>
-            <CountUp value={read} /> / {total}
-          </>
-        ) : (
-          "—"
-        )}
-      </span>
-      <FillProgress value={pct} label={`Read ${read} of ${total} issues`} />
-      <span
-        className={
-          complete
-            ? "text-primary text-xs font-medium"
-            : "text-muted-foreground text-xs"
-        }
-      >
-        {total === 0
-          ? "No active issues"
-          : complete
-            ? "Series complete"
-            : `${total - read} left`}
-      </span>
-    </div>
-  );
-}
-
-/**
- * Reading-load card for the stats grid. Surfaces estimated time + page
- * count remaining to finish the series. Once the user has finished every
- * active issue, the card flips to a "re-read" estimate over the full page
- * count so it stays useful for completionists deciding whether to start
- * over. Mirrors the `<Stat>` shape so it sits flush next to the other
- * tiles. `total_page_count` is the server-aggregated sum across active
- * issues; we subtract `progress_summary.finished_pages` to get the
- * remainder without paginating the issue list client-side.
- */
-function ReadingLoadStat({
-  totalPages,
-  finishedPages,
-}: {
-  totalPages: number | null;
-  finishedPages: number;
-}) {
-  if (totalPages == null || totalPages <= 0) {
-    return (
-      <div className="border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3">
-        <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          Reading load remaining
-        </span>
-        <span className="text-lg leading-tight font-semibold">—</span>
-      </div>
-    );
-  }
-  const remainingPages = Math.max(0, totalPages - finishedPages);
-  const isReread = remainingPages === 0;
-  // When the user has finished the whole series, fall back to the full
-  // page count — the card now estimates a re-read instead of a finish.
-  const pagesShown = isReread ? totalPages : remainingPages;
-  const time = formatReadingTimeCompact(pagesShown);
-  return (
-    <div className="border-border bg-card flex flex-col gap-1 rounded-md border px-4 py-3">
-      <div className="flex items-baseline justify-between">
-        <span className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          Reading load remaining
-        </span>
-        {isReread ? (
-          <span className="text-primary text-xs font-medium">re-read</span>
-        ) : null}
-      </div>
-      <span className="text-lg leading-tight font-semibold tabular-nums">
-        {time ? <CountUp value={pagesShown} format="readingTime" /> : "—"}
-      </span>
-      <span className="text-muted-foreground text-xs">
-        <CountUp value={pagesShown} format="compactPages" /> pages
-      </span>
-    </div>
-  );
 }
 
 function hasAny(...lists: (string[] | undefined)[]): boolean {

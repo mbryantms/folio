@@ -9,9 +9,29 @@ import {
 } from "react";
 import { Loader2, RotateCw } from "lucide-react";
 import { READER_FILTER_VAR } from "@/lib/reader/filters";
+import { ensureFreshSession } from "@/lib/api/session-refresh";
 
 /** Show the "still loading…" hint after this long in flight (audit C3). */
 const SLOW_HINT_MS = 8000;
+
+/**
+ * Where the failed-page retry sits, as a `top` offset (px, in the page
+ * box's own coordinates) that puts it in the middle of the part of the box
+ * on screen, so it stays in view however far a tall page is scrolled
+ * (audit U-05). `position: fixed` can't do this: a zoomed or dragged page
+ * carries a transform, which turns `fixed` back into box-relative.
+ * `scale` converts screen px to the box's px under a zoom transform.
+ */
+export function retryTopPx(
+  box: { top: number; bottom: number },
+  viewportHeight: number,
+  scale = 1,
+): number {
+  const top = Math.max(box.top, 0);
+  const bottom = Math.min(box.bottom, viewportHeight);
+  const middle = bottom > top ? (top + bottom) / 2 : (box.top + box.bottom) / 2;
+  return (middle - box.top) / (scale > 0 ? scale : 1);
+}
 
 /**
  * Page image with a centered spinner while the bytes are in flight. The
@@ -97,6 +117,8 @@ export function PageImage({
   const autoRetried = useRef(false);
   const internalImgRef = useRef<HTMLImageElement>(null);
   const imgRef = externalImgRef ?? internalImgRef;
+  const boxRef = useRef<HTMLSpanElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
   const loaded = status === "loaded";
 
   // Cache-busted src so a retry actually re-fetches the failed bytes.
@@ -107,7 +129,8 @@ export function PageImage({
     if (!autoRetried.current) {
       autoRetried.current = true;
       setSlow(false);
-      setRetry((n) => n + 1);
+      // A lapsed access cookie fails the image too; renew it first.
+      void ensureFreshSession().then(() => setRetry((n) => n + 1));
       return;
     }
     setStatus("error");
@@ -138,11 +161,41 @@ export function PageImage({
     return () => clearTimeout(t);
   }, [status, retry]);
 
+  // Keep the retry in the visible part of the page while it is shown
+  // (`retryTopPx`). Capture-phase scroll catches any scrolling ancestor.
+  useEffect(() => {
+    if (status !== "error") return;
+    const box = boxRef.current;
+    const button = retryRef.current;
+    if (!box || !button) return;
+    let frame = 0;
+    const place = () => {
+      frame = 0;
+      const rect = box.getBoundingClientRect();
+      const scale = box.offsetHeight > 0 ? rect.height / box.offsetHeight : 1;
+      button.style.top = `${retryTopPx(rect, window.innerHeight, scale)}px`;
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(place);
+    };
+    place();
+    window.addEventListener("scroll", schedule, {
+      passive: true,
+      capture: true,
+    });
+    window.addEventListener("resize", schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule, { capture: true });
+      window.removeEventListener("resize", schedule);
+    };
+  }, [status]);
+
   const handleRetry = () => {
     autoRetried.current = false;
     setSlow(false);
     setStatus("loading");
-    setRetry((n) => n + 1);
+    void ensureFreshSession().then(() => setRetry((n) => n + 1));
   };
 
   // Page aspect (w/h) exposed as `--page-ar` for the `contain` fit class
@@ -168,6 +221,7 @@ export function PageImage({
     // the cell's height while the full image (often 0-height until decode
     // at fit-width) catches up — no layout shift, no white gap.
     <span
+      ref={boxRef}
       className="relative grid w-full place-items-center [&>img]:[grid-area:1/1]"
       style={aspectStyle}
     >
@@ -189,8 +243,11 @@ export function PageImage({
         // rather than leaving a broken-image glyph (audit C3). z-20 puts it
         // over the reader's tap zones (z-10), which otherwise take the tap;
         // the rest of the page still turns. The attribute is what the cover
-        // handoff watches for (ReaderCoverMorph.tsx).
+        // handoff watches for (ReaderCoverMorph.tsx). The class `top` is
+        // the first-frame position; the effect above then pins it to the
+        // visible part of the page.
         <button
+          ref={retryRef}
           type="button"
           data-page-load-error=""
           onClick={handleRetry}

@@ -82,13 +82,16 @@ import {
   READER_FILTER_VAR,
   composeFilter,
 } from "@/lib/reader/filters";
+// Direct shard imports, not the `@/lib/api/mutations` barrel: the barrel
+// would put every mutation hook in the app into first-load JS.
 import {
   useSetIssueNote,
   useSetIssueRating,
-  useUpdatePreferences,
-} from "@/lib/api/mutations";
+} from "@/lib/api/mutations/issue-user-state";
+import { useUpdatePreferences } from "@/lib/api/mutations/preferences";
 import { summarizeMarkers, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { readerUrl } from "@/lib/urls";
+import { exitReader, noteReplace } from "@/lib/ui/back-flight";
 import { usePageMarkerToggle } from "@/lib/markers/use-page-marker-toggle";
 import type {
   IssueSummaryView,
@@ -114,6 +117,7 @@ import { useDragTurn } from "@/lib/reader/use-drag-turn";
 // sheets / panels from there, not directly.
 import {
   AmbientGlow,
+  DragTurnPeek,
   EndOfIssueCard,
   MarkerEditor,
   MarkerModePill,
@@ -124,6 +128,7 @@ import {
   ReaderChrome,
   ReaderFirstRunOverlay,
   WebtoonEndFooter,
+  preloadDragTurnPeek,
 } from "./lazy";
 import { ReaderSkipLinks } from "./ReaderSkipLinks";
 import { usePageAltText, usePageTextPanel } from "@/lib/reader/page-text";
@@ -135,7 +140,7 @@ import {
 import { apiMutate } from "@/lib/api/mutations/_core";
 import type { SeriesReaderPrefsView } from "@/lib/api/types";
 import { PageImage } from "./PageImage";
-import { DragTurnPeek, type DragPeekPages } from "./DragTurnPeek";
+import type { DragPeekPages } from "./DragTurnPeek";
 
 const NO_NEXT_UP: NextUpView = { source: "none" };
 /** Pan offset + origin of a re-centred page — the identity zoom minus
@@ -189,6 +194,7 @@ export function Reader({
   nextUpOverride,
   prevUpOverride,
   onNextIssue,
+  onExit,
 }: {
   issueId: string;
   seriesId: string | null;
@@ -218,6 +224,9 @@ export function Reader({
    *  (the offline shell navigates within its own document rather than
    *  to `/read/…`). */
   onNextIssue?: (target: IssueSummaryView) => void;
+  /** Leaves the reader instead of `exitReader` (the offline shell, which
+   *  returns to its downloads list within its own document). */
+  onExit?: () => void;
   /** Saved-view id of the CBL the user is reading through. When set,
    *  the next-up resolver picks from that list instead of the parent
    *  series. Forwarded onto the next-issue URL when source === "cbl"
@@ -511,13 +520,15 @@ export function Reader({
     }
     // Forward the list context only when the resolver also picked that
     // list — a series fallback means the user is no longer following it
-    // and the next read should reset to series-only context.
-    router.push(
-      readerUrl(data.target, {
-        cbl: data.source === "cbl" ? cblSavedViewId : null,
-        collection: data.source === "collection" ? collectionId : null,
-      }),
-    );
+    // and the next read should reset to series-only context. Replace, not
+    // push (audit U-02): one reader entry however many issues are read,
+    // so the exit still goes back to where reading started.
+    const href = readerUrl(data.target, {
+      cbl: data.source === "cbl" ? cblSavedViewId : null,
+      collection: data.source === "collection" ? collectionId : null,
+    });
+    noteReplace(href);
+    router.replace(href);
   }, [cblSavedViewId, collectionId, nextUp.data, onNextIssue, router]);
 
   // Symmetric to useNextUp for the `Shift+P` keybind. Pure sequential
@@ -542,12 +553,13 @@ export function Reader({
       onNextIssue(data.target);
       return;
     }
-    router.push(
-      readerUrl(data.target, {
-        cbl: data.source === "cbl" ? cblSavedViewId : null,
-        collection: data.source === "collection" ? collectionId : null,
-      }),
-    );
+    // Replaces the reader entry, as `goNextIssue` does.
+    const href = readerUrl(data.target, {
+      cbl: data.source === "cbl" ? cblSavedViewId : null,
+      collection: data.source === "collection" ? collectionId : null,
+    });
+    noteReplace(href);
+    router.replace(href);
   }, [cblSavedViewId, collectionId, onNextIssue, prevUpData, router]);
 
   // End-of-issue side panel. Opens only when the user *attempts to
@@ -653,14 +665,14 @@ export function Reader({
   // `b` / `s` keybinds — share one toggle hook with the chrome's
   // BookmarkToggleButton / FavoriteToggleButton (kills the duplicated
   // find-existing → create/delete-with-Undo logic, audit G9). The
-  // page-specific toast copy stays here so the keybind path keeps its
-  // exact wording ("Bookmarked page N" / "Removed bookmark on page N").
+  // removal toast copy stays here so the keybind path keeps its exact
+  // wording ("Removed bookmark on page N"); "Bookmarked page N" comes from
+  // `useCreateMarker`.
   const bookmarkToggle = usePageMarkerToggle(issueId, currentPage, "bookmark");
   const favoriteToggle = usePageMarkerToggle(issueId, currentPage, "favorite");
   const toggleBookmark = useCallback(
     () =>
       bookmarkToggle.toggle({
-        created: `Bookmarked page ${currentPage + 1}`,
         removed: `Removed bookmark on page ${currentPage + 1}`,
       }),
     [bookmarkToggle, currentPage],
@@ -668,7 +680,6 @@ export function Reader({
   const toggleFavorite = useCallback(
     () =>
       favoriteToggle.toggle({
-        created: `Starred page ${currentPage + 1}`,
         removed: `Unstarred page ${currentPage + 1}`,
       }),
     [favoriteToggle, currentPage],
@@ -696,10 +707,14 @@ export function Reader({
       detectInitialViewMode(pages, userDefaultViewMode, seriesReadingDirection),
     [pages, userDefaultViewMode, seriesReadingDirection],
   );
-  const initialFitMode = useMemo<FitMode>(
-    () => userDefaultFitMode ?? "width",
-    [userDefaultFitMode],
-  );
+  // No account default → null, and `init` picks from the viewport
+  // (`autoFitMode`: Screen fit on a wide window, width on a phone).
+  const initialFitMode: FitMode | null = userDefaultFitMode ?? null;
+  const openingPage = pages[Math.max(0, Math.min(totalPages - 1, initialPage))];
+  const initialPageAspect =
+    openingPage?.image_width && openingPage.image_height
+      ? openingPage.image_width / openingPage.image_height
+      : null;
 
   // Per-series overrides follow the account (post-audit T4.4): install the
   // network sender before `init` can queue an adoption push, and send
@@ -748,6 +763,7 @@ export function Reader({
       initialDirection,
       initialViewMode,
       initialFitMode,
+      initialPageAspect,
       initialPageStripVisible: userDefaultPageStrip,
       initialCoverSolo: userDefaultCoverSolo,
       serverSeriesPrefs,
@@ -762,6 +778,7 @@ export function Reader({
     initialDirection,
     initialViewMode,
     initialFitMode,
+    initialPageAspect,
     userDefaultPageStrip,
     userDefaultCoverSolo,
     serverSeriesPrefs,
@@ -920,6 +937,7 @@ export function Reader({
     onNext: goNext,
     onPrev: goPrev,
     trackRef: dragTrackRef,
+    warm: preloadDragTurnPeek,
   });
 
   // v0.3.44 / v0.3.45 page-turn animation. Webtoon mode skips
@@ -954,11 +972,14 @@ export function Reader({
 
   // The keymap's `quitReader` action either dismisses the end-card
   // (first Esc) or exits the reader (subsequent Esc). The hook only
-  // owns dispatch; this component owns the end-card visibility and
-  // router push.
+  // owns dispatch; this component owns the end-card visibility and the
+  // exit. Every exit control (chrome, end card, webtoon footer) calls this:
+  // back to the page reading started from, or the issue page on a cold
+  // load (`exitReader`).
   const handleQuitReader = useCallback(() => {
-    router.push(exitUrl);
-  }, [exitUrl, router]);
+    if (onExit) onExit();
+    else exitReader(router, exitUrl);
+  }, [exitUrl, onExit, router]);
 
   // `addNote` / `startHighlight` keymap actions are forwarded through
   // these wrappers so the hook doesn't need to know about the marker
@@ -1568,6 +1589,7 @@ export function Reader({
         seriesId={seriesId}
         issueId={issueId}
         exitUrl={exitUrl}
+        onExit={handleQuitReader}
         totalPages={totalPages}
         visiblePages={viewMode === "double" ? visiblePages : undefined}
         progressCurrent={viewMode === "double" ? currentGroupIdx : currentPage}
@@ -1664,6 +1686,7 @@ export function Reader({
             onRetryNextUp={retryNextUp}
             onReadNext={continueFromEndCard}
             exitUrl={exitUrl}
+            onExit={handleQuitReader}
             wrapUp={wrapUp}
           />
         ) : viewMode === "double" ? (
@@ -1758,6 +1781,7 @@ export function Reader({
           onRetry={retryNextUp}
           direction={direction}
           exitUrl={exitUrl}
+          onExit={handleQuitReader}
           onContinue={continueFromEndCard}
           onDismiss={dismissEndCard}
           wrapUp={wrapUp}
@@ -2290,6 +2314,7 @@ function WebtoonView({
   onRetryNextUp,
   onReadNext,
   exitUrl,
+  onExit,
   wrapUp,
 }: {
   issueId: string;
@@ -2314,6 +2339,7 @@ function WebtoonView({
   onRetryNextUp: () => void;
   onReadNext: () => void;
   exitUrl: string;
+  onExit: () => void;
   wrapUp: WrapUpProps | undefined;
 }) {
   const markerMode = useReaderStore((s) => s.markerMode);
@@ -2448,6 +2474,7 @@ function WebtoonView({
         onRetry={onRetryNextUp}
         onReadNext={onReadNext}
         exitUrl={exitUrl}
+        onExit={onExit}
         wrapUp={wrapUp}
       />
       {markerMode === "idle" ? (

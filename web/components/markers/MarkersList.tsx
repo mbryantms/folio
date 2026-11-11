@@ -77,6 +77,8 @@ import {
   useBookmarkSeries,
   useBookmarksFeedInfinite,
 } from "@/lib/api/queries";
+import { RailError } from "@/components/saved-views/RailError";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 import type {
   BookmarkEntryView,
   BookmarkKindCounts,
@@ -313,10 +315,15 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
   // returns a fresh object identity per render, so `[query]` tore the
   // observer down and rebuilt it on every state change.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -329,7 +336,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   function toggleTag(tag: string) {
     setSelectedTags((prev) =>
@@ -703,10 +710,11 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
           </div>
           <span className="sr-only">Loading markers…</span>
         </div>
-      ) : query.isError ? (
-        <div className="text-destructive rounded-md border p-4 text-sm">
-          Failed to load markers.
-        </div>
+      ) : query.isError && !query.data ? (
+        <RailError
+          message="Couldn't load markers."
+          onRetry={() => void query.refetch()}
+        />
       ) : entries.length === 0 ? (
         <EmptyState hasFilter={hasFilterOrSearch} scope={scope} />
       ) : (
@@ -786,6 +794,7 @@ export function MarkersList({ scope }: { scope?: MarkersListScope } = {}) {
             aria-hidden
             className={query.hasNextPage ? "h-12" : "hidden"}
           />
+          <LoadMoreError query={query} />
           {query.isFetchingNextPage ? (
             <p
               role="status"

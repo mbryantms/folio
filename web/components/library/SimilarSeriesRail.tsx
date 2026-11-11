@@ -7,6 +7,7 @@ import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import { useSimilarSeriesInfinite } from "@/lib/api/queries";
 import { DEFAULT_COVER_SIZE_PX } from "@/lib/library/cover-size";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 /**
  * WP-7.4 "Similar series" rail on the series page. Content-based
@@ -33,11 +34,16 @@ export function SimilarSeriesRail({
 }) {
   const query = useSimilarSeriesInfinite(seriesSlug);
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
 
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -48,7 +54,7 @@ export function SimilarSeriesRail({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   if (!query.isLoading && items.length === 0) return null;
@@ -82,6 +88,10 @@ export function SimilarSeriesRail({
             <SeriesCardSkeleton />
           </div>
         ) : null}
+        <LoadMoreError
+          query={query}
+          className="mt-0 shrink-0 flex-nowrap self-center px-2"
+        />
         <div ref={sentinelRef} aria-hidden className="h-px w-px shrink-0" />
       </HorizontalScrollRail>
     </section>

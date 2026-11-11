@@ -17,7 +17,7 @@ re-verified against the code during WP-6.3.
 
 | Finding | Severity | Status | Where / regression guard |
 |---|---|---|---|
-| H-1 SSRF via `POST /me/cbl-lists` (URL kind) | High | **Fixed (earlier)** — 1.0 Phase B; https-only, DNS-vetted + address-pinned fetch, per-hop redirect re-validation (`util::ssrf`) | `crates/server/src/util/ssrf.rs` unit tests; `tests/cbl_lists.rs` |
+| H-1 SSRF via `POST /me/cbl-lists` (URL kind) | High | **Fixed (earlier)** — 1.0 Phase B; https-only, DNS-vetted + address-pinned fetch, per-hop redirect re-validation (`util::ssrf`). Since 2026-11 the conditional refresh uses the same fetch (`util::ssrf::fetch_public`), every fetch has an overall deadline, the refusal message names no address, and the refused ranges cover the IANA special-purpose blocks plus IPv4 embedded in IPv6 (mapped, compatible, NAT64, 6to4) | `crates/server/src/util/ssrf.rs` unit tests; `tests/cbl_lists.rs`; `tests/cbl_lists_ssrf.rs` |
 | H-2 `Config` derives `Debug` with plaintext secrets | High | **Fixed (earlier)** — hand-written masking `Debug` impl | `crates/server/src/config.rs` (`impl Debug for Config`) |
 | H-3.1 failed-auth lockout keyed only by identifier | High | **Fixed (earlier)** — IP axis + email axis (`auth::failed_auth`) | `tests/rate_limits.rs` (`failed_auth_lockout_*`, `email_axis_lockout_*`) |
 | H-3.2 OPDS shared rate bucket | High | **Fixed (WP-6.3)** — split into `opds_catalog` (30/min, burst 60) and `opds_stream` (downloads, PSE pages, progress/KOReader sync; 120/min, burst 120) | `tests/rate_limits.rs::opds_catalog_exhaustion_does_not_throttle_the_stream_bucket` |
@@ -276,7 +276,7 @@ Confirmed across the audit:
 - **PII hashing.** OIDC subject + email logged as sha256 prefix;
   failed-auth logs hash the identifier.
 - **Security headers.** Strict CSP, HSTS, X-Frame-Options DENY,
-  Referrer-Policy `no-referrer` on auth pages, CORP/COEP.
+  Referrer-Policy `same-origin` on auth pages (no referrer to other sites), CORP/COEP.
 - **SQLx query logging disabled** (no bound parameters in logs).
 
 ---

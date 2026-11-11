@@ -4,7 +4,7 @@
 //! Every route under `/opds/v2/*` mirrors its `/opds/v1/*` counterpart's
 //! data exactly; only the wire format differs. Data fetching, library
 //! ACL, audit, and rate-limiting reuse the v1 helpers (`allowed_libraries`,
-//! `fetch_series_slugs`, `fetch_visible_issues_preserving_order`,
+//! `fetch_visible_issues_preserving_order`,
 //! `dsl_from_view`, `ensure_want_to_read_seeded`) so the two protocols
 //! can't drift in business logic.
 //!
@@ -15,9 +15,8 @@
 //!
 //! Acquisition link payload mirrors the Atom output: every issue gets
 //! a download link with the per-extension MIME from `mime_for`, an
-//! image-thumbnail link, a full-size image link, an optional related
-//! link to the JSON API, and the PSE signed-URL stream link (rendered
-//! by `crate::auth::url_signing::issue_query`).
+//! image-thumbnail link, a full-size image link, and the PSE signed-URL
+//! stream link (rendered by `crate::auth::url_signing::issue_query`).
 //!
 //! Personal surfaces (`/opds/v2/wtr`, `/opds/v2/lists`, `/opds/v2/collections`,
 //! `/opds/v2/views`) mirror M4. The mixed-collection feed surfaces
@@ -298,8 +297,8 @@ async fn series_list(
     };
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -385,8 +384,8 @@ async fn browse(
         Err(e) => return server_error(e.to_string()),
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -536,7 +535,14 @@ async fn series_one(
     AxPath(id): AxPath<Uuid>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    let s = match series::Entity::find_by_id(id).one(&app.db).await {
+    // A soft-removed series answers the same not-found as an unknown id,
+    // for every role: OPDS is a list surface (`access::active_series`),
+    // and the admin Removed tab is the only place removed rows appear.
+    let s = match access::active_series_select()
+        .filter(series::Column::Id.eq(id))
+        .one(&app.db)
+        .await
+    {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
@@ -545,11 +551,10 @@ async fn series_one(
     if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
         return not_found();
     }
-    // WP-2.7: issues carrying their own rating above the cap are hidden.
-    let mut issues_base = issue::Entity::find().filter(issue::Column::SeriesId.eq(id));
-    if let Some(cond) = acl.issue_cap_condition() {
-        issues_base = issues_base.filter(cond);
-    }
+    // `visible_issues_select`: soft-removed issues drop out, and the grant
+    // + age cap (WP-2.7: an issue's own rating above the cap hides it)
+    // apply exactly as on every other OPDS issue listing.
+    let issues_base = access::visible_issues_select(&acl).filter(issue::Column::SeriesId.eq(id));
     let total = match issues_base.clone().count(&app.db).await {
         Ok(n) => n,
         Err(e) => return server_error(e.to_string()),
@@ -633,8 +638,8 @@ async fn series_one(
     // exposes in the `<feed>` element so clients render a series
     // banner (cover + author byline + publisher + year + genre
     // chips) instead of just the title and the issue grid.
-    let series_facets = opds::fetch_series_facets(&app.db, &[s.id]).await;
-    let cover_map = opds::fetch_cover_issues(&app.db, &[s.id]).await;
+    let series_facets = opds::fetch_series_facets(&app.db, &[s.id], &acl).await;
+    let cover_map = crate::api::series::series_cover_issue_ids(&app.db, &[s.id], &acl).await;
     let cover_id = cover_map.get(&s.id).map(String::as_str);
     let mut metadata = serde_json::Map::new();
     metadata.insert("title".into(), Value::from(s.name.clone()));
@@ -956,7 +961,6 @@ async fn by_creator(
     AxPath(writer): AxPath<String>,
     Query(q): Query<PageQuery>,
 ) -> Response {
-    use entity::series_credit;
     let writer = urlencoding::decode(&writer)
         .map(|s| s.into_owned())
         .unwrap_or(writer);
@@ -967,16 +971,10 @@ async fn by_creator(
         Err(e) => return server_error(e),
     };
 
-    let credit_rows = match series_credit::Entity::find()
-        .filter(series_credit::Column::Role.eq("writer"))
-        .filter(series_credit::Column::Person.eq(writer.clone()))
-        .all(&app.db)
-        .await
-    {
-        Ok(r) => r,
+    let series_ids = match opds::writer_series_ids(&app.db, &writer, &allowed).await {
+        Ok(ids) => ids,
         Err(e) => return server_error(e.to_string()),
     };
-    let series_ids: Vec<Uuid> = credit_rows.iter().map(|c| c.series_id).collect();
 
     let self_href = if page > 1 {
         format!(
@@ -1018,8 +1016,8 @@ async fn by_creator(
         Err(e) => return server_error(e.to_string()),
     };
     let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &result_ids).await;
-    let facets = opds::fetch_series_facets(&app.db, &result_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &result_ids, &allowed).await;
+    let facets = opds::fetch_series_facets(&app.db, &result_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -1090,8 +1088,8 @@ async fn search(
         Err(e) => return server_error(e.to_string()),
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -1464,7 +1462,7 @@ async fn view_acq(
         limit: view_limit,
         cursor: None,
         user_id: user.id,
-        visible_libraries: visible,
+        visible_libraries: visible.clone(),
     };
     let stmt = match compile::compile(&input) {
         Ok(s) => s,
@@ -1473,16 +1471,16 @@ async fn view_acq(
     let (sql, values) = stmt.build(PostgresQueryBuilder);
     let backend = app.db.get_database_backend();
     let raw = Statement::from_sql_and_values(backend, sql, values);
-    let mut rows = match series::Model::find_by_statement(raw).all(&app.db).await {
+    let mut rows = match opds::run_series_view_query(&app, id, raw).await {
         Ok(r) => r,
-        Err(e) => return server_error(e.to_string()),
+        Err(e) => return server_error(e),
     };
     if rows.len() as u64 > view_limit {
         rows.truncate(view_limit as usize);
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
-    let covers = opds::fetch_cover_issues(&app.db, &series_ids).await;
-    let facets = opds::fetch_series_facets(&app.db, &series_ids).await;
+    let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &visible).await;
+    let facets = opds::fetch_series_facets(&app.db, &series_ids, &visible).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))
@@ -1738,7 +1736,6 @@ async fn build_publications_inner(
     if issues.is_empty() {
         return Vec::new();
     }
-    let slugs = opds::fetch_series_slugs(&app.db, issues).await;
     let key = app.secrets.url_signing_key.as_ref();
     let issue_ids: Vec<String> = issues.iter().map(|i| i.id.clone()).collect();
     let progress = opds::fetch_user_progress(&app.db, user.id, &issue_ids).await;
@@ -1757,7 +1754,6 @@ async fn build_publications_inner(
             };
             publication_for(PublicationCtx {
                 issue: i,
-                series_slug: slugs.get(&i.series_id).map(String::as_str),
                 user_id: user.id,
                 url_signing_key: key,
                 progress: progress.get(&i.id),
@@ -1776,7 +1772,6 @@ async fn build_publications_inner(
 /// surface doesn't fan back out across the file.
 struct PublicationCtx<'a> {
     issue: &'a opds::OpdsIssueRow,
-    series_slug: Option<&'a str>,
     user_id: Uuid,
     url_signing_key: &'a [u8],
     progress: Option<&'a progress_record::Model>,
@@ -1794,7 +1789,6 @@ struct PublicationCtx<'a> {
 fn publication_for(ctx: PublicationCtx<'_>) -> Value {
     let PublicationCtx {
         issue: i,
-        series_slug,
         user_id,
         url_signing_key,
         progress,
@@ -1878,22 +1872,6 @@ fn publication_for(ctx: PublicationCtx<'_>) -> Value {
         "href": format!("/opds/v1/issues/{}/file", i.id),
         "type": super::opds::mime_for(&i.file_path),
     })];
-    // `rel=alternate` carries the canonical JSON representation of
-    // this issue — capable clients use it to fetch the rich JSON
-    // form for detail views without a second round-trip discovery.
-    // M7 of opds-richer-feeds.
-    links.push(json!({
-        "rel": "alternate",
-        "href": format!("/api/issues/{}", i.id),
-        "type": "application/json",
-    }));
-    if let Some(slug) = series_slug {
-        links.push(json!({
-            "rel": "related",
-            "href": format!("/api/series/{slug}"),
-            "type": "application/json",
-        }));
-    }
     // M2 of opds-sync: sequential navigation in reading-sequence feeds.
     // `previous` / `next` point at the adjacent issue's acquisition URL
     // so a finishing client can stream the next file without re-fetching
@@ -2006,18 +1984,6 @@ fn series_nav_entry(
     );
     obj.insert("type".into(), Value::from(NAV_CT));
     obj.insert("metadata".into(), Value::Object(metadata));
-    // `rel=alternate` to the canonical JSON for this series — capable
-    // OPDS 2.0 clients can fetch the rich web-API representation for
-    // detail views (per-series stats, full credits, etc.). M7 of
-    // opds-richer-feeds.
-    obj.insert(
-        "links".into(),
-        json!([{
-            "rel": "alternate",
-            "href": format!("/api/series/{}", s.slug),
-            "type": "application/json",
-        }]),
-    );
     // OPDS 2.0 `images` array — clients pick the best fit for their
     // surface (thumbnail for browse, full-size for cover detail).
     // Mirrors v1's image rels; without these clients render a generic
@@ -2146,8 +2112,9 @@ async fn render_collection_acq_v2(
     // dc:issued / author / subject lift series entries to the same
     // metadata richness as issue entries.
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
-    let series_covers = opds::fetch_cover_issues(&app.db, &collection_series_ids).await;
-    let series_facets = opds::fetch_series_facets(&app.db, &collection_series_ids).await;
+    let series_covers =
+        crate::api::series::series_cover_issue_ids(&app.db, &collection_series_ids, &visible).await;
+    let series_facets = opds::fetch_series_facets(&app.db, &collection_series_ids, &visible).await;
 
     // Walk rows in position order so series + issues retain the
     // collection's logical sequence.

@@ -16,6 +16,7 @@ import { showUndoToast } from "@/lib/ui/undo-toast";
 
 import { apiFetch } from "../auth-refresh";
 import { queryKeys, type EntityKindPath } from "../queries";
+import { apiPath } from "../path";
 import { getCsrfToken, useApiMutation } from "./_core";
 import {
   applyOptimisticProgress,
@@ -26,7 +27,7 @@ import {
   type PriorProgress,
   type ProgressWrite,
 } from "./progress";
-import { invalidateRails } from "./rails";
+import { invalidateRails, invalidateSeriesProgress } from "./rails";
 
 // Re-exports kept stable across the M5 directory split so callers
 // can continue to import everything from `"@/lib/api/mutations"`.
@@ -42,7 +43,7 @@ export * from "./duplicates";
 export * from "./hash-backfill";
 export * from "./sidecar-reemit";
 export * from "./markers";
-export { invalidateRails } from "./rails";
+export { invalidateRails, invalidateSeriesProgress } from "./rails";
 export {
   issueProgressKey,
   restoreProgress,
@@ -51,6 +52,8 @@ export {
 export * from "./page-overrides";
 export * from "./relationship-suggestions";
 export * from "./shared-lists";
+export * from "./issue-user-state";
+export * from "./preferences";
 
 import type {
   CancelBatchResp,
@@ -92,7 +95,6 @@ import type {
   ReorderLogWidgetsReq,
   ManualMatchReq,
   MeView,
-  PreferencesReq,
   QueueClearReq,
   QueueClearResp,
   DeadJobRetryReq,
@@ -100,7 +102,6 @@ import type {
   DeadJobsPurgeReq,
   DeadJobsPurgeResp,
   ProgressView,
-  IssueNoteView,
   RatingView,
   SavedViewListView,
   SavedViewView,
@@ -108,7 +109,6 @@ import type {
   ScanAllResp,
   ScanMode,
   ScanResp,
-  SetIssueNoteReq,
   SetRatingReq,
   AppPasswordCreatedView,
   CreateAppPasswordReq,
@@ -161,7 +161,7 @@ export function useCreateLibrary() {
 export function useUpdateLibrary(id: string) {
   const qc = useQueryClient();
   return useApiMutation<LibraryView, UpdateLibraryReq>(
-    (body) => ({ path: `/libraries/${id}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/libraries/${id}`, method: "PATCH", body }),
     {
       successMessage: "Settings saved",
       onSuccess: () => {
@@ -181,7 +181,7 @@ export function useUpdateLibrary(id: string) {
 export function useDeleteLibrary(id: string) {
   const qc = useQueryClient();
   return useApiMutation<DeleteLibraryResp, void>(
-    () => ({ path: `/libraries/${id}`, method: "DELETE" }),
+    () => ({ path: apiPath`/libraries/${id}`, method: "DELETE" }),
     {
       successMessage: (data) =>
         `Deleted library — purged ${data?.deleted_issues ?? 0} issue${
@@ -222,7 +222,7 @@ export function useCancelScanRun(librarySlug: string) {
     { scanId: string }
   >(
     (input) => ({
-      path: `/libraries/${librarySlug}/scan-runs/${input.scanId}/cancel`,
+      path: apiPath`/libraries/${librarySlug}/scan-runs/${input.scanId}/cancel`,
       method: "POST",
     }),
     {
@@ -247,7 +247,7 @@ export function useTriggerScan(libraryId: string) {
       if (input?.force) params.set("force", "true");
       const qs = params.toString();
       return {
-        path: `/libraries/${libraryId}/scan${qs ? `?${qs}` : ""}`,
+        path: apiPath`/libraries/${libraryId}/scan` + (qs ? `?${qs}` : ""),
         method: "POST",
       };
     },
@@ -456,7 +456,7 @@ export function useBulkRemoveFromCollection(collectionId: string) {
     { members: { entry_kind: "issue" | "series"; ref_id: string }[] }
   >(
     (input) => ({
-      path: `/me/collections/${collectionId}/members/bulk-remove`,
+      path: apiPath`/me/collections/${collectionId}/members/bulk-remove`,
       method: "POST",
       body: input,
     }),
@@ -528,7 +528,7 @@ export function useBulkAddToCollection(collectionId: string) {
     { members: { entry_kind: "issue" | "series"; ref_id: string }[] }
   >(
     (input) => ({
-      path: `/me/collections/${collectionId}/members/bulk-add`,
+      path: apiPath`/me/collections/${collectionId}/members/bulk-add`,
       method: "POST",
       body: input,
     }),
@@ -609,6 +609,7 @@ export function useBulkMarkProgress() {
       onSuccess: (data, input, ctx) => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
         const message = summarizeBulkProgress(data, input.finished);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (!prior || data?.updated === 0) {
@@ -642,7 +643,7 @@ export function useBulkMarkSeriesMatchingProgress(seriesSlug: string) {
     }
   >(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/progress-matching`,
+      path: apiPath`/series/${seriesSlug}/progress-matching`,
       method: "POST",
       body: input,
     }),
@@ -653,6 +654,7 @@ export function useBulkMarkSeriesMatchingProgress(seriesSlug: string) {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
       },
     },
   );
@@ -771,6 +773,7 @@ export function useBulkMarkSeriesProgress() {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
       },
     },
   );
@@ -787,7 +790,7 @@ export function useBulkMarkSeriesProgress() {
 export function useTriggerDeepValidate(libraryId: string) {
   return useApiMutation<{ library_id: string; state: string }, void>(
     () => ({
-      path: `/libraries/${libraryId}/validate-deeply`,
+      path: apiPath`/libraries/${libraryId}/validate-deeply`,
       method: "POST",
     }),
     {
@@ -804,7 +807,10 @@ export function useTriggerSeriesScan(seriesId: string, libraryId?: string) {
   // the menu item. The endpoint accepts ?force=false for cron-style
   // callers that explicitly want the cheap path.
   return useApiMutation<ScanResp, void>(
-    () => ({ path: `/series/${seriesId}/scan?force=true`, method: "POST" }),
+    () => ({
+      path: apiPath`/series/${seriesId}/scan?force=true`,
+      method: "POST",
+    }),
     {
       successMessage: "Scan series queued",
       onSuccess: () => {
@@ -821,7 +827,7 @@ export function useDismissHealthIssue(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<null, { issueId: string }>(
     ({ issueId }) => ({
-      path: `/libraries/${libraryId}/health-issues/${issueId}/dismiss`,
+      path: apiPath`/libraries/${libraryId}/health-issues/${issueId}/dismiss`,
       method: "POST",
     }),
     {
@@ -842,7 +848,7 @@ export function useRestoreIssue(libraryId: string) {
   // id-based path never existed and every restore 404ed.
   return useApiMutation<null, { seriesSlug: string; issueSlug: string }>(
     ({ seriesSlug, issueSlug }) => ({
-      path: `/series/${seriesSlug}/issues/${issueSlug}/restore`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/restore`,
       method: "POST",
     }),
     {
@@ -861,7 +867,7 @@ export function useRestoreSeries(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<null, { seriesSlug: string }>(
     ({ seriesSlug }) => ({
-      path: `/series/${seriesSlug}/restore`,
+      path: apiPath`/series/${seriesSlug}/restore`,
       method: "POST",
     }),
     {
@@ -915,7 +921,7 @@ export function useCancelMetadataBatch() {
   const qc = useQueryClient();
   return useApiMutation<CancelBatchResp, { id: string }>(
     ({ id }) => ({
-      path: `/admin/metadata/batches/${encodeURIComponent(id)}/cancel`,
+      path: apiPath`/admin/metadata/batches/${id}/cancel`,
       method: "POST",
     }),
     {
@@ -984,7 +990,7 @@ export function useConfirmIssueRemoval(libraryId: string) {
   // Slug-addressed (UX-11 fix) — same route mismatch as `useRestoreIssue`.
   return useApiMutation<null, { seriesSlug: string; issueSlug: string }>(
     ({ seriesSlug, issueSlug }) => ({
-      path: `/series/${seriesSlug}/issues/${issueSlug}/confirm-removal`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/confirm-removal`,
       method: "POST",
     }),
     {
@@ -1016,7 +1022,7 @@ export function useConfirmSeriesRemoval(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<ConfirmRemovalsResp, { seriesSlug: string }>(
     ({ seriesSlug }) => ({
-      path: `/series/${seriesSlug}/confirm-removal`,
+      path: apiPath`/series/${seriesSlug}/confirm-removal`,
       method: "POST",
     }),
     {
@@ -1035,7 +1041,7 @@ export function useConfirmRemovals(libraryId: string) {
   const qc = useQueryClient();
   return useApiMutation<ConfirmRemovalsResp, ConfirmRemovalsReq>(
     (body) => ({
-      path: `/libraries/${libraryId}/removed/confirm`,
+      path: apiPath`/libraries/${libraryId}/removed/confirm`,
       method: "POST",
       body,
     }),
@@ -1051,7 +1057,7 @@ export function useConfirmRemovals(libraryId: string) {
 export function useUpdateSeries(seriesId: string) {
   const qc = useQueryClient();
   return useApiMutation<null, UpdateSeriesReq>(
-    (body) => ({ path: `/series/${seriesId}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/series/${seriesId}`, method: "PATCH", body }),
     {
       successMessage: "Series updated",
       onSuccess: () => {
@@ -1069,68 +1075,13 @@ export function useUpdateSeries(seriesId: string) {
 export function useSetSeriesRating(seriesSlug: string) {
   return useApiMutation<RatingView, SetRatingReq>(
     (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/rating`,
+      path: apiPath`/series/${seriesSlug}/rating`,
       method: "PUT",
       body,
     }),
     {
       // No toast on success — the rating control gives instant visual
       // feedback and a toast on every click would be noisy.
-    },
-  );
-}
-
-/**
- * `PUT /series/{slug}/issues/{slug}/rating` — same shape as the series
- * rating endpoint but scoped to a single issue.
- *
- * No toast on success — the star control fills in inline; a per-click
- * toast would be noisy. Mirrors `useSetSeriesRating`.
- */
-export function useSetIssueRating(seriesSlug: string, issueSlug: string) {
-  return useApiMutation<RatingView, SetRatingReq>(
-    (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/rating`,
-      method: "PUT",
-      body,
-    }),
-    {},
-  );
-}
-
-/**
- * `PUT /series/{series_slug}/issues/{issue_slug}/note` — the caller's
- * issue-level closing note (not a page note). `body: null` or blank
- * clears it. Written from the reader's end-of-issue Wrap up pane and
- * the issue page; the response echoes the stored body.
- */
-export function useSetIssueNote(
-  seriesSlug: string,
-  issueSlug: string,
-  opts?: { silent?: boolean },
-) {
-  const qc = useQueryClient();
-  return useApiMutation<IssueNoteView, SetIssueNoteReq>(
-    (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/note`,
-      method: "PUT",
-      body,
-    }),
-    {
-      // `silent`: the caller raises its own (Undo) toast.
-      ...(opts?.silent
-        ? {}
-        : {
-            successMessage: (view: IssueNoteView | null) =>
-              view?.body ? "Closing note saved" : "Closing note cleared",
-          }),
-      // The /bookmarks feed, its counts and series list carry closing
-      // notes (`["markers", "feed…"]` keys).
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["markers", "feed"] });
-        qc.invalidateQueries({ queryKey: ["markers", "feed-counts"] });
-        qc.invalidateQueries({ queryKey: ["markers", "feed-series"] });
-      },
     },
   );
 }
@@ -1143,7 +1094,7 @@ export function useSetIssueNote(
 export function useUpdateIssue(seriesSlug: string, issueSlug: string) {
   return useApiMutation<IssueDetailView, UpdateIssueReq>(
     (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}`,
       method: "PATCH",
       body,
     }),
@@ -1166,7 +1117,7 @@ export function useSetIssueCoverPage(
   const qc = useQueryClient();
   return useApiMutation<IssueCoverPickResp, IssueCoverPickReq>(
     (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/cover`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/cover`,
       method: "PATCH",
       body,
     }),
@@ -1195,7 +1146,7 @@ export function useSetIssueVariantCover(
   const qc = useQueryClient();
   return useApiMutation<IssueVariantCoverResp, { variantId: string }>(
     ({ variantId }) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/cover/variant/${encodeURIComponent(variantId)}`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/cover/variant/${variantId}`,
       method: "POST",
     }),
     {
@@ -1221,7 +1172,7 @@ export function useClearIssueVariantCover(
   const qc = useQueryClient();
   return useApiMutation<IssueVariantCoverClearResp, void>(
     () => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/cover/variant`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/cover/variant`,
       method: "DELETE",
     }),
     {
@@ -1250,7 +1201,7 @@ export function useSetSeriesCover(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<SeriesCoverPickResp, SeriesCoverPickReq>(
     (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/cover`,
+      path: apiPath`/series/${seriesSlug}/cover`,
       method: "PATCH",
       body,
     }),
@@ -1273,7 +1224,7 @@ export function useSetSeriesCover(seriesSlug: string) {
 export function useResetSeriesReaderPrefs(seriesId: string) {
   return useApiMutation<null, void>(
     () => ({
-      path: `/me/series/${encodeURIComponent(seriesId)}/reader-prefs`,
+      path: apiPath`/me/series/${seriesId}/reader-prefs`,
       method: "DELETE",
     }),
     { successMessage: "Series reader settings reset" },
@@ -1291,7 +1242,7 @@ export function useClearIssueFieldPin(seriesSlug: string, issueSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<{ cleared: boolean }, { field: string }>(
     ({ field }) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/field-provenance/${encodeURIComponent(field)}`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/field-provenance/${field}`,
       method: "DELETE",
     }),
     {
@@ -1322,7 +1273,7 @@ export function useSetIssueFieldLock(seriesSlug: string, issueSlug: string) {
     { field: string; locked: boolean }
   >(
     ({ field, locked }) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/field-provenance/${encodeURIComponent(field)}`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/field-provenance/${field}`,
       method: locked ? "PUT" : "DELETE",
     }),
     {
@@ -1370,7 +1321,7 @@ function invalidateIssueFieldPins(
 export function useArchiveEditMutation(issueId: string) {
   return useApiMutation<EditResponse, EditRequest>(
     (body) => ({
-      path: `/issues/${encodeURIComponent(issueId)}/archive/edit`,
+      path: apiPath`/issues/${issueId}/archive/edit`,
       method: "POST",
       body,
     }),
@@ -1398,7 +1349,7 @@ export function useBulkArchiveEditMutation() {
 export function useRestoreArchiveMutation(issueId: string) {
   return useApiMutation<RestoreResponse, void>(
     () => ({
-      path: `/issues/${encodeURIComponent(issueId)}/archive/restore`,
+      path: apiPath`/issues/${issueId}/archive/restore`,
       method: "POST",
     }),
     { successMessage: "Restore queued" },
@@ -1432,7 +1383,7 @@ export function useScanIssue(seriesSlug: string, issueSlug: string) {
   // user clicked "Scan issue" — they expect a fresh ingest.
   return useApiMutation<ScanResp, void>(
     () => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/scan?force=true`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/scan?force=true`,
       method: "POST",
     }),
     { successMessage: "Scan issue queued" },
@@ -1450,7 +1401,7 @@ export function useSetIssueMetadataAccepted(
   issueSlug: string,
 ) {
   const qc = useQueryClient();
-  const base = `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/accept`;
+  const base = apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/accept`;
   return useApiMutation<AcceptMetadataResp, boolean>(
     (accept) => ({ path: base, method: accept ? "POST" : "DELETE" }),
     {
@@ -1519,6 +1470,7 @@ export function useUpsertIssueProgress() {
         if (data) qc.setQueryData(issueProgressKey(input.issue_id), data);
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
         const prior = (ctx as MarkProgressCtx | undefined)?.prior;
         if (typeof input.finished !== "boolean" || !prior) return;
         showUndoToast({
@@ -1540,7 +1492,11 @@ export function useUpsertIssueProgress() {
 export function useUpsertSeriesProgress(seriesId: string) {
   const qc = useQueryClient();
   return useApiMutation<UpsertSeriesProgressResp, UpsertSeriesProgressReq>(
-    (body) => ({ path: `/series/${seriesId}/progress`, method: "POST", body }),
+    (body) => ({
+      path: apiPath`/series/${seriesId}/progress`,
+      method: "POST",
+      body,
+    }),
     {
       successMessage: (data, input) => {
         if (!data) return "Progress updated";
@@ -1555,6 +1511,7 @@ export function useUpsertSeriesProgress(seriesId: string) {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.userProgress });
         invalidateRails(qc);
+        invalidateSeriesProgress(qc);
       },
     },
   );
@@ -1572,7 +1529,7 @@ export function useSetSavedViewIcon() {
   const qc = useQueryClient();
   return useApiMutation<null, { id: string; icon: string | null }>(
     (vars) => ({
-      path: `/me/saved-views/${encodeURIComponent(vars.id)}/icon`,
+      path: apiPath`/me/saved-views/${vars.id}/icon`,
       method: "POST",
       body: { icon: vars.icon },
     }),
@@ -1608,7 +1565,7 @@ export function useRestoreRailItem() {
   const qc = useQueryClient();
   return useApiMutation<null, { target_kind: string; target_id: string }>(
     (vars) => ({
-      path: `/me/rail-dismissals/${encodeURIComponent(vars.target_kind)}/${encodeURIComponent(vars.target_id)}`,
+      path: apiPath`/me/rail-dismissals/${vars.target_kind}/${vars.target_id}`,
       method: "DELETE",
     }),
     {
@@ -1629,7 +1586,7 @@ function invalidateUser(qc: ReturnType<typeof useQueryClient>, id: string) {
 export function useUpdateUser(id: string) {
   const qc = useQueryClient();
   return useApiMutation<AdminUserDetailView, UpdateUserReq>(
-    (body) => ({ path: `/admin/users/${id}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/admin/users/${id}`, method: "PATCH", body }),
     {
       successMessage: "User updated",
       onSuccess: () => invalidateUser(qc, id),
@@ -1657,7 +1614,7 @@ export function useCreateUser() {
 export function useDisableUser(id: string) {
   const qc = useQueryClient();
   return useApiMutation<AdminUserView, void>(
-    () => ({ path: `/admin/users/${id}/disable`, method: "POST" }),
+    () => ({ path: apiPath`/admin/users/${id}/disable`, method: "POST" }),
     {
       successMessage: "User disabled",
       onSuccess: () => invalidateUser(qc, id),
@@ -1668,7 +1625,7 @@ export function useDisableUser(id: string) {
 export function useEnableUser(id: string) {
   const qc = useQueryClient();
   return useApiMutation<AdminUserView, void>(
-    () => ({ path: `/admin/users/${id}/enable`, method: "POST" }),
+    () => ({ path: apiPath`/admin/users/${id}/enable`, method: "POST" }),
     {
       successMessage: "User enabled",
       onSuccess: () => invalidateUser(qc, id),
@@ -1680,7 +1637,7 @@ export function useUpdateLibraryAccess(id: string) {
   const qc = useQueryClient();
   return useApiMutation<AdminUserDetailView, LibraryAccessReq>(
     (body) => ({
-      path: `/admin/users/${id}/library-access`,
+      path: apiPath`/admin/users/${id}/library-access`,
       method: "POST",
       body,
     }),
@@ -1692,31 +1649,6 @@ export function useUpdateLibraryAccess(id: string) {
 }
 
 // ---------- Per-user settings (M4) ----------
-
-/**
- * `PATCH /me/preferences`. Updates the calling user's reader/theme/keybind
- * preferences and returns the refreshed `MeView`. The cache is updated in
- * place so the new prefs are immediately visible to every consumer of
- * `useMe()` without an extra round-trip.
- */
-export function useUpdatePreferences(opts?: {
-  silent?: boolean;
-  /** Collapse repeated error toasts into one (autosave-like callers such
-   *  as the reader's coalesced display-pref sync). */
-  toastId?: string;
-}) {
-  const qc = useQueryClient();
-  return useApiMutation<MeView, PreferencesReq>(
-    (body) => ({ path: "/me/preferences", method: "PATCH", body }),
-    {
-      ...(opts?.silent ? {} : { successMessage: "Preferences saved" }),
-      ...(opts?.toastId ? { toastId: opts.toastId } : {}),
-      onSuccess: (data) => {
-        if (data) qc.setQueryData(queryKeys.me, data);
-      },
-    },
-  );
-}
 
 /**
  * `POST /me/reading-sessions/clear`. Destructive — deletes ALL of the
@@ -1748,7 +1680,27 @@ export function useUpdateAccount() {
   return useApiMutation<MeView, AccountReq>(
     (body) => ({ path: "/me/account", method: "PATCH", body }),
     {
-      successMessage: "Account updated",
+      // An email change with mail delivery on leaves `email` as it was and
+      // names the new address in `pending_email` until its link is opened.
+      successMessage: (data, body) =>
+        body.email && data?.pending_email
+          ? `Confirmation sent to ${data.pending_email}`
+          : "Account updated",
+      onSuccess: (data) => {
+        if (data) qc.setQueryData(queryKeys.me, data);
+      },
+    },
+  );
+}
+
+/** Cancel a pending email change: `PATCH /me/account` with the account's
+ *  current address drops the outstanding confirmation link. */
+export function useCancelEmailChange() {
+  const qc = useQueryClient();
+  return useApiMutation<MeView, { email: string }>(
+    (body) => ({ path: "/me/account", method: "PATCH", body }),
+    {
+      successMessage: "Email change cancelled",
       onSuccess: (data) => {
         if (data) qc.setQueryData(queryKeys.me, data);
       },
@@ -1772,7 +1724,7 @@ export function useDeleteAccount() {
 export function useRevokeSession() {
   const qc = useQueryClient();
   return useApiMutation<null, string>(
-    (id) => ({ path: `/me/sessions/${id}`, method: "DELETE" }),
+    (id) => ({ path: apiPath`/me/sessions/${id}`, method: "DELETE" }),
     {
       successMessage: "Session signed out",
       onSuccess: () => {
@@ -1818,7 +1770,7 @@ export function useCreateAppPassword() {
 export function useRevokeAppPassword() {
   const qc = useQueryClient();
   return useApiMutation<null, string>(
-    (id) => ({ path: `/me/app-passwords/${id}`, method: "DELETE" }),
+    (id) => ({ path: apiPath`/me/app-passwords/${id}`, method: "DELETE" }),
     {
       successMessage: "App password revoked",
       onSuccess: () => {
@@ -1854,7 +1806,7 @@ export function useUpdateViewGroup(scope: ViewGroupScope) {
   const qc = useQueryClient();
   return useApiMutation<ViewGroupView, { id: string } & UpdateViewGroupReq>(
     ({ id, ...body }) => ({
-      path: `/me/view-groups/${id}`,
+      path: apiPath`/me/view-groups/${id}`,
       method: "PATCH",
       body,
     }),
@@ -1897,7 +1849,7 @@ export function useUpdateViewGroup(scope: ViewGroupScope) {
 export function useDeleteViewGroup(scope: ViewGroupScope) {
   const qc = useQueryClient();
   return useApiMutation<unknown, string>(
-    (id) => ({ path: `/me/view-groups/${id}`, method: "DELETE" }),
+    (id) => ({ path: apiPath`/me/view-groups/${id}`, method: "DELETE" }),
     {
       successMessage: "Group removed — its views are ungrouped",
       onSuccess: () => {
@@ -1997,7 +1949,7 @@ export async function uploadCblFile(
 export function useUpdateCblList(id: string) {
   const qc = useQueryClient();
   return useApiMutation<CblListView, UpdateCblListReq>(
-    (body) => ({ path: `/me/cbl-lists/${id}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/me/cbl-lists/${id}`, method: "PATCH", body }),
     {
       successMessage: "Saved",
       onSuccess: () => {
@@ -2011,7 +1963,7 @@ export function useUpdateCblList(id: string) {
 export function useDeleteCblList(id: string) {
   const qc = useQueryClient();
   return useApiMutation<unknown, void>(
-    () => ({ path: `/me/cbl-lists/${id}`, method: "DELETE" }),
+    () => ({ path: apiPath`/me/cbl-lists/${id}`, method: "DELETE" }),
     {
       successMessage: "List deleted",
       onSuccess: () => {
@@ -2026,7 +1978,9 @@ export function useRefreshCblList(id: string) {
   const qc = useQueryClient();
   return useApiMutation<ImportSummary, { force?: boolean }>(
     (input) => ({
-      path: `/me/cbl-lists/${id}/refresh${input?.force ? "?force=true" : ""}`,
+      path:
+        apiPath`/me/cbl-lists/${id}/refresh` +
+        (input?.force ? "?force=true" : ""),
       method: "POST",
     }),
     {
@@ -2066,7 +2020,7 @@ export function useRefreshCblList(id: string) {
  *  applying it. Powers the "Review" affordance on the refresh dashboard. */
 export function useCheckCblList(id: string) {
   return useApiMutation<CblBulkItemView, void>(
-    () => ({ path: `/me/cbl-lists/${id}/check`, method: "POST" }),
+    () => ({ path: apiPath`/me/cbl-lists/${id}/check`, method: "POST" }),
     {
       // No toast: the dashboard renders the returned diff inline.
     },
@@ -2100,7 +2054,7 @@ export function useManualMatchEntry(listId: string) {
   const qc = useQueryClient();
   return useApiMutation<CblEntryView, { entryId: string; req: ManualMatchReq }>(
     ({ entryId, req }) => ({
-      path: `/me/cbl-lists/${listId}/entries/${entryId}/match`,
+      path: apiPath`/me/cbl-lists/${listId}/entries/${entryId}/match`,
       method: "POST",
       body: req,
     }),
@@ -2124,7 +2078,7 @@ export function useClearMatchEntry(listId: string) {
   const qc = useQueryClient();
   return useApiMutation<CblEntryView, string>(
     (entryId) => ({
-      path: `/me/cbl-lists/${listId}/entries/${entryId}/clear-match`,
+      path: apiPath`/me/cbl-lists/${listId}/entries/${entryId}/clear-match`,
       method: "POST",
     }),
     {
@@ -2142,15 +2096,14 @@ export function useClearMatchEntry(listId: string) {
 
 // ---------- Saved views (M6 needs create + delete + pin from import flow) ----------
 
-/** No toast on success — the create dialog closes and the user lands
- *  on the new view's detail route; the route change is the signal.
- *  AddViewButton additionally fires its own context-aware toast when
- *  it chains a pin after create. */
+/** Toasts "View created". AddViewButton adds a plan-limit notice when
+ *  the pin it chains after create hits the cap. */
 export function useCreateSavedView() {
   const qc = useQueryClient();
   return useApiMutation<SavedViewView, CreateSavedViewReq>(
     (body) => ({ path: "/me/saved-views", method: "POST", body }),
     {
+      successMessage: "View created",
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: ["saved-views"] });
       },
@@ -2200,7 +2153,7 @@ export function usePinSavedView() {
   const router = useRouter();
   return useApiMutation<unknown, { id: string; pinned: boolean }>(
     ({ id, pinned }) => ({
-      path: `/me/saved-views/${id}/${pinned ? "pin" : "unpin"}`,
+      path: apiPath`/me/saved-views/${id}/${pinned ? "pin" : "unpin"}`,
       method: "POST",
     }),
     {
@@ -2277,7 +2230,7 @@ export function useSidebarSavedView() {
   const router = useRouter();
   return useApiMutation<unknown, { id: string; show: boolean }>(
     ({ id, show }) => ({
-      path: `/me/saved-views/${id}/sidebar?show=${show ? "true" : "false"}`,
+      path: apiPath`/me/saved-views/${id}/sidebar?show=${show ? "true" : "false"}`,
       method: "POST",
     }),
     {
@@ -2446,7 +2399,7 @@ export function useCreateCollection(opts?: { silent?: boolean }) {
 export function useUpdateCollection(id: string) {
   const qc = useQueryClient();
   return useApiMutation<SavedViewView, UpdateCollectionReq>(
-    (body) => ({ path: `/me/collections/${id}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/me/collections/${id}`, method: "PATCH", body }),
     {
       successMessage: "Saved",
       onSuccess: () => {
@@ -2468,7 +2421,7 @@ export function useUpdateCollection(id: string) {
 export function useDeleteCollection(id: string, opts?: { silent?: boolean }) {
   const qc = useQueryClient();
   return useApiMutation<unknown, void>(
-    () => ({ path: `/me/collections/${id}`, method: "DELETE" }),
+    () => ({ path: apiPath`/me/collections/${id}`, method: "DELETE" }),
     {
       ...(opts?.silent ? {} : { successMessage: "Collection deleted" }),
       onSuccess: () => {
@@ -2486,7 +2439,7 @@ export function useAddCollectionEntry(collectionId: string) {
   const qc = useQueryClient();
   return useApiMutation<CollectionEntryView, AddEntryReq>(
     (body) => ({
-      path: `/me/collections/${collectionId}/entries`,
+      path: apiPath`/me/collections/${collectionId}/entries`,
       method: "POST",
       body,
     }),
@@ -2508,7 +2461,7 @@ export function useRemoveCollectionEntry(
   const qc = useQueryClient();
   return useApiMutation<unknown, { entryId: string }>(
     ({ entryId }) => ({
-      path: `/me/collections/${collectionId}/entries/${entryId}`,
+      path: apiPath`/me/collections/${collectionId}/entries/${entryId}`,
       method: "DELETE",
     }),
     {
@@ -2528,7 +2481,7 @@ export function useReorderCollectionEntries(collectionId: string) {
   const qc = useQueryClient();
   return useApiMutation<unknown, ReorderEntriesReq>(
     (body) => ({
-      path: `/me/collections/${collectionId}/entries/reorder`,
+      path: apiPath`/me/collections/${collectionId}/entries/reorder`,
       method: "POST",
       body,
     }),
@@ -2649,7 +2602,7 @@ export function useUpdatePage(id: string) {
   const router = useRouter();
   const pathname = usePathname();
   return useApiMutation<PageView, UpdatePageReq>(
-    (body) => ({ path: `/me/pages/${id}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/me/pages/${id}`, method: "PATCH", body }),
     {
       successMessage: (_data, input) => {
         if (typeof input.name === "string") return TOAST.PAGE_RENAMED;
@@ -2694,7 +2647,7 @@ export function useTogglePageSidebar(id: string) {
   const router = useRouter();
   return useApiMutation<void, { show: boolean }>(
     ({ show }) => ({
-      path: `/me/pages/${id}/sidebar?show=${show ? "true" : "false"}`,
+      path: apiPath`/me/pages/${id}/sidebar?show=${show ? "true" : "false"}`,
       method: "POST",
     }),
     {
@@ -2724,7 +2677,7 @@ export function useDeletePage(
   const router = useRouter();
   const leaveRoute = opts?.leaveRoute ?? true;
   return useApiMutation<void, void>(
-    () => ({ path: `/me/pages/${id}`, method: "DELETE" }),
+    () => ({ path: apiPath`/me/pages/${id}`, method: "DELETE" }),
     {
       ...(opts?.silent ? {} : { successMessage: TOAST.PAGE_DELETED }),
       onSuccess: () => {
@@ -2774,12 +2727,12 @@ export function useTogglePinOnPage() {
     ({ viewId, pageId, pinned }) =>
       pinned
         ? {
-            path: `/me/saved-views/${viewId}/pin`,
+            path: apiPath`/me/saved-views/${viewId}/pin`,
             method: "POST",
             body: { page_ids: [pageId] },
           }
         : {
-            path: `/me/saved-views/${viewId}/unpin`,
+            path: apiPath`/me/saved-views/${viewId}/unpin`,
             method: "POST",
             body: { page_id: pageId },
           },
@@ -2856,7 +2809,7 @@ export function useAddLogWidget() {
 export function usePatchLogWidget(id: string) {
   const qc = useQueryClient();
   return useApiMutation<LogWidgetView, PatchLogWidgetReq>(
-    (body) => ({ path: `/me/log/widgets/${id}`, method: "PATCH", body }),
+    (body) => ({ path: apiPath`/me/log/widgets/${id}`, method: "PATCH", body }),
     {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.logWidgets });
@@ -2871,7 +2824,7 @@ export function usePatchLogWidget(id: string) {
 export function useRemoveLogWidget(id: string) {
   const qc = useQueryClient();
   return useApiMutation<null, void>(
-    () => ({ path: `/me/log/widgets/${id}`, method: "DELETE" }),
+    () => ({ path: apiPath`/me/log/widgets/${id}`, method: "DELETE" }),
     {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: queryKeys.logWidgets });
@@ -3016,7 +2969,7 @@ export function useSearchMetadataForSeries(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<SearchStartedResp, SearchOverrides | void>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/search`,
+      path: apiPath`/series/${seriesSlug}/metadata/search`,
       method: "POST",
       body: input ?? undefined,
     }),
@@ -3038,7 +2991,7 @@ export function useSearchMetadataForIssue(
   const qc = useQueryClient();
   return useApiMutation<SearchStartedResp, SearchOverrides | void>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/search`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/search`,
       method: "POST",
       body: input ?? undefined,
     }),
@@ -3068,7 +3021,7 @@ export function useLookupMetadataForSeries(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<LookupResp, LookupReq>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/lookup`,
+      path: apiPath`/series/${seriesSlug}/metadata/lookup`,
       method: "POST",
       body: input,
     }),
@@ -3090,7 +3043,7 @@ export function useLookupMetadataForIssue(
   const qc = useQueryClient();
   return useApiMutation<LookupResp, LookupReq>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/lookup`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/lookup`,
       method: "POST",
       body: input,
     }),
@@ -3133,7 +3086,7 @@ export function useApplyMetadataForSeries(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<ApplyAcceptedResp, ApplyMetadataInput>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/apply`,
+      path: apiPath`/series/${seriesSlug}/metadata/apply`,
       method: "POST",
       body: input,
     }),
@@ -3156,7 +3109,7 @@ export function useApplyMetadataForIssue(
   const qc = useQueryClient();
   return useApiMutation<ApplyAcceptedResp, ApplyMetadataInput>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/apply`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/apply`,
       method: "POST",
       body: input,
     }),
@@ -3185,7 +3138,7 @@ export function useCreateSeriesBatch(seriesSlug: string) {
       const scope = input?.scope;
       const qs = scope && scope !== "all" ? `?scope=${scope}` : "";
       return {
-        path: `/series/${encodeURIComponent(seriesSlug)}/metadata/batch${qs}`,
+        path: apiPath`/series/${seriesSlug}/metadata/batch` + qs,
         method: "POST",
       };
     },
@@ -3205,7 +3158,7 @@ export function useRefreshEntityProfile(kind: EntityKindPath, slug: string) {
   const qc = useQueryClient();
   return useApiMutation<{ queued: boolean }, void>(
     () => ({
-      path: `/${kind}/${encodeURIComponent(slug)}/profile/refresh`,
+      path: apiPath`/${kind}/${slug}/profile/refresh`,
       method: "POST",
     }),
     {
@@ -3221,7 +3174,7 @@ export function useAcceptSeriesIssues(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<AcceptIssuesResp, AcceptIssuesReq>(
     (body) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/issues/accept`,
+      path: apiPath`/series/${seriesSlug}/metadata/issues/accept`,
       method: "POST",
       body,
     }),
@@ -3247,13 +3200,14 @@ export function useAcceptSeriesIssues(seriesSlug: string) {
 
 export function useCreateSeriesSelectionBatch(seriesSlug: string) {
   return useApiMutation<BatchCreatedResp, { issue_ids: string[] }>((input) => ({
-    path: `/series/${encodeURIComponent(seriesSlug)}/metadata/batch/selection`,
+    path: apiPath`/series/${seriesSlug}/metadata/batch/selection`,
     method: "POST",
     body: input,
   }));
 }
 
-/** Fan out a metadata search over a saved view's targets → one batch. */
+/** Fan out a metadata search over a saved view's targets → one batch.
+ *  The success toast counts the batch and links to its Review tab. */
 export function useCreateSavedViewBatch() {
   return useApiMutation<BatchCreatedResp, { saved_view_id: string }>(
     (input) => ({
@@ -3261,7 +3215,19 @@ export function useCreateSavedViewBatch() {
       method: "POST",
       body: input,
     }),
-    { successMessage: "Queued metadata search" },
+    {
+      successMessage: (resp) =>
+        resp
+          ? `Searching ${resp.items_total} items for metadata`
+          : "Queued metadata search",
+      successAction: (resp) =>
+        resp
+          ? {
+              label: "Review",
+              href: `/admin/metadata?tab=review&batch=${resp.batch_id}`,
+            }
+          : undefined,
+    },
   );
 }
 
@@ -3281,7 +3247,7 @@ export function useBatchApply(batchId: string) {
   const qc = useQueryClient();
   return useApiMutation<BatchApplyResp, BatchApplyInput>(
     (input) => ({
-      path: `/metadata/batch/${encodeURIComponent(batchId)}/apply`,
+      path: apiPath`/metadata/batch/${batchId}/apply`,
       method: "POST",
       body: input,
     }),
@@ -3318,7 +3284,7 @@ export function useApplyCompositeMetadataForSeries(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<CompositeApplyResp, CompositeApplyInput>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/composite-apply`,
+      path: apiPath`/series/${seriesSlug}/metadata/composite-apply`,
       method: "POST",
       body: input,
     }),
@@ -3338,7 +3304,7 @@ export function useApplyCompositeMetadataForIssue(
   const qc = useQueryClient();
   return useApiMutation<CompositeApplyResp, CompositeApplyInput>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/metadata/composite-apply`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/metadata/composite-apply`,
       method: "POST",
       body: input,
     }),
@@ -3357,7 +3323,7 @@ export function usePauseMetadataSync(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<SyncStatusResp, void>(
     () => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/pause`,
+      path: apiPath`/series/${seriesSlug}/metadata/pause`,
       method: "POST",
     }),
     {
@@ -3375,7 +3341,7 @@ export function useResumeMetadataSync(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<SyncStatusResp, void>(
     () => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/metadata/resume`,
+      path: apiPath`/series/${seriesSlug}/metadata/resume`,
       method: "POST",
     }),
     {
@@ -3398,7 +3364,7 @@ export function useAddExternalIdSeries(
   const qc = useQueryClient();
   return useApiMutation<ExternalIdRow, AddExternalIdReq>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/external-ids`,
+      path: apiPath`/series/${seriesSlug}/external-ids`,
       method: "POST",
       body: input,
     }),
@@ -3423,7 +3389,7 @@ export function useDeleteExternalIdSeries(
   const qc = useQueryClient();
   return useApiMutation<null, { source: string }>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/external-ids/${encodeURIComponent(input.source)}`,
+      path: apiPath`/series/${seriesSlug}/external-ids/${input.source}`,
       method: "DELETE",
     }),
     {
@@ -3444,7 +3410,7 @@ export function useAddProviderRangeSeries(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<ProviderRangeRow, AddProviderRangeReq>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/provider-ranges`,
+      path: apiPath`/series/${seriesSlug}/provider-ranges`,
       method: "POST",
       body: input,
     }),
@@ -3466,7 +3432,7 @@ export function useDeleteProviderRangeSeries(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<null, { id: string }>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/provider-ranges/${encodeURIComponent(input.id)}`,
+      path: apiPath`/series/${seriesSlug}/provider-ranges/${input.id}`,
       method: "DELETE",
     }),
     {
@@ -3525,7 +3491,7 @@ export function useCreateSeriesRelationship(
     CreateSeriesRelationshipReq
   >(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/relationships`,
+      path: apiPath`/series/${seriesSlug}/relationships`,
       method: "POST",
       body: input,
     }),
@@ -3549,7 +3515,7 @@ export function useDeleteSeriesRelationship(
     { id: string; otherSlug: string; arcSlug?: string }
   >(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/relationships/${encodeURIComponent(input.id)}`,
+      path: apiPath`/series/${seriesSlug}/relationships/${input.id}`,
       method: "DELETE",
     }),
     {
@@ -3576,7 +3542,7 @@ export function useUpdateSeriesRelationship(seriesSlug: string) {
     { id: string; body: UpdateSeriesRelationshipReq }
   >(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/relationships/${encodeURIComponent(input.id)}`,
+      path: apiPath`/series/${seriesSlug}/relationships/${input.id}`,
       method: "PATCH",
       body: input.body,
     }),
@@ -3601,7 +3567,7 @@ export function useCreateExternalRelationship(
     CreateExternalRelationshipReq
   >(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/external-relationships`,
+      path: apiPath`/series/${seriesSlug}/external-relationships`,
       method: "POST",
       body: input,
     }),
@@ -3630,7 +3596,7 @@ export function useDeleteExternalRelationship(
   const qc = useQueryClient();
   return useApiMutation<null, { id: string }>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/external-relationships/${encodeURIComponent(input.id)}`,
+      path: apiPath`/series/${seriesSlug}/external-relationships/${input.id}`,
       method: "DELETE",
     }),
     {
@@ -3649,7 +3615,7 @@ export function useAnalyzeProviderCoverage(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<CoverageJobResp, AnalyzeCoverageReq>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/provider-coverage/analyze`,
+      path: apiPath`/series/${seriesSlug}/provider-coverage/analyze`,
       method: "POST",
       body: input,
     }),
@@ -3669,7 +3635,7 @@ export function useAcceptProviderCoverage(seriesSlug: string) {
   const qc = useQueryClient();
   return useApiMutation<AcceptOutcome, AcceptCoverageReq>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/provider-coverage/accept`,
+      path: apiPath`/series/${seriesSlug}/provider-coverage/accept`,
       method: "POST",
       body: input,
     }),
@@ -3713,7 +3679,7 @@ export function useAddExternalIdIssue(
   const qc = useQueryClient();
   return useApiMutation<ExternalIdRow, AddExternalIdReq>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/external-ids`,
       method: "POST",
       body: input,
     }),
@@ -3736,7 +3702,7 @@ export function useDeleteExternalIdIssue(
   const qc = useQueryClient();
   return useApiMutation<null, { source: string }>(
     (input) => ({
-      path: `/series/${encodeURIComponent(seriesSlug)}/issues/${encodeURIComponent(issueSlug)}/external-ids/${encodeURIComponent(input.source)}`,
+      path: apiPath`/series/${seriesSlug}/issues/${issueSlug}/external-ids/${input.source}`,
       method: "DELETE",
     }),
     {
@@ -3759,7 +3725,7 @@ export function useTestLocalDb() {
   const qc = useQueryClient();
   return useApiMutation<LocalDbTestResp, { id: string }>(
     (input) => ({
-      path: `/admin/metadata/providers/${encodeURIComponent(input.id)}/local/test`,
+      path: apiPath`/admin/metadata/providers/${input.id}/local/test`,
       method: "POST",
     }),
     {
@@ -3775,7 +3741,7 @@ export function useTestMetadataProvider() {
   const qc = useQueryClient();
   return useApiMutation<TestProviderResp, { id: string }>(
     (input) => ({
-      path: `/admin/metadata/providers/${encodeURIComponent(input.id)}/test`,
+      path: apiPath`/admin/metadata/providers/${input.id}/test`,
       method: "POST",
     }),
     {

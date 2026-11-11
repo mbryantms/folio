@@ -134,7 +134,9 @@ function Summary({ view }: { view: BackgroundWorkView }) {
       <p
         className={cn(
           "flex items-center gap-2 text-sm font-medium",
-          t.busy ? statusToneText("warning") : statusToneText("success"),
+          // Work under way is info, idle is the ordinary state (neutral);
+          // stalled rows below keep the warning tone.
+          statusToneText(t.busy ? "info" : "neutral"),
         )}
         role="status"
       >

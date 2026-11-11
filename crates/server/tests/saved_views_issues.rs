@@ -596,20 +596,25 @@ async fn wave2_fields_execute_on_both_entities() {
             ("/api/me/saved-views/preview", "rating"),
             ("/api/me/saved-views/preview-issues", "page_count"),
         ] {
-            let (status, body) = http(
-                &app,
-                Method::POST,
-                path,
-                &auth,
-                Some(json!({
-                    "filter": {"match_mode": "all", "conditions": [c]},
-                    "sort_field": sort, "sort_order": "desc", "result_limit": 12,
-                })),
-            )
-            .await;
+            let body = json!({
+                "filter": {"match_mode": "all", "conditions": [c]},
+                "sort_field": sort, "sort_order": "desc", "result_limit": 12,
+            });
+            // 28 previews outrun the per-user `saved_view_preview` bucket
+            // (burst 20, 2/s); wait out a 429 like a client would.
+            let (status, body) = loop {
+                let (status, body) =
+                    http(&app, Method::POST, path, &auth, Some(body.clone())).await;
+                if status != StatusCode::TOO_MANY_REQUESTS {
+                    break (status, body);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+            };
             assert_eq!(status, StatusCode::OK, "{path} {c} → {body}");
         }
     }
+    // Let the preview bucket refill (2/s) for the two previews below.
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     // Spot-check semantics: nothing is provider-matched, so `unmatched`
     // is every issue; the composed release date puts the 2018 annual
     // before mid-2018 and the four 2019 issues after it.

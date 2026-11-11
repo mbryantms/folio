@@ -1788,3 +1788,1099 @@ async fn create_from_json_validation_names_the_field() {
     assert_eq!(body["error"]["code"], "validation");
     assert!(body["error"]["details"].is_null(), "{body:#?}");
 }
+
+// ───── library ACL on list entries ─────
+
+/// Grant `user_id` a library, optionally under an age-rating cap.
+async fn grant_library(app: &TestApp, user_id: Uuid, library_id: Uuid, cap: Option<&str>) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let now = Utc::now().fixed_offset();
+    entity::library_user_access::ActiveModel {
+        user_id: Set(user_id),
+        library_id: Set(library_id),
+        age_rating_max: Set(cap.map(str::to_owned)),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&db)
+    .await
+    .unwrap();
+}
+
+/// One issue (`number` of a 2020 series) titled `title`. Returns its id.
+async fn acl_issue(
+    db: &sea_orm::DatabaseConnection,
+    dir: &std::path::Path,
+    lib: Uuid,
+    series: Uuid,
+    number: f64,
+    title: &str,
+) -> String {
+    let path = dir.join(format!("{title}.cbz"));
+    common::seed::IssueSeed::new(lib, series, &path, title.as_bytes(), number)
+        .with_title(title)
+        .insert(db)
+        .await
+}
+
+/// Fixture for the reading-list ACL tests: library A (granted to the
+/// readers) and libraries B and C (hidden from them), a CBL naming
+///
+///   0. Aurora Patrol #1    → A, unrated, "Dawn Light"
+///   1. Midnight Cartel #1  → B, "Secret Moon"
+///   2. Twin Tale #1        → ambiguous: one candidate in A, one in B
+///   3. Ghost Pair #1       → ambiguous: candidates in B and C only
+///   4. Nowhere #1          → no such book
+///   5. Aurora Patrol #2    → A, rated Mature 17+, "Red Night"
+struct AclFixture {
+    dir: tempfile::TempDir,
+    lib_a: Uuid,
+    lib_b: Uuid,
+    visible_id: String,
+    hidden_id: String,
+    twin_a_id: String,
+    mature_id: String,
+    cbl: String,
+}
+
+async fn seed_acl_fixture(app: &TestApp) -> AclFixture {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let lib_a_root = dir.path().join("lib_a");
+    std::fs::create_dir_all(&lib_a_root).unwrap();
+    let lib_a = common::seed::LibrarySeed::new(&lib_a_root)
+        .insert(&db)
+        .await;
+    let lib_b_root = dir.path().join("lib_b");
+    std::fs::create_dir_all(&lib_b_root).unwrap();
+    let lib_b = common::seed::LibrarySeed::new(&lib_b_root)
+        .insert(&db)
+        .await;
+    let lib_c_root = dir.path().join("lib_c");
+    std::fs::create_dir_all(&lib_c_root).unwrap();
+    let lib_c = common::seed::LibrarySeed::new(&lib_c_root)
+        .insert(&db)
+        .await;
+    let aurora = common::seed::seed_series(&db, lib_a, "Aurora Patrol").await;
+    let cartel = common::seed::seed_series(&db, lib_b, "Midnight Cartel").await;
+    let twin_a = common::seed::seed_series(&db, lib_a, "Twin Tale").await;
+    let twin_b = common::seed::seed_series(&db, lib_b, "Twin Tale").await;
+    let ghost_b = common::seed::seed_series(&db, lib_b, "Ghost Pair").await;
+    let ghost_c = common::seed::seed_series(&db, lib_c, "Ghost Pair").await;
+    let visible_id = acl_issue(&db, dir.path(), lib_a, aurora, 1.0, "Dawn Light").await;
+    let hidden_id = acl_issue(&db, dir.path(), lib_b, cartel, 1.0, "Secret Moon").await;
+    let twin_a_id = acl_issue(&db, dir.path(), lib_a, twin_a, 1.0, "Twin A").await;
+    acl_issue(&db, dir.path(), lib_b, twin_b, 1.0, "Twin B").await;
+    acl_issue(&db, dir.path(), lib_b, ghost_b, 1.0, "Ghost B").await;
+    acl_issue(&db, dir.path(), lib_c, ghost_c, 1.0, "Ghost C").await;
+    let mature_id = acl_issue(&db, dir.path(), lib_a, aurora, 2.0, "Red Night").await;
+    sea_orm::ConnectionTrait::execute_unprepared(
+        &db,
+        &format!("UPDATE issues SET age_rating = 'Mature 17+' WHERE id = '{mature_id}'"),
+    )
+    .await
+    .unwrap();
+    let book = |series: &str, number: u32| {
+        format!(r#"<Book Series="{series}" Number="{number}" Volume="2020" Year="2020" />"#)
+    };
+    let cbl = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<ReadingList><Name>ACL list</Name><Books>{}{}{}{}{}{}</Books></ReadingList>"#,
+        book("Aurora Patrol", 1),
+        book("Midnight Cartel", 1),
+        book("Twin Tale", 1),
+        book("Ghost Pair", 1),
+        book("Nowhere", 1),
+        book("Aurora Patrol", 2),
+    );
+    AclFixture {
+        dir,
+        lib_a,
+        lib_b,
+        visible_id,
+        hidden_id,
+        twin_a_id,
+        mature_id,
+        cbl,
+    }
+}
+
+async fn entries_of(app: &TestApp, auth: &Authed, list_id: &str, query: &str) -> serde_json::Value {
+    let (status, body) = http(
+        app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/entries{query}"),
+        Some(auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    body
+}
+
+fn entry_at(body: &serde_json::Value, position: i64) -> &serde_json::Value {
+    body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["position"].as_i64() == Some(position))
+        .unwrap_or_else(|| panic!("entry {position}: {body:#?}"))
+}
+
+/// The match facts of an entry — what must be identical between a hidden
+/// match and a genuinely missing entry.
+fn match_facts(e: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "match_status": e["match_status"],
+        "matched_issue_id": e["matched_issue_id"],
+        "match_method": e["match_method"],
+        "match_confidence": e["match_confidence"],
+        "ambiguous_candidates": e["ambiguous_candidates"],
+        "matched_at": e["matched_at"],
+        "issue": e["issue"],
+    })
+}
+
+fn stat_counts(stats: &serde_json::Value) -> [i64; 5] {
+    [
+        stats["total"].as_i64().unwrap(),
+        stats["matched"].as_i64().unwrap(),
+        stats["ambiguous"].as_i64().unwrap(),
+        stats["missing"].as_i64().unwrap(),
+        stats["manual"].as_i64().unwrap(),
+    ]
+}
+
+/// Total of `?status=` / `?q=` on the entries endpoint (first page).
+async fn entries_total(app: &TestApp, auth: &Authed, list_id: &str, query: &str) -> i64 {
+    entries_of(app, auth, list_id, query).await["total"]
+        .as_i64()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_entries_respect_the_readers_library_access() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "acl-admin@example.com").await;
+    let reader = register(&app, "acl-reader@example.com").await;
+    let capped = register(&app, "acl-capped@example.com").await;
+    let fx = seed_acl_fixture(&app).await;
+    grant_library(&app, reader.user_id, fx.lib_a, None).await;
+    grant_library(&app, capped.user_id, fx.lib_a, Some("Teen")).await;
+
+    // ── Admin: the full view.
+    let (status, view) = upload_cbl(&app, &admin, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    assert_eq!(stat_counts(&view["stats"]), [6, 3, 2, 1, 0]);
+    let admin_list = view["id"].as_str().unwrap().to_owned();
+    let body = entries_of(&app, &admin, &admin_list, "").await;
+    assert_eq!(entry_at(&body, 1)["match_status"], "matched");
+    assert_eq!(
+        entry_at(&body, 1)["matched_issue_id"],
+        fx.hidden_id.as_str()
+    );
+    assert_eq!(
+        entry_at(&body, 3)["ambiguous_candidates"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        entries_total(&app, &admin, &admin_list, "?q=Secret").await,
+        1
+    );
+
+    // ── Reader granted library A only.
+    let (status, view) = upload_cbl(&app, &reader, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    assert_eq!(
+        stat_counts(&view["stats"]),
+        [6, 2, 0, 4, 0],
+        "import summary counts only what the reader can open: {view:#?}"
+    );
+    let list_id = view["id"].as_str().unwrap().to_owned();
+    let (_, detail) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(detail["stats"], view["stats"], "{detail:#?}");
+
+    let body = entries_of(&app, &reader, &list_id, "").await;
+    assert_eq!(body["total"].as_i64(), Some(6));
+    let missing = match_facts(entry_at(&body, 4));
+    assert_eq!(missing["match_status"], "missing");
+    // Hidden match and all-hidden ambiguous read exactly as missing.
+    assert_eq!(match_facts(entry_at(&body, 1)), missing, "{body:#?}");
+    assert_eq!(match_facts(entry_at(&body, 3)), missing, "{body:#?}");
+    // Visible match keeps its card.
+    assert_eq!(
+        entry_at(&body, 0)["matched_issue_id"],
+        fx.visible_id.as_str()
+    );
+    assert!(entry_at(&body, 0)["issue"].is_object());
+    assert_eq!(
+        entry_at(&body, 5)["matched_issue_id"],
+        fx.mature_id.as_str()
+    );
+    // Mixed ambiguous with one visible candidate of two reads as missing
+    // too: a lone visible candidate would reveal the hidden one.
+    assert_eq!(match_facts(entry_at(&body, 2)), missing, "{body:#?}");
+
+    // Status filters and search are the reader's view.
+    assert_eq!(
+        entries_total(&app, &reader, &list_id, "?status=matched").await,
+        2
+    );
+    assert_eq!(
+        entries_total(&app, &reader, &list_id, "?status=ambiguous").await,
+        0
+    );
+    assert_eq!(
+        entries_total(&app, &reader, &list_id, "?status=missing").await,
+        4
+    );
+    let matched = entries_of(&app, &reader, &list_id, "?status=matched").await;
+    assert!(
+        matched["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["matched_issue_id"] != fx.hidden_id.as_str())
+    );
+    let found = entries_of(&app, &reader, &list_id, "?q=Secret").await;
+    assert_eq!(found["total"].as_i64(), Some(0), "{found:#?}");
+    assert!(found["items"].as_array().unwrap().is_empty());
+    assert_eq!(entries_total(&app, &reader, &list_id, "?q=Dawn").await, 1);
+
+    // Window + issues feed count only visible matches.
+    let (_, window) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/window"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(window["total_matched"].as_i64(), Some(2), "{window:#?}");
+    assert_eq!(window["total_entries"].as_i64(), Some(6));
+    let (_, page) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/window-paginated"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(page["total_matched"].as_i64(), Some(2), "{page:#?}");
+    let (_, issues) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/issues"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(issues["total"].as_i64(), Some(2), "{issues:#?}");
+
+    // A refresh summary is the reader's view too: a book that newly
+    // matches in a hidden library is neither matched nor rematched.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let nowhere = common::seed::seed_series(&db, fx.lib_b, "Nowhere").await;
+    acl_issue(&db, fx.dir.path(), fx.lib_b, nowhere, 1.0, "Nowhere B").await;
+    let (status, summary) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/refresh"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{summary:#?}");
+    assert_eq!(summary["matched"].as_i64(), Some(2), "{summary:#?}");
+    assert_eq!(summary["ambiguous"].as_i64(), Some(0));
+    assert_eq!(summary["missing"].as_i64(), Some(4));
+    assert_eq!(summary["rematched"].as_i64(), Some(0));
+
+    // ── Age-capped reader: the Mature issue in library A is hidden too.
+    let (status, view) = upload_cbl(&app, &capped, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    assert_eq!(stat_counts(&view["stats"]), [6, 1, 0, 5, 0], "{view:#?}");
+    let capped_list = view["id"].as_str().unwrap().to_owned();
+    let body = entries_of(&app, &capped, &capped_list, "").await;
+    assert_eq!(
+        match_facts(entry_at(&body, 5)),
+        match_facts(entry_at(&body, 4)),
+        "{body:#?}"
+    );
+    assert_eq!(
+        entries_total(&app, &capped, &capped_list, "?q=Red").await,
+        0
+    );
+    assert_eq!(
+        entries_total(&app, &capped, &capped_list, "?status=matched").await,
+        1
+    );
+    let (_, window) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{capped_list}/window"),
+        Some(&capped),
+        None,
+    )
+    .await;
+    assert_eq!(window["total_matched"].as_i64(), Some(1), "{window:#?}");
+
+    // ── Granting library B reveals the stored matches, no re-import.
+    grant_library(&app, reader.user_id, fx.lib_b, None).await;
+    let body = entries_of(&app, &reader, &list_id, "").await;
+    assert_eq!(entry_at(&body, 1)["match_status"], "matched");
+    assert_eq!(
+        entry_at(&body, 1)["matched_issue_id"],
+        fx.hidden_id.as_str()
+    );
+    assert!(entry_at(&body, 1)["issue"].is_object());
+    // Twin Tale now has both candidates visible; Ghost Pair still has one
+    // (its library C candidate stays hidden), so it still reads missing.
+    assert_eq!(entry_at(&body, 2)["match_status"], "ambiguous");
+    assert_eq!(entry_at(&body, 3)["match_status"], "missing");
+    assert_eq!(entries_total(&app, &reader, &list_id, "?q=Secret").await, 1);
+    let (_, detail) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    // Entry 4 now matches "Nowhere" in B (refreshed above), visible too.
+    assert_eq!(
+        stat_counts(&detail["stats"]),
+        [6, 4, 1, 1, 0],
+        "{detail:#?}"
+    );
+}
+
+/// Grant `user_id` every library that exists, uncapped: a non-admin who
+/// sees the whole library.
+async fn grant_every_library(app: &TestApp, user_id: Uuid) {
+    let db = Database::connect(&app.db_url).await.unwrap();
+    for lib in library::Entity::find().all(&db).await.unwrap() {
+        grant_library(app, user_id, lib.id, None).await;
+    }
+}
+
+async fn refresh_log_of(app: &TestApp, auth: &Authed, list_id: &str) -> Vec<serde_json::Value> {
+    let (status, body) = http(
+        app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}/refresh-log"),
+        Some(auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    body["items"].as_array().unwrap().clone()
+}
+
+/// The refresh log stores global match facts. A caller who cannot see the
+/// whole library gets `rematched_count` as 0 and no row without a
+/// structural change (every post-scan row); a non-admin with every library
+/// granted and no cap, and an admin, get the stored rows unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_log_follows_the_callers_view() {
+    use server::cbl::import::{RefreshTrigger, rematch_existing};
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "log-admin@example.com").await;
+    let reader = register(&app, "log-reader@example.com").await;
+    let full = register(&app, "log-full@example.com").await;
+    let fx = seed_acl_fixture(&app).await;
+    grant_library(&app, reader.user_id, fx.lib_a, None).await;
+    grant_every_library(&app, full.user_id).await;
+
+    // One book in hidden library B, one not in the library yet.
+    let cbl = r#"<?xml version="1.0" encoding="utf-8"?>
+<ReadingList><Name>Log list</Name><Books><Book Series="Midnight Cartel" Number="1" Volume="2020" Year="2020" /><Book Series="Late Arrival" Number="1" Volume="2020" Year="2020" /></Books></ReadingList>"#;
+    let mut lists = Vec::new();
+    for auth in [&admin, &reader, &full] {
+        let (status, view) = upload_cbl(&app, auth, "log.cbl", cbl.as_bytes()).await;
+        assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+        lists.push(view["id"].as_str().unwrap().to_owned());
+    }
+    let (_, detail) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{}", lists[1]),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(detail["stats"]["matched"].as_i64(), Some(0), "{detail:#?}");
+
+    // The real post-scan rematch path: a new issue in hidden library B.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let late = common::seed::seed_series(&db, fx.lib_b, "Late Arrival").await;
+    acl_issue(&db, fx.dir.path(), fx.lib_b, late, 1.0, "Late Arrival One").await;
+    for list in &lists {
+        let n = rematch_existing(
+            &db,
+            Uuid::parse_str(list).unwrap(),
+            RefreshTrigger::PostScan,
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    // Restricted reader: only the import row, its rematch count zeroed.
+    let rows = refresh_log_of(&app, &reader, &lists[1]).await;
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    assert_eq!(rows[0]["added_count"].as_i64(), Some(2));
+    assert_eq!(rows[0]["rematched_count"].as_i64(), Some(0), "{rows:#?}");
+    assert!(rows.iter().all(|r| r["trigger"] != "post_scan"));
+
+    // Every library granted, no cap / admin: the stored rows.
+    for (auth, list) in [(&full, &lists[2]), (&admin, &lists[0])] {
+        let rows = refresh_log_of(&app, auth, list).await;
+        assert_eq!(rows.len(), 2, "{rows:#?}");
+        assert_eq!(rows[0]["trigger"], "post_scan");
+        assert_eq!(rows[0]["rematched_count"].as_i64(), Some(1));
+        assert_eq!(rows[1]["added_count"].as_i64(), Some(2));
+        assert_eq!(rows[1]["rematched_count"].as_i64(), Some(1), "{rows:#?}");
+    }
+
+    // An age cap on any grant is no longer the whole library.
+    sea_orm::ConnectionTrait::execute_unprepared(
+        &db,
+        &format!(
+            "UPDATE library_user_access SET age_rating_max = 'Teen' \
+             WHERE user_id = '{}' AND library_id = '{}'",
+            full.user_id, fx.lib_a
+        ),
+    )
+    .await
+    .unwrap();
+    let rows = refresh_log_of(&app, &full, &lists[2]).await;
+    assert_eq!(rows.len(), 1, "{rows:#?}");
+    assert_eq!(rows[0]["rematched_count"].as_i64(), Some(0));
+}
+
+/// `entry_id` of the entry at `position` (entries endpoint).
+async fn entry_id_at(app: &TestApp, auth: &Authed, list_id: &str, position: i64) -> String {
+    let body = entries_of(app, auth, list_id, "").await;
+    entry_at(&body, position)["id"].as_str().unwrap().to_owned()
+}
+
+fn bulk_item<'a>(body: &'a serde_json::Value, list_id: &str) -> &'a serde_json::Value {
+    body["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"].as_str() == Some(list_id))
+        .unwrap_or_else(|| panic!("item {list_id}: {body:#?}"))
+}
+
+/// Check / check-all / refresh-all report `rematched` and `changed` in the
+/// caller's view: an entry that would resolve to an issue the caller
+/// cannot open is no change to them. Admins keep the real counts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn check_and_refresh_all_counts_follow_the_callers_view() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "check-admin@example.com").await;
+    let reader = register(&app, "check-reader@example.com").await;
+    let fx = seed_acl_fixture(&app).await;
+    grant_library(&app, reader.user_id, fx.lib_a, None).await;
+
+    let mut lists = Vec::new();
+    for auth in [&admin, &reader] {
+        let (status, view) = upload_cbl(&app, auth, "acl.cbl", fx.cbl.as_bytes()).await;
+        assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+        let list_id = view["id"].as_str().unwrap().to_owned();
+        // Clear the match on entry 1 (the issue in library B): the reader
+        // sees that entry as missing already.
+        let entry_id = entry_id_at(&app, auth, &list_id, 1).await;
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            &format!("/api/me/cbl-lists/{list_id}/entries/{entry_id}/clear-match"),
+            Some(auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body:#?}");
+        lists.push(list_id);
+    }
+    let (admin_list, reader_list) = (&lists[0], &lists[1]);
+
+    // Check one.
+    let (status, item) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{reader_list}/check"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{item:#?}");
+    assert_eq!(item["rematched"].as_i64(), Some(0), "{item:#?}");
+    assert_eq!(item["changed"], false, "{item:#?}");
+    let (_, item) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{admin_list}/check"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(item["rematched"].as_i64(), Some(1), "{item:#?}");
+    assert_eq!(item["changed"], true, "{item:#?}");
+
+    // Check all.
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    let item = bulk_item(&body, reader_list);
+    assert_eq!(item["rematched"].as_i64(), Some(0), "{body:#?}");
+    assert_eq!(item["changed"], false);
+    assert_eq!(body["changed_count"].as_i64(), Some(0));
+    let (_, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/check-all",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let item = bulk_item(&body, admin_list);
+    assert_eq!(item["rematched"].as_i64(), Some(1), "{body:#?}");
+    assert_eq!(item["changed"], true);
+
+    // Refresh all, after a book also appears in hidden library B.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let nowhere = common::seed::seed_series(&db, fx.lib_b, "Nowhere").await;
+    acl_issue(&db, fx.dir.path(), fx.lib_b, nowhere, 1.0, "Nowhere B").await;
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/refresh-all",
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    let item = bulk_item(&body, reader_list);
+    assert_eq!(item["rematched"].as_i64(), Some(0), "{body:#?}");
+    assert_eq!(item["changed"], false);
+    let (_, body) = http(
+        &app,
+        Method::POST,
+        "/api/me/cbl-lists/refresh-all",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let item = bulk_item(&body, admin_list);
+    assert_eq!(item["rematched"].as_i64(), Some(2), "{body:#?}");
+    assert_eq!(item["changed"], true);
+}
+
+/// An ambiguous entry reads as ambiguous to a non-admin only with two or
+/// more candidates they can open; with fewer it is a missing entry
+/// everywhere. A manual match into a hidden library is missing too, and
+/// malformed candidate JSON never fails the request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ambiguous_entries_need_two_visible_candidates() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "amb-admin@example.com").await;
+    let reader = register(&app, "amb-reader@example.com").await;
+    let fx = seed_acl_fixture(&app).await;
+    grant_library(&app, reader.user_id, fx.lib_a, None).await;
+    let (status, view) = upload_cbl(&app, &reader, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    let list_id = view["id"].as_str().unwrap().to_owned();
+
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let set = |position: i32, status: &'static str, cands: Option<serde_json::Value>| {
+        let db = db.clone();
+        let list = Uuid::parse_str(&list_id).unwrap();
+        async move {
+            let row = cbl_entry::Entity::find()
+                .filter(cbl_entry::Column::CblListId.eq(list))
+                .filter(cbl_entry::Column::Position.eq(position))
+                .one(&db)
+                .await
+                .unwrap()
+                .unwrap();
+            let mut am: cbl_entry::ActiveModel = row.into();
+            am.match_status = Set(status.into());
+            am.ambiguous_candidates = Set(cands);
+            if status == "manual" {
+                am.match_method = Set(Some("manual".into()));
+            } else {
+                am.matched_issue_id = Set(None);
+            }
+            am.update(&db).await.unwrap();
+        }
+    };
+    let cand =
+        |id: &str| serde_json::json!({ "issue_id": id, "series_name": "S", "similarity": 0.9 });
+    // 1: manual match to the issue in hidden library B.
+    set(1, "manual", None).await;
+    // 2: Twin Tale stays ambiguous [A, B] — one visible of two.
+    // 3: two visible of three.
+    set(
+        3,
+        "ambiguous",
+        Some(serde_json::json!([
+            cand(&fx.twin_a_id),
+            cand(&fx.hidden_id),
+            cand(&fx.visible_id),
+        ])),
+    )
+    .await;
+    // 4: not an array.
+    set(
+        4,
+        "ambiguous",
+        Some(serde_json::json!({ "not": "an array" })),
+    )
+    .await;
+    // 5: malformed elements and one visible id named twice.
+    set(
+        5,
+        "ambiguous",
+        Some(serde_json::json!([
+            1,
+            "x",
+            { "issue_id": 5 },
+            cand(&fx.visible_id),
+            cand(&fx.visible_id),
+        ])),
+    )
+    .await;
+
+    let missing = serde_json::json!({
+        "match_status": "missing",
+        "matched_issue_id": null,
+        "match_method": null,
+        "match_confidence": null,
+        "ambiguous_candidates": null,
+        "matched_at": null,
+        "issue": null,
+    });
+    let body = entries_of(&app, &reader, &list_id, "").await;
+    for p in [1, 2, 4, 5] {
+        assert_eq!(
+            match_facts(entry_at(&body, p)),
+            missing,
+            "entry {p}: {body:#?}"
+        );
+    }
+    let amb = entry_at(&body, 3);
+    assert_eq!(amb["match_status"], "ambiguous");
+    let mut ids: Vec<&str> = amb["ambiguous_candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["issue_id"].as_str().unwrap())
+        .collect();
+    ids.sort_unstable();
+    let mut want = vec![fx.twin_a_id.as_str(), fx.visible_id.as_str()];
+    want.sort_unstable();
+    assert_eq!(ids, want, "{amb:#?}");
+
+    for (status, total) in [
+        ("ambiguous", 1),
+        ("missing", 4),
+        ("manual", 0),
+        ("matched", 1),
+    ] {
+        assert_eq!(
+            entries_total(&app, &reader, &list_id, &format!("?status={status}")).await,
+            total,
+            "?status={status}"
+        );
+    }
+    let (_, detail) = http(
+        &app,
+        Method::GET,
+        &format!("/api/me/cbl-lists/{list_id}"),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(
+        stat_counts(&detail["stats"]),
+        [6, 1, 1, 4, 0],
+        "{detail:#?}"
+    );
+}
+
+/// The reader's "Issue N of M" pair and the series appearances count use
+/// one scale: matched entries the reader can open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn next_up_and_appearances_count_what_the_reader_can_open() {
+    let app = TestApp::spawn().await;
+    let _admin = register(&app, "nu-admin@example.com").await;
+    let reader = register(&app, "nu-reader@example.com").await;
+    let capped = register(&app, "nu-capped@example.com").await;
+    let fx = seed_acl_fixture(&app).await;
+    grant_library(&app, reader.user_id, fx.lib_a, None).await;
+    grant_library(&app, capped.user_id, fx.lib_a, Some("Teen")).await;
+
+    let mut views = Vec::new();
+    for auth in [&reader, &capped] {
+        let (status, view) = upload_cbl(&app, auth, "acl.cbl", fx.cbl.as_bytes()).await;
+        assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+        let (status, sv) = http(
+            &app,
+            Method::POST,
+            "/api/me/saved-views",
+            Some(auth),
+            Some(serde_json::json!({
+                "kind": "cbl",
+                "name": "ACL view",
+                "cbl_list_id": view["id"],
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{sv:#?}");
+        views.push(sv["id"].as_str().unwrap().to_owned());
+    }
+
+    // Entries 0 (Dawn Light) and 5 (Red Night) are the reader's matches;
+    // the raw entry position of Red Night is 6.
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/issues/{}/next-up?cbl={}", fx.visible_id, views[0]),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["source"], "cbl", "{body:#?}");
+    assert_eq!(body["target"]["id"], fx.mature_id.as_str());
+    assert_eq!(body["cbl_position"], 2, "{body:#?}");
+    assert_eq!(body["cbl_total"], 2, "{body:#?}");
+    let (status, body) = http(
+        &app,
+        Method::GET,
+        &format!("/api/issues/{}/prev-up?cbl={}", fx.mature_id, views[0]),
+        Some(&reader),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#?}");
+    assert_eq!(body["source"], "cbl", "{body:#?}");
+    assert_eq!(body["target"]["id"], fx.visible_id.as_str());
+    assert_eq!(body["cbl_position"], 1, "{body:#?}");
+    assert_eq!(body["cbl_total"], 2, "{body:#?}");
+
+    // Series appearances: Aurora Patrol holds both of the reader's
+    // matches; the capped reader can open only the unrated one.
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let aurora = entity::series::Entity::find()
+        .filter(entity::series::Column::Name.eq("Aurora Patrol"))
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    for (auth, count) in [(&reader, 2), (&capped, 1)] {
+        let (status, body) = http(
+            &app,
+            Method::GET,
+            &format!("/api/series/{}/appearances", aurora.slug),
+            Some(auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body:#?}");
+        let lists = body["reading_lists"].as_array().unwrap();
+        assert_eq!(lists.len(), 1, "{body:#?}");
+        assert_eq!(lists[0]["issue_count"].as_i64(), Some(count), "{body:#?}");
+    }
+}
+
+/// The window endpoints drop a soft-removed match for admins too, like
+/// `/issues` and next-up.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn window_total_matched_excludes_a_removed_match_for_admins() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "win-admin@example.com").await;
+    let fx = seed_acl_fixture(&app).await;
+    let (status, view) = upload_cbl(&app, &admin, "acl.cbl", fx.cbl.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view:#?}");
+    let list_id = view["id"].as_str().unwrap().to_owned();
+    let totals = || async {
+        let mut out = Vec::new();
+        for path in ["window", "window-paginated"] {
+            let (status, body) = http(
+                &app,
+                Method::GET,
+                &format!("/api/me/cbl-lists/{list_id}/{path}"),
+                Some(&admin),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body:#?}");
+            out.push(body["total_matched"].as_i64().unwrap());
+        }
+        out
+    };
+    assert_eq!(totals().await, [3, 3]);
+    let db = Database::connect(&app.db_url).await.unwrap();
+    sea_orm::ConnectionTrait::execute_unprepared(
+        &db,
+        &format!(
+            "UPDATE issues SET removed_at = now() WHERE id = '{}'",
+            fx.hidden_id
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(totals().await, [2, 2]);
+}
+
+// ───── refresh: entry cap, atomic writes, request budgets ─────
+//
+// URL sources go through `cbl::fetch::stub_source_for_tests` (debug builds
+// only): a test cannot serve https from a public address, which the vetted
+// fetch requires.
+
+use server::cbl::fetch::{TestSource, stub_source_for_tests};
+
+fn over_cap_xml() -> String {
+    let over = server::cbl::MAX_BOOKS_PER_LIST + 1;
+    let mut xml = String::from("<?xml version=\"1.0\"?>\n<ReadingList><Name>Grown</Name><Books>\n");
+    for i in 0..over {
+        xml.push_str(&format!(
+            "<Book Series=\"Grown\" Number=\"{i}\" Volume=\"2020\" Year=\"2020\" />\n"
+        ));
+    }
+    xml.push_str("</Books></ReadingList>\n");
+    xml
+}
+
+/// Upload the sample list and return its id.
+async fn upload_sample(app: &TestApp, auth: &Authed) -> Uuid {
+    let (status, view) = upload_cbl(app, auth, "sample.cbl", SAMPLE_CBL.as_bytes()).await;
+    assert_eq!(status, StatusCode::CREATED, "{view}");
+    Uuid::parse_str(view["id"].as_str().unwrap()).unwrap()
+}
+
+/// Turn a list into a URL list at `url`, optionally replacing its stored
+/// XML (and digest).
+async fn make_url_list(db: &sea_orm::DatabaseConnection, id: Uuid, url: &str, raw: Option<&str>) {
+    let row = cbl_list::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.source_kind = Set("url".into());
+    am.source_url = Set(Some(url.to_owned()));
+    if let Some(raw) = raw {
+        am.raw_xml = Set(raw.to_owned());
+        am.raw_sha256 = Set(server::cbl::import::sha256_of(raw.as_bytes()));
+    }
+    am.update(db).await.unwrap();
+}
+
+/// (sorted entries, list row, refresh-log row count) — everything a failed
+/// refresh must leave alone.
+async fn stored_state(
+    db: &sea_orm::DatabaseConnection,
+    id: Uuid,
+) -> (Vec<(i32, String, String)>, cbl_list::Model, u64) {
+    let mut entries: Vec<(i32, String, String)> = cbl_entry::Entity::find()
+        .filter(cbl_entry::Column::CblListId.eq(id))
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| (e.position, e.series_name, e.issue_number))
+        .collect();
+    entries.sort();
+    let row = cbl_list::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let logs = cbl_refresh_log::Entity::find()
+        .filter(cbl_refresh_log::Column::CblListId.eq(id))
+        .count(db)
+        .await
+        .unwrap();
+    (entries, row, logs)
+}
+
+/// A source whose content changed and is over the import cap is refused on
+/// refresh and check with the import's error; the stored list is left as
+/// it was (no truncation, no refresh-log row).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refresh_and_check_refuse_new_content_over_the_entry_cap() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cap-grower@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let url = format!("https://lists.example.test/{list_id}/grown.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Body(over_cap_xml().into_bytes()));
+    let before = stored_state(&db, list_id).await;
+    assert_eq!(before.0.len(), 269);
+
+    let expected = format!("exceeds {} entries", server::cbl::MAX_BOOKS_PER_LIST);
+    for path in ["refresh", "check"] {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            &format!("/api/me/cbl-lists/{list_id}/{path}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{path}: {body}");
+        assert_eq!(body["error"]["code"], "too_many_entries", "{path}");
+        assert_eq!(body["error"]["message"], expected.as_str(), "{path}");
+    }
+    for path in ["check-all", "refresh-all"] {
+        let (status, body) = http(
+            &app,
+            Method::POST,
+            &format!("/api/me/cbl-lists/{path}"),
+            Some(&auth),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        assert_eq!(body["failed_count"], 1, "{path}: {body}");
+        assert_eq!(body["items"][0]["error"], expected.as_str());
+    }
+    assert_eq!(
+        stored_state(&db, list_id).await,
+        before,
+        "stored list untouched"
+    );
+}
+
+/// Stored content that has not changed is not re-checked against the cap:
+/// a list already over it keeps working on refresh and check, both for an
+/// upload and for a URL source that serves the same bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unchanged_content_over_the_cap_keeps_refreshing() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "cap-unchanged@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let big = over_cap_xml();
+    let row = cbl_list::Entity::find_by_id(list_id)
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: cbl_list::ActiveModel = row.into();
+    am.raw_xml = Set(big.clone());
+    am.raw_sha256 = Set(server::cbl::import::sha256_of(big.as_bytes()));
+    am.update(&db).await.unwrap();
+
+    let run = |path: &'static str| {
+        let app = &app;
+        let auth = &auth;
+        async move {
+            http(
+                app,
+                Method::POST,
+                &format!("/api/me/cbl-lists/{list_id}/{path}"),
+                Some(auth),
+                None,
+            )
+            .await
+        }
+    };
+    for path in ["check", "refresh"] {
+        let (status, body) = run(path).await;
+        assert_eq!(status, StatusCode::OK, "upload {path}: {body}");
+    }
+    let url = format!("https://lists.example.test/{list_id}/same.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Body(big.into_bytes()));
+    for path in ["check", "refresh"] {
+        let (status, body) = run(path).await;
+        assert_eq!(status, StatusCode::OK, "url {path}: {body}");
+    }
+}
+
+/// A failure after the entries were deleted rolls the whole refresh back:
+/// entries, list row and refresh log are exactly as before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refresh_that_fails_after_the_delete_leaves_the_list_unchanged() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "atomic@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let before = stored_state(&db, list_id).await;
+
+    server::cbl::import::fail_after_delete_for_tests(list_id);
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/refresh"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(stored_state(&db, list_id).await, before);
+}
+
+/// A host that never answers ends in the handler's own timeout error on
+/// the request budget, well before the 60 s route timeout, and the list is
+/// untouched. (Takes the 40 s request budget to run.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stalled_host_hits_the_request_budget_before_the_route_timeout() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "stall@example.com").await;
+    let list_id = upload_sample(&app, &auth).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let url = format!("https://lists.example.test/{list_id}/stall.cbl");
+    make_url_list(&db, list_id, &url, None).await;
+    stub_source_for_tests(&url, TestSource::Stall);
+    let before = stored_state(&db, list_id).await;
+
+    let started = std::time::Instant::now();
+    let (status, body) = http(
+        &app,
+        Method::POST,
+        &format!("/api/me/cbl-lists/{list_id}/refresh"),
+        Some(&auth),
+        None,
+    )
+    .await;
+    let took = started.elapsed();
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(body["error"]["code"], "refresh_failed");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("timed out"),
+        "{body}"
+    );
+    assert!(
+        took >= server::cbl::fetch::REQUEST_BUDGET.fetch_deadline
+            && took < server::app::JSON_ROUTE_TIMEOUT,
+        "{took:?}"
+    );
+    assert_eq!(stored_state(&db, list_id).await, before);
+}

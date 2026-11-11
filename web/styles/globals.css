@@ -947,8 +947,13 @@ body {
     content: "";
     position: absolute;
     top: 50%;
-    right: -4px;
-    left: -4px;
+    /* 4px each side by default. A row packed tighter than the 8px gap
+     * sets `--folio-tap-x` to half its gap so neighbouring areas meet
+     * in the middle instead of the later one taking the whole gap (the
+     * reader header's 4px icon row); `--folio-tap-l` / `--folio-tap-r`
+     * set one side, e.g. the two half-star zones of `RatingStars`. */
+    right: calc(-1 * var(--folio-tap-r, var(--folio-tap-x, 4px)));
+    left: calc(-1 * var(--folio-tap-l, var(--folio-tap-x, 4px)));
     height: max(100%, 44px);
     transform: translateY(-50%);
   }
@@ -1262,6 +1267,20 @@ body {
 }
 .cover-box {
   transition: box-shadow 260ms ease-out;
+}
+
+/* ── Cover long press (components/CoverLongPressActions.tsx) ──
+ * On touch devices a long press on a cover opens Folio's quick-actions
+ * sheet, so the browser's own long-press callout (iOS link preview /
+ * "Save image", text selection) must not open on
+ * top of it. The attribute is only set on hover-incapable touch devices,
+ * and none of these properties affect a normal tap on the link. Android's
+ * link menu comes from the `contextmenu` event, which the hook cancels
+ * for touch-originated events only. */
+[data-cover-long-press] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* ── Springy drag and drop (folio-flair) ──
@@ -1745,4 +1764,28 @@ html.theme-reveal::view-transition-group(root) {
 }
 .queue-indeterminate {
   animation: queue-indeterminate 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+/* Sign-in "Signing you in…" card: its "Sign in instead" way out appears
+ * after a few seconds by CSS alone, so a failed hydration never strands the
+ * visitor. Hidden (not just transparent) until then, so it can't be focused
+ * or clicked early. Reduced motion: shown at once. */
+@keyframes delayed-reveal {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+.delayed-reveal {
+  animation: delayed-reveal 0s linear 4s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .delayed-reveal {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .delayed-reveal {
+  animation: none;
 }

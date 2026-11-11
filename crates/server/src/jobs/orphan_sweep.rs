@@ -15,9 +15,10 @@
 //! row on the next scan and an admin can restore it from the Removed tab,
 //! so the thumbs would only have to be regenerated.
 //!
-//! Cheap: one query per run + a dirent scan. Best-effort — disk errors are
-//! logged and the loop continues; we'd rather skip one path than fail the
-//! whole sweep.
+//! Cheap: one query per [`ALIVE_QUERY_CHUNK`] candidate ids + a dirent
+//! scan (run on the blocking pool). Best-effort — disk errors are logged
+//! and the loop continues; we'd rather skip one path than fail the whole
+//! sweep.
 
 use crate::library::thumbnails;
 use crate::state::AppState;
@@ -25,16 +26,38 @@ use entity::issue;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
 use std::collections::HashSet;
 
+/// Candidate ids bound per alive-set query. Postgres caps a statement at
+/// 65,535 bind parameters, so one `IN (...)` over every thumbnail
+/// directory failed once a library passed ~65k issues with thumbs. 5,000
+/// keeps each statement small and the round-trip count low (20 queries
+/// per 100k issues).
+pub const ALIVE_QUERY_CHUNK: usize = 5_000;
+
 /// Run one sweep. Returns the count of wiped issue artifacts.
 pub async fn run(state: &AppState) -> anyhow::Result<usize> {
-    let data_path = &state.cfg().data_path;
+    run_with_chunk(state, ALIVE_QUERY_CHUNK).await
+}
+
+/// [`run`] with an explicit alive-query chunk size. Public so the
+/// integration suite can cross a chunk boundary with a handful of rows;
+/// production always goes through [`run`].
+#[doc(hidden)]
+pub async fn run_with_chunk(state: &AppState, chunk: usize) -> anyhow::Result<usize> {
+    let data_path = state.cfg().data_path.clone();
     // Two parallel artifact trees keyed by issue id:
     //   - generated page/cover thumbs at `thumbs/{id}` + `thumbs/{id}.ext`
     //   - downloaded provider covers at `thumbs/issues/{id}/`
     // Sweep both; the second was previously read as a single phantom
     // `issues` issue and wiped wholesale on every run.
-    let thumb_ids: HashSet<String> = thumbnails::list_issues_on_disk(data_path)?;
-    let variant_ids: HashSet<String> = thumbnails::list_variant_cover_issues_on_disk(data_path)?;
+    let list_path = data_path.clone();
+    let (thumb_ids, variant_ids): (HashSet<String>, HashSet<String>) =
+        tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+            Ok((
+                thumbnails::list_issues_on_disk(&list_path)?,
+                thumbnails::list_variant_cover_issues_on_disk(&list_path)?,
+            ))
+        })
+        .await??;
     if thumb_ids.is_empty() && variant_ids.is_empty() {
         return Ok(0);
     }
@@ -45,32 +68,41 @@ pub async fn run(state: &AppState) -> anyhow::Result<usize> {
     // keep `state = active` and get `removed_at` set, so filtering on the
     // state alone never reclaimed a removed issue's thumbs.
     let candidates: Vec<String> = thumb_ids.union(&variant_ids).cloned().collect();
-    let alive: Vec<String> = issue::Entity::find()
-        .select_only()
-        .column(issue::Column::Id)
-        .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovalConfirmedAt.is_null())
-        .filter(issue::Column::Id.is_in(candidates))
-        .into_tuple::<String>()
-        .all(&state.db)
-        .await?;
-    let alive_set: HashSet<String> = alive.into_iter().collect();
+    let mut alive_set: HashSet<String> = HashSet::new();
+    for batch in candidates.chunks(chunk.max(1)) {
+        let alive: Vec<String> = issue::Entity::find()
+            .select_only()
+            .column(issue::Column::Id)
+            .filter(issue::Column::State.eq(issue::IssueState::Active))
+            .filter(issue::Column::RemovalConfirmedAt.is_null())
+            .filter(issue::Column::Id.is_in(batch.iter().cloned()))
+            .into_tuple::<String>()
+            .all(&state.db)
+            .await?;
+        alive_set.extend(alive);
+    }
 
-    let mut wiped = 0usize;
-    for id in &thumb_ids {
-        if alive_set.contains(id) {
-            continue;
+    // The wipes are `remove_dir_all` / `remove_file` calls; keep them off
+    // the async workers too.
+    let wiped = tokio::task::spawn_blocking(move || {
+        let mut wiped = 0usize;
+        for id in &thumb_ids {
+            if alive_set.contains(id) {
+                continue;
+            }
+            thumbnails::wipe_issue_thumbs(&data_path, id);
+            wiped += 1;
         }
-        thumbnails::wipe_issue_thumbs(data_path, id);
-        wiped += 1;
-    }
-    for id in &variant_ids {
-        if alive_set.contains(id) {
-            continue;
+        for id in &variant_ids {
+            if alive_set.contains(id) {
+                continue;
+            }
+            thumbnails::wipe_issue_variant_covers(&data_path, id);
+            wiped += 1;
         }
-        thumbnails::wipe_issue_variant_covers(data_path, id);
-        wiped += 1;
-    }
+        wiped
+    })
+    .await?;
     Ok(wiped)
 }
 
@@ -102,4 +134,18 @@ pub async fn run_budget_sweep(state: &AppState) -> anyhow::Result<thumbnails::Th
         tokio::task::spawn_blocking(move || thumbnails::thumbs_budget_sweep(&data_path, budget))
             .await??;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ALIVE_QUERY_CHUNK;
+
+    /// Each chunk binds `ALIVE_QUERY_CHUNK` ids plus the state filter;
+    /// it must stay far below Postgres' 65,535 bind-parameter cap.
+    #[test]
+    fn alive_chunk_is_far_below_postgres_bind_limit() {
+        const PG_MAX_BINDS: usize = 65_535;
+        const { assert!(ALIVE_QUERY_CHUNK > 0) };
+        const { assert!(ALIVE_QUERY_CHUNK * 4 <= PG_MAX_BINDS) };
+    }
 }

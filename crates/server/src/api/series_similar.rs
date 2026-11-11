@@ -36,7 +36,7 @@ use super::error;
 use crate::api::series::{SeriesView, find_by_slug, hydrate_series};
 use crate::auth::CurrentUser;
 use crate::library::access::{self, VisibleLibraries};
-use crate::similarity::{self, Neighbor, Reason};
+use crate::similarity::{self, Neighbor, Reason, ReasonKind};
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -167,7 +167,19 @@ pub async fn similar(
     };
     let visible = filter_visible(&neighbors, &acl, &hidden, &HashSet::new());
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    match build_page(&app, user.id, visible, cursor.as_ref(), limit, None).await {
+    let target = (row.id, row.library_id);
+    match build_page(
+        &app,
+        user.id,
+        &acl,
+        target,
+        visible,
+        cursor.as_ref(),
+        limit,
+        None,
+    )
+    .await
+    {
         Ok((items, next_cursor, total)) => Json(SimilarSeriesListView {
             items,
             next_cursor,
@@ -244,6 +256,8 @@ pub async fn home_rail(
         return match build_page(
             &app,
             user.id,
+            &acl,
+            (seed.series_id, seed.library_id),
             visible,
             cursor.as_ref(),
             limit,
@@ -287,15 +301,50 @@ fn filter_visible<'a>(
 }
 
 /// Slice one keyset page out of the (already ranked) visible list and
-/// hydrate it into series cards.
+/// hydrate it into series cards. `target` is `(series id, library id)` of
+/// the series the neighbours were computed for.
+#[allow(clippy::too_many_arguments)]
 async fn build_page(
     app: &AppState,
     viewer: Uuid,
+    acl: &VisibleLibraries,
+    target: (Uuid, Uuid),
     visible: Vec<&Neighbor>,
     cursor: Option<&SimilarCursor>,
     limit: u64,
     seed: Option<Uuid>,
 ) -> Result<(Vec<SimilarSeriesItem>, Option<String>, Option<i64>), sea_orm::DbErr> {
+    // A caller whose cap hides anything: drop every reason it could only
+    // know from a hidden issue, drop a neighbour left with no reason, and
+    // score and order the rest by the reasons that remain. Per request,
+    // over the cached list (at most `MAX_NEIGHBORS`), one query; the
+    // cache itself is never re-keyed. Everyone else: the cached list.
+    let rescored: Vec<Neighbor>;
+    let visible: Vec<&Neighbor> = if acl.hides_any() {
+        let reasons = visible_reasons(app, acl, target, &visible).await?;
+        let mut kept: Vec<Neighbor> = visible
+            .iter()
+            .zip(reasons)
+            .filter(|(_, because)| !because.is_empty())
+            .map(|(n, because)| {
+                let sum: f64 = because.iter().map(|r| r.weight).sum();
+                Neighbor {
+                    score: (sum * 1000.0).round() / 1000.0,
+                    because,
+                    ..(*n).clone()
+                }
+            })
+            .collect();
+        kept.sort_by(|a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then_with(|| a.series_id.cmp(&b.series_id))
+        });
+        rescored = kept;
+        rescored.iter().collect()
+    } else {
+        visible
+    };
     let total = cursor.is_none().then_some(visible.len() as i64);
     let after: Vec<&Neighbor> = match cursor {
         None => visible,
@@ -331,7 +380,7 @@ async fn build_page(
         .iter()
         .filter_map(|n| by_id.remove(&n.series_id))
         .collect();
-    let views = hydrate_series(app, ordered, viewer).await;
+    let views = hydrate_series(app, ordered, viewer, acl).await;
     let mut view_by_id: HashMap<String, SeriesView> =
         views.into_iter().map(|v| (v.id.clone(), v)).collect();
     let items = page
@@ -347,6 +396,156 @@ async fn build_page(
         })
         .collect();
     Ok((items, next_cursor, total))
+}
+
+/// The SQL name of a reason kind whose entity comes from an issue-derived
+/// junction, `None` for kinds that describe the series itself (publisher,
+/// imprint, curated relationships) and for arcs named by accepted tie-in
+/// edges (`label` set).
+fn issue_derived_kind(r: &Reason) -> Option<&'static str> {
+    match r.kind {
+        ReasonKind::Creator => Some("creator"),
+        ReasonKind::Character => Some("character"),
+        ReasonKind::Team => Some("team"),
+        ReasonKind::Genre => Some("genre"),
+        ReasonKind::Tag => Some("tag"),
+        ReasonKind::Arc if r.label.is_none() => Some("arc"),
+        _ => None,
+    }
+}
+
+/// Is the entity of `(series, kind, role, name)` carried by an issue of
+/// that series the caller can see? One row per key of the unnested
+/// arrays (`$1` series, `$2` kind, `$3` role, `$4` name); `{ivis}` is the
+/// issue-visibility predicate over `i` for the row's series.
+fn reason_check_sql(ivis: &str) -> String {
+    format!(
+        "SELECT (k.ord - 1)::bigint AS idx \
+           FROM unnest($1::uuid[], $2::text[], $3::text[], $4::text[]) \
+                WITH ORDINALITY AS k(sid, kind, role, name, ord) \
+          WHERE CASE k.kind \
+            WHEN 'creator' THEN EXISTS (SELECT 1 FROM issue_credits j \
+                JOIN issues i ON i.id = j.issue_id \
+               WHERE {ivis} AND j.role = k.role AND j.person = k.name) \
+            WHEN 'character' THEN EXISTS (SELECT 1 FROM issue_characters j \
+                JOIN issues i ON i.id = j.issue_id \
+               WHERE {ivis} AND btrim(lower(j.\"character\")) = btrim(lower(k.name))) \
+            WHEN 'team' THEN EXISTS (SELECT 1 FROM issue_teams j \
+                JOIN issues i ON i.id = j.issue_id \
+               WHERE {ivis} AND btrim(lower(j.team)) = btrim(lower(k.name))) \
+            WHEN 'genre' THEN EXISTS (SELECT 1 FROM issue_genres j \
+                JOIN issues i ON i.id = j.issue_id \
+               WHERE {ivis} AND j.genre = k.name) \
+            WHEN 'tag' THEN EXISTS (SELECT 1 FROM issue_tags j \
+                JOIN issues i ON i.id = j.issue_id \
+               WHERE {ivis} AND j.tag = k.name) \
+            WHEN 'arc' THEN EXISTS (SELECT 1 FROM series_arcs sa \
+                JOIN story_arc a ON a.id = sa.arc_id \
+               WHERE sa.series_id = k.sid AND a.name = k.name) \
+              OR EXISTS (SELECT 1 FROM issue_arcs ia \
+                JOIN story_arc a ON a.id = ia.arc_id \
+                JOIN issues i ON i.id = ia.issue_id \
+               WHERE {ivis} AND a.name = k.name) \
+            ELSE TRUE END"
+    )
+}
+
+/// The "because" lists of `page` (the visible neighbours), minus every reason that names an entity
+/// the caller only could know from an issue above its age cap. The
+/// neighbour cache is shared and built from the `series_*` rollups (the
+/// union of every issue in a series), so for a caller whose cap hides
+/// anything each issue-derived reason is re-checked against the issues it
+/// can see, on both the target and the neighbour (only in libraries where
+/// the cap hides a rung). Uncapped callers get the cached lists unchanged
+/// and pay no query.
+async fn visible_reasons(
+    app: &AppState,
+    acl: &VisibleLibraries,
+    target: (Uuid, Uuid),
+    page: &[&Neighbor],
+) -> Result<Vec<Vec<Reason>>, sea_orm::DbErr> {
+    let all: Vec<Vec<Reason>> = page.iter().map(|n| n.because.clone()).collect();
+    if !acl.hides_any() {
+        return Ok(all);
+    }
+    // Distinct (series, kind, role, name) keys to check.
+    type Key = (Uuid, &'static str, String, String);
+    let mut keys: Vec<Key> = Vec::new();
+    let mut key_idx: HashMap<Key, usize> = HashMap::new();
+    let mut needs: Vec<Vec<Vec<usize>>> = Vec::with_capacity(page.len());
+    for n in page {
+        let mut per_reason = Vec::with_capacity(n.because.len());
+        for r in &n.because {
+            let mut idxs = Vec::new();
+            if let Some(kind) = issue_derived_kind(r) {
+                for (sid, lib) in [target, (n.series_id, n.library_id)] {
+                    if !acl.hides_in(lib) {
+                        continue;
+                    }
+                    let key: Key = (
+                        sid,
+                        kind,
+                        r.role.clone().unwrap_or_default(),
+                        r.name.clone(),
+                    );
+                    let next = keys.len();
+                    let idx = *key_idx.entry(key.clone()).or_insert(next);
+                    if idx == next {
+                        keys.push(key);
+                    }
+                    idxs.push(idx);
+                }
+            }
+            per_reason.push(idxs);
+        }
+        needs.push(per_reason);
+    }
+    if keys.is_empty() {
+        return Ok(all);
+    }
+    let mut params: Vec<sea_orm::Value> = vec![
+        keys.iter().map(|k| k.0).collect::<Vec<Uuid>>().into(),
+        keys.iter()
+            .map(|k| k.1.to_owned())
+            .collect::<Vec<String>>()
+            .into(),
+        keys.iter()
+            .map(|k| k.2.clone())
+            .collect::<Vec<String>>()
+            .into(),
+        keys.iter()
+            .map(|k| k.3.clone())
+            .collect::<Vec<String>>()
+            .into(),
+    ];
+    let cap = acl.issue_cap_sql("i", &mut params);
+    let ivis = format!("i.series_id = k.sid AND i.state = 'active' AND i.removed_at IS NULL{cap}");
+    #[derive(FromQueryResult)]
+    struct IdxRow {
+        idx: i64,
+    }
+    let ok: HashSet<usize> = IdxRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        reason_check_sql(&ivis),
+        params,
+    ))
+    .all(&app.db)
+    .await?
+    .into_iter()
+    .map(|r| r.idx as usize)
+    .collect();
+    Ok(all
+        .into_iter()
+        .zip(needs)
+        .map(|(because, per_reason)| {
+            because
+                .into_iter()
+                .zip(per_reason)
+                .filter(|(_, idxs)| idxs.iter().all(|i| ok.contains(i)))
+                .map(|(r, _)| r)
+                .collect()
+        })
+        .collect())
 }
 
 #[derive(Debug, FromQueryResult)]

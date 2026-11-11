@@ -1,7 +1,8 @@
 import { signInUrl } from "@/lib/api/sign-in-url";
 import { notFound, redirect } from "next/navigation";
 import { Reader } from "./Reader";
-import { ReaderHealthToast } from "./ReaderHealthToast";
+// Client-only and code-split: see ./lazy.
+import { ReaderHealthToast } from "./lazy";
 import { ReaderCoverHandoff } from "./ReaderCoverMorph";
 import { apiGet, ApiError } from "@/lib/api/fetch";
 import type {
@@ -20,6 +21,7 @@ import {
 } from "@/lib/reader/account-prefs-sync";
 import { preload } from "react-dom";
 import { pageBytesSrcSet, withContentVersion } from "@/lib/urls";
+import { apiPath, routeParam } from "@/lib/api/path";
 
 // No `generateViewport` here on purpose: the reader inherits the root
 // layout's viewport (theme-color / color-scheme) unchanged. It used to pin
@@ -67,7 +69,9 @@ export default async function ReadPage({
     peek?: string;
   }>;
 }) {
-  const { seriesSlug, issueSlug } = await params;
+  const routeParams = await params;
+  const seriesSlug = routeParam(routeParams.seriesSlug);
+  const issueSlug = routeParam(routeParams.issueSlug);
   const { from, incognito, page, cbl, collection, peek } = await searchParams;
   // Trust the URL contract: a malformed `?cbl=` / `?collection=` just
   // falls through to series-next on the server. No client-side
@@ -105,7 +109,7 @@ export default async function ReadPage({
   let issue: IssueDetailView;
   try {
     issue = await apiGet<IssueDetailView>(
-      `/series/${seriesSlug}/issues/${issueSlug}`,
+      apiPath`/series/${seriesSlug}/issues/${issueSlug}`,
     );
   } catch (e) {
     if (e instanceof ApiError) {
@@ -135,26 +139,26 @@ export default async function ReadPage({
   let progressUnavailable = false;
   const progressPromise =
     explicitPage === null && !startFresh
-      ? apiGet<ProgressDelta>(
-          `/progress?issue_id=${encodeURIComponent(issue.id)}`,
-        ).catch((e: unknown) => {
-          // A 4xx means "no record" territory (or a stale session the
-          // layout is already bouncing); anything else is an outage.
-          if (!(e instanceof ApiError) || e.status >= 500) {
-            progressUnavailable = true;
-          }
-          return null;
-        })
+      ? apiGet<ProgressDelta>(apiPath`/progress?issue_id=${issue.id}`).catch(
+          (e: unknown) => {
+            // A 4xx means "no record" territory (or a stale session the
+            // layout is already bouncing); anything else is an outage.
+            if (!(e instanceof ApiError) || e.status >= 500) {
+              progressUnavailable = true;
+            }
+            return null;
+          },
+        )
       : null;
   // WP-4.3: the user's manual spread controls, prefetched so the first
   // double-page paint already pairs with them. Fails soft to automatic.
   const overridesPromise = apiGet<PageOverridesView>(
-    `/me/issues/${issue.id}/page-overrides`,
+    apiPath`/me/issues/${issue.id}/page-overrides`,
   ).catch(() => null);
   // Post-audit T4.4: the account's per-series reader overrides. `null`
   // when the fetch fails so the reader keeps its local cache.
   const seriesPrefsPromise = apiGet<SeriesReaderPrefsView>(
-    `/me/series/${issue.series_id}/reader-prefs`,
+    apiPath`/me/series/${issue.series_id}/reader-prefs`,
   ).catch(() => null);
   const [delta, me, pageOverrides, serverSeriesPrefs] = await Promise.all([
     progressPromise,

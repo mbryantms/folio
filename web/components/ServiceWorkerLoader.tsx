@@ -16,8 +16,9 @@ import dynamic from "next/dynamic";
  * fallback, static caches, and update notifications.
  *
  * `loading: () => null` keeps the layout's JSX tree quiet during
- * the short async window; the updater returns `null` itself, so
- * the placeholder and the loaded component render identically.
+ * the short async window; the updater renders only a closed
+ * confirmation dialog (a portal, nothing in place), so the placeholder
+ * and the loaded component render identically.
  */
 export const ServiceWorkerLoader = dynamic(
   () =>

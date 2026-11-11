@@ -332,6 +332,16 @@ async fn app_password_cannot_delete_the_account() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error"]["code"], "auth.permission_denied");
+    // The extractor refuses an app password off the reader surface before
+    // the handler runs; the handler's own app-password check stays as
+    // defence in depth.
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reader apps"),
+        "{body}"
+    );
     assert!(user_exists(&app.state().db, a.user_id).await);
 }
 

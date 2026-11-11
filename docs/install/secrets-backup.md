@@ -30,6 +30,13 @@ the hashes were computed against is different from the one verifying
 them now. The fix is to restore the matching secrets, not to reset
 passwords blindly.
 
+A backup of the volume is a copy of these secrets, so treat it with the
+same care: anyone who can read the tarball can forge access tokens and
+signed URLs. [`scripts/backup.sh`](../../scripts/backup.sh) writes its
+dumps and tarballs at mode `0600`, and creates its backup directory
+at `0700`, for that reason
+(details in [`backup.md`](./backup.md#a-backup-script)).
+
 ## Rotating a secret
 
 Routine rotation isn't necessary — these are filesystem-local secrets

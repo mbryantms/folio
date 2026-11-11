@@ -30,11 +30,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, FixedOffset};
-use entity::user::UserRole;
-use entity::{issue, library_user_access, marker, progress_record, reading_session, series};
+use entity::{issue, marker, progress_record, reading_session, series};
 use sea_orm::{
     ActiveValue::Set,
-    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, Statement,
+    ColumnTrait, EntityTrait, FromQueryResult, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+    Statement,
     sea_query::{Expr, ExprTrait},
 };
 use serde::{Deserialize, Serialize};
@@ -46,7 +46,9 @@ use uuid::Uuid;
 use super::error;
 use super::extractors::Validated;
 use crate::auth::CurrentUser;
+use crate::library::access;
 use crate::state::AppState;
+use crate::util::csv_cell::formula_safe;
 use server_macros::handler;
 
 pub fn routes() -> OpenApiRouter<AppState> {
@@ -459,11 +461,20 @@ async fn gather_events(
     // tens of MB up front; the Vec still grows to whatever the sources
     // return.
     let mut candidates: Vec<Candidate> = Vec::with_capacity((limit.clamp(0, 1000) as usize) * 4);
+    // The caller's grant + age cap. For a capped caller every harvester
+    // folds the issue-level cap into its own statement (grant + cap only:
+    // the log is history, so a read of an issue that was later removed
+    // stays), so a page is never short and a read of an issue rated above
+    // the cap leaves no event — including reads recorded before the cap
+    // was set. Admins and uncapped readers pay nothing extra: the grant is
+    // checked at hydrate time, as before.
+    let acl = access::for_user(app, user).await;
 
     if p.kinds.contains(&EventKind::IssueFinished) {
         candidates.extend(
             fetch_issue_finished(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -479,6 +490,7 @@ async fn gather_events(
         candidates.extend(
             fetch_sessions(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -494,6 +506,7 @@ async fn gather_events(
         candidates.extend(
             fetch_markers(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -513,6 +526,7 @@ async fn gather_events(
         candidates.extend(
             fetch_series_finished(
                 app,
+                &acl,
                 user.id,
                 fetch_limit,
                 p.cursor.as_ref(),
@@ -572,13 +586,20 @@ async fn gather_events(
     let series_cover_by_id: HashMap<Uuid, String> = if series_ids.is_empty() {
         HashMap::new()
     } else {
-        let candidates_for_cover = issue::Entity::find()
+        let mut cover_select = issue::Entity::find()
             .filter(issue::Column::SeriesId.is_in(series_ids.iter().copied().collect::<Vec<_>>()))
             .filter(issue::Column::State.eq(issue::IssueState::Active))
-            .filter(issue::Column::RemovedAt.is_null())
+            .filter(issue::Column::RemovedAt.is_null());
+        if let Some(cap) = acl.issue_cap_condition() {
+            cover_select = cover_select.filter(cap);
+        }
+        let candidates_for_cover = cover_select
             .into_partial_model::<crate::api::issue_card::IssueCardRow>()
             .all(&app.db)
             .await?;
+        let capped = acl.issue_cap_condition().is_some();
+        let cover_candidates: HashSet<String> =
+            candidates_for_cover.iter().map(|i| i.id.clone()).collect();
         let mut by_series: HashMap<Uuid, (Option<f64>, String)> = HashMap::new();
         for i in candidates_for_cover {
             let url = format!("/issues/{}/pages/0/thumb", i.id);
@@ -604,26 +625,17 @@ async fn gather_events(
         )
         .await
         {
-            by_series.insert(sid, (None, format!("/issues/{iid}/pages/0/thumb")));
+            // For a capped caller, a pick they can't see never stands in as
+            // the cover; everyone else keeps the pick unconditionally, as
+            // `series::series_cover_issue_ids` does.
+            if !capped || cover_candidates.contains(&iid) {
+                by_series.insert(sid, (None, format!("/issues/{iid}/pages/0/thumb")));
+            }
         }
         by_series
             .into_iter()
             .map(|(k, (_, url))| (k, url))
             .collect()
-    };
-
-    let allowed_libraries: Option<HashSet<Uuid>> = if user.role == UserRole::Admin {
-        None
-    } else {
-        Some(
-            library_user_access::Entity::find()
-                .filter(library_user_access::Column::UserId.eq(user.id))
-                .all(&app.db)
-                .await?
-                .into_iter()
-                .map(|r| r.library_id)
-                .collect(),
-        )
     };
 
     let library_filter = p.library_id;
@@ -633,10 +645,7 @@ async fn gather_events(
         {
             return false;
         }
-        match &allowed_libraries {
-            None => true, // admin
-            Some(set) => set.contains(&library_id),
-        }
+        acl.contains(library_id)
     };
 
     let events: Vec<ReadingLogEventView> = candidates
@@ -747,10 +756,16 @@ pub async fn reading_log_export(
     (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("text/csv; charset=utf-8"),
+            ),
             (
                 header::CONTENT_DISPOSITION,
-                "attachment; filename=\"reading-log.csv\"".to_string(),
+                crate::util::content_disposition::content_disposition(
+                    crate::util::content_disposition::Disposition::Attachment,
+                    "reading-log.csv",
+                ),
             ),
         ],
         body,
@@ -761,6 +776,12 @@ pub async fn reading_log_export(
 /// Flatten reading-log events into an RFC 4180 CSV — one row per event,
 /// with kind-specific payload fields fanned out into dedicated columns
 /// (empty where not applicable) so the output stays analyzable.
+///
+/// Text columns that carry archive metadata or user input (series,
+/// publisher, issue number and title, marker kind, tags) go through
+/// [`formula_safe`], so a cell a spreadsheet would read as a formula gets
+/// a leading `'`. Columns the server formats itself (timestamps, counts,
+/// the event kind) are written as they are.
 fn build_reading_log_csv(events: &[ReadingLogEventView]) -> Result<Vec<u8>, csv::Error> {
     let mut w = csv::Writer::from_writer(Vec::new());
     w.write_record([
@@ -867,11 +888,11 @@ fn build_reading_log_csv(events: &[ReadingLogEventView]) -> Result<Vec<u8>, csv:
         w.write_record([
             e.occurred_at.as_str(),
             e.kind.as_str(),
-            series_name,
+            &formula_safe(series_name),
             &series_year,
-            publisher,
-            issue_number,
-            issue_title,
+            &formula_safe(publisher),
+            &formula_safe(issue_number),
+            &formula_safe(issue_title),
             &started_at,
             &ended_at,
             &active_minutes,
@@ -880,8 +901,8 @@ fn build_reading_log_csv(events: &[ReadingLogEventView]) -> Result<Vec<u8>, csv:
             &is_reread,
             &total_issues,
             &span_days,
-            &marker_kind,
-            &tags,
+            &formula_safe(&marker_kind),
+            &formula_safe(&tags),
         ])?;
     }
     w.flush()?;
@@ -1015,9 +1036,29 @@ fn hydrate(
 
 // ───────── Per-source harvesters ─────────
 
+/// For a capped caller, `SELECT issues.id` under the caller's grant + age
+/// cap ([`access::VisibleLibraries::issue_filter`], which has no removed
+/// predicate: a log row of a since-removed issue is history and stays) —
+/// the semi-join every per-issue harvester filters its rows through.
+/// `None` for an admin or an uncapped reader: no predicate at all (the
+/// grant is still checked at hydrate time, as before).
+fn capped_issue_ids(acl: &access::VisibleLibraries) -> Option<sea_orm::sea_query::SelectStatement> {
+    if !acl.has_caps() {
+        return None;
+    }
+    let mut select = issue::Entity::find()
+        .select_only()
+        .column(issue::Column::Id);
+    if let Some(cond) = acl.issue_filter() {
+        select = select.filter(cond);
+    }
+    Some(select.into_query())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn fetch_issue_finished(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1033,6 +1074,9 @@ async fn fetch_issue_finished(
     let mut query = progress_record::Entity::find()
         .filter(progress_record::Column::UserId.eq(user_id))
         .filter(progress_record::Column::FinishedAt.is_not_null());
+    if let Some(ids) = capped_issue_ids(acl) {
+        query = query.filter(progress_record::Column::IssueId.in_subquery(ids));
+    }
     // Catalog/sync writes (`is_backfill = true`) are intentionally
     // excluded from the reading-log feed by default — they represent
     // issues the user is *recording* as read, not *just read*. The
@@ -1120,6 +1164,7 @@ async fn fetch_issue_finished(
 #[allow(clippy::too_many_arguments)]
 async fn fetch_sessions(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1133,6 +1178,9 @@ async fn fetch_sessions(
         .filter(reading_session::Column::EndedAt.is_not_null())
         .filter(reading_session::Column::ActiveMs.gte(SESSION_MIN_ACTIVE_MS))
         .filter(reading_session::Column::DistinctPagesRead.gt(0));
+    if let Some(ids) = capped_issue_ids(acl) {
+        query = query.filter(reading_session::Column::IssueId.in_subquery(ids));
+    }
     if !include_hidden {
         query = query.filter(reading_session::Column::HiddenFromLog.eq(false));
     }
@@ -1189,6 +1237,7 @@ async fn fetch_sessions(
 #[allow(clippy::too_many_arguments)]
 async fn fetch_markers(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1198,6 +1247,9 @@ async fn fetch_markers(
     include_hidden: bool,
 ) -> Result<Vec<Candidate>, sea_orm::DbErr> {
     let mut query = marker::Entity::find().filter(marker::Column::UserId.eq(user_id));
+    if let Some(ids) = capped_issue_ids(acl) {
+        query = query.filter(marker::Column::IssueId.in_subquery(ids));
+    }
     if !include_hidden {
         query = query.filter(marker::Column::HiddenFromLog.eq(false));
     }
@@ -1255,8 +1307,10 @@ struct SeriesFinishedRow {
     series_finished_at: DateTime<FixedOffset>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_series_finished(
     app: &AppState,
+    acl: &access::VisibleLibraries,
     user_id: Uuid,
     limit: i64,
     cursor: Option<&Cursor>,
@@ -1276,40 +1330,71 @@ async fn fetch_series_finished(
     // trip even though Sea-ORM doesn't expose a fluent API for the
     // pattern.
 
+    // For a capped caller both sides count only what they can see: the
+    // series under the cap and, within it, the issues under the
+    // issue-level cap (own rating, else the joined series' rating), so
+    // "finished" is judged over the issues they can open and a hidden
+    // issue never feeds the timestamp. Empty for admins and uncapped
+    // readers (the grant is checked at hydrate time, as before).
+    let mut params: Vec<sea_orm::Value> = vec![user_id.into(), limit.into()];
+    let series_cap = acl.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
+    let active_cap = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
+    let finished_cap = acl.raw_cap_clause(
+        "i.library_id",
+        "COALESCE(i.age_rating, s.age_rating)",
+        &mut params,
+    );
     // Cursor: (occurred_at, series_id::text). The "::text" cast
     // mirrors how the rest of the query orders the id field; using
     // text comparison keeps the cursor compatible across the merge
-    // step which compares synthetic ids as strings.
+    // step which compares synthetic ids as strings. Every value is a
+    // bound parameter, numbered after the cap clauses' ones.
     let cursor_clause = match cursor {
         Some(c) => {
             let id_str = c.id.strip_prefix("ser-fin:").unwrap_or("");
+            params.push(c.occurred_at.into());
+            let at = params.len();
+            params.push(id_str.to_owned().into());
+            let id = params.len();
             format!(
-                "AND (uf.series_finished_at, uf.series_id::text) < (TIMESTAMPTZ '{}', '{}')",
-                c.occurred_at.to_rfc3339().replace('\'', "''"),
-                id_str.replace('\'', "''"),
+                "AND (uf.series_finished_at, uf.series_id::text) < (${at}::timestamptz, ${id}::text)"
             )
         }
         None => String::new(),
     };
     let from_clause = match from {
-        Some(t) => format!(
-            "AND uf.series_finished_at >= TIMESTAMPTZ '{}'",
-            t.to_rfc3339().replace('\'', "''")
-        ),
+        Some(t) => {
+            params.push((*t).into());
+            format!(
+                "AND uf.series_finished_at >= ${}::timestamptz",
+                params.len()
+            )
+        }
         None => String::new(),
     };
     let to_clause = match to {
-        Some(t) => format!(
-            "AND uf.series_finished_at < TIMESTAMPTZ '{}'",
-            t.to_rfc3339().replace('\'', "''")
-        ),
+        Some(t) => {
+            params.push((*t).into());
+            format!("AND uf.series_finished_at < ${}::timestamptz", params.len())
+        }
         None => String::new(),
     };
     let series_clause = match series_id {
-        Some(s) => format!("AND uf.series_id = '{s}'"),
+        Some(s) => {
+            params.push(s.into());
+            format!("AND uf.series_id = ${}", params.len())
+        }
         None => String::new(),
     };
-
+    let finished_join = if finished_cap.is_empty() {
+        ""
+    } else {
+        "JOIN   series s ON s.id = i.series_id"
+    };
     let sql = format!(
         r#"
         WITH active_counts AS (
@@ -1317,6 +1402,7 @@ async fn fetch_series_finished(
             FROM   series s
             JOIN   issues i ON i.series_id = s.id
             WHERE  i.state = 'active' AND i.removed_at IS NULL
+                   {series_cap}{active_cap}
             GROUP BY s.id
         ),
         user_finishes AS (
@@ -1325,6 +1411,7 @@ async fn fetch_series_finished(
                    COUNT(*)             AS finished_count
             FROM   progress_records pr
             JOIN   issues i ON i.id = pr.issue_id
+            {finished_join}
             WHERE  pr.user_id = $1
               AND  pr.finished = TRUE
               AND  pr.finished_at IS NOT NULL
@@ -1333,6 +1420,7 @@ async fn fetch_series_finished(
               AND  pr.is_backfill = FALSE
               AND  i.state = 'active'
               AND  i.removed_at IS NULL
+                   {finished_cap}
             GROUP BY i.series_id
         )
         SELECT uf.series_id, uf.series_finished_at
@@ -1348,14 +1436,11 @@ async fn fetch_series_finished(
         "#
     );
 
-    let rows: Vec<SeriesFinishedRow> =
-        SeriesFinishedRow::find_by_statement(Statement::from_sql_and_values(
-            sea_orm::DatabaseBackend::Postgres,
-            sql,
-            [user_id.into(), limit.into()],
-        ))
-        .all(&app.db)
-        .await?;
+    let rows: Vec<SeriesFinishedRow> = SeriesFinishedRow::find_by_statement(
+        Statement::from_sql_and_values(sea_orm::DatabaseBackend::Postgres, sql, params),
+    )
+    .all(&app.db)
+    .await?;
 
     Ok(rows
         .into_iter()
@@ -1541,5 +1626,89 @@ fn handle_update_result(
             tracing::warn!(error = %e, kind, "reading-log hide/unhide update failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
+    }
+}
+
+#[cfg(test)]
+mod csv_tests {
+    use super::*;
+
+    fn marker_event(series: &str, number: &str, title: &str, tags: &[&str]) -> ReadingLogEventView {
+        ReadingLogEventView {
+            id: "mrk:1".into(),
+            kind: "marker_created".into(),
+            occurred_at: "2026-11-01T10:00:00+00:00".into(),
+            series: Some(EventSeries {
+                id: "s".into(),
+                slug: "s".into(),
+                name: series.into(),
+                year: Some(2001),
+                publisher: Some("@Publisher".into()),
+                imprint: None,
+                cover_url: None,
+            }),
+            issue: Some(EventIssue {
+                id: "i".into(),
+                slug: "i".into(),
+                number: Some(number.into()),
+                title: Some(title.into()),
+                year: None,
+                month: None,
+                day: None,
+                page_count: None,
+                cover_url: None,
+                writer: None,
+                penciller: None,
+                inker: None,
+                colorist: None,
+                letterer: None,
+                cover_artist: None,
+                editor: None,
+            }),
+            payload: EventPayload::MarkerCreated {
+                marker_id: "m".into(),
+                marker_kind: "note".into(),
+                page_index: 0,
+                tags: tags.iter().map(|t| (*t).to_owned()).collect(),
+                body_preview: None,
+            },
+            is_hidden: false,
+        }
+    }
+
+    fn rows(events: &[ReadingLogEventView]) -> Vec<Vec<String>> {
+        let bytes = build_reading_log_csv(events).unwrap();
+        csv::Reader::from_reader(bytes.as_slice())
+            .records()
+            .map(|r| r.unwrap().iter().map(str::to_owned).collect())
+            .collect()
+    }
+
+    #[test]
+    fn formula_cells_are_prefixed_and_numbers_kept() {
+        let out = rows(&[marker_event(
+            "=HYPERLINK(\"http://x\",\"y\")",
+            "-1",
+            "+cmd|' /C calc'!A0",
+            &["-tag", "ok"],
+        )]);
+        let r = &out[0];
+        assert_eq!(r[0], "2026-11-01T10:00:00+00:00", "timestamp untouched");
+        assert_eq!(r[1], "marker_created");
+        assert_eq!(r[2], "'=HYPERLINK(\"http://x\",\"y\")");
+        assert_eq!(r[3], "2001");
+        assert_eq!(r[4], "'@Publisher");
+        assert_eq!(r[5], "-1", "issue -1 is a number, not a formula");
+        assert_eq!(r[6], "'+cmd|' /C calc'!A0");
+        assert_eq!(r[16], "'-tag, ok");
+    }
+
+    #[test]
+    fn plain_text_is_unchanged() {
+        let out = rows(&[marker_event("Batman", "12", "Year One", &["arc"])]);
+        assert_eq!(out[0][2], "Batman");
+        assert_eq!(out[0][5], "12");
+        assert_eq!(out[0][6], "Year One");
+        assert_eq!(out[0][16], "arc");
     }
 }

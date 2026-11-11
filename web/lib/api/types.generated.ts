@@ -1624,6 +1624,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/local/confirm-email-change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /auth/local/confirm-email-change?token=...`
+         * @description Opens the link `PATCH /me/account` mailed to a new address. The token
+         *     must match an unconsumed, unexpired `email_change_requests` row of the
+         *     same user, made under the account's current `token_version` (a
+         *     credential change since voids it: the row is expired), and the address
+         *     must still be free. Then, in one transaction: `users.email` = the new
+         *     address, `email_verified = true`, `token_version` bumped, the row
+         *     consumed, and every refresh session revoked except the opening
+         *     browser's, kept only when it belongs to the same user. Always answers
+         *     with a redirect to `/settings/account` carrying
+         *     `email_change=confirmed|confirmed_signed_out|invalid|taken`.
+         */
+        get: operations["local_confirm_email_change"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/local/login": {
         parameters: {
             query?: never;
@@ -3466,6 +3495,9 @@ export interface paths {
          * @description Implementation note: dismissals require comparing `progress_records.
          *     updated_at` against `rail_dismissals.dismissed_at`, so we let Postgres
          *     do that in one SQL pass rather than re-filtering rows in Rust.
+         *
+         *     Cursor-paginated on `(progress.updated_at, issue_id)` descending (see
+         *     [`progress_cards`]).
          */
         get: operations["rails_continue_reading"];
         put?: never;
@@ -3798,6 +3830,53 @@ export interface paths {
         patch: operations["markers_update"];
         trace?: never;
     };
+    "/api/me/new-in-series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Issues added to the library in the last [`NEW_IN_SERIES_WINDOW_DAYS`]
+         *     days (`issues.created_at`, the scanner's ingest time — the same stamp
+         *     the New issues rail orders by) to a series the caller was already
+         *     reading when the issue arrived, minus issues the caller finished.
+         *     Newest addition first, tie-break on id; cursor-paginated on
+         *     `(created_at, id)`, `total` on the first page.
+         * @description "Already reading" means the issue was added after the caller started
+         *     the series. No start time is stored, so per series the start is
+         *     `MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading
+         *     rows (finished, or read past page 0): a finished row's `finished_at`
+         *     is stamped once when it flips to finished and kept while it stays
+         *     finished, so for anyone who finished an issue the start is when they
+         *     first finished one. A whole series added at once and then started is
+         *     therefore not "new". Known limits: when the caller's only reading row
+         *     in a series is one unfinished issue, its `updated_at` moves with every
+         *     read, so an issue added while they are still on that first issue can
+         *     be missed; and restarting a finished issue clears its `finished_at`,
+         *     so if that was the only finished row the start moves to the re-read.
+         *
+         *     Excludes removed issues and series, issues outside the caller's
+         *     libraries or over their age cap (issue rating, series fallback), and
+         *     series the caller hid from the rails — with On deck's auto-restore: a
+         *     series dismissal stops hiding once the caller reads in the series again.
+         *
+         *     One query: the started-series CTE reads the caller's progress rows
+         *     (`progress_records` primary key on `(user_id, issue_id)`), the issue
+         *     side walks `issues_active_created_idx` (`created_at DESC, id DESC`,
+         *     partial on active + not removed) inside the window, and the finished
+         *     check is a primary-key probe. The window bounds the scan.
+         */
+        get: operations["rails_new_in_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/on-deck": {
         parameters: {
             query?: never;
@@ -3812,6 +3891,14 @@ export interface paths {
          *     queue) and `cbl_next` cards (lowest-position unfinished matched entry
          *     in a CBL the user has any progress in). Series with an active in-
          *     progress issue are skipped — they already surface in Continue Reading.
+         * @description Paging: the cards are merged and ranked in Rust (the series walk and
+         *     the reading-list frontier are not expressible as one SQL ordering), so
+         *     a paged request recomputes the merge over a *bounded* candidate set —
+         *     the [`ON_DECK_PAGED_CANDIDATES`] most recently active series and as
+         *     many reading lists — and keysets over the ranked result (`OnDeckCursor`).
+         *     `total` counts that set, and `bounded_to` says when the bound was hit.
+         *     The home-rail preview (no `cursor`, no `limit`) keeps the rail's
+         *     smaller candidate set and returns no cursor.
          */
         get: operations["rails_on_deck"];
         put?: never;
@@ -6284,7 +6371,10 @@ export interface components {
              *     absent or equal.
              */
             confirm_password?: string | null;
-            /** @description Required when changing the password. Verified before any write. */
+            /**
+             * @description Required when changing the password, and when changing the email
+             *     of an account that has a password. Verified before any write.
+             */
             current_password?: string | null;
             display_name?: string | null;
             /**
@@ -8193,7 +8283,8 @@ export interface components {
             /**
              * @description Shape varies by `(field, op)`. The compiler validates and rejects
              *     mismatches with a clear error. See [`super::registry`] for the
-             *     matrix of allowed combinations.
+             *     matrix of allowed combinations. Bounded by
+             *     [`MAX_FILTER_LIST_VALUES`] / [`MAX_FILTER_VALUE_LEN`].
              */
             value?: unknown;
         };
@@ -8230,6 +8321,13 @@ export interface components {
         };
         ContinueReadingView: {
             items: components["schemas"]["ContinueReadingCard"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching cards in total; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description `sharp` | `default` | `round` — the `--radius` token every corner in
@@ -9319,7 +9417,7 @@ export interface components {
          *     Similar series rail, and the OPDS Continue reading feeds.
          * @enum {string}
          */
-        DismissalRail: "continue_reading" | "recent_history" | "on_deck" | "random_picks" | "similar_series" | "opds_continue_reading";
+        DismissalRail: "continue_reading" | "recent_history" | "on_deck" | "random_picks" | "similar_series" | "opds_continue_reading" | "new_in_series";
         DowHourCell: {
             /** Format: int64 */
             active_ms: number;
@@ -10233,6 +10331,7 @@ export interface components {
             weekly_refresh_enabled: boolean;
         };
         FilterDsl: {
+            /** @description At most [`MAX_FILTER_CONDITIONS`] on a write or preview. */
             conditions: components["schemas"]["Condition"][];
             match_mode: components["schemas"]["MatchMode"];
         };
@@ -10356,7 +10455,7 @@ export interface components {
          *     one of these.
          * @enum {string}
          */
-        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "MetadataDriftFromXml";
+        HealthIssueKind: "FileAtRoot" | "EmptyFolder" | "UnreadableFile" | "UnreadableFolder" | "UnreadableArchive" | "MissingComicInfo" | "MalformedComicInfo" | "MalformedArchive" | "EncryptedArchive" | "FolderNameMismatch" | "MixedSeriesInFolder" | "DuplicateContent" | "OrphanedSeriesJson" | "UnsupportedArchiveFormat" | "RecoveredArchive" | "SkippedArchiveEntries" | "UnreadablePage" | "NoPages" | "AmbiguousFolder" | "DuplicateExternalId" | "SymlinkSkipped" | "MetadataDriftFromXml";
         /**
          * @description One kind-facet tally within the current status+severity scope (drives the
          *     per-kind filter pills).
@@ -11818,6 +11917,12 @@ export interface components {
             /** @description True when `/me/account` accepts local password changes for this user. */
             password_editable: boolean;
             /**
+             * @description The address an email change is waiting to be confirmed at (the
+             *     link went to it), or `null` when no change is pending. `email` keeps
+             *     the current address until the link is opened.
+             */
+            pending_email?: string | null;
+            /**
              * Format: double
              * @description Reader display preferences that follow the account (audit 2026-11
              *     F6/F7). Each is `null` until the account has set it; while `null`
@@ -12025,6 +12130,22 @@ export interface components {
          * @enum {string}
          */
         Motion: "system" | "reduced";
+        /**
+         * @description "New in series you're reading" page: issues added in the last
+         *     `NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller was already
+         *     reading (added after they started it), that the caller has not
+         *     finished, newest addition first.
+         */
+        NewInSeriesView: {
+            items: components["schemas"]["IssueSummaryView"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching issues in total; first page only.
+             */
+            total?: number | null;
+        };
         NextInSeriesView: {
             items: components["schemas"]["IssueSummaryView"][];
         };
@@ -12403,7 +12524,25 @@ export interface components {
             position: number;
         };
         OnDeckView: {
+            /**
+             * Format: int32
+             * @description First page of a paged request only, and only when the merge hit
+             *     its bound: the cards come from at most this many most recently
+             *     active series and this many reading lists (see
+             *     `ON_DECK_PAGED_CANDIDATES`), so older ones are not listed.
+             */
+            bounded_to?: number | null;
             items: components["schemas"]["OnDeckCard"][];
+            /**
+             * @description Opaque cursor for the next page; `null` on the last page and on
+             *     the home-rail preview (a request with neither `cursor` nor `limit`).
+             */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Cards in the ranked list; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description On-this-day rail: issues released on this calendar day (any year),
@@ -12728,6 +12867,7 @@ export interface components {
             item?: components["schemas"]["IssueSummaryView"] | null;
         };
         PreviewReq: {
+            /** @description Bounded like a saved filter (`views::dsl::MAX_FILTER_*`). */
             filter: components["schemas"]["FilterDsl"];
             /** Format: int32 */
             result_limit: number;
@@ -13458,6 +13598,13 @@ export interface components {
          */
         RecentHistoryView: {
             items: components["schemas"]["ContinueReadingCard"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching cards in total; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description Newest-ingests rail. Items are plain issue cards (`series_name`
@@ -16201,16 +16348,14 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Issues the caller doesn't have library access to read. Silent
-             *     from the user's perspective; surfaced here so an admin
-             *     debugging a "mark read did nothing" report can see the
-             *     filter fired.
+             * @description Always 0. Kept for response shape: an issue the caller can't see
+             *     is counted in `not_found`, indistinguishable from an unknown id.
              */
             forbidden: number;
             /**
              * Format: int32
              * @description Issues whose id didn't resolve to a row (removed / never
-             *     existed / typo). Treated the same as forbidden — the caller
+             *     existed / typo) or that the caller can't see — the caller
              *     doesn't get to distinguish a missing row from one they're
              *     not allowed to see.
              */
@@ -16284,12 +16429,13 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Series the caller can't see (library access denied).
+             * @description Always 0. Kept for response shape: a series the caller can't see
+             *     is counted in `not_found_series`.
              */
             forbidden_series: number;
             /**
              * Format: int32
-             * @description Series whose id didn't resolve.
+             * @description Series whose id didn't resolve, or that the caller can't see.
              */
             not_found_series: number;
             /**
@@ -18519,6 +18665,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_admin_delete: {
@@ -18562,6 +18715,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
+            };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -20051,6 +20211,27 @@ export interface operations {
             };
         };
     };
+    local_confirm_email_change: {
+        parameters: {
+            query: {
+                /** @description token from the confirmation email */
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description redirect to /settings/account?email_change=confirmed (the opening browser's session of this account kept), =confirmed_signed_out (no session of the account kept), =invalid or =taken */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     local_login: {
         parameters: {
             query?: never;
@@ -21216,14 +21397,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssueCoversResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description issue not found */
+            /** @description issue not found, or not visible to the caller */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -22456,6 +22630,7 @@ export interface operations {
             };
         };
         responses: {
+            /** @description updated. After an email change with mail delivery configured, `email` is unchanged and `pending_email` names the address the confirmation link went to. Submitting the current address cancels a pending change */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -22471,22 +22646,36 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description current_password incorrect or session invalid */
+            /** @description session invalid */
             401: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description OIDC users cannot edit email/password */
+            /** @description OIDC users cannot edit email/password, or current_password incorrect (code `auth.invalid`, field error on `current_password`) */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description email already in use */
+            /** @description email already in use (checked after the password) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description validation error; a missing current_password for an email change carries a field error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description locked out after failed password attempts (`auth.locked_out`), or more than 5 email-change requests in an hour (`rate_limited`); both carry Retry-After */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -23593,7 +23782,15 @@ export interface operations {
     };
     rails_continue_reading: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -23607,6 +23804,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ContinueReadingView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -24408,9 +24612,48 @@ export interface operations {
             };
         };
     };
+    rails_new_in_series: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /** @description Page size; default 24, max 100. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewInSeriesView"];
+                };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     rails_on_deck: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -24424,6 +24667,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OnDeckView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25053,7 +25303,15 @@ export interface operations {
     };
     rails_recent_history: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -25067,6 +25325,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RecentHistoryView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25131,6 +25396,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_preview: {
@@ -25154,6 +25426,20 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
             };
+            /** @description invalid filter, filter over the size bounds, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description saved-view preview rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_preview_issues: {
@@ -25176,6 +25462,20 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["IssueListView"];
                 };
+            };
+            /** @description invalid filter, filter over the size bounds, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description saved-view preview rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25249,6 +25549,13 @@ export interface operations {
                     "application/json": components["schemas"]["SavedViewView"];
                 };
             };
+            /** @description invalid body or filter over the size bounds */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description saved-view write rate limit */
             429: {
                 headers: {
@@ -25303,6 +25610,13 @@ export interface operations {
                     "application/json": components["schemas"]["IssueListView"];
                 };
             };
+            /** @description not a filter_issues view, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     saved_views_pin: {
@@ -25351,6 +25665,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SeriesListView"];
                 };
+            };
+            /** @description not a filter_series view, or `filter_too_slow` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -14,6 +14,7 @@ import { jsonFetch, queryKeys } from "@/lib/api/queries";
 import type { components } from "@/lib/api/types.generated";
 import { seriesUrl } from "@/lib/urls";
 import { useVisualEffect } from "@/lib/visual-effects";
+import { RailError } from "@/components/saved-views/RailError";
 
 type Schemas = components["schemas"];
 type CreatorDetail = Schemas["CreatorDetailView"];
@@ -165,7 +166,10 @@ function PreviewBody({
   }
   if (q.isError || !q.data) {
     return (
-      <p className="text-muted-foreground text-sm">Preview unavailable.</p>
+      <RailError
+        message="Preview unavailable."
+        onRetry={() => void q.refetch()}
+      />
     );
   }
   const p = q.data;

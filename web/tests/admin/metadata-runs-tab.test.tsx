@@ -25,6 +25,7 @@ import type { RunRow, RunsListResp } from "@/lib/api/types";
 const net = vi.hoisted(() => ({
   urls: [] as string[],
   pages: new Map<string, RunsListResp>(),
+  broken: new Set<string>(),
 }));
 
 vi.mock("@/lib/api/auth-refresh", () => ({
@@ -32,6 +33,12 @@ vi.mock("@/lib/api/auth-refresh", () => ({
     net.urls.push(path);
     const url = new URL(path, "http://test");
     const key = `${url.searchParams.get("status") ?? ""}|${url.searchParams.get("before") ?? ""}`;
+    if (net.broken.has(key)) {
+      return new Response(
+        JSON.stringify({ error: { code: "internal", message: "internal" } }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
     const body = net.pages.get(key) ?? { runs: [], next_cursor: null };
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -111,6 +118,7 @@ function renderTab() {
 beforeEach(() => {
   net.urls.length = 0;
   net.pages.clear();
+  net.broken.clear();
   io.live.clear();
 });
 
@@ -149,6 +157,30 @@ describe("RunsTab pagination", () => {
     );
     act(() => intersect());
     expect(net.urls).toHaveLength(3);
+  });
+
+  it("a failed next page keeps the rows, stops fetching and offers Retry", async () => {
+    net.pages.set("|", { runs: range(0, 25), next_cursor: "c1" });
+    net.pages.set("|c1", { runs: range(25, 30), next_cursor: null });
+    net.broken.add("|c1");
+    renderTab();
+    await screen.findByText(/trigger-24\b/);
+
+    act(() => intersect());
+    expect(await screen.findByText("Couldn't load more.")).toBeTruthy();
+    expect(screen.getByText(/trigger-24\b/)).toBeTruthy();
+    const pageTwo = () => net.urls.filter((u) => u.endsWith("before=c1"));
+    expect(pageTwo()).toHaveLength(1);
+
+    // Parked: the sentinel coming into view again does not refetch.
+    act(() => intersect());
+    expect(pageTwo()).toHaveLength(1);
+
+    net.broken.delete("|c1");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText(/trigger-29\b/);
+    expect(pageTwo()).toHaveLength(2);
+    expect(screen.queryByText("Couldn't load more.")).toBeNull();
   });
 
   it("filter pills restart from page one with a server-side param", async () => {

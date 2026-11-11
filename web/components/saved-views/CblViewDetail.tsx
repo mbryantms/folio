@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   BookOpen,
@@ -77,6 +76,8 @@ import type { CblEntryHydratedView, SavedViewView } from "@/lib/api/types";
 import { useCblHideMissing } from "@/lib/cbl/use-hide-missing";
 
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 
 import { ViewActionsMenu } from "./ViewActionsMenu";
 import { ViewHeader } from "./ViewHeader";
@@ -125,29 +126,12 @@ function CblViewDetailInner({
   listId: string;
 }) {
   const detail = useCblList(listId);
-  const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
   const [offlineOpen, setOfflineOpen] = React.useState(false);
   const [offlineMounted, setOfflineMounted] = React.useState(false);
   if (offlineOpen && !offlineMounted) setOfflineMounted(true);
   const fetchViewMetadata = () => {
-    createBatch.mutate(
-      { saved_view_id: savedView.id },
-      {
-        onSuccess: (resp) => {
-          if (!resp) return;
-          toast.success(`Searching ${resp.items_total} issues for metadata`, {
-            action: {
-              label: "Review",
-              onClick: () =>
-                router.push(
-                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
-                ),
-            },
-          });
-        },
-      },
-    );
+    createBatch.mutate({ saved_view_id: savedView.id });
   };
   // Server-filter when `hideMissing` is on: only fetch entries we'll
   // render. Otherwise pull everything in position order. Entries
@@ -197,11 +181,12 @@ function CblViewDetailInner({
   const {
     hasNextPage: entriesHasNext,
     isFetchingNextPage: entriesFetchingNext,
+    isFetchNextPageError: entriesNextError,
     fetchNextPage: entriesFetchNext,
   } = entriesQuery;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || entriesNextError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -214,7 +199,7 @@ function CblViewDetailInner({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [entriesHasNext, entriesFetchingNext, entriesFetchNext]);
+  }, [entriesHasNext, entriesFetchingNext, entriesNextError, entriesFetchNext]);
 
   // Hooks must run unconditionally — keep them above the early
   // returns and use empty arrays for selection-relevant state while
@@ -343,9 +328,11 @@ function CblViewDetailInner({
   }
   if (detail.isError || !detail.data) {
     return (
-      <div className="text-destructive rounded-md border p-4 text-sm">
-        Failed to load view.
-      </div>
+      <RailError
+        message="Couldn't load this view."
+        onRetry={() => void detail.refetch()}
+        className="rounded-md border p-4"
+      />
     );
   }
 
@@ -791,6 +778,7 @@ function CblViewDetailInner({
             aria-hidden
             className={entriesQuery.hasNextPage ? "h-12" : "hidden"}
           />
+          <LoadMoreError query={entriesQuery} />
           {entriesQuery.isFetchingNextPage ? (
             <p className="text-muted-foreground flex items-center justify-center gap-2 text-xs">
               <Loader2 className="size-3 animate-spin" /> Loading more (

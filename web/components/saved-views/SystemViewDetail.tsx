@@ -10,6 +10,10 @@ import {
   OnDeckCardSkeleton,
 } from "@/components/library/OnDeckCard";
 import {
+  NewInSeriesCount,
+  NewInSeriesGrid,
+} from "@/components/saved-views/system-rails";
+import {
   ProgressIssueCard,
   ProgressIssueCardSkeleton,
 } from "@/components/library/ProgressIssueCard";
@@ -24,12 +28,12 @@ import {
 } from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import {
-  useContinueReading,
+  useContinueReadingInfinite,
   useIssuesCrossListInfinite,
-  useOnDeck,
+  useOnDeckInfinite,
   useOnThisDay,
   useRandomPicks,
-  useRecentHistory,
+  useRecentHistoryInfinite,
   useSimilarRailInfinite,
 } from "@/lib/api/queries";
 import type {
@@ -41,6 +45,11 @@ import type {
 } from "@/lib/api/types";
 import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { seriesUrl } from "@/lib/urls";
+import type { InfiniteSentinelQuery } from "@/lib/ui/use-infinite-sentinel";
+import {
+  InfiniteSentinel,
+  LoadMoreError,
+} from "@/components/folio/infinite-sentinel";
 
 /** Query filters for the New Issues detail grid: the FULL ingest-ordered
  *  issue list. Deliberately uncapped — the home rail's per-series cap is
@@ -64,9 +73,9 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   const isRandomPicks = view.system_key === "random_picks";
   const isOnThisDay = view.system_key === "on_this_day";
 
-  const cr = useContinueReading({ enabled: isContinueReading });
-  const od = useOnDeck({ enabled: isOnDeck });
-  const rh = useRecentHistory({ enabled: isRecentHistory });
+  const cr = useContinueReadingInfinite({ enabled: isContinueReading });
+  const od = useOnDeckInfinite({ enabled: isOnDeck });
+  const rh = useRecentHistoryInfinite({ enabled: isRecentHistory });
   const rp = useRandomPicks({ enabled: isRandomPicks });
   const otd = useOnThisDay({ enabled: isOnThisDay });
   // Same key as the grid below — one cache entry, two subscribers.
@@ -76,11 +85,12 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   // Same key as the grid below — one cache entry, two subscribers.
   const sim = useSimilarRailInfinite({ enabled: isSimilar });
   const similarSeed = sim.data?.pages[0]?.seed ?? null;
+  const isNewInSeries = view.system_key === "new_in_series";
 
   const itemCount = isContinueReading
-    ? (cr.data?.items.length ?? null)
+    ? (cr.data?.pages[0]?.total ?? null)
     : isOnDeck
-      ? (od.data?.items.length ?? null)
+      ? (od.data?.pages[0]?.total ?? null)
       : isNewIssues
         ? // `total` rides only the first page (cursor-pagination
           // convention) — the full library-wide issue count.
@@ -88,12 +98,23 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
         : isSimilar
           ? (sim.data?.pages[0]?.total ?? null)
           : isRecentHistory
-            ? (rh.data?.items.length ?? null)
+            ? (rh.data?.pages[0]?.total ?? null)
             : isRandomPicks
               ? (rp.data?.items.length ?? null)
               : isOnThisDay
                 ? (otd.data?.items.length ?? null)
                 : null;
+  // On deck merges its sources over a bounded candidate set; when the
+  // server hit that bound it says so, and the caption does too.
+  const onDeckBound = isOnDeck ? od.data?.pages[0]?.bounded_to : undefined;
+  const countLabel =
+    itemCount == null
+      ? null
+      : itemCount === 0
+        ? "Nothing here yet."
+        : onDeckBound != null
+          ? `${itemCount} ${itemCount === 1 ? "item" : "items"}, from your ${onDeckBound} most recently read series and reading lists`
+          : `${itemCount} ${itemCount === 1 ? "item" : "items"}`;
 
   return (
     <div className="space-y-6">
@@ -139,13 +160,10 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
               </Link>
             </p>
           ) : null}
-          {itemCount != null && (
-            <p className="text-muted-foreground mt-2 text-sm">
-              {itemCount === 0
-                ? "Nothing here yet."
-                : `${itemCount} ${itemCount === 1 ? "item" : "items"}`}
-            </p>
+          {countLabel != null && (
+            <p className="text-muted-foreground mt-2 text-sm">{countLabel}</p>
           )}
+          {isNewInSeries ? <NewInSeriesCount /> : null}
         </div>
         {/* Desktop: the cover-size popover. Phones: the same fields in a
          *  bottom sheet behind a single icon, inline in the header row
@@ -161,9 +179,9 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
 
       <div className="grid gap-4" style={COVER_GRID_STYLE}>
         {isContinueReading ? (
-          <ContinueReadingGrid loading={cr.isLoading} data={cr.data} />
+          <ContinueReadingGrid loading={cr.isLoading} query={cr} />
         ) : isOnDeck ? (
-          <OnDeckGrid loading={od.isLoading} data={od.data} />
+          <OnDeckGrid loading={od.isLoading} query={od} />
         ) : isNewIssues ? (
           <NewIssuesGrid />
         ) : isSimilar ? (
@@ -171,7 +189,7 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
         ) : isRecentHistory ? (
           <ContinueReadingGrid
             loading={rh.isLoading}
-            data={rh.data}
+            query={rh}
             emptyMessage="Nothing read yet. Issues you open (or finish) show up here, most recent first."
             primaryAction="details"
           />
@@ -179,6 +197,8 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           <RandomPicksGrid loading={rp.isLoading} data={rp.data} />
         ) : isOnThisDay ? (
           <OnThisDayGrid loading={otd.isLoading} data={otd.data} />
+        ) : isNewInSeries ? (
+          <NewInSeriesGrid />
         ) : null}
       </div>
     </div>
@@ -196,10 +216,15 @@ function NewIssuesGrid() {
   // Depend on the three fields, not the whole result object — TanStack
   // returns a fresh object identity per render, so `[query]` would tear
   // the observer down and rebuild it on every state change.
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -212,7 +237,7 @@ function NewIssuesGrid() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   if (query.isLoading) {
     return (
@@ -237,6 +262,7 @@ function NewIssuesGrid() {
         <IssueCard key={issue.id} issue={issue} />
       ))}
       <div ref={sentinelRef} aria-hidden className="col-span-full h-px" />
+      <LoadMoreError query={query} className="col-span-full" />
       {isFetchingNextPage
         ? Array.from({ length: 6 }).map((_, i) => (
             <IssueCardSkeleton key={`next-${i}`} />
@@ -251,10 +277,15 @@ function NewIssuesGrid() {
 function SimilarSeriesGrid() {
   const query = useSimilarRailInfinite();
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = query;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -267,7 +298,7 @@ function SimilarSeriesGrid() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   if (query.isLoading) {
     return (
@@ -293,6 +324,7 @@ function SimilarSeriesGrid() {
         <SimilarSeriesCard key={item.series.id} item={item} />
       ))}
       <div ref={sentinelRef} aria-hidden className="col-span-full h-px" />
+      <LoadMoreError query={query} className="col-span-full" />
       {isFetchingNextPage
         ? Array.from({ length: 6 }).map((_, i) => (
             <SeriesCardSkeleton key={`next-${i}`} />
@@ -372,12 +404,12 @@ function OnThisDayGrid({
 
 function ContinueReadingGrid({
   loading,
-  data,
+  query,
   emptyMessage,
   primaryAction,
 }: {
   loading: boolean;
-  data: { items: ContinueReadingCard[] } | undefined;
+  query: PagedQuery<ContinueReadingCard>;
   emptyMessage?: string;
   primaryAction?: React.ComponentProps<
     typeof ProgressIssueCard
@@ -392,7 +424,7 @@ function ContinueReadingGrid({
       </>
     );
   }
-  const items = data?.items ?? [];
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   if (items.length === 0) {
     return (
       <p className="text-muted-foreground col-span-full text-sm">
@@ -410,16 +442,19 @@ function ContinueReadingGrid({
           primaryAction={primaryAction}
         />
       ))}
+      <div className="col-span-full">
+        <InfiniteSentinel query={query} />
+      </div>
     </>
   );
 }
 
 function OnDeckGrid({
   loading,
-  data,
+  query,
 }: {
   loading: boolean;
-  data: { items: OnDeckCardData[] } | undefined;
+  query: PagedQuery<OnDeckCardData>;
 }) {
   if (loading) {
     return (
@@ -430,7 +465,7 @@ function OnDeckGrid({
       </>
     );
   }
-  const items = data?.items ?? [];
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   if (items.length === 0) {
     return (
       <p className="text-muted-foreground col-span-full text-sm">
@@ -451,6 +486,15 @@ function OnDeckGrid({
           card={card}
         />
       ))}
+      <div className="col-span-full">
+        <InfiniteSentinel query={query} />
+      </div>
     </>
   );
 }
+
+/** The slice of a `useInfiniteQuery` result the paged progress grids read:
+ *  the loaded pages plus what `<InfiniteSentinel>` drives. */
+type PagedQuery<T> = InfiniteSentinelQuery & {
+  data: { pages: { items: T[] }[] } | undefined;
+};

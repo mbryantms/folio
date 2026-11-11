@@ -74,6 +74,7 @@ import {
   useDeleteExternalRelationship,
   useDeleteSeriesRelationship,
 } from "@/lib/api/mutations";
+import { RailError } from "@/components/saved-views/RailError";
 import {
   useMe,
   useRelationshipKinds,
@@ -368,9 +369,10 @@ export function SeriesRelatedSection({
   if (query.isLoading) return <RelatedSkeleton coverWidth={coverWidth} />;
   if (query.isError) {
     return (
-      <p className="text-muted-foreground text-sm">
-        Couldn&apos;t load related series. Try refreshing.
-      </p>
+      <RailError
+        message="Couldn't load related series."
+        onRetry={() => void query.refetch()}
+      />
     );
   }
   const empty =

@@ -37,6 +37,8 @@ import type { SeriesFinishProgress } from "@/lib/reader/finish-progress";
 import { nextUpListSubtitle } from "@/lib/reader/list-context";
 import { ratingFromKey, type WrapUpProps } from "@/lib/reader/wrap-up";
 import { issueUrl, readerUrl } from "@/lib/urls";
+import { noteReplace } from "@/lib/ui/back-flight";
+import { issueLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { FinishedMoment } from "./FinishedMoment";
@@ -50,6 +52,7 @@ export function EndOfIssueCard({
   onRetry,
   direction,
   exitUrl,
+  onExit,
   onContinue,
   onDismiss,
   wrapUp,
@@ -73,6 +76,10 @@ export function EndOfIssueCard({
   /** Where the secondary "Exit reader" button goes. Same destination as
    *  the existing reader-exit (the issue detail page). */
   exitUrl: string;
+  /** Leaves the reader (the Reader's `exitReader`: back to where reading
+   *  started, else `exitUrl`). The exit links keep `exitUrl` as their href
+   *  for new-tab clicks. Omitted: they navigate to it. */
+  onExit?: () => void;
   /** Click handler for the primary CTA. Delegates to the parent so the
    *  keybind and the button fire the same navigation + cache-forwarding
    *  logic. */
@@ -93,11 +100,15 @@ export function EndOfIssueCard({
   // up", which is only true for a confirmed empty resolver result.
   const failed = isError && !data;
   const listSubtitle = nextUpListSubtitle(data);
-  const heading =
-    target?.title ??
-    (target?.series_name && target?.number
-      ? `${target.series_name} #${target.number}`
-      : (target?.series_name ?? ""));
+  // A plain click on an exit link leaves through `onExit` instead of
+  // pushing `exitUrl` (audit U-02).
+  const onExitNavigate = onExit
+    ? (e: { preventDefault: () => void }) => {
+        e.preventDefault();
+        onExit();
+      }
+    : undefined;
+  const heading = target ? issueLabel(target) : "";
   const subheading =
     target?.title && target?.series_name && target?.number
       ? `${target.series_name} #${target.number}`
@@ -298,7 +309,11 @@ export function EndOfIssueCard({
                   </Button>
                 ) : (
                   <Button asChild variant="outline" className="w-full">
-                    <Link href={exitUrl} onClick={onDismiss}>
+                    <Link
+                      href={exitUrl}
+                      onClick={onDismiss}
+                      onNavigate={onExitNavigate}
+                    >
                       Exit reader
                     </Link>
                   </Button>
@@ -457,12 +472,24 @@ export function EndOfIssueCard({
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <Button asChild variant="outline">
-                        <Link href={exitUrl} onClick={onDismiss}>
+                        {/* These leave the reader for an issue page: they
+                        replace its entry, so Back from there skips it. */}
+                        <Link
+                          href={exitUrl}
+                          replace
+                          onClick={onDismiss}
+                          onNavigate={() => noteReplace(exitUrl)}
+                        >
                           This issue
                         </Link>
                       </Button>
                       <Button asChild variant="outline">
-                        <Link href={issueUrl(target)} onClick={onDismiss}>
+                        <Link
+                          href={issueUrl(target)}
+                          replace
+                          onClick={onDismiss}
+                          onNavigate={() => noteReplace(issueUrl(target))}
+                        >
                           Next issue
                         </Link>
                       </Button>
@@ -484,6 +511,7 @@ export function EndOfIssueCard({
                         onClick={() => {
                           onDismiss();
                         }}
+                        onNavigate={onExitNavigate}
                       >
                         Exit reader
                       </Link>
@@ -508,6 +536,7 @@ export function EndOfIssueCard({
                         onClick={() => {
                           onDismiss();
                         }}
+                        onNavigate={onExitNavigate}
                       >
                         Exit reader
                       </Link>
@@ -570,11 +599,7 @@ function FallbackSuggestionTile({
       ? (suggestion.cbl_saved_view_id ?? null)
       : null;
   const href = readerUrl(issue, { cbl });
-  const heading =
-    issue.title ??
-    (issue.series_name && issue.number
-      ? `${issue.series_name} #${issue.number}`
-      : (issue.series_name ?? "Untitled"));
+  const heading = issueLabel(issue);
   const subheading =
     suggestion.kind === "cbl_next"
       ? `In ${suggestion.cbl_list_name} · entry ${suggestion.position}`
@@ -582,9 +607,13 @@ function FallbackSuggestionTile({
         ? suggestion.series_name
         : null;
   return (
+    // Another issue from inside the reader replaces the reader entry, as
+    // the reader's own next issue does (audit U-02).
     <Link
       href={href}
+      replace
       onClick={onNavigate}
+      onNavigate={() => noteReplace(href)}
       className={cn(
         "border-border bg-muted/30 hover:bg-muted/60 focus-visible:ring-ring",
         "flex items-center gap-3 rounded-md border p-2 transition-colors",

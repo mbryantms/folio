@@ -113,7 +113,7 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
         let alias = active_issue_count_alias();
         q.join_subquery(
             JoinType::LeftJoin,
-            active_issue_count_subquery(),
+            active_issue_count_subquery(&input.visible_libraries),
             alias.clone(),
             Expr::col((alias, Alias::new("series_id")))
                 .equals((series::Entity, series::Column::Id)),
@@ -150,7 +150,7 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
         let alias = metadata_completeness_alias();
         q.join_subquery(
             JoinType::LeftJoin,
-            metadata_completeness_subquery(),
+            metadata_completeness_subquery(&input.visible_libraries),
             alias.clone(),
             Expr::col((alias, Alias::new("series_id")))
                 .equals((series::Entity, series::Column::Id)),
@@ -160,6 +160,7 @@ pub fn compile(input: &CompileInput<'_>) -> Result<SelectStatement, CompileError
     let ctx = Ctx {
         entity: ViewEntity::Series,
         user_id: input.user_id,
+        acl: &input.visible_libraries,
     };
     apply_conditions(&mut q, input.dsl, &ctx)?;
 
@@ -562,6 +563,7 @@ fn issue_base(input: &IssueCompileInput<'_>) -> Result<SelectStatement, CompileE
     let ctx = Ctx {
         entity: ViewEntity::Issue,
         user_id: input.user_id,
+        acl: &input.visible_libraries,
     };
     apply_conditions(&mut q, input.dsl, &ctx)?;
     Ok(q)
@@ -697,12 +699,17 @@ pub fn validate(
 /// Per-compile context threaded into every condition: which root the SQL
 /// targets and whose per-user state (ratings, progress) to read.
 #[derive(Debug, Clone, Copy)]
-struct Ctx {
+struct Ctx<'a> {
     entity: ViewEntity,
     user_id: Uuid,
+    /// The caller's visibility. Series-root junction fields read the
+    /// `series_*` rollups, which hold every issue of a series; for a caller
+    /// whose cap hides anything they read the issue twin over the issues
+    /// that caller can see instead ([`junction_predicate`]).
+    acl: &'a VisibleLibraries,
 }
 
-impl Ctx {
+impl Ctx<'_> {
     /// `series.id` / `issues.id` — the row a junction or per-user
     /// subquery correlates against.
     fn root_id_sql(self) -> &'static str {
@@ -854,10 +861,13 @@ fn metadata_completeness_alias() -> Alias {
 /// `assess_issue_view` exactly — credits from the per-role CSV columns, the
 /// provider match from a CV/Metron `external_ids` row — so the saved-view
 /// filter, the series rollup, and the per-issue detail report never disagree.
-fn metadata_completeness_subquery() -> SelectStatement {
+///
+/// Counts only issues under the caller's age cap (`acl`, WP-2.7), the same
+/// set as the series card's badge.
+fn metadata_completeness_subquery(acl: &VisibleLibraries) -> SelectStatement {
     use entity::issue;
-    Query::select()
-        .column(issue::Column::SeriesId)
+    let mut q = Query::select();
+    q.column(issue::Column::SeriesId)
         .expr_as(
             Func::count(Expr::col((issue::Entity, issue::Column::Id))),
             Alias::new("active_count"),
@@ -890,8 +900,11 @@ fn metadata_completeness_subquery() -> SelectStatement {
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq(issue::IssueState::Active.as_str()))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
-        .add_group_by([Expr::col(issue::Column::SeriesId)])
-        .to_owned()
+        .add_group_by([Expr::col(issue::Column::SeriesId)]);
+    if let Some(cap) = acl.issue_cap_condition() {
+        q.cond_where(cap);
+    }
+    q.to_owned()
 }
 
 /// `SELECT series_id, COUNT(*) AS active_count, COUNT(*) FILTER (WHERE
@@ -902,11 +915,12 @@ fn metadata_completeness_subquery() -> SelectStatement {
 /// `main_count` is the main run alone — what `series.total_issues`
 /// describes — matching `SeriesView.main_issue_count`; the completeness
 /// predicate adds `special_count` only when the caller counts specials
-/// (B9).
-fn active_issue_count_subquery() -> SelectStatement {
+/// (B9). Counts only issues under the caller's age cap (`acl`, WP-2.7),
+/// matching the card's `issue_count`.
+fn active_issue_count_subquery(acl: &VisibleLibraries) -> SelectStatement {
     use entity::issue;
-    Query::select()
-        .column(issue::Column::SeriesId)
+    let mut q = Query::select();
+    q.column(issue::Column::SeriesId)
         .expr_as(
             Func::count(Expr::col((issue::Entity, issue::Column::Id))),
             Alias::new("active_count"),
@@ -922,8 +936,11 @@ fn active_issue_count_subquery() -> SelectStatement {
         .from(issue::Entity)
         .and_where(Expr::col(issue::Column::State).eq(issue::IssueState::Active.as_str()))
         .and_where(Expr::col(issue::Column::RemovedAt).is_null())
-        .add_group_by([Expr::col(issue::Column::SeriesId)])
-        .to_owned()
+        .add_group_by([Expr::col(issue::Column::SeriesId)]);
+    if let Some(cap) = acl.issue_cap_condition() {
+        q.cond_where(cap);
+    }
+    q.to_owned()
 }
 
 fn compile_condition(cond: &Condition, ctx: &Ctx) -> Result<SeaCondition, CompileError> {
@@ -1388,6 +1405,20 @@ fn btrim_or_empty(lhs: SimpleExpr) -> SimpleExpr {
         .into()
 }
 
+/// The `issue_*` junction a `series_*` rollup is rebuilt from
+/// (`metadata_rollup::rollup_series_metadata`), same value columns.
+fn rollup_issue_twin(table: &str) -> Option<&'static str> {
+    Some(match table {
+        "series_genres" => "issue_genres",
+        "series_tags" => "issue_tags",
+        "series_credits" => "issue_credits",
+        "series_characters" => "issue_characters",
+        "series_teams" => "issue_teams",
+        "series_locations" => "issue_locations",
+        _ => return None,
+    })
+}
+
 fn junction_predicate(
     cond: &Condition,
     table: &'static str,
@@ -1400,11 +1431,35 @@ fn junction_predicate(
     // values are bound through `cust_with_values`.
     let root_id = ctx.root_id_sql();
     let key = ctx.junction_key();
+    let twin = (ctx.entity == ViewEntity::Series && ctx.acl.hides_any())
+        .then(|| rollup_issue_twin(table))
+        .flatten();
+    if let Some(twin) = twin {
+        // Capped caller on a series root: a value counts only when an
+        // issue of the series the caller can see carries it (WP-2.7).
+        let role_clause = role
+            .map(|r| format!(" AND {twin}.role = '{r}'"))
+            .unwrap_or_default();
+        let acl = ctx.acl;
+        let any_row = move |params: &mut Vec<sea_orm::Value>| {
+            let cap = acl.issue_cap_sql("vi", params);
+            format!(
+                "SELECT 1 FROM {twin} JOIN issues vi ON vi.id = {twin}.issue_id \
+                  WHERE vi.series_id = {root_id} AND vi.removed_at IS NULL \
+                    AND vi.state = 'active'{cap}{role_clause}"
+            )
+        };
+        return multi_predicate(cond, &any_row, &format!("{twin}.{value_col}"));
+    }
     let role_clause = role
         .map(|r| format!(" AND {table}.role = '{r}'"))
         .unwrap_or_default();
     let any_row = format!("SELECT 1 FROM {table} WHERE {table}.{key} = {root_id}{role_clause}");
-    multi_predicate(cond, &any_row, &format!("{table}.{value_col}"))
+    multi_predicate(
+        cond,
+        &move |_: &mut Vec<sea_orm::Value>| any_row.clone(),
+        &format!("{table}.{value_col}"),
+    )
 }
 
 /// Junction whose values live in a lookup table (story arcs / universes /
@@ -1423,15 +1478,22 @@ fn lookup_junction_predicate(
     let any_row = format!(
         "SELECT 1 FROM {table} j JOIN {lookup} l ON l.id = j.{fk_col} WHERE j.{key} = {root_id}"
     );
-    multi_predicate(cond, &any_row, "l.name")
+    multi_predicate(
+        cond,
+        &move |_: &mut Vec<sea_orm::Value>| any_row.clone(),
+        "l.name",
+    )
 }
 
 /// Shared body of the multi-set ops over an `EXISTS (any_row …)` probe:
 /// `is_empty` / `is_not_empty` need no value; `includes_any` / `excludes`
 /// bind the whole array; `includes_all` ANDs one EXISTS per value.
+/// `any_row` renders the probe given the statement's bound values so far
+/// (the user value, when there is one, is `$1`), pushing any values of its
+/// own after them.
 fn multi_predicate(
     cond: &Condition,
-    any_row: &str,
+    any_row: &dyn Fn(&mut Vec<sea_orm::Value>) -> String,
     value_expr: &str,
 ) -> Result<SeaCondition, CompileError> {
     let bad = |reason: &str| CompileError::BadValue {
@@ -1441,11 +1503,17 @@ fn multi_predicate(
     };
     // WP-5.4: "has no genres" / "has any writer" — no value needed.
     match cond.op {
-        Op::IsEmpty => {
-            return Ok(SeaCondition::all().add(Expr::cust(format!("NOT EXISTS ({any_row})"))));
-        }
-        Op::IsNotEmpty => {
-            return Ok(SeaCondition::all().add(Expr::cust(format!("EXISTS ({any_row})"))));
+        Op::IsEmpty | Op::IsNotEmpty => {
+            let mut params = Vec::new();
+            let probe = any_row(&mut params);
+            let not = if cond.op == Op::IsEmpty { "NOT " } else { "" };
+            let sql = format!("{not}EXISTS ({probe})");
+            let expr = if params.is_empty() {
+                Expr::cust(sql)
+            } else {
+                Expr::cust_with_values(sql, params)
+            };
+            return Ok(SeaCondition::all().add(expr));
         }
         _ => {}
     }
@@ -1466,19 +1534,20 @@ fn multi_predicate(
         .collect::<Result<_, _>>()?;
 
     match cond.op {
-        Op::IncludesAny => {
-            let sql = format!("EXISTS ({any_row} AND {value_expr} = ANY($1))");
-            Ok(SeaCondition::all().add(Expr::cust_with_values(sql, [strs])))
-        }
-        Op::Excludes => {
-            let sql = format!("NOT EXISTS ({any_row} AND {value_expr} = ANY($1))");
-            Ok(SeaCondition::all().add(Expr::cust_with_values(sql, [strs])))
+        Op::IncludesAny | Op::Excludes => {
+            let mut params: Vec<sea_orm::Value> = vec![strs.into()];
+            let probe = any_row(&mut params);
+            let not = if cond.op == Op::Excludes { "NOT " } else { "" };
+            let sql = format!("{not}EXISTS ({probe} AND {value_expr} = ANY($1))");
+            Ok(SeaCondition::all().add(Expr::cust_with_values(sql, params)))
         }
         Op::IncludesAll => {
             let mut all = SeaCondition::all();
             for s in strs {
-                let sql = format!("EXISTS ({any_row} AND {value_expr} = $1)");
-                all = all.add(Expr::cust_with_values(sql, [s]));
+                let mut params: Vec<sea_orm::Value> = vec![s.into()];
+                let probe = any_row(&mut params);
+                let sql = format!("EXISTS ({probe} AND {value_expr} = $1)");
+                all = all.add(Expr::cust_with_values(sql, params));
             }
             Ok(all)
         }

@@ -8,7 +8,6 @@ import {
   ListChecks,
   Sparkles,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import { BulkAddToCollectionDialog } from "@/components/collections/BulkAddToCollectionDialog";
@@ -39,12 +38,14 @@ import {
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { useMe, useSavedViewResultsInfinite } from "@/lib/api/queries";
 import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
+import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import type { SavedViewView } from "@/lib/api/types";
 
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
 
 /** Filter-view detail page: header + paginated series grid. The
  *  cursor-paginated results endpoint pages at 60; an IntersectionObserver
@@ -55,7 +56,6 @@ import { ViewHeader } from "./ViewHeader";
 export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const results = useSavedViewResultsInfinite(view.id);
-  const router = useRouter();
   const createBatch = useCreateSavedViewBatch();
   const isAdmin = useMe().data?.role === "admin";
 
@@ -63,10 +63,15 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   // index. Depend on the three result fields (not the whole object) so the
   // observer isn't rebuilt every render.
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = results;
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = results;
   React.useEffect(() => {
     const el = sentinelRef.current;
-    if (!el) return;
+    if (!el || isFetchNextPageError) return;
     const obs = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
@@ -79,26 +84,10 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const fetchViewMetadata = () => {
-    createBatch.mutate(
-      { saved_view_id: view.id },
-      {
-        onSuccess: (resp) => {
-          if (!resp) return;
-          toast.success(`Searching ${resp.items_total} items for metadata`, {
-            action: {
-              label: "Review",
-              onClick: () =>
-                router.push(
-                  `/admin/metadata?tab=review&batch=${resp.batch_id}`,
-                ),
-            },
-          });
-        },
-      },
-    );
+    createBatch.mutate({ saved_view_id: view.id });
   };
 
   const items = (results.data?.pages ?? []).flatMap((p) => p.items);
@@ -321,6 +310,11 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
 
       {isInitialLoading ? (
         <SeriesGridSkeleton />
+      ) : results.isError && items.length === 0 ? (
+        <EmptyState
+          size="sm"
+          description={filterQueryErrorMessage(results.error)}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           size="sm"
@@ -354,6 +348,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
         aria-hidden="true"
         className={results.hasNextPage ? "h-12" : "hidden"}
       />
+      <LoadMoreError query={results} />
       {results.isFetchingNextPage ? (
         <p className="text-muted-foreground text-center text-xs">
           Loading more…

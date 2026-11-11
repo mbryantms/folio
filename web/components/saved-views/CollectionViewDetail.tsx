@@ -70,6 +70,8 @@ import {
   useCollectionNextUp,
   useMe,
 } from "@/lib/api/queries";
+import { LoadMoreError } from "@/components/folio/infinite-sentinel";
+import { RailError } from "@/components/saved-views/RailError";
 import {
   useBulkMarkProgress,
   useBulkRemoveFromCollection,
@@ -93,6 +95,7 @@ import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
 import { readerUrl } from "@/lib/urls";
+import { issueLabel } from "@/lib/format";
 import { restoreOrder, showUndoToast } from "@/lib/ui/undo-toast";
 import { cn } from "@/lib/utils";
 import type {
@@ -146,9 +149,14 @@ export function CollectionViewDetail({
   // entry ids — sending a half-loaded view to `useReorderCollectionEntries`
   // would wipe everything past the load window. The fetch runs in 200-entry
   // pages; for typical user-curated collections this is one round-trip.
+  // A failed page parks the walk (no request loop) until its Retry.
   const entriesQ = useCollectionEntriesInfinite(savedView.id);
   React.useEffect(() => {
-    if (entriesQ.hasNextPage && !entriesQ.isFetchingNextPage) {
+    if (
+      entriesQ.hasNextPage &&
+      !entriesQ.isFetchingNextPage &&
+      !entriesQ.isFetchNextPageError
+    ) {
       void entriesQ.fetchNextPage();
     }
   }, [entriesQ]);
@@ -554,10 +562,11 @@ export function CollectionViewDetail({
 
       {entriesQ.isLoading ? (
         <CoverGridSkeleton className="gap-3" label="Loading collection…" />
-      ) : entriesQ.isError ? (
-        <div className="text-destructive rounded-md border p-4 text-sm">
-          Failed to load collection entries.
-        </div>
+      ) : entriesQ.isError && !entriesQ.data ? (
+        <RailError
+          message="Couldn't load this collection."
+          onRetry={() => void entriesQ.refetch()}
+        />
       ) : orderedEntries.length === 0 ? (
         <EmptyState isWantToRead={isWantToRead} />
       ) : (
@@ -604,6 +613,7 @@ export function CollectionViewDetail({
               Loading more ({orderedEntries.length} of {total})…
             </p>
           ) : null}
+          <LoadMoreError query={entriesQ} />
         </>
       )}
 
@@ -722,7 +732,7 @@ export function CollectionContinueButton({
   const target = q.data?.target;
   if (!target) return null;
   const label = q.data?.started ? "Continue" : "Start reading";
-  const ariaLabel = `${label}: ${target.title ?? `${target.series_name ?? ""} #${target.number ?? ""}`}`;
+  const ariaLabel = `${label}: ${issueLabel(target)}`;
   const href = readerUrl(target, { collection: collectionId });
   if (iconOnly) {
     return (

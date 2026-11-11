@@ -43,11 +43,11 @@ describe("parseCommandPrefix", () => {
 });
 
 describe("SEARCH_ACTIONS registry", () => {
-  it("has 43 actions: 23 for every user + 20 admin-gated, unique ids", () => {
+  it("has 44 actions: 24 for every user + 20 admin-gated, unique ids", () => {
     const ids = SEARCH_ACTIONS.map((a) => a.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(SEARCH_ACTIONS.length).toBe(43);
-    expect(SEARCH_ACTIONS.filter((a) => a.role === undefined).length).toBe(23);
+    expect(SEARCH_ACTIONS.length).toBe(44);
+    expect(SEARCH_ACTIONS.filter((a) => a.role === undefined).length).toBe(24);
     expect(SEARCH_ACTIONS.filter((a) => a.role === "admin").length).toBe(20);
     // Every `admin-*` id is gated and nothing else is.
     for (const a of SEARCH_ACTIONS) {
@@ -83,7 +83,7 @@ describe("rankSearchActions", () => {
 
   it("hides admin entries from non-admin users", () => {
     const out = rankSearchActions("", undefined);
-    expect(out.length).toBe(23);
+    expect(out.length).toBe(24);
     expect(out.every((a) => a.id !== "admin-libraries")).toBe(true);
     expect(out.every((a) => !a.id.startsWith("admin-"))).toBe(true);
     // The user-facing additions stay visible without a role.

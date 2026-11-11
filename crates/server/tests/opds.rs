@@ -826,6 +826,93 @@ async fn series_one_paginates_at_50() {
     );
 }
 
+/// Soft-remove an issue the way a scan does (`removed_at` set, row kept).
+async fn soft_remove_issue(db: &DatabaseConnection, issue_id: &str) {
+    let row = entity::issue::Entity::find_by_id(issue_id.to_owned())
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: IssueAM = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(db).await.unwrap();
+}
+
+/// Soft-remove a series (`removed_at` set, row kept).
+async fn soft_remove_series(db: &DatabaseConnection, series_id: Uuid) {
+    let row = entity::series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: SeriesAM = row.into();
+    am.removed_at = Set(Some(Utc::now().fixed_offset()));
+    am.update(db).await.unwrap();
+}
+
+/// The per-series feed lists only live issues and its paging counts only
+/// them; a removed series answers 404 like an unknown id, for an admin
+/// too (OPDS is a list surface; only the admin Removed tab shows removed
+/// rows).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn series_one_omits_removed_issues_and_removed_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "series-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    let series_id = seed_series(&db, lib_id, "Shrinking Run").await;
+    let mut ids = Vec::new();
+    for i in 0..51 {
+        let file = tmp.path().join(format!("shrink-{i:03}.cbz"));
+        ids.push(
+            seed_issue_with_file(
+                &db,
+                lib_id,
+                series_id,
+                &file,
+                format!("shrink-{i:03}").as_bytes(),
+            )
+            .await,
+        );
+    }
+    let href = format!("/opds/v1/series/{series_id}");
+
+    // 51 live issues: two pages.
+    let body = body_text(
+        get_with_auth(&app, &href, Header::Cookie(auth.cookies()))
+            .await
+            .into_body(),
+    )
+    .await;
+    let page2 = format!("/opds/v1/series/{series_id}?page=2");
+    assert!(body.contains(&page2), "{body}");
+
+    let removed = ids[0].clone();
+    soft_remove_issue(&db, &removed).await;
+    let resp = get_with_auth(&app, &href, Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_text(resp.into_body()).await;
+    assert_eq!(body.matches("<entry>").count(), 50, "{body}");
+    assert!(!body.contains(&removed), "removed issue listed");
+    assert!(
+        !body.contains(&page2),
+        "the removed issue must not count toward the page total: {body}"
+    );
+
+    soft_remove_series(&db, series_id).await;
+    let resp = get_with_auth(&app, &href, Header::Cookie(auth.cookies())).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "removed series feed");
+    let unknown = get_with_auth(
+        &app,
+        &format!("/opds/v1/series/{}", Uuid::now_v7()),
+        Header::Cookie(auth.cookies()),
+    )
+    .await;
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+}
+
 /// Audit N-L6: `/opds/v1/recent` used to be a hard `LIMIT 50` with no
 /// paging rels. It now pages like every other v1 feed — page 1 carries
 /// `next` + `last`, the last page carries `previous` but no `next`, and
@@ -1028,8 +1115,8 @@ async fn recent_feed_entries_render_full_metadata_from_the_projection() {
         body.contains(r#"pse:count="32""#),
         "PSE page count:\n{body}"
     );
-    // `series_id` → the related-series deep link.
-    assert!(body.contains(r#"rel="related" href="/api/series/"#));
+    // No JSON-API links: an OPDS client's app password can't open them.
+    assert!(!body.contains(r#"href="/api/"#), "{body}");
 }
 
 /// The recent feed goes through `access::visible_issues_select`: removed
@@ -1244,8 +1331,8 @@ async fn metadata_enrichment_present() {
     // Distinct image rels: thumbnail (webp) AND full-size (jpeg).
     assert!(body.contains(r#"rel="http://opds-spec.org/image/thumbnail""#));
     assert!(body.contains(r#"rel="http://opds-spec.org/image" href="/issues/"#));
-    // Deep-link back into the JSON API.
-    assert!(body.contains(r#"rel="related" href="/api/series/"#));
+    // No deep link into the JSON API (app passwords are refused there).
+    assert!(!body.contains(r#"href="/api/"#), "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2451,6 +2538,49 @@ async fn browse_advertises_facet_groups() {
     assert!(body.contains("DC A"));
 }
 
+/// The publisher facet counts only live series: soft-removing one drops
+/// its publisher's `thr:count`, and a publisher left with no live series
+/// disappears from the facet group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browse_publisher_facet_count_skips_removed_series() {
+    let app = TestApp::spawn().await;
+    let auth = register(&app, "browse-removed@example.com").await;
+    promote_to_admin(&app, auth.user_id).await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_library(&db, tmp.path()).await;
+    seed_series_full(&db, lib_id, "Marvel A", "continuing", Some("Marvel")).await;
+    let marvel_b = seed_series_full(&db, lib_id, "Marvel B", "ended", Some("Marvel")).await;
+    let dc = seed_series_full(&db, lib_id, "DC A", "continuing", Some("DC Comics")).await;
+
+    let marvel_facet = |n: u32| {
+        format!(
+            r#"title="Marvel" opds:facetGroup="Publisher" opds:activeFacet="false" thr:count="{n}""#
+        )
+    };
+    let body = body_text(
+        get_with_auth(&app, "/opds/v1/browse", Header::Cookie(auth.cookies()))
+            .await
+            .into_body(),
+    )
+    .await;
+    assert!(body.contains(&marvel_facet(2)), "{body}");
+
+    soft_remove_series(&db, marvel_b).await;
+    soft_remove_series(&db, dc).await;
+    let body = body_text(
+        get_with_auth(&app, "/opds/v1/browse", Header::Cookie(auth.cookies()))
+            .await
+            .into_body(),
+    )
+    .await;
+    assert!(body.contains(&marvel_facet(1)), "{body}");
+    assert!(
+        !body.contains(r#"title="DC Comics""#),
+        "publisher with only removed series still faceted: {body}"
+    );
+}
+
 /// `?status=continuing` returns only continuing series and marks
 /// that status facet as `opds:activeFacet="true"`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2875,14 +3005,14 @@ async fn series_detail_feed_carries_banner_metadata() {
     assert!(header.contains(&format!(r#"href="/issues/{issue_id}/pages/0""#)));
 }
 
-// ─── M7 (opds-richer-feeds): rel=alternate JSON pointers ───
+// ─── No JSON-API pointers in OPDS feeds ───
 
-/// Series subsection entries carry a `rel=alternate` link to the
-/// canonical JSON representation at `/api/series/{slug}`. Capable
-/// OPDS clients fetch this to render rich detail views (full
-/// credits, per-series stats, etc.) without a discovery round-trip.
+/// Series and issue entries carry no `/api/...` links (the M7
+/// `rel=alternate` / `rel=related` JSON pointers were dropped): the JSON
+/// API refuses app passwords, which is how OPDS clients authenticate, so
+/// those links could only ever answer 403 for a feed's audience.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn series_entry_carries_rel_alternate_json() {
+async fn feeds_carry_no_json_api_links() {
     let app = TestApp::spawn().await;
     let auth = register(&app, "alt-series@example.com").await;
     promote_to_admin(&app, auth.user_id).await;
@@ -2890,40 +3020,23 @@ async fn series_entry_carries_rel_alternate_json() {
     let tmp = tempfile::tempdir().unwrap();
     let lib_id = seed_library(&db, tmp.path()).await;
     let series_id = seed_series(&db, lib_id, "Sandman").await;
-
-    let resp = get_with_auth(&app, "/opds/v1/series", Header::Cookie(auth.cookies())).await;
-    let body = body_text(resp.into_body()).await;
-    assert!(
-        body.contains(&format!(
-            r#"<link rel="alternate" href="/api/series/{series_id}" type="application/json"/>"#
-        )),
-        "missing rel=alternate JSON link for series: {body}"
-    );
-}
-
-/// Issue acquisition entries carry a `rel=alternate` link to the
-/// canonical issue JSON at `/api/issues/{id}`. Distinct from the
-/// existing `rel=related` link pointing at the parent series.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn issue_entry_carries_rel_alternate_json() {
-    let app = TestApp::spawn().await;
-    let auth = register(&app, "alt-issue@example.com").await;
-    promote_to_admin(&app, auth.user_id).await;
-    let db = Database::connect(&app.db_url).await.unwrap();
-    let tmp = tempfile::tempdir().unwrap();
-    let lib_id = seed_library(&db, tmp.path()).await;
-    let series_id = seed_series(&db, lib_id, "Pride").await;
     let issue_id =
         seed_issue_with_file(&db, lib_id, series_id, &tmp.path().join("p.cbz"), b"p").await;
 
-    let resp = get_with_auth(&app, "/opds/v1/recent", Header::Cookie(auth.cookies())).await;
-    let body = body_text(resp.into_body()).await;
-    assert!(
-        body.contains(&format!(
-            r#"<link rel="alternate" href="/api/issues/{issue_id}" type="application/json"/>"#
-        )),
-        "missing rel=alternate JSON link for issue: {body}"
-    );
+    for path in [
+        "/opds/v1/series".to_owned(),
+        format!("/opds/v1/series/{series_id}"),
+        "/opds/v1/recent".to_owned(),
+    ] {
+        let resp = get_with_auth(&app, &path, Header::Cookie(auth.cookies())).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        let body = body_text(resp.into_body()).await;
+        assert!(
+            body.contains(&series_id.to_string()) || body.contains(&issue_id),
+            "{path} lists the seeded entry: {body}"
+        );
+        assert!(!body.contains(r#"href="/api/"#), "{path}: {body}");
+    }
 }
 
 /// Soft-remove a row by id (`issues` / `series`) through raw SQL.

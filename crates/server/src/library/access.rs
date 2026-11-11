@@ -72,6 +72,24 @@ impl VisibleLibraries {
         !self.caps.is_empty()
     }
 
+    /// True iff some cap actually hides a rating rung (a cap on the top
+    /// rung hides nothing). The switch between the two shapes of an
+    /// entity query: the `series_*` rollup junctions are the union of
+    /// every issue in the series, so a caller this returns `true` for
+    /// reads the `issue_*` twin over the issues it can see instead; every
+    /// other caller keeps the rollup (and its query plan).
+    pub fn hides_any(&self) -> bool {
+        self.caps
+            .values()
+            .any(|cap| !age_rating::hidden_ratings(cap).is_empty())
+    }
+
+    /// [`Self::hides_any`] for one library.
+    pub fn hides_in(&self, library_id: Uuid) -> bool {
+        self.cap_for(library_id)
+            .is_some_and(|cap| !age_rating::hidden_ratings(cap).is_empty())
+    }
+
     /// Membership + cap check for a series row.
     pub fn series_ok(&self, library_id: Uuid, rating: Option<&str>) -> bool {
         self.contains(library_id) && age_rating::passes(rating, self.cap_for(library_id))
@@ -180,6 +198,50 @@ impl VisibleLibraries {
             Expr::col((issue::Entity, issue::Column::LibraryId)),
             issue_effective_rating_expr(),
         )
+    }
+
+    /// Raw-SQL twin of [`Self::issue_cap_condition`] for an `issues` row
+    /// aliased `alias`: the cap on the issue's own rating, the series
+    /// rating as the fallback. Same ` AND ` / `params` convention as
+    /// [`Self::raw_cap_clause`]; empty when nothing is capped. For
+    /// statements scoped to one already-visible series (membership is
+    /// settled), and the cap half of [`visible_issues_sql`].
+    pub fn issue_cap_sql(&self, alias: &str, params: &mut Vec<Value>) -> String {
+        self.raw_cap_clause(
+            &format!("{alias}.library_id"),
+            &format!(
+                "COALESCE({alias}.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = {alias}.series_id))"
+            ),
+            params,
+        )
+    }
+
+    /// The cap half of the **entity-surface** issue predicate, for an
+    /// `issues` row aliased `issue` joined to its series aliased `series`:
+    /// the issue's effective rating (own rating, series as fallback) AND
+    /// the series' own rating. Entity surfaces (creator / character / …
+    /// lists, pages, counts, pickers) count an issue only when its series
+    /// is one the caller can open, so they never name a hidden series.
+    /// Same ` AND ` / `params` convention as [`Self::raw_cap_clause`];
+    /// empty when nothing is capped, so uncapped SQL is unchanged. Issue
+    /// routes keep [`visible_issues_sql`] (issue rating only).
+    pub fn entity_issue_cap_sql(
+        &self,
+        issue: &str,
+        series: &str,
+        params: &mut Vec<Value>,
+    ) -> String {
+        let mut sql = self.raw_cap_clause(
+            &format!("{series}.library_id"),
+            &format!("COALESCE({issue}.age_rating, {series}.age_rating)"),
+            params,
+        );
+        sql.push_str(&self.raw_cap_clause(
+            &format!("{series}.library_id"),
+            &format!("{series}.age_rating"),
+            params,
+        ));
+        sql
     }
 
     /// Cap-only predicate for a `series` query (membership handled by
@@ -316,13 +378,7 @@ pub fn visible_issues_sql(acl: &VisibleLibraries, alias: &str, params: &mut Vec<
             acl.allowed.iter().copied().collect::<Vec<Uuid>>(),
         ));
         sql.push_str(&format!(" AND {alias}.library_id = ANY(${})", params.len()));
-        sql.push_str(&acl.raw_cap_clause(
-            &format!("{alias}.library_id"),
-            &format!(
-                "COALESCE({alias}.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = {alias}.series_id))"
-            ),
-            params,
-        ));
+        sql.push_str(&acl.issue_cap_sql(alias, params));
     }
     sql
 }
@@ -368,6 +424,30 @@ pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {
         allowed,
         caps,
     }
+}
+
+/// True iff `acl` hides nothing in the library: an admin, or a non-admin
+/// with no age cap on any grant AND a grant on every library that exists.
+/// For surfaces that hold stored global facts (CBL refresh-log counts,
+/// dry-run rematch counts) which cannot be recomputed per caller: only a
+/// caller this returns `true` for may see them unchanged. One query for a
+/// non-admin without caps; a DB error reads as `false` (fail closed).
+pub async fn sees_whole_library(db: &sea_orm::DatabaseConnection, acl: &VisibleLibraries) -> bool {
+    if acl.unrestricted {
+        return true;
+    }
+    if acl.has_caps() {
+        return false;
+    }
+    let mut ungranted = entity::library::Entity::find()
+        .select_only()
+        .column(entity::library::Column::Id);
+    if !acl.allowed.is_empty() {
+        ungranted = ungranted.filter(
+            entity::library::Column::Id.is_not_in(acl.allowed.iter().copied().collect::<Vec<_>>()),
+        );
+    }
+    matches!(ungranted.into_tuple::<Uuid>().one(db).await, Ok(None))
 }
 
 /// Single-row grant lookup: membership + cap for one library. Admins
@@ -426,8 +506,11 @@ pub async fn series_ratings(app: &AppState, series_ids: &[Uuid]) -> HashMap<Uuid
 /// Full visibility check for one issue row: membership + cap, with the
 /// series-rating fallback fetched only when it's actually needed (the
 /// caller is capped in that library and the issue carries no rating).
-pub async fn issue_visible(app: &AppState, user: &CurrentUser, row: &issue::Model) -> bool {
-    let acl = for_library(app, user, row.library_id).await;
+/// The one gate for every issue-scoped route: a `false` must answer
+/// exactly like an unknown id. Takes the full model or a slim projection
+/// (`IssueCardRow`).
+pub async fn issue_visible<T: IssueAclFields>(app: &AppState, user: &CurrentUser, row: &T) -> bool {
+    let acl = for_library(app, user, row.acl_library_id()).await;
     issue_allowed(app, &acl, row).await
 }
 
@@ -581,9 +664,55 @@ mod tests {
     }
 
     #[test]
+    fn issue_cap_sql_falls_back_to_the_series_rating() {
+        let lib = Uuid::now_v7();
+        let mut params = Vec::new();
+        assert_eq!(
+            VisibleLibraries::unrestricted().issue_cap_sql("i", &mut params),
+            ""
+        );
+        let sql = capped(lib, "Teen").issue_cap_sql("i", &mut params);
+        assert!(sql.starts_with(" AND (i.library_id <> $1 OR "), "{sql}");
+        assert!(
+            sql.contains(
+                "COALESCE(i.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = i.series_id))"
+            ),
+            "{sql}"
+        );
+        assert_eq!(params.len(), 2);
+    }
+
+    #[test]
+    fn entity_issue_cap_checks_issue_and_series() {
+        let lib = Uuid::now_v7();
+        let mut params = Vec::new();
+        assert_eq!(
+            VisibleLibraries::unrestricted().entity_issue_cap_sql("i", "s", &mut params),
+            ""
+        );
+        let sql = capped(lib, "Teen").entity_issue_cap_sql("i", "s", &mut params);
+        assert!(
+            sql.contains("COALESCE(i.age_rating, s.age_rating)"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("lower(btrim(s.age_rating)) <> ALL($4)"),
+            "{sql}"
+        );
+        assert_eq!(params.len(), 4);
+    }
+
+    #[test]
     fn top_rung_cap_hides_nothing() {
         let lib = Uuid::now_v7();
         let v = capped(lib, "X18+");
+        assert!(v.has_caps());
+        assert!(!v.hides_any());
+        assert!(capped(lib, "Teen").hides_any());
+        assert!(capped(lib, "Teen").hides_in(lib));
+        assert!(!capped(lib, "Teen").hides_in(Uuid::now_v7()));
+        assert!(!v.hides_in(lib));
+        assert!(!VisibleLibraries::unrestricted().hides_any());
         assert!(v.series_cap_condition().is_none());
         let mut params = Vec::new();
         assert_eq!(v.raw_cap_clause("l", "r", &mut params), "");

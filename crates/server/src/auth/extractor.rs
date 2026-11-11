@@ -30,6 +30,45 @@ use entity::user::{self, Entity as UserEntity, UserRole, UserState};
 
 use super::cookies::SESSION_COOKIE;
 
+/// Request-extension marker for the reader-client surface: page bytes,
+/// thumbnails and stored covers, OPDS 1.2 + 2.0 (feeds, downloads,
+/// progress, KOReader sync), OPDS progression and the Komga shim.
+/// `app::build_openapi_router_with` layers it onto exactly those routers
+/// before they are merged into the `bare` group. [`CurrentUser`] resolves
+/// an app password (Bearer or Basic) only when the marker is present;
+/// everywhere else the token is refused with 403 before any DB or argon2
+/// work, so a reader token can't reach the JSON API, admin routes or
+/// account settings.
+#[derive(Clone, Copy, Debug)]
+pub struct AppPasswordSurface;
+
+/// Route-template prefixes of every route under the reader-client surface
+/// ([`AppPasswordSurface`]). The CSRF middleware runs before the marker is
+/// attached, so it decides "is this a reader route?" from the matched route
+/// template with [`is_reader_route`]: an app password skips the CSRF check
+/// only there. `tests/app_passwords.rs::reader_route_prefixes_match_reader_surface`
+/// checks every route of every `reader_surface(...)` router in `app.rs`
+/// starts with one of these, and that no other route does.
+pub const READER_ROUTE_PREFIXES: &[&str] = &[
+    // OPDS 1.2 + 2.0 feeds, downloads, PSE, progress, KOReader sync,
+    // OPDS progression.
+    "/opds/",
+    // Komga-compatible shim.
+    "/api/v1/",
+    // Page bytes + page thumbnails.
+    "/issues/{id}/pages/",
+    // Stored issue covers.
+    "/issues/{id}/covers/",
+];
+
+/// True when `matched_path` (an axum route template such as
+/// `/opds/v1/issues/{id}/progress`) belongs to the reader-client surface.
+pub fn is_reader_route(matched_path: &str) -> bool {
+    READER_ROUTE_PREFIXES
+        .iter()
+        .any(|p| matched_path.starts_with(p))
+}
+
 #[derive(Clone, Debug)]
 pub struct CurrentUser {
     pub id: Uuid,
@@ -52,12 +91,41 @@ pub enum AuthRejection {
     UserDisabled,
     EmailUnverified,
     Forbidden,
+    /// An app password presented outside the [`AppPasswordSurface`].
+    AppPasswordNotAllowed,
+    /// The client IP is in failed-auth lockout (app-password path; the
+    /// remaining seconds go out as `Retry-After`).
+    LockedOut(u64),
+    /// No app-password verification permit freed up in time.
+    Busy,
     Internal,
 }
 
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> axum::response::Response {
         let (status, code, message) = match self {
+            // Typed envelope plus `Retry-After`; reader apps get the code
+            // sign-in uses for a locked-out address.
+            Self::LockedOut(retry) => {
+                return with_retry_after(
+                    crate::api::respond(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        shared::error::ApiErrorCode::AuthLockedOut,
+                        "too many failed app-password attempts; try again later",
+                    ),
+                    retry,
+                );
+            }
+            Self::Busy => {
+                return with_retry_after(
+                    crate::api::respond(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        shared::error::ApiErrorCode::AuthBusy,
+                        "Too many sign-ins are being checked right now; try again shortly",
+                    ),
+                    super::app_password::BUSY_RETRY_AFTER_SECS,
+                );
+            }
             Self::Missing => (
                 StatusCode::UNAUTHORIZED,
                 "auth.required",
@@ -80,6 +148,11 @@ impl IntoResponse for AuthRejection {
                 "auth.permission_denied",
                 "Admin only",
             ),
+            Self::AppPasswordNotAllowed => (
+                StatusCode::FORBIDDEN,
+                "auth.permission_denied",
+                "App passwords only work with reader apps (OPDS). Sign in to use this endpoint.",
+            ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
@@ -88,6 +161,14 @@ impl IntoResponse for AuthRejection {
         };
         crate::api::error(status, code, message)
     }
+}
+
+fn with_retry_after(mut resp: axum::response::Response, secs: u64) -> axum::response::Response {
+    resp.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from(secs),
+    );
+    resp
 }
 
 impl<S> FromRequestParts<S> for CurrentUser
@@ -103,12 +184,19 @@ where
         let token = extract_token(parts).ok_or(AuthRejection::Missing)?;
 
         // App-password Bearer flow (M7). The `app_` prefix is unambiguous
-        // — JWTs always start with `eyJ` so there's no overlap. The
-        // app-password DB lookup runs argon2 verify against active rows,
-        // so this is slow on cold cache (10-30ms per active row) but the
-        // working set is tiny in practice.
+        // — JWTs always start with `eyJ` so there's no overlap. The token
+        // is found by its lookup digest and argon2-checked against that one
+        // row (`app_password::verify`). Reader routes only: anywhere else
+        // the token is refused before the DB / argon2 work.
         if super::app_password::looks_like_app_password(&token) {
-            return resolve_app_password(&app, &token).await;
+            if parts.extensions.get::<AppPasswordSurface>().is_none() {
+                return Err(AuthRejection::AppPasswordNotAllowed);
+            }
+            let ctx = parts
+                .extensions
+                .get::<crate::middleware::RequestContext>()
+                .cloned();
+            return resolve_app_password(&app, ctx.as_ref(), &token).await;
         }
 
         let claims = app
@@ -152,16 +240,22 @@ pub fn admit_state(state: UserState) -> Result<(), AuthRejection> {
 
 /// Resolve an `app_…` Bearer token to its owning user. Bumps the row's
 /// `last_used_at` on success (best-effort, see `app_password::verify`).
-async fn resolve_app_password(app: &AppState, token: &str) -> Result<CurrentUser, AuthRejection> {
-    let resolved = super::app_password::verify(
-        &app.db,
-        &app.app_password_cache,
-        token,
-        app.secrets.peppers(),
-        app.cfg().password_hash_cost,
-    )
-    .await
-    .ok_or(AuthRejection::Invalid)?;
+/// A wrong token is 401 `auth.invalid` as before; an address in
+/// app-password lockout gets 429 `auth.locked_out`, and a request that found
+/// every verification permit taken gets 503 `auth.busy`.
+async fn resolve_app_password(
+    app: &AppState,
+    ctx: Option<&crate::middleware::RequestContext>,
+    token: &str,
+) -> Result<CurrentUser, AuthRejection> {
+    use super::app_password::VerifyError;
+    let resolved = super::app_password::verify(app, ctx, token)
+        .await
+        .map_err(|e| match e {
+            VerifyError::Invalid => AuthRejection::Invalid,
+            VerifyError::LockedOut(retry) => AuthRejection::LockedOut(retry),
+            VerifyError::Busy => AuthRejection::Busy,
+        })?;
     let row = UserEntity::find()
         .filter(user::Column::Id.eq(resolved.user_id))
         .one(&app.db)

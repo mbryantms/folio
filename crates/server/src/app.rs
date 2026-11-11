@@ -38,6 +38,16 @@ use utoipa_axum::router::OpenApiRouter;
 )]
 pub struct ApiDoc;
 
+/// Mark a reader-client router (OPDS, Komga shim, page bytes, thumbnails)
+/// as a surface where app passwords authenticate. See
+/// [`auth::extractor::AppPasswordSurface`]. Every route of a router wrapped
+/// here must start with one of [`auth::extractor::READER_ROUTE_PREFIXES`]
+/// (the CSRF exemption for app passwords is decided from that list); a
+/// test in `tests/app_passwords.rs` enforces it.
+fn reader_surface(router: axum::Router<AppState>) -> axum::Router<AppState> {
+    router.layer(axum::Extension(auth::extractor::AppPasswordSurface))
+}
+
 /// Compose every routed module into a single [`OpenApiRouter`].
 ///
 /// State-free — the result is bound to a concrete [`AppState`] at serve time
@@ -118,12 +128,20 @@ pub fn build_openapi_router_with(timeouts: RouteTimeouts) -> OpenApiRouter<AppSt
         // canonical slug URL. Has a `#[utoipa::path]`, so merged unwrapped to
         // land in the spec.
         .merge(api::issue_permalink::routes())
-        .merge(OpenApiRouter::from(api::page_bytes::routes()))
-        .merge(OpenApiRouter::from(api::thumbnails::routes()))
-        .merge(OpenApiRouter::from(api::opds::routes()))
-        .merge(OpenApiRouter::from(api::opds_v2::routes()))
-        .merge(OpenApiRouter::from(api::komga_compat::routes()))
-        .merge(OpenApiRouter::from(api::opds_progression::routes()))
+        // The reader-client surface: the only routes where an app password
+        // authenticates (`AppPasswordSurface`). The marker is layered onto
+        // each router *before* the merge, so it covers that router's
+        // routes and nothing merged alongside them.
+        .merge(OpenApiRouter::from(reader_surface(api::page_bytes::routes())))
+        .merge(OpenApiRouter::from(reader_surface(api::thumbnails::routes())))
+        .merge(OpenApiRouter::from(reader_surface(api::opds::routes())))
+        .merge(OpenApiRouter::from(reader_surface(api::opds_v2::routes())))
+        .merge(OpenApiRouter::from(reader_surface(
+            api::komga_compat::routes(),
+        )))
+        .merge(OpenApiRouter::from(reader_surface(
+            api::opds_progression::routes(),
+        )))
         // Applied before the `api` group is nested, so it covers the bare
         // routes only; the `api` group carries its own copy inside
         // `with_json_layers`.
@@ -565,9 +583,12 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
             "COMIC_SMTP_* env vars are deprecated; DB value wins once a row exists for each key"
         );
     }
-    if std::env::var("COMIC_AUTH_MODE").is_ok()
-        || std::env::var("COMIC_OIDC_ISSUER").is_ok()
-        || std::env::var("COMIC_LOCAL_REGISTRATION_OPEN").is_ok()
+    // Blank values (`COMIC_AUTH_MODE=` from a compose pass-through) count
+    // as unset, so an install that sets none of these never sees the WARN.
+    let env_set = |k: &str| std::env::var(k).is_ok_and(|v| !v.trim().is_empty());
+    if env_set("COMIC_AUTH_MODE")
+        || env_set("COMIC_OIDC_ISSUER")
+        || env_set("COMIC_LOCAL_REGISTRATION_OPEN")
     {
         tracing::warn!(
             target: "comic.deprecation",
@@ -607,6 +628,22 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
         );
     }
 
+    // First-run exposure: with open local registration and no accounts
+    // yet, whoever registers first is granted admin (auth::local::register).
+    if cfg.local_registration_open
+        && matches!(
+            cfg.auth_mode,
+            crate::config::AuthMode::Local | crate::config::AuthMode::Both
+        )
+        && entity::user::Entity::find().count(&db).await.unwrap_or(1) == 0
+    {
+        tracing::warn!(
+            "local registration is open and no account exists yet — the first account to \
+             register becomes admin; keep the port unreachable by others until you have \
+             registered, then close registration under /admin/auth"
+        );
+    }
+
     let jobs = crate::jobs::JobRuntime::new(&cfg.redis_url, db.clone()).await?;
 
     let email = crate::email::build(&cfg)?;
@@ -632,29 +669,6 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // `/admin/metadata/variant-cover-backfill`). Auto-enqueueing every
     // phash-missing issue at boot flooded the queue (~9k jobs) on a
     // large library; the operator now decides when that work runs.
-
-    // Archive-rewrite startup sweep (M0 of metadata-sidecar-writeback-1.0):
-    // walk every `library.root_path` and remove orphan `.tmp` siblings
-    // older than 10 min. Crashed rewrites leave these behind; without the
-    // sweep they accumulate forever. Skipped libraries with read errors
-    // (mount went away, perm issue) — logged inside `walk_and_remove`.
-    {
-        use entity::library;
-        use sea_orm::EntityTrait;
-        if let Ok(libs) = library::Entity::find().all(&state.db).await {
-            let roots: Vec<std::path::PathBuf> = libs
-                .into_iter()
-                .map(|l| std::path::PathBuf::from(l.root_path))
-                .collect();
-            let removed = crate::archive_rewrite::startup_cleanup(
-                roots,
-                std::time::Duration::from_secs(10 * 60),
-            );
-            if removed > 0 {
-                tracing::info!(removed, "archive_rewrite startup: cleaned orphan .tmp");
-            }
-        }
-    }
 
     // Scan-coalescing key boot sweep (OPS-2): clear any `scan:{in_flight,
     // scan_id,queued}:*` keys orphaned by a previous process crash so a library
@@ -719,6 +733,9 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     });
     // Aggregated `queue.activity` events for the admin queue lanes.
     crate::jobs::activity::spawn_flusher(state.clone(), shutdown.clone());
+    // Prometheus recorder upkeep: drains histogram samples into their
+    // buckets on a timer so their memory stays bounded between scrapes.
+    crate::observability::spawn_metrics_upkeep(state.prometheus.clone(), shutdown.clone());
 
     // Cron scheduler — best-effort. Failure here doesn't block startup.
     match crate::jobs::scheduler::start(state.clone()).await {
@@ -740,10 +757,20 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     // hotlinked variants localize on re-apply or via
     // `/admin/metadata/variant-cover-backfill`.
 
+    let cleanup_db = state.db.clone();
     let app = router(state);
 
-    let listener = tokio::net::TcpListener::bind(bind).await?;
+    // The only listener the server opens; metrics and health are routes on
+    // it. Accepted connections disable Nagle's algorithm (`tuned_listener`).
+    let listener = tuned_listener(tokio::net::TcpListener::bind(bind).await?);
     tracing::info!(addr = %bind, "listening");
+
+    // Archive-rewrite staging sweep: remove Folio's own orphan
+    // `<name>.<32 hex>.tmp` files (crashed rewrites) older than 10 min, in
+    // writeback-enabled libraries only. Runs in the background on the
+    // blocking pool once the listener is bound, so a large library never
+    // holds up startup; the age floor keeps it off live rewrites.
+    drop(crate::archive_rewrite::spawn_startup_cleanup(cleanup_db));
 
     let http_shutdown = shutdown.clone();
     axum::serve(
@@ -806,7 +833,10 @@ pub fn router_with_timeouts(state: AppState, timeouts: RouteTimeouts) -> Router 
         // panic escapes to stderr and drops the connection — invisible to the
         // JSON log stream, the /admin/logs ring buffer, and the client.
         .layer(tower_http::catch_panic::CatchPanicLayer::custom(handle_panic))
-        .layer(axum::middleware::from_fn(auth::csrf::require_csrf))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::csrf::require_csrf,
+        ))
         // M-1 (security audit) / WP-6.3: explicit deny-by-default CORS.
         // Rust is the single public origin — the web app, its JSON API,
         // OPDS, and the Komga/KOReader shims are all served from it — so no
@@ -917,6 +947,29 @@ fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> axum::response:
         .into_response()
 }
 
+/// Accepted-socket setup for the public listener: disable Nagle's algorithm.
+///
+/// Responses that end in a small final write (a cached page variant, a short
+/// JSON body, the tail of a proxied page) otherwise sit in the kernel until
+/// the client's delayed ACK arrives, which adds tens of milliseconds per
+/// response. A failure is logged and the connection is served anyway.
+pub fn configure_accepted_socket(stream: &mut tokio::net::TcpStream) {
+    if let Err(e) = stream.set_nodelay(true) {
+        tracing::debug!(error = %e, "failed to set TCP_NODELAY on accepted connection");
+    }
+}
+
+/// The public listener as `serve` runs it: every accepted connection goes
+/// through [`configure_accepted_socket`]. `TapIo` keeps the listener's
+/// `SocketAddr` as the connection address, so `ConnectInfo<SocketAddr>`
+/// is unchanged.
+pub fn tuned_listener(
+    listener: tokio::net::TcpListener,
+) -> axum::serve::TapIo<tokio::net::TcpListener, fn(&mut tokio::net::TcpStream)> {
+    use axum::serve::ListenerExt;
+    listener.tap_io(configure_accepted_socket as fn(&mut tokio::net::TcpStream))
+}
+
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
@@ -996,5 +1049,37 @@ mod tests {
         );
         let fast_resp = router.oneshot(req("/fast")).await.unwrap();
         assert_eq!(fast_resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// P-03: the listener `serve` runs hands out accepted sockets with
+    /// `TCP_NODELAY` set, and keeps the peer `SocketAddr` that
+    /// `ConnectInfo` is built from. Driven through `Listener::accept` on
+    /// the exact wrapper `serve` uses, so nothing races.
+    #[tokio::test]
+    async fn tuned_listener_sets_nodelay_on_accepted_sockets() {
+        use axum::serve::Listener;
+
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = raw.local_addr().unwrap();
+        let mut listener = tuned_listener(raw);
+        let client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (accepted, peer) = listener.accept().await;
+        assert!(
+            accepted.nodelay().unwrap(),
+            "accepted socket must have TCP_NODELAY"
+        );
+        assert_eq!(peer, client.local_addr().unwrap());
+    }
+
+    /// The setup function itself on a socket that starts with Nagle on.
+    #[tokio::test]
+    async fn configure_accepted_socket_enables_nodelay() {
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = raw.local_addr().unwrap();
+        let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut accepted, _) = raw.accept().await.unwrap();
+        accepted.set_nodelay(false).unwrap();
+        configure_accepted_socket(&mut accepted);
+        assert!(accepted.nodelay().unwrap());
     }
 }

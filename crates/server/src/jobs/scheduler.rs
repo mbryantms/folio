@@ -41,6 +41,9 @@ pub async fn start(state: AppState) -> anyhow::Result<JobScheduler> {
     register_metadata_weekly_refresh(&scheduler, &state).await;
     register_metadata_resume_sweep(&scheduler, &state).await;
     register_writeback_migration_progress(&scheduler, &state).await;
+    // Boot value of the app-password legacy gauge; the app-password code
+    // refreshes it when a row is created, revoked or given its digest.
+    crate::auth::app_password::refresh_legacy_gauge(&state.db).await;
     register_metadata_match_outcome_prune(&scheduler, &state).await;
     register_job_queue_depth(&scheduler, &state).await;
     Ok(scheduler)
@@ -82,7 +85,9 @@ async fn register_prune_auth_sessions(scheduler: &JobScheduler, state: &AppState
 /// supports a small set of canonical schedules (`@hourly`, `@daily`,
 /// `@weekly`, `@monthly`) plus the literal `manual` (which refuses to
 /// auto-fire). Real cron parsing is deferred — the API caps the schedule
-/// to these tokens.
+/// to these tokens. Each list's remote fetch has its own budget and the
+/// whole run is bounded (`cbl::fetch::CBL_SWEEP_BUDGET`); see
+/// [`crate::cbl::refresh::run_sweep`].
 async fn register_cbl_refresh_sweep(
     scheduler: &tokio_cron_scheduler::JobScheduler,
     state: &AppState,
@@ -98,31 +103,7 @@ async fn register_cbl_refresh_sweep(
                     return;
                 }
             };
-            for list_id in due {
-                match crate::cbl::refresh::refresh(
-                    &state.db,
-                    list_id,
-                    crate::cbl::import::RefreshTrigger::Scheduled,
-                    false,
-                )
-                .await
-                {
-                    Ok(s) => {
-                        if s.upstream_changed {
-                            tracing::info!(
-                                list_id = %list_id,
-                                added = s.added,
-                                removed = s.removed,
-                                rematched = s.rematched,
-                                "cbl_refresh applied diff",
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(list_id = %list_id, error = %e, "cbl_refresh failed");
-                    }
-                }
-            }
+            crate::cbl::refresh::run_sweep(&state.db, due).await;
         })
     });
     match job_result {
@@ -535,11 +516,14 @@ async fn register_hard_purge(scheduler: &JobScheduler, state: &AppState) {
         Box::pin(async move {
             match crate::jobs::hard_purge::run(&state).await {
                 Ok(stats) => {
-                    if stats.issues > 0 || stats.series > 0 {
+                    if stats.issues > 0 || stats.series > 0 || stats.kept_present > 0 {
                         tracing::info!(
                             issues = stats.issues,
                             series = stats.series,
                             libraries = stats.libraries,
+                            kept_present = stats.kept_present,
+                            rescans_queued = stats.rescans_queued,
+                            libraries_skipped = stats.libraries_skipped,
                             "hard purge: deleted confirmed-removed rows"
                         );
                     }
@@ -567,10 +551,16 @@ async fn register_reconcile_sweep(scheduler: &JobScheduler, state: &AppState) {
     let job_result = Job::new_async("0 0 4 * * *", move |_uuid, _l| {
         let state = state.clone();
         Box::pin(async move {
-            match crate::library::reconcile::auto_confirm_sweep(&state.db).await {
-                Ok(n) => {
-                    if n > 0 {
-                        tracing::info!(confirmed = n, "reconcile sweep: confirmed removals");
+            match crate::library::reconcile::auto_confirm_sweep(&state).await {
+                Ok(stats) => {
+                    if stats.confirmed > 0 || stats.kept_present > 0 {
+                        tracing::info!(
+                            confirmed = stats.confirmed,
+                            kept_present = stats.kept_present,
+                            rescans_queued = stats.rescans_queued,
+                            libraries_skipped = stats.libraries_skipped,
+                            "reconcile sweep: confirmed removals"
+                        );
                     }
                 }
                 Err(e) => tracing::error!(error = %e, "reconcile sweep failed"),

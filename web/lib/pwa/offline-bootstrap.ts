@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 
-import { formatIssueHeading } from "@/lib/format";
+import { issueLabel } from "@/lib/format";
 
 import { DOWNLOAD_TOAST_ID, isTrackedDownload } from "./download-toast";
 import { getDownloadManager, trackOutboxProgress } from "./downloads";
@@ -18,9 +18,9 @@ export function startOfflineDownloads(userId: string): () => void {
   let stopped = false;
   let offProgress: (() => void) | undefined;
   const offEvents = manager.onEvent((event) => {
-    const label = formatIssueHeading(
+    const label = issueLabel(
       { title: event.record.title, number: event.record.number },
-      event.record.seriesName,
+      { seriesName: event.record.seriesName },
     );
     if (event.type === "complete") {
       // A download started from the dialog reports in its own batch

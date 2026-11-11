@@ -234,8 +234,17 @@ impl LevelFilter {
 }
 
 /// `tracing-subscriber` layer that copies each event into the ring buffer.
-struct RingLayer {
+pub(crate) struct RingLayer {
     buffer: LogRingBuffer,
+}
+
+impl RingLayer {
+    /// Unit tests in other modules use this to read what a code path
+    /// would put in the admin log ring.
+    #[cfg(test)]
+    pub(crate) fn new(buffer: LogRingBuffer) -> Self {
+        Self { buffer }
+    }
 }
 
 impl<S> Layer<S> for RingLayer
@@ -328,6 +337,28 @@ where
 /// also attach extensions.
 struct SpanFields(BTreeMap<String, String>);
 
+/// Longest field value [`FieldVisitor`] keeps, in bytes. Every event's
+/// fields are held in the ring for [`LOG_RING_CAPACITY`] entries, so one
+/// caller logging a request body must not pin megabytes in memory. The
+/// stdout JSON layer is unaffected.
+const MAX_RING_FIELD_BYTES: usize = 8 * 1024;
+
+/// Cut `s` to at most [`MAX_RING_FIELD_BYTES`] on a char boundary and
+/// append a marker naming how many bytes were dropped.
+fn cap_field(mut s: String) -> String {
+    if s.len() <= MAX_RING_FIELD_BYTES {
+        return s;
+    }
+    let mut cut = MAX_RING_FIELD_BYTES;
+    while !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let dropped = s.len() - cut;
+    s.truncate(cut);
+    let _ = write!(s, "… [truncated {dropped} bytes]");
+    s
+}
+
 #[derive(Default)]
 struct FieldVisitor {
     fields: BTreeMap<String, String>,
@@ -336,7 +367,7 @@ struct FieldVisitor {
 impl Visit for FieldVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         self.fields
-            .insert(field.name().to_owned(), value.to_owned());
+            .insert(field.name().to_owned(), cap_field(value.to_owned()));
     }
     fn record_i64(&mut self, field: &Field, value: i64) {
         self.fields
@@ -356,12 +387,12 @@ impl Visit for FieldVisitor {
     }
     fn record_error(&mut self, field: &Field, value: &(dyn std::error::Error + 'static)) {
         self.fields
-            .insert(field.name().to_owned(), value.to_string());
+            .insert(field.name().to_owned(), cap_field(value.to_string()));
     }
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         let mut s = String::new();
         let _ = write!(s, "{value:?}");
-        self.fields.insert(field.name().to_owned(), s);
+        self.fields.insert(field.name().to_owned(), cap_field(s));
     }
 }
 
@@ -538,6 +569,32 @@ fn redact_bearer(s: &str) -> String {
     out
 }
 
+/// How often [`spawn_metrics_upkeep`] drains the recorder. Matches the
+/// exporter's own default upkeep interval (`PrometheusBuilder` sets 5 s).
+pub const METRICS_UPKEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Periodic upkeep for the Prometheus recorder. [`init`] installs it with
+/// `install_recorder`, which, unlike `PrometheusBuilder::install`, spawns no
+/// upkeep task: histogram samples then pile up until something drains them
+/// into their buckets. A scrape drains them too, but a server nobody scrapes
+/// would grow with every request. Runs until `shutdown` is cancelled.
+pub fn spawn_metrics_upkeep(
+    handle: PrometheusHandle,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(METRICS_UPKEEP_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                _ = tick.tick() => {}
+            }
+            handle.run_upkeep();
+        }
+    })
+}
+
 pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
     let env_filter = EnvFilter::try_new(&cfg.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
     let (filter_layer, log_reload) = reload::Layer::new(env_filter);
@@ -593,6 +650,8 @@ pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
         .map_err(|e| anyhow::anyhow!("metrics histogram buckets: {e}"))?
         .install_recorder()
         .map_err(|e| anyhow::anyhow!("install prometheus recorder: {e}"))?;
+    // `install_recorder` leaves upkeep to the caller: `app::serve` starts
+    // [`spawn_metrics_upkeep`] on this handle with the server's shutdown token.
 
     // Process/runtime gauges under `folio_process_*` (CPU, RSS, FDs,
     // threads). `describe()` registers them against the recorder now; the
@@ -611,6 +670,93 @@ pub fn init(cfg: &Config) -> anyhow::Result<ObservabilityHandles> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Many histogram observations still render as one bounded set of
+    /// buckets, with upkeep run in between, as the upkeep task does.
+    #[test]
+    fn histogram_renders_after_many_observations_and_upkeep() {
+        let recorder = PrometheusBuilder::new()
+            .set_buckets_for_metric(Matcher::Suffix("_seconds".to_string()), &[0.1, 1.0])
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            for i in 0..20_000u32 {
+                metrics::histogram!("upkeep_test_seconds").record(f64::from(i % 3));
+                if i % 5_000 == 0 {
+                    handle.run_upkeep();
+                }
+            }
+        });
+        handle.run_upkeep();
+        let out = handle.render();
+        assert!(out.contains("upkeep_test_seconds_count 20000"), "{out}");
+        assert!(
+            out.contains(r#"upkeep_test_seconds_bucket{le="+Inf"} 20000"#),
+            "{out}"
+        );
+    }
+
+    /// The upkeep task stops with the server's shutdown token.
+    #[tokio::test]
+    async fn metrics_upkeep_stops_on_shutdown() {
+        let handle = PrometheusBuilder::new().build_recorder().handle();
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let task = spawn_metrics_upkeep(handle, shutdown.clone());
+        shutdown.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("upkeep task exits on cancel")
+            .expect("upkeep task joins cleanly");
+    }
+
+    #[test]
+    fn field_cap_leaves_short_values_alone() {
+        assert_eq!(cap_field("short".to_owned()), "short");
+        let exact = "x".repeat(MAX_RING_FIELD_BYTES);
+        assert_eq!(cap_field(exact.clone()), exact);
+    }
+
+    #[test]
+    fn field_cap_truncates_long_values_with_marker() {
+        let got = cap_field("x".repeat(MAX_RING_FIELD_BYTES + 100));
+        let (kept, marker) = got.split_at(MAX_RING_FIELD_BYTES);
+        assert!(kept.bytes().all(|b| b == b'x'));
+        assert_eq!(marker, "… [truncated 100 bytes]");
+    }
+
+    #[test]
+    fn field_cap_cuts_multibyte_on_char_boundary() {
+        // 3-byte chars: the cap (8192) falls mid-char, so the cut backs
+        // off to the previous boundary.
+        let s = "€".repeat(MAX_RING_FIELD_BYTES);
+        let total = s.len();
+        let got = cap_field(s);
+        let kept = got.split('…').next().unwrap();
+        assert!(kept.len() <= MAX_RING_FIELD_BYTES);
+        assert_eq!(kept.len() % 3, 0);
+        assert!(kept.chars().all(|c| c == '€'));
+        assert!(got.ends_with(&format!("[truncated {} bytes]", total - kept.len())));
+    }
+
+    #[test]
+    fn field_visitor_caps_recorded_strings() {
+        let ring = LogRingBuffer::with_capacity(4);
+        let subscriber = Registry::default().with(RingLayer {
+            buffer: ring.clone(),
+        });
+        tracing::subscriber::with_default(subscriber, || {
+            let big = "y".repeat(MAX_RING_FIELD_BYTES * 4);
+            tracing::warn!(big_str = big.as_str(), big_dbg = ?big, small = "ok", "cap test");
+        });
+        let snap = ring.snapshot(SnapshotFilter::default());
+        let fields = &snap.last().unwrap().fields;
+        assert_eq!(fields["small"], "ok");
+        for key in ["big_str", "big_dbg"] {
+            assert!(fields[key].len() < MAX_RING_FIELD_BYTES + 64, "{key}");
+            assert!(fields[key].contains("[truncated "), "{key}");
+        }
+    }
 
     #[test]
     fn ring_buffer_evicts_oldest_past_capacity() {

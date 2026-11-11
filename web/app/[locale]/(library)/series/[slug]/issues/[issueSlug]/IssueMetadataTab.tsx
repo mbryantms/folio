@@ -52,6 +52,7 @@ import { cn } from "@/lib/utils";
 import { statusTone, statusToneText } from "@/lib/ui/status-tone";
 
 import { IssueFieldLocks } from "./IssueFieldLocks";
+import { RailError } from "@/components/saved-views/RailError";
 
 export function IssueMetadataTab({
   seriesSlug,
@@ -62,7 +63,7 @@ export function IssueMetadataTab({
   issueSlug: string;
   libraryId: string;
 }) {
-  const { data, isLoading, isError } = useIssueMetadataOverview(
+  const { data, isLoading, isError, refetch } = useIssueMetadataOverview(
     seriesSlug,
     issueSlug,
   );
@@ -90,9 +91,11 @@ export function IssueMetadataTab({
   }
   if (isError || !data) {
     return (
-      <p className="text-muted-foreground py-8 text-sm">
-        Couldn&rsquo;t load metadata overview.
-      </p>
+      <RailError
+        message="Couldn't load metadata overview."
+        onRetry={() => void refetch()}
+        className="py-8"
+      />
     );
   }
 

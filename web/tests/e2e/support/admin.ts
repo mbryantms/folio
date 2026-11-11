@@ -24,7 +24,7 @@ export const ADMIN_EMAIL = "e2e-admin@example.test";
 export const ADMIN_PASSWORD = "correct-horse-battery-staple";
 
 /** Series folders `fixtures/make-library.mjs` writes. */
-export const FIXTURE_SERIES = 3;
+export const FIXTURE_SERIES = 4;
 
 /** True when the target is the Rust origin with open local registration
  *  (the docker-smoke stack); the admin specs skip otherwise. */

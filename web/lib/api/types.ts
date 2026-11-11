@@ -142,6 +142,7 @@ export type RecentIssuesView = Schemas["RecentIssuesView"];
 export type RecentHistoryView = Schemas["RecentHistoryView"];
 export type RandomPicksView = Schemas["RandomPicksView"];
 export type OnThisDayView = Schemas["OnThisDayView"];
+export type NewInSeriesView = Schemas["NewInSeriesView"];
 export type SimilarReason = Schemas["SimilarReason"];
 export type SimilarReasonKind = Schemas["SimilarReasonKind"];
 export type SimilarSeriesItem = Schemas["SimilarSeriesItem"];

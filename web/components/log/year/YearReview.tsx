@@ -49,11 +49,29 @@ export function YearReview({ year }: { year: number }) {
   // Pull a few pages so the mosaic and top-series covers see most of the
   // year; past that the mosaic says "and more".
   const pagesLoaded = log.data?.pages.length ?? 0;
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = log;
+  // A failed page stops the walk (no request loop); the mosaic keeps
+  // what loaded.
+  const {
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    fetchNextPage,
+  } = log;
   useEffect(() => {
-    if (hasNextPage && !isFetchingNextPage && pagesLoaded < MAX_LOG_PAGES)
+    if (
+      hasNextPage &&
+      !isFetchingNextPage &&
+      !isFetchNextPageError &&
+      pagesLoaded < MAX_LOG_PAGES
+    )
       void fetchNextPage();
-  }, [hasNextPage, isFetchingNextPage, pagesLoaded, fetchNextPage]);
+  }, [
+    hasNextPage,
+    isFetchingNextPage,
+    isFetchNextPageError,
+    pagesLoaded,
+    fetchNextPage,
+  ]);
 
   const timeZone = stats.data?.timezone ?? all.data?.timezone ?? "UTC";
 

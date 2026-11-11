@@ -60,8 +60,12 @@ payload-agnostic: each *kind* registers `{ merge?, deliver }`.
   queue only matters when the page dies first.
 - **Replay** runs in the page (`OutboxReplayer`, mounted in `QueryProvider`
   for a signed-in account) through `apiFetch`, so the CSRF header and token
-  refresh behave like live writes. Triggers: launch, `online`, tab visible,
-  backoff (5 s → 5 min) while entries are retained, and the service worker's
+  refresh behave like live writes. It is the only retry loop (the live
+  writer delivers once and leaves failures queued). Triggers: launch,
+  `online`, tab visible, the server answering again (`folio:connectivity` →
+  `reachable`), one backoff timer (5 s → 5 min) armed by a new entry and
+  stretched while entries are retained — the timer is what retries while the
+  browser stays online but the server does not answer — and the service worker's
   `sync` event (tag `folio-outbox`), which only posts `FOLIO_OUTBOX_REPLAY`
   to open windows — a worker cannot read the CSRF cookie or refresh a token,
   and Background Sync is Chromium-only, so it is a wake-up hint, not the
@@ -82,8 +86,11 @@ payload-agnostic: each *kind* registers `{ merge?, deliver }`.
 
 Known limits: the replayed progress `updated_at` is the replay time (sessions
 keep their client timestamps); the reader's resume page comes from SSR and
-does not yet consult queued local writes; there is no pending/error
-sync-state UI yet (`outbox.subscribe` + `entries()` are there for it).
+does not yet consult queued local writes. Sync state: the reader settings
+popover shows one line per issue (saved / saved on this device, will sync /
+retrying; `ProgressSyncStatus`), the connectivity toasts say reading progress
+is kept on the device while other changes may not save, and one
+"Reading progress synced" toast follows a stuck queue draining.
 
 ## Offline downloads (WP-4.6)
 
@@ -208,7 +215,9 @@ Code: `downloadList` in `downloads.ts`, the pure helpers in
 
 - `/downloads` renders nothing from the server: it reads IndexedDB and
   opens a complete download in the regular `Reader` (`?issue=<id>`), with
-  `exitUrl` back to the list. The download manager stores a copy fetched
+  `exitUrl` back to the list (the exit goes back in history to the list
+  it was opened from, else replaces the reader with it; see
+  `reader-shortcuts.md` "Leaving the reader"). The download manager stores a copy fetched
   with `credentials: "omit"` — an anonymous render, so it carries no user
   data — after the first completed download, crawling the HTML, its flight
   data and each chunk/stylesheet for `static/(chunks|css|media)` references

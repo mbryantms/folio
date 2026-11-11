@@ -9,6 +9,7 @@ import { useEntityInsights, type EntityKindPath } from "@/lib/api/queries";
 import type { EntityInsightsView } from "@/lib/api/types";
 import { entityUrl } from "@/lib/entities";
 import { seriesUrl } from "@/lib/urls";
+import { RailError } from "@/components/saved-views/RailError";
 
 /** Bar heights (0–1) for the decade chart, scaled to the busiest decade
  *  and never below a hairline for a non-zero count. Pure for the tests. */
@@ -40,9 +41,10 @@ export function EntityInsights({
   const query = useEntityInsights(kind, slug);
   if (query.isError) {
     return (
-      <p className="text-muted-foreground text-sm">
-        Couldn&apos;t load library statistics. Try refreshing.
-      </p>
+      <RailError
+        message="Couldn't load library statistics."
+        onRetry={() => void query.refetch()}
+      />
     );
   }
   const data = query.data;

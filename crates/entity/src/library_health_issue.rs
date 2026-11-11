@@ -101,6 +101,9 @@ pub enum HealthIssueKind {
     /// A file tagged with an external id another entity owns.
     #[sea_orm(string_value = "DuplicateExternalId")]
     DuplicateExternalId,
+    /// A symbolic link below the library root; links are never followed.
+    #[sea_orm(string_value = "SymlinkSkipped")]
+    SymlinkSkipped,
     /// Never stored: the health list synthesizes this row per request
     /// for a writeback library with user pins not yet in its XML
     /// (`api::health_issues`).
@@ -132,6 +135,7 @@ impl HealthIssueKind {
             Self::NoPages => "NoPages",
             Self::AmbiguousFolder => "AmbiguousFolder",
             Self::DuplicateExternalId => "DuplicateExternalId",
+            Self::SymlinkSkipped => "SymlinkSkipped",
             Self::MetadataDriftFromXml => "MetadataDriftFromXml",
         }
     }
@@ -232,6 +236,7 @@ mod tests {
                 (HealthIssueKind::NoPages, "NoPages"),
                 (HealthIssueKind::AmbiguousFolder, "AmbiguousFolder"),
                 (HealthIssueKind::DuplicateExternalId, "DuplicateExternalId"),
+                (HealthIssueKind::SymlinkSkipped, "SymlinkSkipped"),
                 (
                     HealthIssueKind::MetadataDriftFromXml,
                     "MetadataDriftFromXml",

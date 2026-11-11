@@ -11,15 +11,19 @@ One fetch per entity, run by the `entity_enrich` job
 (`crates/server/src/jobs/entity_enrich.rs`) and implemented in
 `crates/server/src/metadata/entity_profile.rs`.
 
-**When it runs.** The first `GET /<kind>/{slug}` that finds no
-`entity_profile` row (or a row whose fetch was requested more than 30
+**When it runs.** The first **admin** `GET /<kind>/{slug}` that finds
+no `entity_profile` row (or a row whose fetch was requested more than 30
 minutes ago and never completed) stamps `requested_at` and pushes the
 job. The page reports `enrichment = pending` and the web polls the
 header every 4 s until it flips to `done` / `failed`. An admin's
 **Refresh** (`POST /<kind>/{slug}/profile/refresh`, audited as
-`admin.entity.refresh_profile`) forces a new fetch. There is no bulk
-"fill every character" job on purpose: ComicVine allows 200 requests per
-resource per hour, so profiles are fetched as pages are viewed.
+`admin.entity.refresh_profile`) forces a new fetch. A reader's page view
+never queues a fetch (it would spend the admin's provider budget, and
+any reader could drive provider traffic by walking entity pages): it is
+served the cached profile, `pending` while a fetch an admin queued is in
+flight, else `unavailable`. There is no bulk "fill every character" job
+on purpose: ComicVine allows 200 requests per resource per hour, so
+profiles are fetched as admins view pages.
 
 **Provider order.**
 
@@ -61,6 +65,13 @@ excluded), most frequent creators, and the first ten issues in the
 entity's reading order as issue cards. No provider is involved, so this
 block works for every entity today.
 
+Visibility follows the rule in
+[`docs/architecture/auth-model.md`](../architecture/auth-model.md#entity-surfaces):
+for a caller with an age cap the entity must be linked from an issue that
+caller can see, otherwise every route under `/<kind>/{slug}` answers 404
+like an unknown slug. The provider profile is shown whenever the entity
+itself is visible.
+
 ## Web
 
 - `web/components/library/EntityProfile.tsx` — the profile block and
@@ -73,6 +84,7 @@ block works for every entity today.
 
 - `crates/server/tests/entity_pages.rs` — `profile_fetch_merges_metron_and_comicvine`
   (wiremock both providers), `profile_is_queued_on_first_view_and_refreshed_by_admin`,
+  `reader_view_queues_no_profile_fetch`,
   `insights_report_library_stats_under_the_acl`.
 - `crates/server/src/metadata/entity_profile.rs` — section parser unit tests.
 - `web/tests/library/entity-profile.test.tsx`.

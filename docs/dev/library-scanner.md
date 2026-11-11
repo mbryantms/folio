@@ -106,6 +106,89 @@ reconcile so unscanned siblings stay untouched.
 | Scheduled scan | `library.scan_schedule_cron` per-library | [`jobs/scheduler.rs:224`](../../crates/server/src/jobs/scheduler.rs#L224) — `coalesce_scan(.., false)`. 5- or 6-field cron via `tokio_cron_scheduler`. |
 | File watcher | `library.file_watch_enabled` per library ([library/watcher.rs](../../crates/server/src/library/watcher.rs)) | inotify on local mounts, directory-mtime poll on NFS/SMB/CIFS/FUSE (picked by `statfs` at watcher start). Touched directories are collapsed over `scanner.watch_debounce_secs` (30 s) and enqueued via [`JobRuntime::coalesce_watch_scan`](../../crates/server/src/jobs/mod.rs) as a **scoped, non-forced** library scan of those directories only ([`scan_library_scoped`](../../crates/server/src/library/scanner/mod.rs)). Shares the full scan's `scan:in_flight` / `scan:queued` keys, so a storm is one scan plus at most one queued follow-up. See [File watcher](#file-watcher). |
 
+### Coalescing key
+
+Full-library scans (manual, scheduled, file watcher, scan-all) share one
+Redis key per library, `scan:in_flight:<library_id>`, whose value is the
+scan run id that holds it ([`jobs/scan_lease.rs`](../../crates/server/src/jobs/scan_lease.rs)).
+Every change to it is a single atomic command or Lua script:
+
+- **Claim.** `coalesce_scan` runs one script: `SET key <run id> NX PX
+  <ttl>`; if the key is already held, the same script records the queued
+  follow-up (`scan:queued:<lib>`, its force flag and its watcher
+  directories) and returns the holder's run id. Concurrent triggers
+  therefore produce exactly one queued run; the others get
+  `coalesced: true` with that run's `scan_id`, as before. A claim whose
+  job could not be queued is undone with a compare-and-delete.
+- **Lifetime.** A claimed scan waiting in the queue carries
+  `SCAN_QUEUED_TTL` (6 h): nothing runs to refresh it, and the job itself
+  survives a restart. When the job starts, a lease task beside the scan
+  resets the expiry to `SCAN_LEASE_TTL` (120 s) every
+  `SCAN_LEASE_REFRESH` (30 s, one worker heartbeat), only while the key
+  still holds the run's id. The task runs for the whole job, including the
+  blocking enumerate and plan phases and the reconcile, which the
+  scanner's own 750 ms progress heartbeat does not cover. A process that
+  dies mid-scan frees the library within 120 s; the boot sweep clears the
+  keys on restart anyway. A key that expired and is still free is taken
+  back by its run.
+- **Lost key.** If a refresh finds another run's id on the key (the key
+  lapsed and another trigger claimed it), the lease flags itself lost. The
+  scanner checks that flag at every phase boundary and on its phase-3
+  heartbeat, and the reconcile checks it at entry, between series of its
+  folder-missing sweep and before its final restore of series that hold
+  live issues. The removals, restores and empty-series marks for the
+  series the run itself scanned always finish together once started: a
+  later non-forced scan skips an unchanged folder, so a series emptied
+  there and left unmarked would stay live. A stop in the folder-missing
+  sweep still flags the series already handled, and every manifest event
+  is recorded only after its rows were written. The scan stops through
+  the cooperative-cancel path: no new folders start, the reconcile is
+  skipped or stops early, and the run closes as `cancelled` with
+  the error "Superseded: another scan of this library is running" and a
+  terminal `ScanEvent::Failed`. A job that finds the key held by another
+  run before it starts scans nothing and closes its run the same way,
+  whether the row is still `queued` or `running` (a job re-delivered after
+  a crash); its run id does not hold the key, so any live copy of it stops
+  too.
+- **Superseded request.** A superseded run hands its own request (force
+  flag and scope) to the coalescing script once: it becomes the holder's
+  queued follow-up, force OR-ed in and a full request widening a scoped
+  one, or a new run when the key has become free. The follow-up is a new
+  run with a new id, so this cannot repeat for the same run. A new run
+  joins the superseded run's scan-all batch; a request folded into
+  another holder's follow-up runs unbatched, and the batch counts the
+  superseded run as cancelled. Either way the batch never reads as
+  complete for that library, because the superseded run stays cancelled
+  in it even though the library was scanned; when the run was the
+  batch's last open member, the batch is marked finished and then
+  finalised again once the new run ends.
+- **Cancel while queued.** The cancel endpoint flips a `queued` run with
+  one conditional update (`… WHERE state = 'queued'`) and, only when that
+  changed the row, releases the library run's claim through
+  `release_scan` (compare-and-delete, or hand-over to a follow-up recorded
+  meanwhile), so the library can be scanned again at once; the cancelled
+  job does nothing when a worker picks it up. If the job started first,
+  the update changes nothing and the run is cancelled as a running scan,
+  which keeps the key until it stops and releases it. The job side mirrors
+  this: `open_scan_run` moves a run to `running` only `WHERE state =
+  'queued'`, so a cancel that landed first stays `cancelled` and the scan
+  stops at its cancel check.
+- **Release.** `release_scan(library, run id)` is compare-and-delete in
+  one script; when a follow-up was queued, the same script hands the key
+  to a new run id and the follow-up is enqueued. A run that no longer
+  holds the key changes nothing, so it can never delete a newer holder's
+  key. The lease task is stopped and awaited before the release, so no
+  refresh lands after it. If the follow-up's job cannot be queued, the key
+  is given back and the follow-up is recorded again without a holder, so
+  the next scan of the library runs it when it releases.
+- **Redis unavailable.** A trigger fails as before: `coalesce_scan`
+  returns the Redis error and nothing is queued. A running scan whose
+  refresh fails keeps scanning and retries on the next tick; it is only
+  stopped when a refresh succeeds and finds another holder.
+
+Series- and issue-scoped scans use their own `scan:in_flight:<lib>:series:…`
+keys with the 6 h lifetime and are not leases.
+
 ## Phase walkthrough
 
 The library path (`scan_library_with_run_id` at
@@ -142,6 +225,70 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
   - dot-prefixed entries (`.git`, `.DS_Store`, …) are silently skipped
   - built-in skips: `__MACOSX`, `Thumbs.db`, `desktop.ini`, `@eaDir`
   - user-glob ignores apply before classification
+  - **symbolic links are never followed**, wherever they point (out of
+    the root or inside it) and whether they name a folder or a file.
+    Every entry is classified from link-not-following metadata
+    (`symlink_metadata` / `DirEntry::file_type`) and every walk runs with
+    `follow_links(false)` and `follow_root_links(false)`, so a linked
+    publisher folder, series folder or archive is never indexed. Each
+    link met (library top level, directly inside a publisher folder, at
+    the top of an empty / ambiguous folder, anywhere inside a series
+    folder) is logged at INFO with its path and reported as a
+    `SymlinkSkipped` health finding. A series that was indexed through a
+    link is reported missing and soft-removed like any other (§4.5); it
+    returns when the real folder is placed in the library. A
+    single-series rescan refuses a folder that is, or sits under, a link.
+    A `series.json` that is a link is not read. The file watcher does not
+    follow links either (`notify::Config::with_follow_symlinks(false)`),
+    and a link appearing triggers a scoped scan so the finding is
+    recorded.
+  - **The library root is the one link resolved.** The configured root
+    path may itself be (or pass through) a link (`/data/comics ->
+    /mnt/x`, a bind-mount path): `validate_library` canonicalizes it, the
+    walk opens it as configured, and stored paths keep the configured
+    spelling. Nothing below it is followed.
+  - **Serving** goes through the same rule: the routes that hand an
+    issue's file to a reader (OPDS download, page bytes, OPDS page
+    stream, inline thumbnails, OCR) open it through
+    [`library::no_follow`](../../crates/server/src/library/no_follow.rs),
+    which walks from the root one name at a time with `O_NOFOLLOW` and
+    accepts only a regular file; anything else answers not-found with a
+    WARN naming the issue and the reason (a missing file is logged at
+    DEBUG). A stored path may be spelled under the configured root or its
+    canonical path (older single-series rescans of a linked root wrote the
+    latter); the walk starts at the opened root either way. The library's
+    roots are kept in `AppState::library_roots` (one-minute expiry, dropped
+    when the library's settings are saved or it is deleted), so the check
+    costs no database query. The OPDS download also refuses soft-removed
+    issues, for every role (OPDS is a list surface); page bytes and the
+    page stream go by `issue_visible` and do not.
+  - **Issue rescans** ("Scan issue", and the per-issue rescan writeback
+    queues) check the stored path the same way before ingesting: a link
+    is logged and nothing is ingested; the row is left for the next
+    library or series scan, whose folder walk opens the `SymlinkSkipped`
+    finding and reconciles the row. The issue rescan opens no finding
+    itself, so that walk never sees the link as already reported.
+  - **Unchanged folders.** The unchanged-folder fast path is turned off
+    for a folder whose walk meets a link that no open `SymlinkSkipped`
+    finding names yet (the open findings' paths are loaded once per
+    scan), so rows indexed through it are reconciled and the finding is
+    recorded; with the finding open the folder is skipped again as usual.
+  - **Still opened by name after a check, or with none** (closing these
+    is the next part of the work): the archive reader behind the page
+    routes, thumbnails, OCR and page hashes (`zip_lru`, which reopens the
+    path the check just proved); the issue rescan's ingest
+    (`process::ingest_one`, after its own `open_below_roots` check); the
+    scanner's ingest and hashing of walked files (`process.rs`,
+    `library/hash.rs`); the writeback read and rewrite of the archive
+    (`jobs/rewrite_sidecars.rs`); thumbnail generation
+    (`jobs/post_scan.rs`); deep validation
+    (`library/deep_validate.rs`); cover hashing (`metadata/phash.rs`); and
+    the admin archive editor (`api/archive_edit.rs`). Each would need
+    someone with write access to the library folder to swap a file for a
+    link in the window between the walk or check and the open.
+  - **Hard links** cannot be told apart from ordinary files and are
+    deliberately not refused: download tools commonly hard-link finished
+    files into a library.
 
 #### Two supported on-disk layouts
 
@@ -206,6 +353,22 @@ without per-library configuration.
   marked `skipped_unchanged=true` and its archives are still listed
   (the walker collects them while looking at mtimes) but the folder
   short-circuits during processing.
+- **What turns the skip off.** One query per plan
+  (`reconcile::series_removal_paths`, projecting `series_id`,
+  `file_path` and a restorable flag) loads, per series, the paths of its
+  soft-removed issues that are not Duplicates-page removals, plus, for a
+  soft-removed series, every path it has a row for. The walk lists every
+  archive in the folder whatever its mtime, so an unchanged folder is
+  still processed when the walk finds (a) the path of a restorable
+  soft-removed issue: the folder went away and came back with its old
+  mtime; or (b) for a removed series, an archive it has no row for at
+  all (its rows were hard-purged). Paths compare as the reconcile's
+  `seen_paths` do (`to_string_lossy` against `issue.file_path`). A
+  permanently deleted file matches nothing, so its leftover row never
+  disables the skip; a removed series whose archives are all live rows
+  or sticky Duplicates-page removals stays skipped (the reconcile's last
+  step heals the former without a walk, §4.5). The watcher-scoped scan
+  builds the same plan, so it inherits the rule.
 - **Force branch**: keep the known-series cache active, but bypass the
   folder mtime skip and list archives in every folder.
 - **Concurrency**: planning is parallelized at `scan_worker_count`
@@ -415,6 +578,33 @@ Two reconciles run after all folders complete:
   - [`mark_empty_series_removed`](../../crates/server/src/library/reconcile.rs#L310-L338)
     flips the series row to removed when the last active issue is
     gone.
+  - **Series heal, last step.** After the folder-missing sweep,
+    [`restore_library_series_with_live_issues`](../../crates/server/src/library/reconcile.rs)
+    restores every soft-removed series of the library (not only the
+    scanned ones) that holds an active, non-duplicate-removed issue:
+    it clears `removed_at` and `removal_confirmed_at` (a confirmed
+    removal too) and records a `series` / `restored` library event.
+    `series.removed_at` is only set by the scanner and only for a series
+    with no live issue, so a removed series with a live issue is always
+    an inconsistent state: a folder that came back this scan, or a
+    series an older scanner, a forced or issue scan, or a failure
+    between the issue and series writes left hidden. Running it after
+    the sweep means a series whose recorded folder is missing (the sweep
+    removed its issues) is never restored and removed again in one scan.
+    The series scan does the same for its one series after
+    `mark_empty_series_removed`; the single-issue scan, the admin
+    per-issue restore and the Duplicates-page "clear decision" undo call
+    `restore_series_with_live_issues` for the series they touched. A
+    reconcile that restored a series drops the similar-series and
+    Duplicates caches even when no issue flipped. No scan counter is
+    added (`ScanStats` is part of the API schema); the event and an
+    `info` log line carry it. Guards: `reconcile.rs::returning_folder_*`,
+    `::returning_duplicate_removed_issue_keeps_series_removed`,
+    `::hidden_series_with_live_issues_heals_and_keeps_the_skip`,
+    `::permanently_deleted_file_keeps_the_unchanged_folder_skip`,
+    `::duplicate_removed_only_series_stays_removed_and_skipped`,
+    `::removed_series_with_unknown_archives_is_processed`,
+    `::series_with_missing_folder_does_not_flap_in_one_reconcile`.
   - **Only successfully enumerated scopes authorise absence**
     (post-audit T1.1). A folder the walk could not read (permission
     denied, dead mount, I/O error) is *unknown*, not absent: it lands
@@ -465,6 +655,12 @@ library tabs show as a badge on "Removed". Guards:
 `reconcile.rs::confirm_series_cascades_to_its_issues` and
 `::bulk_confirm_selected_then_all`.
 
+The library reconcile binds its series-id lists (the scanned series, the
+empty-series check, the end-of-reconcile series heal) at most
+`reconcile::RECONCILE_ID_CHUNK` (5 000) ids per statement, so a library
+with more series than Postgres' 65 535 bind parameters still reconciles
+(guard: `reconcile.rs::library_reconcile_chunks_series_id_lists`).
+
 The narrow per-series path in
 [`reconcile::reconcile_series`](../../crates/server/src/library/reconcile.rs#L175)
 runs the same logic scoped to one series so siblings stay untouched.
@@ -510,7 +706,9 @@ the DB:
   [`list_archives_changed_since`](../../crates/server/src/library/scanner/enumerate.rs#L123)
   short-circuits the folder if its recursive max mtime ≤
   `last_scanned_at`. The folder is marked `skipped_unchanged`
-  and `process_planned_folder` returns immediately.
+  and `process_planned_folder` returns immediately, unless the walk
+  finds a restorable soft-removed issue's file, or an unknown archive in
+  a removed series' folder (§4.3).
 - **Per-file size+mtime fingerprint** — even on a folder that *did*
   change, individual archives whose size+mtime match the existing row
   bypass hash + parse and only count toward `files_unchanged`
@@ -557,7 +755,8 @@ the DB:
 - **Soft-delete + return lifecycle** — files missing on disk are
   `removed_at = now()`. The row stays so user progress, bookmarks, and
   reviews aren't lost. A returning file (same content hash, same path)
-  clears `removed_at` and `removal_confirmed_at` on the next scan
+  clears `removed_at` and `removal_confirmed_at` on the next scan, and a
+  returning folder brings its soft-removed series back with it
   ([reconcile.rs:99–164, 273–304](../../crates/server/src/library/reconcile.rs#L99-L164)).
   When every issue in a series is removed,
   [`mark_empty_series_removed`](../../crates/server/src/library/reconcile.rs#L310-L338)
@@ -567,7 +766,10 @@ the DB:
   runs daily at 04:00 UTC
   ([scheduler.rs:357–361](../../crates/server/src/jobs/scheduler.rs#L357-L361))
   and stamps `removal_confirmed_at` on rows whose `removed_at` is older
-  than `library.soft_delete_days`. The scanner itself never
+  than `library.soft_delete_days`, **but only for what is really gone**
+  (see *Removal guards* under **Removal lifecycle**: a library failing
+  `validate_library` is skipped, a file back on disk gets a series
+  rescan instead of a confirmation). The scanner itself never
   hard-deletes; that is the purge sweep's job (next bullet).
 - **Hard-purge cron** (roadmap WP-3.5) —
   [`jobs::hard_purge`](../../crates/server/src/jobs/hard_purge.rs) runs
@@ -576,8 +778,8 @@ the DB:
   hard-`DELETE`s issues whose `removal_confirmed_at` is older than
   `library.soft_delete_days × library.hard_purge_multiplier` days
   (global setting, default `2`, `0` disables; window floor 1 day; at
-  most 5 000 issues per library per run). See **Removal lifecycle**
-  below.
+  most 5 000 issues per library per run), after the same disk guards as
+  the confirm sweep. See **Removal lifecycle** below.
 - **`series.json` re-read every scan** — there is no caching layer;
   changes to the sidecar take effect on the next pass through the
   folder ([mod.rs:1479](../../crates/server/src/library/scanner/mod.rs#L1479)).
@@ -603,7 +805,7 @@ the DB:
 
 | # | Mechanism | Where | Skip predicate | Bypass |
 |---|---|---|---|---|
-| 1 | Folder mtime fast-path | [build_library_scan_plan mod.rs:707–744](../../crates/server/src/library/scanner/mod.rs#L707-L744), [enumerate.rs:123–161](../../crates/server/src/library/scanner/enumerate.rs#L123-L161) | `force=false` ∧ recursive max mtime ≤ `series.last_scanned_at` → mark folder `skipped_unchanged`, call `health.touch_folder`, return `processed=false`. | `?force=true` on `POST /libraries/:slug/scan`. |
+| 1 | Folder mtime fast-path | [build_library_scan_plan mod.rs:707–744](../../crates/server/src/library/scanner/mod.rs#L707-L744), [enumerate.rs:123–161](../../crates/server/src/library/scanner/enumerate.rs#L123-L161) | `force=false` ∧ recursive max mtime ≤ `series.last_scanned_at` ∧ no walked archive is a restorable soft-removed issue's path ∧ (series not removed ∨ every walked archive is a known row of it) → mark folder `skipped_unchanged`, call `health.touch_folder`, return `processed=false`. | `?force=true` on `POST /libraries/:slug/scan`. |
 | 2 | Per-file size+mtime fingerprint | [process.rs:164–175](../../crates/server/src/library/scanner/process.rs#L164-L175), [mod.rs:1543–1554](../../crates/server/src/library/scanner/mod.rs#L1543-L1554) | `force=false` ∧ existing row's `(file_size, file_mtime)` match disk ∧ no `comicinfo_count` backfill needed → `files_unchanged++`, `health.touch_file`, skip hash + parse. | Same `force=true` from any tier; default `true` for manual series/issue scans, `false` for scheduled library scans. |
 | 3 | `comicinfo_count` backfill override | [process.rs:540–556](../../crates/server/src/library/scanner/process.rs#L540-L556) | When a row lacks both `comicinfo_count` and a raw `count` in `comic_info_raw`, treat the row as stale and force a re-ingest *even when* size+mtime match. | Inverts (1) — there is no bypass; the override fires automatically. |
 | 4 | Thumbnail invalidation skip | [process.rs:339, 411–428](../../crates/server/src/library/scanner/process.rs#L339) | On the update path, when `row_matches_file(row, size, mtime)` is true, skip clearing `thumbnails_generated_at` and skip wiping the strip dir. | None — this is always desired. |
@@ -727,6 +929,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `FileAtRoot` | warning | Archive sits at the library root, not inside a series folder. | [enumerate Phase 2 → mod.rs:1138](../../crates/server/src/library/scanner/mod.rs#L1138) | `{ path }` | Move into a series folder. |
 | `EmptyFolder` | warning | Direct child of root has no entries. | [enumerate Phase 2 → mod.rs:1141](../../crates/server/src/library/scanner/mod.rs#L1141) | `{ path }` | Add files or remove the folder. |
 | `AmbiguousFolder` | warning | Folder violates the two-layouts contract: archives at depth-1 *and* non-allowlist archive-bearing subdirs; or no archives at depth-1 with only allowlist subdirs; or 3-deep nesting; or a stray archive directly inside a publisher folder. The subtree is skipped — better than guessing. | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path, reason, skipped_archives, skipped_archive_count }` — `reason` carries an actionable hint that adapts to the violation shape; `skipped_archives` is a sorted preview (≤ `enumerate::AMBIGUOUS_PREVIEW_LIMIT` = 20) of the skipped archives relative to `path`, `skipped_archive_count` the exact total (WP-3.4). Rows written before WP-3.4 lack both until the next full scan. | Fix the on-disk layout per §4.2 "Two supported on-disk layouts". |
+| `SymlinkSkipped` | warning | A symbolic link below the library root (folder or file, wherever it points). Links are never followed, so nothing behind it is indexed; a series indexed through one before is reported missing and soft-removed. One INFO log line per link. Resolves on the next full scan after the link is removed or replaced by the real folder / file. | [enumerate.rs](../../crates/server/src/library/scanner/enumerate.rs) (`EnumerationResult::symlinks`, `ArchiveWalk::symlinks`) → Phase 2 / `process_planned_folder` in [mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ path }` | Put the real folder or file in the library (or bind-mount it there), or add its location as its own library. |
 | `OrphanedSeriesJson` | warning | A folder with no archives still holds a `series.json` — the sidecar outlived its archives. Reported *instead of* `EmptyFolder` for that folder (root children and folders under a publisher container). | [enumerate Phase 2 → mod.rs](../../crates/server/src/library/scanner/mod.rs) | `{ folder }` | Restore the archives, or delete the folder. |
 | `FolderNameMismatch` | warning | The series folder's name disagrees with the dominant ComicInfo `<Series>` of its non-special archives (spec §7.1 — ComicInfo still wins for the series name). See "Folder consistency checks" below for the normalization that keeps this quiet on healthy libraries. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs), called from `process_planned_folder` after ingest | `{ folder, series_id, comic_info_series, files }` | Rename the folder, or re-tag the archives if the folder is right. |
 | `MixedSeriesInFolder` | warning | Non-special archives in one series folder carry more than one distinct `<Series>` (spec §7.2). All files stay attributed to the folder's series. | [folder_checks.rs](../../crates/server/src/library/scanner/folder_checks.rs) | `{ folder, series_id, series_values: [{ series, files, example }], distinct_values }` — values sorted most-files-first, capped at `MIXED_SERIES_VALUES_LIMIT` = 10; `example` is one file (relative to the folder) carrying the value. | Move the stray archives into their own series folder. |
@@ -971,10 +1174,12 @@ waiting for the scheduled refresh window.
 - `POST /series/{series_slug}/issues/{issue_slug}/restore` — reverse the soft-delete (file must be back)
 - `POST /series/{series_slug}/issues/{issue_slug}/confirm-removal` — admin confirmation now (skip the wait)
 - The auto-confirm sweep at 04:00 UTC stamps `removal_confirmed_at` on
-  rows older than `library.soft_delete_days`
-  ([scheduler.rs:357](../../crates/server/src/jobs/scheduler.rs#L357)).
+  rows older than `library.soft_delete_days` whose files are really gone
+  ([scheduler.rs](../../crates/server/src/jobs/scheduler.rs),
+  `register_reconcile_sweep`; guards under **Removal lifecycle**).
 - A returning file (same content hash, same path, file back on disk) is
-  auto-restored by the next scan
+  auto-restored by the next scan, and so is its soft-removed (or
+  confirmed-removed) series once it holds a live issue again
   ([reconcile.rs:62–68, 198–204](../../crates/server/src/library/reconcile.rs#L62-L68)).
   **Exception:** a copy soft-removed from the Duplicates page stays
   removed although its file is on disk — its
@@ -1033,15 +1238,120 @@ picker). Backed by [`api/duplicates.rs`](../../crates/server/src/api/duplicates.
 | State | Columns | Reached by | Reversible? |
 |---|---|---|---|
 | Active | `removed_at IS NULL` | scan | — |
-| Soft-deleted | `removed_at` set, `removal_confirmed_at` NULL | reconcile: file missing | yes — file returns (auto) or admin restore |
-| Confirmed | both set | 04:00 auto-confirm after `soft_delete_days`, or admin `confirm-removal` | yes — a returning file still restores the row |
-| Purged | row gone | 04:15 hard-purge once confirmed for `soft_delete_days × library.hard_purge_multiplier` days | **no** |
+| Soft-deleted | `removed_at` set, `removal_confirmed_at` NULL | reconcile: file missing | yes — file returns (auto) or admin restore; the series follows its first live issue |
+| Confirmed | both set | 04:00 auto-confirm after `soft_delete_days` (file absent, library root valid), or admin `confirm-removal` | yes — a returning file still restores the row, and its series |
+| Purged | row gone | 04:15 hard-purge once confirmed for `soft_delete_days × library.hard_purge_multiplier` days (file still absent, library root valid) | **no** |
 
 With the defaults (`soft_delete_days = 30`, multiplier `2`) a missing
 file's row survives ~90 days: 30 pending, then 60 confirmed.
 
+**Removal guards (both automatic steps look at the disk).** Neither the
+04:00 confirm sweep ([`reconcile::auto_confirm_sweep`](../../crates/server/src/library/reconcile.rs))
+nor the 04:15 purge trusts the database alone, so a library root that was
+away for a while (unmounted share, renamed mount) cannot march its rows to
+deletion:
+
+- **Library gate.** Each sweep runs the scanner's own `validate_library`
+  (root missing, not a directory, unreadable, empty, equal to the data
+  path, overlapping another library) per library first. A library that
+  fails is skipped whole for that run: one `WARN` line and one
+  `library_events` row (`category = issue`, `action = skipped`, `detail`
+  names the sweep and the error). Nothing in it is confirmed or purged
+  until its root validates again.
+- **Per-row stat, three answers.** Candidate paths are stat-ed on the
+  blocking pool, 500 per `spawn_blocking` call. "Present" means exactly
+  what a scan would index, one shared helper
+  ([`enumerate::archive_presence`](../../crates/server/src/library/scanner/enumerate.rs),
+  and `folder_presence` for series folders): the stored `issue.file_path`
+  lies in a folder below the library root, has a recognised archive
+  extension, neither it nor a folder between the root and it is ignored
+  (built-in junk names and the library's `ignore_globs`), it is a
+  **regular file** (not a symlink, FIFO, socket, device or directory: the
+  scan walk runs with `follow_links(false)` and keeps only regular files),
+  and its canonical path stays inside the canonical root. **Absent** is
+  only a not-found class of error (`NotFound`, `NotADirectory`) on the
+  file or a path component, or a path a scan would never index. Every
+  other error (permission denied, I/O error, stale or disconnected mount)
+  and, for a folder, any unreadable directory in the walk is **Unknown**:
+  as in the scan reconcile's `unreadable_folders`, unknown is never gone.
+  Unknown is treated like present for the decision (not confirmed, not
+  deleted, and the purge leaves its confirmation alone) but gets no
+  rescan; it is counted separately (`kept_unknown`, one WARN per library,
+  and in the summary event).
+- **Root emptied mid-run.** `validate_library` runs once per library, so
+  after every stat batch the canonical root must still resolve and hold at
+  least one entry; if a share unmounted mid-run and left an empty mount
+  point, the batch fails (`RootVanished`) and the library is aborted for
+  the run, nothing from that batch confirmed or deleted. The purge also
+  re-runs `validate_library` before every DELETE chunk.
+- **Symbolic links.** The scanner never follows a link below the root
+  (§4.2), and the guards agree: a path through a linked folder that
+  points out of the root reads absent, and a linked series folder reads
+  absent to `folder_presence` (its walk does not follow the walked
+  folder's own link). The one remaining difference fails safe: a stored
+  archive path through a linked folder that points *inside* the root
+  reads present to `archive_presence` (its canonical path is in the
+  root), so that row stays removed but unconfirmed, like a folder whose
+  archives never ingest.
+- **Confirm sweep.** Candidates (soft-removed past the window,
+  unconfirmed) are read oldest first in keyset pages of 500, at most
+  20 000 issue rows and 20 000 series rows per library per run
+  (`CONFIRM_MAX_ISSUE_ROWS_PER_LIBRARY_PER_RUN`,
+  `CONFIRM_MAX_SERIES_ROWS_PER_LIBRARY_PER_RUN`). Rows kept as present or
+  unknown are re-examined every run; past the bound the sweep simply makes
+  no further progress that run (the safe direction) and continues the next
+  day. A present file is **not** confirmed and its series is rescanned;
+  an absent file is confirmed as before. A removed series is not
+  confirmed while one of its issues was just kept, or while its folder
+  holds (or may hold) an indexable archive, its Duplicates-page removals
+  excepted.
+- **Purge.** A candidate issue whose file is present is **not** deleted:
+  its `removal_confirmed_at` is cleared (the confirm sweep re-evaluates
+  it) and its series is rescanned. An unknown one is kept as it is. A
+  candidate series (no issue rows left) whose folder holds an indexable
+  archive again is kept, unconfirmed and rescanned the same way, so a
+  returning folder is never purged out from under the scan that will
+  re-ingest it. An empty or missing folder is purged as before. The purge
+  reads at most 5 000 candidate issues per library per run, oldest
+  confirmation first; unknown rows stay confirmed, so a backlog of them
+  holds newer rows back (again the safe direction).
+- **Rescans** go through `JobRuntime::coalesce_scoped_scan` (the admin
+  "Scan series" path, not forced): one queued `scan_runs` row per series,
+  coalesced into a scoped scan already in flight. A series scanned within
+  `RESCAN_THROTTLE_DAYS` (6) is not rescanned again, since a scan that
+  recent did not restore it, but its row is still kept. Above
+  `MAX_SERIES_RESCANS_PER_RUN` (50) series in one library and run, one
+  library scan is queued through `JobRuntime::coalesce_scan` instead (a
+  normal library scan processes every folder that holds a restorable
+  file). The normal restore path does the rest. Kept rows are summarised
+  per library and sweep in one `issue` / `skipped` event (present and
+  unknown counts, rescans, up to 50 ids each).
+- **Duplicates-page removals** (`issue_duplicate_decision`, `remove`) are
+  deliberate and their files are on disk by definition, so both sweeps
+  confirm / purge them without the stat, as before.
+- **Admin actions.** The Removed tab's confirm buttons stay unguarded
+  (the admin asked for it); there is no admin "purge now", so every hard
+  delete goes through the guarded job, which also un-confirms an
+  admin-confirmed row whose file turns out to be present.
+- A folder that keeps an indexable archive the scanner never ingests
+  (only malformed or encrypted archives, say) keeps its series removed
+  but unconfirmed, with at most one rescan every six days: the guards fail
+  safe.
+  Guards: `tests/reconcile.rs::auto_confirm_*`,
+  `::probe_batch_refuses_an_empty_root`,
+  `::many_series_to_rescan_queue_one_library_scan`,
+  `::recently_scanned_series_is_not_rescanned`,
+  `::duplicate_removal_is_confirmed_and_purged_without_a_stat`, and
+  `tests/hard_purge.rs::purge_keeps_rows_whose_files_are_back`,
+  `::purge_keeps_rows_it_cannot_read`,
+  `::purge_skips_a_library_whose_root_is_missing`,
+  `::empty_root_is_skipped_by_both_sweeps`.
+
 The purge ([`jobs/hard_purge.rs`](../../crates/server/src/jobs/hard_purge.rs)):
 
+- **Only what is really gone.** See *Removal guards* above: a library
+  failing `validate_library` is skipped, and a row whose file is on disk
+  again is kept, un-confirmed and rescanned.
 - **Only confirmed rows.** The candidate `SELECT` and the `DELETE` both
   carry `removed_at IS NOT NULL AND removal_confirmed_at IS NOT NULL AND
   removal_confirmed_at < cutoff`, so a row restored between the two

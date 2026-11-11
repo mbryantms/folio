@@ -315,3 +315,45 @@ async fn revoke_one_clears_current_marks_only_other_session() {
         "remaining session is not the caller's"
     );
 }
+
+/// A session older than the absolute maximum age (90 d by default) can no
+/// longer refresh, so the list hides it even while its sliding expiry is
+/// still ahead.
+#[tokio::test]
+async fn list_hides_sessions_past_the_absolute_age() {
+    use sea_orm::ConnectionTrait;
+    let app = TestApp::spawn().await;
+    let reg = register(&app, "list-aged@example.com", "correctly-horse-battery").await;
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    let auth = Auth::from_response(&reg);
+    let second = login(&app, "list-aged@example.com", "correctly-horse-battery").await;
+    let other = Auth::from_response(&second);
+
+    // Age the second session past 90 days; its expires_at stays ahead.
+    let state = app.state();
+    let aged = entity::auth_session::Entity::find()
+        .filter(
+            entity::auth_session::Column::RefreshTokenHash
+                .eq(server::auth::cookies::sha256_hex(&other.refresh)),
+        )
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("second session");
+    state
+        .db
+        .execute_unprepared(&format!(
+            "UPDATE auth_sessions SET created_at = now() - interval '91 days' WHERE id = '{}'",
+            aged.id
+        ))
+        .await
+        .unwrap();
+
+    let resp = list_sessions(&app, &auth).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let arr = body["sessions"].as_array().unwrap();
+    assert_eq!(arr.len(), 1, "the over-age session is hidden: {body}");
+    assert_eq!(arr[0]["current"].as_bool(), Some(true));
+    assert_ne!(arr[0]["id"].as_str().unwrap(), aged.id.to_string());
+}

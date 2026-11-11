@@ -57,6 +57,7 @@ import {
 } from "@/lib/api/mutations";
 import { useCollections, useIssueMarkers, useMe } from "@/lib/api/queries";
 import { TOAST } from "@/lib/api/toast-strings";
+import { issueLabel } from "@/lib/format";
 import { showUndoToast } from "@/lib/ui/undo-toast";
 import { issueUrl, readerUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
@@ -181,12 +182,11 @@ export function IssueSettingsMenu({
           }),
       });
     } else {
-      createMarker.mutate(
-        { issue_id: issue.id, page_index: 0, kind: "bookmark" },
-        {
-          onSuccess: () => toast.success("Bookmarked"),
-        },
-      );
+      createMarker.mutate({
+        issue_id: issue.id,
+        page_index: 0,
+        kind: "bookmark",
+      });
     }
   };
 
@@ -228,7 +228,7 @@ export function IssueSettingsMenu({
     }
   };
 
-  const issueLabel = issue.title ?? `Issue ${issue.number ?? ""}`.trim();
+  const label = issueLabel(issue);
 
   const addToReadingList = () => {
     if (!wtrId) {
@@ -240,11 +240,11 @@ export function IssueSettingsMenu({
       {
         onSuccess: (entry) => {
           if (!entry) {
-            toast.success(`Added "${issueLabel}" to Want to Read`);
+            toast.success(`Added "${label}" to Want to Read`);
             return;
           }
           showUndoToast({
-            message: `Added "${issueLabel}" to Want to Read`,
+            message: `Added "${label}" to Want to Read`,
             restoredMessage: "Removed from Want to Read",
             onUndo: () => removeFromWtr.mutateAsync({ entryId: entry.id }),
           });
@@ -256,7 +256,7 @@ export function IssueSettingsMenu({
   const collectionTarget: AddToCollectionTarget = {
     entry_kind: "issue",
     ref_id: issue.id,
-    label: issueLabel,
+    label,
   };
 
   const finishedPage = Math.max(0, (issue.page_count ?? 1) - 1);
@@ -381,9 +381,7 @@ export function IssueSettingsMenu({
               Add to collection…
             </DropdownMenuItem>
             <DropdownMenuItem
-              onSelect={() =>
-                void share.shareOrCopy(issueUrl(issue), issueLabel)
-              }
+              onSelect={() => void share.shareOrCopy(issueUrl(issue), label)}
             >
               <Link2 className="mr-2 size-4" />
               {share.label}

@@ -29,6 +29,18 @@ export const TOAST = {
   PAGE_RENAMED: "Page renamed",
   PAGE_DELETED: "Page deleted",
   PAGE_UPDATED: "Page updated",
+
+  /** Connectivity notices (`QueryProvider`). Only reading progress and
+   *  reading-session activity are queued on the device (the outbox in
+   *  `lib/pwa/outbox.ts`); every other write needs the server, so the
+   *  copy promises nothing more. */
+  OFFLINE:
+    "You’re offline. Reading progress is kept on this device and will sync when you reconnect. Other changes may not save.",
+  SERVER_UNREACHABLE:
+    "Folio can’t reach your server. Reading progress is kept on this device and will sync when it’s back. Other changes may not save.",
+  /** One notice when a queue that could not be delivered has drained
+   *  (`OutboxReplayer`); never per item or per ordinary write. */
+  PROGRESS_SYNCED: "Reading progress synced",
 } as const;
 
 /**

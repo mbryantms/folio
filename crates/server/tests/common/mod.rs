@@ -577,6 +577,11 @@ pub struct SpawnOpts {
     /// and sets `auth_mode = Both` so the OIDC handlers respond. Used by
     /// `tests/oidc.rs` with a wiremock mock OP.
     pub oidc_issuer: Option<String>,
+    /// Leave the sign-in mode unchosen (no `COMIC_AUTH_MODE`, no
+    /// `auth.mode` row) so `Config::resolve_auth` derives it, as on a
+    /// fresh install. Default `false`: the harness chooses `local` (or
+    /// `both` with `oidc_issuer`) explicitly.
+    pub auth_mode_unset: bool,
     /// Mirrors `COMIC_OIDC_TRUST_UNVERIFIED_EMAIL`.
     pub oidc_trust_unverified_email: bool,
     /// Mirrors `COMIC_OIDC_LINK_LOCAL_BY_VERIFIED_EMAIL` — auto-link an OIDC
@@ -630,9 +635,24 @@ pub struct SpawnOpts {
     /// pool. Off by default (noise); `perf_regressions.rs` turns it on —
     /// its ≤N-queries guards count those events.
     pub sqlx_logging: bool,
+    /// `COMIC_TRUSTED_PROXIES` (CIDR list). Default: none trusted.
+    pub trusted_proxies: Option<String>,
+    /// Override `Config::filter_statement_timeout` (default 5 s) so a test
+    /// can drive a saved-view filter query into the time box quickly.
+    pub filter_statement_timeout: Option<std::time::Duration>,
 }
 
 impl TestApp {
+    /// Spawn with `cidrs` as the trusted reverse proxies, so a request whose
+    /// peer (`ConnectInfo`) is in the list has its forwarding headers read.
+    pub async fn spawn_with_trusted_proxies(cidrs: &str) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            trusted_proxies: Some(cidrs.to_owned()),
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
     /// Spawn mid-pepper-rotation: `previous` is loaded as
     /// `secrets/pepper.previous` alongside a freshly generated current pepper.
     pub async fn spawn_with_previous_pepper(previous: [u8; 32]) -> Self {
@@ -658,6 +678,28 @@ impl TestApp {
 
     pub async fn spawn() -> Self {
         Self::spawn_inner(SpawnOpts::default()).await
+    }
+
+    /// Spawn the way a fresh install with a minimal env boots: no sign-in
+    /// mode chosen and no OIDC settings, so the effective mode is resolved
+    /// by `Config::resolve_auth` instead of being set by the harness.
+    pub async fn spawn_with_default_auth_mode() -> Self {
+        Self::spawn_inner(SpawnOpts {
+            auth_mode_unset: true,
+            ..SpawnOpts::default()
+        })
+        .await
+    }
+
+    /// [`spawn`] with a short saved-view filter statement timeout, so a
+    /// test can push a filter query into the time box without a slow
+    /// query (`saved_views_bounds.rs`).
+    pub async fn spawn_with_filter_statement_timeout(timeout: std::time::Duration) -> Self {
+        Self::spawn_inner(SpawnOpts {
+            filter_statement_timeout: Some(timeout),
+            ..SpawnOpts::default()
+        })
+        .await
     }
 
     /// [`spawn`] with sqlx statement logging left on, so a tracing layer
@@ -959,7 +1001,7 @@ impl TestApp {
         }
         let secrets = Secrets::load(data_dir.path()).expect("load secrets");
 
-        let cfg = Config {
+        let mut cfg = Config {
             database_url: db_url.clone(),
             redis_url: redis_url.clone(),
             library_path: opts
@@ -972,12 +1014,17 @@ impl TestApp {
             public_url: "http://localhost:8080".into(),
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             log_level: "warn".into(),
-            trusted_proxies: String::new(),
-            auth_mode: if opts.oidc_issuer.is_some() {
-                AuthMode::Both
+            trusted_proxies: opts.trusted_proxies.clone().unwrap_or_default(),
+            auth_mode_choice: if opts.auth_mode_unset {
+                None
+            } else if opts.oidc_issuer.is_some() {
+                Some(AuthMode::Both)
             } else {
-                AuthMode::Local
+                Some(AuthMode::Local)
             },
+            // Placeholder; `resolve_auth` below derives the effective mode
+            // exactly as `Config::load` does in production.
+            auth_mode: AuthMode::Local,
             // Defaults to a guaranteed-dead address so any test that
             // accidentally triggers the SSR fallback fails loudly. Real
             // fallback coverage lives in `tests/fallback_proxy.rs`,
@@ -1002,6 +1049,7 @@ impl TestApp {
             local_registration_open: true,
             jwt_access_ttl: "15m".into(),
             jwt_refresh_ttl: "30d".into(),
+            session_max_age: "90d".into(),
             rate_limit_enabled: true,
             check_upstream_releases: true,
             otlp_endpoint: None,
@@ -1026,6 +1074,9 @@ impl TestApp {
             // concurrent test processes) hashing dominated CI wall-clock.
             // Production cost is pinned by `auth::password` unit tests.
             password_hash_cost: server::auth::password::HashCost::TEST,
+            filter_statement_timeout: opts
+                .filter_statement_timeout
+                .unwrap_or(server::views::timebox::FILTER_STATEMENT_TIMEOUT),
             metrics_open: false,
             // progress-writeback-2.0 M4: OPDS client compat mode.
             // Default off — TestApp::spawn() preserves Folio identity;
@@ -1090,6 +1141,7 @@ impl TestApp {
             // retention tests flip it via `replace_cfg`.
             audit_log_retention_days: 0,
         };
+        cfg.resolve_auth().expect("test config auth mode resolves");
 
         let jobs = JobRuntime::new(&redis_url, db.clone())
             .await

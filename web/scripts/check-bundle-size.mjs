@@ -68,10 +68,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(__dirname, "..");
 const ROUTE_DIR = "[locale]/read/[seriesSlug]/[issueSlug]";
 const ROUTE_LABEL = "/[locale]/read/[seriesSlug]/[issueSlug]";
-/** Gate ceiling — regressions above this fail CI. Re-based on 2026-11-04
- *  (Folio Flair 1.0: 161.47 KB → 170 KB, tighter than the usual +10%); the
- *  measurement table and reasoning live in docs/dev/pwa-performance.md. */
-const BUDGET_KB = 170;
+/** Gate ceiling — regressions above this fail CI. Lowered on 2026-11-10
+ *  from 170 KB: measured 148.58 KB after moving the drag-turn motion, the
+ *  drag peek, the health toast and the reader's mutations-barrel import
+ *  out of first load (165.43 KB before), so measured + ~3 KB keeps the
+ *  gain from eroding silently. The measurement table and reasoning live in
+ *  docs/dev/pwa-performance.md. */
+const BUDGET_KB = 152;
 /** WP-4.4 target. Exceeding it (while still under the ceiling) prints a
  *  warning so creep stays visible in every build log. */
 const BUDGET_TARGET_KB = 120;

@@ -23,6 +23,7 @@ import { ChevronDown } from "lucide-react";
 
 import { Cover } from "@/components/Cover";
 import { Button } from "@/components/ui/button";
+import { issueLabel } from "@/lib/format";
 import type { NextUpView } from "@/lib/api/types";
 import { nextUpListSubtitle } from "@/lib/reader/list-context";
 import type { WrapUpProps } from "@/lib/reader/wrap-up";
@@ -36,6 +37,7 @@ export function WebtoonEndFooter({
   onRetry,
   onReadNext,
   exitUrl,
+  onExit,
   wrapUp,
 }: {
   data: NextUpView | undefined;
@@ -45,6 +47,9 @@ export function WebtoonEndFooter({
   onRetry?: () => void;
   onReadNext: () => void;
   exitUrl: string;
+  /** Leaves the reader (see `ReaderChrome`); the links keep `exitUrl` as
+   *  their href for new-tab clicks. Omitted: the links navigate to it. */
+  onExit?: () => void;
   /** Rating / closing note / markers for the finished issue; omitted →
    *  the footer renders as before. */
   wrapUp?: WrapUpProps;
@@ -53,12 +58,16 @@ export function WebtoonEndFooter({
   const target = data?.target;
   const source = data?.source ?? "none";
   const failed = isError && !data;
-  const heading =
-    target?.title ??
-    (target?.series_name && target?.number
-      ? `${target.series_name} #${target.number}`
-      : (target?.series_name ?? ""));
+  const heading = target ? issueLabel(target) : "";
   const listSubtitle = nextUpListSubtitle(data);
+  // A plain click on an exit link leaves the reader through `onExit`
+  // instead of pushing `exitUrl` (audit U-02).
+  const onExitNavigate = onExit
+    ? (e: { preventDefault: () => void }) => {
+        e.preventDefault();
+        onExit();
+      }
+    : undefined;
 
   return (
     <footer className="relative z-20 mx-auto w-full max-w-sm px-6 py-16 text-center">
@@ -84,7 +93,9 @@ export function WebtoonEndFooter({
             Read next
           </Button>
           <Button asChild variant="outline" className="mt-2 w-full">
-            <Link href={exitUrl}>Back to issue</Link>
+            <Link href={exitUrl} onNavigate={onExitNavigate}>
+              Exit reader
+            </Link>
           </Button>
         </>
       ) : failed ? (
@@ -99,7 +110,9 @@ export function WebtoonEndFooter({
             Retry
           </Button>
           <Button asChild variant="outline" className="mt-2 w-full">
-            <Link href={exitUrl}>Exit reader</Link>
+            <Link href={exitUrl} onNavigate={onExitNavigate}>
+              Exit reader
+            </Link>
           </Button>
         </>
       ) : isLoading && !data ? (
@@ -116,7 +129,9 @@ export function WebtoonEndFooter({
             That was the last issue.
           </p>
           <Button asChild variant="outline" className="mt-4 w-full">
-            <Link href={exitUrl}>Exit reader</Link>
+            <Link href={exitUrl} onNavigate={onExitNavigate}>
+              Exit reader
+            </Link>
           </Button>
         </>
       )}

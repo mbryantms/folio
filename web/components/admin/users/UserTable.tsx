@@ -11,23 +11,28 @@ import { FilterPill } from "@/components/folio/filter-pill";
 import { Input } from "@/components/ui/input";
 import { UserRowsSkeleton } from "@/components/skeletons/AdminShapes";
 import { CreateUserDialog } from "@/components/admin/users/CreateUserDialog";
+import { StatusBadge } from "@/components/admin/StatusBadge";
+import { userStateTone } from "@/components/admin/status-tones";
 import { useUserList, type UserListFilters } from "@/lib/api/queries";
 import type { AdminUserView, UserRole, UserState } from "@/lib/api/types";
 
 type RoleFilter = "all" | UserRole;
 type StateFilter = "all" | UserState;
 
-function roleVariant(role: UserRole): "default" | "secondary" {
-  return role === "admin" ? "default" : "secondary";
+/** Role is a category, not a status: admin gets the outlined badge so it
+ *  stays distinguishable without borrowing the brand accent, which reads
+ *  as an alert on a page of ordinary rows. */
+function roleVariant(role: UserRole): "outline" | "secondary" {
+  return role === "admin" ? "outline" : "secondary";
 }
 
-function stateVariant(
-  state: UserState,
-): "default" | "secondary" | "destructive" {
-  if (state === "disabled") return "destructive";
-  if (state === "pending_verification") return "secondary";
-  return "default";
-}
+/** Column priority below `lg` (tablet and phone): last login and the
+ *  library count are on the user's own page; email, name, role and state
+ *  carry the row. */
+const USER_COLUMN_CLASSES = {
+  last_login_at: "max-lg:hidden",
+  library_count: "max-lg:hidden",
+};
 
 export function UserTable() {
   const [role, setRole] = React.useState<RoleFilter>("all");
@@ -105,12 +110,12 @@ export function UserTable() {
         accessorKey: "state",
         header: "State",
         cell: ({ row }) => (
-          <Badge
-            variant={stateVariant(row.original.state)}
+          <StatusBadge
+            tone={userStateTone(row.original.state)}
             className="uppercase"
           >
             {row.original.state.replace("_", " ")}
-          </Badge>
+          </StatusBadge>
         ),
       },
       {
@@ -201,6 +206,7 @@ export function UserTable() {
       ) : (
         <DataTable
           columns={columns}
+          columnClassNames={USER_COLUMN_CLASSES}
           data={data?.items ?? []}
           emptyMessage="No users match the current filters."
         />

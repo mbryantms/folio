@@ -89,25 +89,22 @@ export function EditFilterViewSheet({
               initial={initial}
               onCancel={() => onOpenChange(false)}
               onSave={async (state) => {
-                try {
-                  await update.mutateAsync({
-                    name: state.name,
-                    description: state.description.trim() || null,
-                    filter: {
-                      match_mode: state.matchMode,
-                      conditions: state.conditions,
-                    },
-                    sort_field: state.sortField,
-                    sort_order: state.sortOrder,
-                    result_limit: state.resultLimit,
-                  });
-                  qc.invalidateQueries({ queryKey: ["saved-views"] });
-                  onOpenChange(false);
-                } catch {
-                  // useApiMutation already surfaced the error toast — keep
-                  // the catch so the sheet stays open and the user can
-                  // adjust their input and retry.
-                }
+                // A rejection propagates to the builder, which binds a
+                // 422's field errors inline and keeps the sheet open
+                // (useApiMutation already toasted).
+                await update.mutateAsync({
+                  name: state.name,
+                  description: state.description.trim() || null,
+                  filter: {
+                    match_mode: state.matchMode,
+                    conditions: state.conditions,
+                  },
+                  sort_field: state.sortField,
+                  sort_order: state.sortOrder,
+                  result_limit: state.resultLimit,
+                });
+                qc.invalidateQueries({ queryKey: ["saved-views"] });
+                onOpenChange(false);
               }}
             />
           </div>

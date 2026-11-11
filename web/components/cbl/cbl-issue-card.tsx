@@ -20,6 +20,7 @@ import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { Badge } from "@/components/ui/badge";
 import { useUpsertIssueProgress } from "@/lib/api/mutations";
 import { useUserProgress } from "@/lib/api/queries";
+import { issueLabel } from "@/lib/format";
 import { issueCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { cn } from "@/lib/utils";
 import type { CblEntryView, IssueSummaryView } from "@/lib/api/types";
@@ -80,7 +81,10 @@ export function CblIssueCard({
   const collectionActions = useCoverMenuCollectionActions({
     entry_kind: "issue",
     ref_id: issue?.id ?? "",
-    label: `${heading} ${numberLabel}`,
+    label: issueLabel(
+      { title: issue?.title, number: entry.issue_number },
+      { seriesName: entry.series_name, withNumber: true },
+    ),
   });
   const menuActions: CoverMenuAction[] =
     issue && issue.state === "active"
@@ -210,6 +214,7 @@ export function CblIssueCard({
        *  definition have no `issue` and so never show this check. */}
       {issue && issue.state === "active" && finished && (
         <span
+          role="img"
           aria-label="Read"
           title="Read"
           className="bg-primary/90 text-primary-foreground absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 backdrop-blur dark:ring-white/10"

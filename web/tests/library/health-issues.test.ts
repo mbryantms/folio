@@ -33,8 +33,11 @@ describe("archive-container kinds", () => {
     );
   });
 
-  it("distinguishes a corrupt archive from a malformed ComicInfo", () => {
+  it("distinguishes a malformed archive from a malformed ComicInfo", () => {
     expect(healthKindLabel("MalformedArchive")).toMatch(/archive/i);
+    // The API names the kind "malformed"; the row also covers refused
+    // files, so the copy never claims corruption.
+    expect(healthKindLabel("MalformedArchive")).not.toMatch(/corrupt/i);
     expect(healthKindLabel("MalformedArchive")).not.toMatch(/ComicInfo/);
     expect(healthKindHint("MalformedArchive")).toMatch(/Replace/);
     expect(
@@ -209,5 +212,19 @@ describe("DuplicateExternalId", () => {
       "/lib/X-Men Blue (2017)/X-Men Blue 033 (digital).cbz — ComicVine 679423 already belongs to another issue",
     );
     expect(healthPayloadHint("MissingComicInfo", old)).toBeUndefined();
+  });
+});
+
+describe("SymlinkSkipped", () => {
+  it("labels the kind and summarizes the link path", () => {
+    const payload = {
+      kind: "symlink_skipped",
+      data: { path: "/lib/Marvel/Linked Series" },
+    };
+    expect(healthKindLabel("SymlinkSkipped")).toBe("Symbolic link skipped");
+    expect(healthKindHint("SymlinkSkipped")).toMatch(/never follows/);
+    expect(healthPayloadSummary("SymlinkSkipped", payload)).toBe(
+      "/lib/Marvel/Linked Series",
+    );
   });
 });

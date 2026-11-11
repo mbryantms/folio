@@ -84,7 +84,9 @@ export function SeriesSuggestedRelationships({
 }) {
   const query = useSeriesRelationshipSuggestions(seriesSlug, true);
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
-  if (query.isLoading || query.error || items.length === 0) return null;
+  // Optional enhancement: a failed first page hides the strip; a failed
+  // "Show more" keeps the loaded chips and the button doubles as retry.
+  if (query.isLoading || items.length === 0) return null;
 
   return (
     <div className="space-y-2" data-testid="suggested-relationships">
