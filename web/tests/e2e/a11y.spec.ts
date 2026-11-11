@@ -338,6 +338,16 @@ const ROUTES: Route[] = [
   { path: "/admin/findings", label: "admin, library events" },
   { path: "/admin/users", label: "admin, users" },
   { path: (ids) => `/admin/users/${ids.userId}`, label: "admin, user detail" },
+  {
+    // The age-cap picker, the Hide unrated switch and the per-library
+    // "what this hides" line (U-09) live on this tab.
+    path: (ids) => `/admin/users/${ids.userId}`,
+    label: "admin, user library access",
+    prepare: async (page) => {
+      await page.getByRole("tab", { name: "Library access" }).click();
+      await expect(page.getByRole("switch").first()).toBeVisible();
+    },
+  },
   { path: "/admin/stats", label: "admin, stats" },
   { path: "/admin/metadata", label: "admin, metadata" },
   { path: "/admin/duplicates", label: "admin, duplicates" },

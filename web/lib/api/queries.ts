@@ -123,6 +123,7 @@ import type {
   EntityDetailView,
   EntityInsightsView,
   EntityListView,
+  LibraryAgeRatingsView,
   LibraryStatsView,
   LibraryView,
   FsListResp,
@@ -881,6 +882,20 @@ export function useLibraryStatsAll({
   return useQuery({
     queryKey: queryKeys.libraryStatsAll,
     queryFn: () => jsonFetch<LibraryStatsView[]>("/admin/libraries/stats"),
+    enabled,
+  });
+}
+
+/** Admin: how each library's series spread over the age-rating ladder
+ *  (`GET /admin/libraries/age-ratings`), for the age-cap control's "what
+ *  this hides" line. One row per library, like `/libraries`, so no cursor. */
+export function useLibraryAgeRatingsAll({
+  enabled = true,
+}: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.libraryAgeRatingsAll,
+    queryFn: () =>
+      jsonFetch<LibraryAgeRatingsView[]>("/admin/libraries/age-ratings"),
     enabled,
   });
 }
