@@ -72,9 +72,14 @@ const ROUTE_LABEL = "/[locale]/read/[seriesSlug]/[issueSlug]";
  *  from 170 KB: measured 148.58 KB after moving the drag-turn motion, the
  *  drag peek, the health toast and the reader's mutations-barrel import
  *  out of first load (165.43 KB before), so measured + ~3 KB keeps the
- *  gain from eroding silently. The measurement table and reasoning live in
+ *  gain from eroding silently. Raised by 1 KB on 2026-11-11 (owner's
+ *  decision): `main` had crept to 151.92 KB, and the session refresh
+ *  retry, which every signed-in page loads and which cannot be lazy
+ *  because it runs when requests are failing, needed about 0.3 KB more.
+ *  The headroom is gone on purpose: the next change to first-load code
+ *  has to free room first. The measurement table and reasoning live in
  *  docs/dev/pwa-performance.md. */
-const BUDGET_KB = 152;
+const BUDGET_KB = 153;
 /** WP-4.4 target. Exceeding it (while still under the ceiling) prints a
  *  warning so creep stays visible in every build log. */
 const BUDGET_TARGET_KB = 120;
