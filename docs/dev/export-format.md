@@ -72,9 +72,14 @@ on a rebuilt library, where `issues.id` may differ.
 | `series_year` | int \| null | `series.year`. |
 | `library_slug` | string \| null | `libraries.slug`. |
 
-Hydrated fields are `null` only when the referenced row no longer exists
-(the row would normally have been cascade-deleted with it). Soft-removed
-issues and series still hydrate — the export never drops a user row
+Hydrated fields are `null` when the referenced row no longer exists
+(the row would normally have been cascade-deleted with it), and the
+naming fields (`series_name`, `series_year`, `issue_number`,
+`library_slug`) are `null` for an issue or series the user can no longer
+see (outside their library grant or above their age cap): the row is
+still the user's data and keeps its ids and `content_hash` for a
+re-import, but the document names nothing hidden. Soft-removed issues
+and series still hydrate in full: the export never drops a user row
 because its target is pending removal.
 
 Fallback resolution order for a consumer: `content_hash` →
@@ -313,19 +318,24 @@ app. It reuses the `markers` section's shape above (`ExportMarker` +
   (rewrite with `UPDATE_SNAPSHOTS=1` after an intentional change).
 - UI: "Export" menu on `/bookmarks`
   ([`NotesExportMenu`](../../web/components/markers/NotesExportMenu.tsx)).
-- Auth: cookie or Bearer; only the caller's markers, every kind, and
-  issue-level closing notes, on issues the caller can currently see. A
-  marker or note whose issue was since soft-removed (or its series was),
-  or is no longer visible to the caller, is left out: the document names
-  series and issues, and a hidden one must not surface through it. This
-  is the marker list's rule (issue and series not removed, library
-  granted, within the age cap), so the list, the count, the permalink and
-  the export agree. The rows are kept and return with the content or the
-  grant; the full account export (`/me/export`) still carries them.
-  `available` is therefore always `true` (kept for the wire shape), and
-  the Markdown `(no longer available)` form no longer occurs. This
-  replaces the 2026-09-30 posture, which exported such markers flagged
-  unavailable.
+- Auth: cookie or Bearer; every marker the caller owns, every kind, and
+  every issue-level closing note (owner decision 2026-09-30: the export
+  is the user's own data). Content that is no longer available is
+  exported in one of two ways:
+  - **Soft-removed** (the issue, or its series): the entry keeps its
+    series and issue identity, carries `available: false` and no
+    `jump_url`, and reads `(no longer available)` in Markdown.
+  - **No longer visible** (outside the library grant or above the age
+    cap): nothing about the content is named. Its markers sit in one
+    anonymous group, last, with `series.series_id` the nil UUID,
+    `series_name` "No longer available" and no year or library: one
+    issue entry holds the markers, grouped by page, each with only the
+    fields the user wrote (id, kind, page index, favourite, tags, region,
+    selection, body, colour, timestamps), a blank `issue` reference
+    (`issue_id` empty, every other field `null`), `available: false` and
+    no `jump_url`; each closing note on such an issue is an entry of its
+    own with `pages` empty and no rating. In Markdown the group has the
+    `## No longer available` heading and no issue headings.
   Rate-limited at 6 / min / IP in its own bucket (`rate_limit::NOTES_EXPORT`).
 - `format` defaults to `md`; an unknown value is a 400.
 - Response headers: `text/markdown; charset=utf-8` or `application/json`,
@@ -345,7 +355,7 @@ by the body verbatim. The same notes also list on `/bookmarks` through
 `GET /me/bookmarks` (`crates/server/src/api/bookmarks_feed.rs`), the
 union feed the page reads instead of `/me/markers`.
 
-**Jump URL.** Every marker carries `jump_url` =
+**Jump URL.** Every available marker carries `jump_url` =
 `{COMIC_PUBLIC_URL}/markers/{id}`, the marker permalink. That bare route
 303s to `/read/{series_slug}/{issue_slug}?page=<page_index>&peek=1` for
 the owner, 404s for anyone else or when the issue is no longer visible,
@@ -381,8 +391,7 @@ a rename. "Copy link" on a `/bookmarks` card copies the same URL.
 **Markdown layout**: `#` title, an `Exported <ts> · N markers` line,
 then `## Series (year)`, `### #number · title`, `#### Page n` (1-based),
 and per marker a line `**Kind** [★] · [Jump to page](url) [· tags: `a`, `b`]`
-(`(no longer available)` instead of the link for an unavailable marker,
-which the current export never emits),
+(`(no longer available)` instead of the link for an unavailable marker),
 the captured text (`selection.text`) as a blockquote, and the note body
 verbatim.
 

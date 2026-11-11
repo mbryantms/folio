@@ -12202,14 +12202,16 @@ export interface components {
         };
         NotesExportMarker: components["schemas"]["ExportMarker"] & {
             /**
-             * @description Always `true`: a marker whose issue was removed or is no longer
-             *     visible to the caller is left out of the export. Kept for the wire
-             *     shape.
+             * @description `false` when the marker's issue was soft-removed (with or without
+             *     its series), or is no longer visible to the caller (library grant /
+             *     age cap; such markers sit in the anonymous group). The marker is
+             *     still exported; only the link is withheld.
              */
             available: boolean;
             /**
              * @description Absolute marker permalink (`{public_url}/markers/{id}`); 303s to
-             *     the reader at this page in peek mode.
+             *     the reader at this page in peek mode. Omitted when `available` is
+             *     `false`.
              */
             jump_url?: string | null;
         };
@@ -14003,8 +14005,8 @@ export interface components {
             /**
              * Format: int32
              * @description Snapshots not restored: the id already exists (a repeated Undo,
-             *     or another user's row), the issue is gone or no longer visible,
-             *     or the page no longer exists.
+             *     or another user's row), the issue is gone, soft-removed or no
+             *     longer visible, or the page no longer exists.
              */
             skipped: number;
         };
@@ -24036,15 +24038,8 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description overrides cleared */
+            /** @description overrides cleared, or there were none */
             204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description issue not found or not visible */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };

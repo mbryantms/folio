@@ -668,10 +668,11 @@ async fn cross_user_collection_access_denied() {
     // Another user's collection answers exactly like an unknown id.
     let (status, body) = http(&app, Method::GET, &url, Some(&bob), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "body: {body:#?}");
+    assert_eq!(body["error"]["code"], "not_found", "{body}");
 
     // Bob can't patch it.
     let patch_url = format!("/api/me/collections/{cid}");
-    let (status, _) = http(
+    let (status, nf) = http(
         &app,
         Method::PATCH,
         &patch_url,
@@ -680,10 +681,12 @@ async fn cross_user_collection_access_denied() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 
     // Bob can't delete it either.
-    let (status, _) = http(&app, Method::DELETE, &patch_url, Some(&bob), None).await;
+    let (status, nf) = http(&app, Method::DELETE, &patch_url, Some(&bob), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -946,7 +949,7 @@ async fn bulk_add_rejects_non_owner() {
     let intruder = register(&app, "intruder@example.com").await;
     let cid = create_collection(&app, &owner, "Mine").await;
     let url = format!("/api/me/collections/{cid}/members/bulk-add");
-    let (status, _) = http(
+    let (status, nf) = http(
         &app,
         Method::POST,
         &url,
@@ -956,6 +959,7 @@ async fn bulk_add_rejects_non_owner() {
     .await;
     // Another user's collection answers exactly like an unknown id.
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -1095,7 +1099,7 @@ async fn bulk_remove_rejects_non_owner() {
     let intruder = register(&app, "rm-intruder@example.com").await;
     let cid = create_collection(&app, &owner, "Mine").await;
     let url = format!("/api/me/collections/{cid}/members/bulk-remove");
-    let (status, _) = http(
+    let (status, nf) = http(
         &app,
         Method::POST,
         &url,
@@ -1104,6 +1108,7 @@ async fn bulk_remove_rejects_non_owner() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

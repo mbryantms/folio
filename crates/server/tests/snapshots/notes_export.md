@@ -1,6 +1,6 @@
 # Folio notes
 
-Exported <EXPORTED_AT> · 5 markers
+Exported <EXPORTED_AT> · 6 markers
 
 ## Alpha Flight (2020)
 
@@ -9,6 +9,16 @@ Exported <EXPORTED_AT> · 5 markers
 #### Page 2
 
 **Favorite** · [Jump to page](http://localhost:8080/markers/00000000-0000-7000-8000-000000000005)
+
+## Gone Series (2020)
+
+### #1 · Issue 1
+
+#### Page 1
+
+**Note** · (no longer available)
+
+Note on a removed issue.
 
 ## Saga (2020)
 

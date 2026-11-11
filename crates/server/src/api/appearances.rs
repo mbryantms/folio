@@ -242,7 +242,7 @@ pub async fn series_appearances(
         }
     };
     let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
+    if !crate::library::access::series_page_ok(&acl, &user, &s) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 

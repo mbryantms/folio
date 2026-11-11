@@ -258,8 +258,8 @@ async fn seed(db: &DatabaseConnection, root: &std::path::Path, owner: Uuid, othe
     )
     .await;
 
-    // A marker on an issue since removed from the library: left out of
-    // the export (the row is kept).
+    // A marker on an issue since removed from the library: still
+    // exported, but flagged unavailable with no Jump link.
     let gone_id = SeriesSeed::new(lib, "Gone Series").insert(db).await;
     let gone1 = seed_issue(db, lib, gone_id, &root.join("gone1.cbz"), b"gone-1", 1.0).await;
     insert_marker(
@@ -383,18 +383,22 @@ async fn json_export_groups_series_issue_page() {
 
     assert_eq!(doc["format"], "folio-notes-export");
     assert_eq!(doc["version"], 1);
-    assert_eq!(doc["total"], 5);
+    assert_eq!(doc["total"], 6);
     let series = doc["series"].as_array().unwrap();
     let names: Vec<&str> = series
         .iter()
         .map(|s| s["series"]["series_name"].as_str().unwrap())
         .collect();
-    // The marker on a removed issue (and so its series) is left out.
-    assert_eq!(names, ["Alpha Flight", "Saga"]);
-    assert!(!doc.to_string().contains(M_GONE_P1_NOTE));
-    assert!(!doc.to_string().contains("Gone Series"));
+    assert_eq!(names, ["Alpha Flight", "Gone Series", "Saga"]);
 
-    let saga = &series[1];
+    // Removed issue: exported, flagged unavailable, no jump_url.
+    let gone = &series[1]["issues"][0]["pages"][0]["markers"][0];
+    assert_eq!(gone["id"], M_GONE_P1_NOTE);
+    assert_eq!(gone["available"], false);
+    assert!(gone.get("jump_url").is_none(), "{gone:#}");
+    assert_eq!(gone["body"], "Note on a removed issue.");
+
+    let saga = &series[2];
     assert_eq!(saga["series"]["series_id"], seeded.saga_id.to_string());
     let issues = saga["issues"].as_array().unwrap();
     assert_eq!(issues.len(), 2);
@@ -561,7 +565,7 @@ async fn permalink_404s_when_issue_is_no_longer_visible() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn export_omits_markers_the_user_can_no_longer_see() {
+async fn export_flags_markers_the_user_can_no_longer_see() {
     let app = TestApp::spawn().await;
     let _admin = register(&app, "admin@example.com").await;
     let user = register(&app, "reader@example.com").await;
@@ -612,15 +616,10 @@ async fn export_omits_markers_the_user_can_no_longer_see() {
         let doc: Value = serde_json::from_slice(&body_bytes(resp.into_body()).await).unwrap();
         doc
     };
-    let doc = fetch().await;
-    assert_eq!(doc["total"], 1);
-    assert_eq!(
-        doc["series"][0]["issues"][0]["pages"][0]["markers"][0]["available"],
-        true
-    );
+    let marker_of = |doc: &Value| doc["series"][0]["issues"][0]["pages"][0]["markers"][0].clone();
+    assert_eq!(marker_of(&fetch().await)["available"], true);
 
-    // Age cap below the issue's rating hides it: the marker is left out,
-    // like the marker list leaves it out.
+    // Age cap below the issue's rating hides it.
     let row = entity::issue::Entity::find_by_id(issue_id.clone())
         .one(&db)
         .await
@@ -637,30 +636,36 @@ async fn export_omits_markers_the_user_can_no_longer_see() {
     let mut gam: library_user_access::ActiveModel = grant.into();
     gam.age_rating_max = Set(Some("Teen".into()));
     gam.update(&db).await.unwrap();
+    // Still exported (it is the user's data), flagged, and in the
+    // anonymous group: nothing names the content it sits on.
     let doc = fetch().await;
-    assert_eq!(doc["total"], 0);
-    assert_eq!(doc["series"], serde_json::json!([]));
+    let m = marker_of(&doc);
+    assert_eq!(m["id"], marker_id.to_string());
+    assert_eq!(m["available"], false);
+    assert!(m.get("jump_url").is_none());
+    assert_eq!(m["issue"]["issue_id"], "");
+    assert_eq!(
+        doc["series"][0]["series"]["series_name"],
+        "No longer available"
+    );
     assert!(!doc.to_string().contains("Capped"), "{doc}");
+    assert!(!doc.to_string().contains(&issue_id), "{doc}");
 
-    // Revoked grant: still left out. The row itself is kept.
+    // Revoked grant: the same.
     library_user_access::Entity::delete_by_id((lib, user.user_id))
         .exec(&db)
         .await
         .unwrap();
     let doc = fetch().await;
-    assert_eq!(doc["total"], 0);
-    assert!(!doc.to_string().contains(&marker_id.to_string()));
-    assert!(
-        entity::marker::Entity::find_by_id(marker_id)
-            .one(&db)
-            .await
-            .unwrap()
-            .is_some()
-    );
+    let m = marker_of(&doc);
+    assert_eq!(m["id"], marker_id.to_string());
+    assert_eq!(m["available"], false);
+    assert!(!doc.to_string().contains("Capped"), "{doc}");
 
     let resp = get(&app, "/api/me/markers/export?format=md", Some(&user)).await;
     let md = String::from_utf8(body_bytes(resp.into_body()).await).unwrap();
-    assert!(!md.contains("Bookmark"), "{md}");
+    assert!(md.contains("## No longer available"), "{md}");
+    assert!(md.contains("**Bookmark** · (no longer available)"), "{md}");
     assert!(!md.contains("/markers/"), "{md}");
     assert!(!md.contains("Capped"), "{md}");
 }

@@ -1076,14 +1076,15 @@ pub(crate) async fn usable_cbl_list_id(
         .then_some(list_id))
 }
 
-/// Drop what a CBL view row copied from its list (the year range seeded at
-/// creation) when the caller may not use that list, so the response reads
-/// like a view whose list is gone.
+/// Drop the list reference and what a CBL view row copied from its list
+/// (the year range seeded at creation) when the caller may not use that
+/// list, so the response reads like a view whose list is gone.
 fn scrub_unusable_cbl(m: &mut saved_view::Model, usable: &std::collections::HashSet<Uuid>) {
     if m.kind == KIND_CBL
         && let Some(list_id) = m.cbl_list_id
         && !usable.contains(&list_id)
     {
+        m.cbl_list_id = None;
         m.custom_year_start = None;
         m.custom_year_end = None;
     }

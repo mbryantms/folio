@@ -16,19 +16,24 @@
 //! break links already pasted into another app.
 //!
 //! Scope: every marker the caller owns, every kind (bookmark, note,
-//! favorite, highlight), and every issue-level closing note, on issues
-//! the caller can currently see. A marker or note whose issue was since
-//! soft-removed, or is no longer visible to the caller (library grant /
-//! age cap), is left out, the same rule as the marker list, count,
-//! search and permalink: the document names series and issues, and a
-//! hidden one must not surface through it. The rows are kept, so they
-//! return with the content or the grant. The full account export
-//! (`GET /me/export`) still carries every row the user owns.
-//! `available` is therefore always `true`; the field stays for the wire
-//! shape. Query shape: one marker query, one IN-batched visibility probe
-//! (live + library grant + age cap), and the account export's IN-batched
-//! identity hydration (issues → series → libraries) over the visible
-//! issues only.
+//! favorite, highlight), and every issue-level closing note: the export
+//! is the user's own data (owner decision 2026-09-30). Two kinds of
+//! content are no longer available, and they are exported differently:
+//!
+//! - Soft-removed content (the issue or its series): the entry keeps its
+//!   series and issue identity, is flagged `available: false`, carries no
+//!   `jump_url`, and reads "(no longer available)" in Markdown.
+//! - Content the caller can no longer see (outside the library grant or
+//!   above the age cap): the document names nothing about it. Its markers
+//!   and closing notes go under one anonymous group
+//!   ([`HIDDEN_GROUP_NAME`], nil series id, last) with only the fields the
+//!   user wrote: the issue reference is blank, there is no title, no
+//!   rating and no jump URL, and they are flagged `available: false`.
+//!
+//! Query shape: one marker query, two IN-batched probes (library grant +
+//! age cap; then live), and the account export's IN-batched identity
+//! hydration (issues → series → libraries) over the issues the caller
+//! can see only.
 //!
 //! Wire format is documented in `docs/dev/export-format.md` ("Notes
 //! export").
@@ -151,12 +156,14 @@ pub struct NotesExportPage {
 pub struct NotesExportMarker {
     #[serde(flatten)]
     pub marker: ExportMarker,
-    /// Always `true`: a marker whose issue was removed or is no longer
-    /// visible to the caller is left out of the export. Kept for the wire
-    /// shape.
+    /// `false` when the marker's issue was soft-removed (with or without
+    /// its series), or is no longer visible to the caller (library grant /
+    /// age cap; such markers sit in the anonymous group). The marker is
+    /// still exported; only the link is withheld.
     pub available: bool,
     /// Absolute marker permalink (`{public_url}/markers/{id}`); 303s to
-    /// the reader at this page in peek mode.
+    /// the reader at this page in peek mode. Omitted when `available` is
+    /// `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jump_url: Option<String>,
 }
@@ -256,10 +263,36 @@ impl Ord for OrdF64 {
 /// export's hydration).
 const VISIBLE_CHUNK: usize = 1000;
 
-/// The subset of `issue_ids` the caller can see under `acl`: live, with
-/// a live parent series, inside the library grant and under the age cap
-/// (`access::visible_issues_select`, the marker list's rule).
-async fn visible_issue_ids(
+/// Heading of the anonymous group that holds the caller's markers and
+/// closing notes on content they can no longer see.
+pub const HIDDEN_GROUP_NAME: &str = "No longer available";
+
+/// The subset of `issue_ids` inside the caller's library grant and under
+/// the age cap (`acl.issue_filter()`), removed or not. Anything else is
+/// hidden from the caller and named nowhere in the document.
+async fn accessible_issue_ids(
+    db: &DatabaseConnection,
+    acl: &VisibleLibraries,
+    issue_ids: &HashSet<String>,
+) -> Result<HashSet<String>, sea_orm::DbErr> {
+    let ids: Vec<String> = issue_ids.iter().cloned().collect();
+    let mut out = HashSet::with_capacity(ids.len());
+    for chunk in ids.chunks(VISIBLE_CHUNK) {
+        let mut q = issue::Entity::find()
+            .select_only()
+            .column(issue::Column::Id)
+            .filter(issue::Column::Id.is_in(chunk.to_vec()));
+        if let Some(cond) = acl.issue_filter() {
+            q = q.filter(cond);
+        }
+        out.extend(q.into_tuple::<String>().all(db).await?);
+    }
+    Ok(out)
+}
+
+/// The subset of `issue_ids` that is also live, with a live parent series
+/// (`access::visible_issues_select`): a marker there gets its jump link.
+async fn live_issue_ids(
     db: &DatabaseConnection,
     acl: &VisibleLibraries,
     issue_ids: &HashSet<String>,
@@ -274,6 +307,44 @@ async fn visible_issue_ids(
         out.extend(q.into_tuple::<String>().all(db).await?);
     }
     Ok(out)
+}
+
+/// The issue reference of an entry in the anonymous group: no id, no
+/// hash, no names.
+fn blank_issue_ref() -> IssueRef {
+    IssueRef {
+        issue_id: String::new(),
+        content_hash: None,
+        series_id: None,
+        series_name: None,
+        series_year: None,
+        issue_number: None,
+        library_slug: None,
+    }
+}
+
+/// A marker on hidden content: only the fields the user wrote.
+fn anonymous_marker(m: marker::Model) -> NotesExportMarker {
+    NotesExportMarker {
+        marker: ExportMarker {
+            id: m.id,
+            issue: blank_issue_ref(),
+            page_index: m.page_index,
+            kind: m.kind,
+            is_favorite: m.is_favorite,
+            tags: m.tags,
+            region: m.region,
+            selection: m.selection,
+            body: m.body,
+            color: m.color,
+            hidden_from_log: m.hidden_from_log,
+            page_hash: None,
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        },
+        available: false,
+        jump_url: None,
+    }
 }
 
 async fn build(
@@ -295,22 +366,22 @@ async fn build(
         .order_by_asc(user_issue_note::Column::CreatedAt)
         .all(db)
         .await?;
-    let mut issue_ids: HashSet<String> = rows.iter().map(|m| m.issue_id.clone()).collect();
-    issue_ids.extend(note_rows.iter().map(|n| n.issue_id.clone()));
-    // Rows on an issue the caller can't currently see are left out
-    // before anything about that issue is hydrated.
-    let visible = visible_issue_ids(db, acl, &issue_ids).await?;
-    let rows: Vec<marker::Model> = rows
-        .into_iter()
-        .filter(|m| visible.contains(&m.issue_id))
-        .collect();
-    let note_rows: Vec<user_issue_note::Model> = note_rows
-        .into_iter()
-        .filter(|n| visible.contains(&n.issue_id))
-        .collect();
     let total = rows.len() as u64;
     let closing_notes = note_rows.len() as u64;
-    let issue_ids: HashSet<String> = visible;
+    let mut issue_ids: HashSet<String> = rows.iter().map(|m| m.issue_id.clone()).collect();
+    issue_ids.extend(note_rows.iter().map(|n| n.issue_id.clone()));
+    // Rows on an issue the caller can't see are split off before anything
+    // about that issue is hydrated: they go to the anonymous group.
+    let accessible = accessible_issue_ids(db, acl, &issue_ids).await?;
+    let live = live_issue_ids(db, acl, &accessible).await?;
+    let (rows, hidden_rows): (Vec<marker::Model>, Vec<marker::Model>) = rows
+        .into_iter()
+        .partition(|m| accessible.contains(&m.issue_id));
+    let (note_rows, hidden_notes): (Vec<user_issue_note::Model>, Vec<user_issue_note::Model>) =
+        note_rows
+            .into_iter()
+            .partition(|n| accessible.contains(&n.issue_id));
+    let issue_ids: HashSet<String> = accessible;
     let mut series_ids: HashSet<Uuid> = rows.iter().map(|m| m.series_id).collect();
     if !note_rows.is_empty() {
         // Series ids for note-only issues come from the issue rows.
@@ -386,9 +457,8 @@ async fn build(
         let issue_id = m.issue_id.clone();
         let page_index = m.page_index;
         let (series_key, issue_key) = keys_for(&issue_id, Some(m.series_id));
-        // Every exported marker is on a visible issue (filtered above).
-        let available = true;
-        let jump_url = Some(format!("{base_url}/markers/{}", m.id));
+        let available = live.contains(&issue_id);
+        let jump_url = available.then(|| format!("{base_url}/markers/{}", m.id));
         let marker = export_marker(m, &refs);
         tree.entry(series_key)
             .or_default()
@@ -426,7 +496,7 @@ async fn build(
         });
     }
 
-    let series = tree
+    let mut series: Vec<NotesExportSeries> = tree
         .into_iter()
         .map(|((_, _, series_id), issues)| NotesExportSeries {
             series: refs.series(series_id),
@@ -451,6 +521,56 @@ async fn build(
                 .collect(),
         })
         .collect();
+
+    // Content the caller can no longer see: one anonymous group, last.
+    // Markers share one entry, grouped by page; each closing note is an
+    // entry of its own, without the rating.
+    if !hidden_rows.is_empty() || !hidden_notes.is_empty() {
+        let mut issues = Vec::new();
+        if !hidden_rows.is_empty() {
+            let mut pages: BTreeMap<i32, Vec<NotesExportMarker>> = BTreeMap::new();
+            for m in hidden_rows {
+                pages
+                    .entry(m.page_index)
+                    .or_default()
+                    .push(anonymous_marker(m));
+            }
+            issues.push(NotesExportIssue {
+                issue: blank_issue_ref(),
+                issue_title: None,
+                closing_note: None,
+                pages: pages
+                    .into_iter()
+                    .map(|(page_index, markers)| NotesExportPage {
+                        page_index,
+                        markers,
+                    })
+                    .collect(),
+            });
+        }
+        for n in hidden_notes {
+            issues.push(NotesExportIssue {
+                issue: blank_issue_ref(),
+                issue_title: None,
+                closing_note: Some(NotesExportClosingNote {
+                    rating: None,
+                    body: n.body,
+                    created_at: n.created_at.to_rfc3339(),
+                    updated_at: n.updated_at.to_rfc3339(),
+                }),
+                pages: Vec::new(),
+            });
+        }
+        series.push(NotesExportSeries {
+            series: SeriesRef {
+                series_id: Uuid::nil(),
+                series_name: Some(HIDDEN_GROUP_NAME.to_owned()),
+                series_year: None,
+                library_slug: None,
+            },
+            issues,
+        });
+    }
 
     Ok(NotesExport {
         format: NOTES_EXPORT_FORMAT.to_owned(),
@@ -502,14 +622,18 @@ pub fn render_markdown(doc: &NotesExport) -> String {
                 let _ = write!(out, "\n## {name}\n");
             }
         }
+        // The anonymous group names no issue: its entries get no heading.
+        let anonymous = s.series.series_id.is_nil();
         for i in &s.issues {
-            let heading = match (i.issue.issue_number.as_deref(), i.issue_title.as_deref()) {
-                (Some(n), Some(t)) => format!("#{n} · {t}"),
-                (Some(n), None) => format!("#{n}"),
-                (None, Some(t)) => t.to_owned(),
-                (None, None) => "Issue".to_owned(),
-            };
-            let _ = write!(out, "\n### {heading}\n");
+            if !anonymous {
+                let heading = match (i.issue.issue_number.as_deref(), i.issue_title.as_deref()) {
+                    (Some(n), Some(t)) => format!("#{n} · {t}"),
+                    (Some(n), None) => format!("#{n}"),
+                    (None, Some(t)) => t.to_owned(),
+                    (None, None) => "Issue".to_owned(),
+                };
+                let _ = write!(out, "\n### {heading}\n");
+            }
             if let Some(note) = &i.closing_note {
                 render_closing_note(&mut out, note);
             }

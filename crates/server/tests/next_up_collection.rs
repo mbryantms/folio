@@ -688,8 +688,9 @@ async fn collection_next_up_endpoint_start_then_continue_then_done() {
 
     // Someone else's collection answers like a missing one: 404.
     let other = register(&app, "nuc-page-2@example.com").await;
-    let (status, _) = http(&app, Method::GET, &url, Some(&other), None).await;
+    let (status, nf) = http(&app, Method::GET, &url, Some(&other), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
     let (status, _) = http(
         &app,
         Method::GET,
@@ -786,6 +787,7 @@ async fn collection_window_anchors_on_first_unfinished_and_pages_by_position() {
 
     // Ownership: someone else's collection answers like a missing one.
     let other = register(&app, "win-page-2@example.com").await;
-    let (status, _) = http(&app, Method::GET, &base, Some(&other), None).await;
+    let (status, nf) = http(&app, Method::GET, &base, Some(&other), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }

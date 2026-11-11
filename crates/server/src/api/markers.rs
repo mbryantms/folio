@@ -699,14 +699,37 @@ pub(crate) async fn hydrate_views(
         .collect())
 }
 
-/// Verify the calling user can see `issue_id`. Returns the issue row
-/// (we need its `series_id` and `page_count` to populate the marker)
-/// or a [`MarkerError`] on miss / DB failure. Caller converts to
+/// Verify the calling user can read `issue_id` (the reader's overlay):
+/// outside the grant or rated above the cap answers exactly like an
+/// unknown id; a soft-removed issue is history and still answers.
+async fn fetch_readable_issue(
+    app: &AppState,
+    user: &CurrentUser,
+    issue_id: &str,
+) -> Result<issue::Model, MarkerError> {
+    let not_found = || MarkerError::new(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    let row = issue::Entity::find_by_id(issue_id.to_owned())
+        .one(&app.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "markers: issue fetch failed");
+            MarkerError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })?
+        .ok_or_else(not_found)?;
+    if !access::issue_visible(app, user, &row).await {
+        return Err(not_found());
+    }
+    Ok(row)
+}
+
+/// Verify the calling user can write markers on `issue_id`. Returns the
+/// issue row (we need its `series_id` and `page_count` to populate the
+/// marker) or a [`MarkerError`] on miss / DB failure. Caller converts to
 /// `Response` via `IntoResponse` at the HTTP boundary.
 ///
-/// The rule is the list's ([`visible_marker_condition`]): an issue the
-/// caller can't see (outside the grant, rated above their cap) or one
-/// soft-removed, with its series, answers exactly like an unknown id.
+/// An issue the caller can't see (outside the grant, rated above their
+/// cap) answers exactly like an unknown id, and so does a soft-removed
+/// issue or series: no new writes on removed content, for any role.
 async fn fetch_visible_issue(
     app: &AppState,
     user: &CurrentUser,
@@ -1311,10 +1334,10 @@ pub async fn list_for_issue(
     user: CurrentUser,
     AxPath(issue_id): AxPath<String>,
 ) -> impl IntoResponse {
-    // ACL: fetch_visible_issue returns 404 if the caller can't
+    // ACL: fetch_readable_issue returns 404 if the caller can't
     // reach this issue, before we leak whether they have markers on
     // it.
-    let issue_row = match fetch_visible_issue(&app, &user, &issue_id).await {
+    let issue_row = match fetch_readable_issue(&app, &user, &issue_id).await {
         Ok(r) => r,
         Err(resp) => return resp.into_response(),
     };
@@ -1767,8 +1790,8 @@ pub struct RestoreMarkersResp {
     /// The markers re-inserted, in request order.
     pub restored: Vec<MarkerView>,
     /// Snapshots not restored: the id already exists (a repeated Undo,
-    /// or another user's row), the issue is gone or no longer visible,
-    /// or the page no longer exists.
+    /// or another user's row), the issue is gone, soft-removed or no
+    /// longer visible, or the page no longer exists.
     pub skipped: u32,
 }
 

@@ -880,6 +880,8 @@ async fn composite_diff_series_404_when_non_admin_lacks_access() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let nf = body_json(resp.into_body()).await;
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test]
@@ -1815,6 +1817,8 @@ async fn lookup_series_404_when_non_admin_lacks_library_access() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let nf = body_json(resp.into_body()).await;
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test]

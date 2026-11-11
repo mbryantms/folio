@@ -7900,10 +7900,7 @@
         ],
         "responses": {
           "204": {
-            "description": "overrides cleared"
-          },
-          "404": {
-            "description": "issue not found or not visible"
+            "description": "overrides cleared, or there were none"
           }
         }
       }
@@ -28649,14 +28646,14 @@
             "properties": {
               "available": {
                 "type": "boolean",
-                "description": "Always `true`: a marker whose issue was removed or is no longer\nvisible to the caller is left out of the export. Kept for the wire\nshape."
+                "description": "`false` when the marker's issue was soft-removed (with or without\nits series), or is no longer visible to the caller (library grant /\nage cap; such markers sit in the anonymous group). The marker is\nstill exported; only the link is withheld."
               },
               "jump_url": {
                 "type": [
                   "string",
                   "null"
                 ],
-                "description": "Absolute marker permalink (`{public_url}/markers/{id}`); 303s to\nthe reader at this page in peek mode."
+                "description": "Absolute marker permalink (`{public_url}/markers/{id}`); 303s to\nthe reader at this page in peek mode. Omitted when `available` is\n`false`."
               }
             }
           }
@@ -32873,7 +32870,7 @@
           "skipped": {
             "type": "integer",
             "format": "int32",
-            "description": "Snapshots not restored: the id already exists (a repeated Undo,\nor another user's row), the issue is gone or no longer visible,\nor the page no longer exists.",
+            "description": "Snapshots not restored: the id already exists (a repeated Undo,\nor another user's row), the issue is gone, soft-removed or no\nlonger visible, or the page no longer exists.",
             "minimum": 0
           }
         }

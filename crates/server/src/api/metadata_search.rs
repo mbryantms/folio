@@ -31,9 +31,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::user::UserRole;
-use entity::{
-    issue, library_user_access, metadata_batch, metadata_match_outcome, metadata_run, series,
-};
+use entity::{issue, metadata_batch, metadata_match_outcome, metadata_run, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect,
@@ -3670,20 +3668,12 @@ async fn provider_budgets(app: &AppState) -> Vec<ProviderBudget> {
     out
 }
 
-/// Can the caller view this batch? Admins see all; otherwise the creator, or
-/// a user who can see the batch's (single) library.
-async fn user_can_see_batch(
-    app: &AppState,
-    user: &CurrentUser,
-    batch: &metadata_batch::Model,
-) -> bool {
-    if user.role == UserRole::Admin || batch.created_by == Some(user.id) {
-        return true;
-    }
-    match batch.library_id {
-        Some(lib) => user_can_see_library(app, user, lib).await,
-        None => false,
-    }
+/// Can the caller view this batch? Admins see all; otherwise only its
+/// creator. Batches are created and reviewed from admin surfaces, and a
+/// batch's children name series and issues across the library, so a grant
+/// on the library is not enough to read someone else's batch.
+fn user_can_see_batch(user: &CurrentUser, batch: &metadata_batch::Model) -> bool {
+    user.role == UserRole::Admin || batch.created_by == Some(user.id)
 }
 
 #[utoipa::path(
@@ -3713,7 +3703,7 @@ pub async fn batch_status(
         }
     };
     // A batch the caller can't see answers like an unknown id.
-    if !user_can_see_batch(&app, &user, &batch).await {
+    if !user_can_see_batch(&user, &batch) {
         return error(StatusCode::NOT_FOUND, "not_found", "batch not found");
     }
 
@@ -4356,22 +4346,10 @@ pub async fn batch_apply(
         .into_response()
 }
 
-async fn user_can_see_library(app: &AppState, user: &CurrentUser, lib_id: Uuid) -> bool {
-    if user.role == UserRole::Admin {
-        return true;
-    }
-    let row = library_user_access::Entity::find()
-        .filter(library_user_access::Column::UserId.eq(user.id))
-        .filter(library_user_access::Column::LibraryId.eq(lib_id))
-        .one(&app.db)
-        .await
-        .unwrap_or(None);
-    row.is_some()
-}
-
 /// [`find_series_issue`] for the per-issue reader routes: a series or
-/// issue the caller can't see (outside the grant, above the cap, or
-/// soft-removed for a non-admin) answers the same 404 as an unknown slug.
+/// issue the caller can't see (outside the grant or above the cap), or a
+/// series soft-removed for a non-admin, answers the same 404 as an unknown
+/// slug. A soft-removed issue in a live series still answers.
 async fn visible_series_issue(
     app: &AppState,
     user: &CurrentUser,
@@ -4383,9 +4361,7 @@ async fn visible_series_issue(
         return Err(not_found());
     };
     let acl = crate::library::access::for_library(app, user, s.library_id).await;
-    if !crate::library::access::issue_page_allowed(app, &acl, user, &s, &i, i.removed_at.is_some())
-        .await
-    {
+    if !crate::library::access::issue_page_allowed(app, &acl, user, &s, &i).await {
         return Err(not_found());
     }
     Ok((s, i))

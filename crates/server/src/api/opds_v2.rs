@@ -1626,6 +1626,14 @@ async fn page_acq(
     };
     let view_by_id: HashMap<Uuid, &saved_view::Model> =
         view_rows.iter().map(|v| (v.id, v)).collect();
+    // A legacy CBL view may point at another user's private list; that
+    // list's feed answers 404, so its pin is skipped.
+    let cbl_ids: Vec<Uuid> = view_rows.iter().filter_map(|v| v.cbl_list_id).collect();
+    let usable_lists =
+        match crate::api::saved_views::usable_cbl_lists(&app.db, user.id, &cbl_ids).await {
+            Ok(u) => u,
+            Err(e) => return server_error(e.to_string()),
+        };
     // Walk pins in pin-position order. Per-kind dispatch routes
     // each pin to its appropriate v2 handler.
     let mut navigation: Vec<Value> = Vec::new();
@@ -1634,7 +1642,7 @@ async fn page_acq(
             continue;
         };
         let (urn, href) = match v.kind {
-            KIND_CBL => match v.cbl_list_id {
+            KIND_CBL => match v.cbl_list_id.filter(|id| usable_lists.contains(id)) {
                 Some(list_id) => (
                     format!("urn:cbl:{list_id}"),
                     format!("/opds/v2/lists/{list_id}"),

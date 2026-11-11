@@ -506,8 +506,9 @@ async fn unowned_list_returns_404() {
     let (list_id, _) = seed_cbl_with_matched_entries(&app, owner.user_id, 5).await;
 
     let url = format!("/api/me/cbl-lists/{list_id}/window-paginated");
-    let (status, _) = get_json(&app, &url, &other).await;
+    let (status, nf) = get_json(&app, &url, &other).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

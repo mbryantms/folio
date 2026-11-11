@@ -230,8 +230,9 @@ async fn admin_shares_a_list_with_everyone() {
     let share_url = format!("/api/admin/saved-views/{view_id}/share");
 
     // Not shared yet → Bob can't see it: it answers like an unknown list.
-    let (status, _) = http(&app, Method::GET, &list_url, Some(&bob), None).await;
+    let (status, nf) = http(&app, Method::GET, &list_url, Some(&bob), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 
     // Only an admin can share.
     let (status, _) = http(&app, Method::POST, &share_url, Some(&bob), None).await;

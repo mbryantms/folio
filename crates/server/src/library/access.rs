@@ -553,22 +553,19 @@ pub async fn series_page_visible(app: &AppState, user: &CurrentUser, row: &serie
     series_visible(app, user, row).await
 }
 
-/// The issue-page twin of [`series_page_ok`] for routes keyed on a
-/// `(series, issue)` pair: the series gate, then the issue's own grant +
-/// cap, and a soft-removed issue (`issue_removed`) is gone for non-admins
-/// too.
+/// The issue-page twin of [`series_page_ok`] for read routes keyed on a
+/// `(series, issue)` pair: the series gate (a soft-removed series is gone
+/// for non-admins), then the issue's own grant + cap. A soft-removed issue
+/// in a live series still reads, as its detail page does: it is history,
+/// not hidden. Writes refuse it separately.
 pub async fn issue_page_allowed<T: IssueAclFields>(
     app: &AppState,
     acl: &VisibleLibraries,
     user: &CurrentUser,
     series_row: &series::Model,
     issue_row: &T,
-    issue_removed: bool,
 ) -> bool {
     if !series_page_ok(acl, user, series_row) {
-        return false;
-    }
-    if issue_removed && user.role != UserRole::Admin {
         return false;
     }
     issue_allowed(app, acl, issue_row).await

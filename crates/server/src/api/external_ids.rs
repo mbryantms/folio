@@ -233,12 +233,11 @@ pub async fn list_issue(
     let Some((s, issue_row)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
-    // A series or issue the caller can't see (outside the grant, above the
-    // cap, soft-removed for a reader) answers like an unknown slug.
-    let removed = issue_removed(&app, &issue_row.id).await;
+    // A series or issue the caller can't see (outside the grant or above
+    // the cap), or a series soft-removed for a reader, answers like an
+    // unknown slug; a soft-removed issue in a live series still reads.
     let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
-    if !crate::library::access::issue_page_allowed(&app, &acl, &user, &s, &issue_row, removed).await
-    {
+    if !crate::library::access::issue_page_allowed(&app, &acl, &user, &s, &issue_row).await {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     }
     let issue_id = issue_row.id;
@@ -587,19 +586,6 @@ async fn manual_rewrite(
 
 /// The series and the issue's id. Projects the id only: the full
 /// `issue::Model` carries the large `comic_info_raw`.
-/// `issues.removed_at IS NOT NULL` for one id (the card projection does
-/// not carry the column). A lookup error reads as removed (fail closed).
-async fn issue_removed(app: &AppState, issue_id: &str) -> bool {
-    use sea_orm::PaginatorTrait;
-    !matches!(
-        issue::Entity::find_by_id(issue_id.to_owned())
-            .filter(issue::Column::RemovedAt.is_null())
-            .count(&app.db)
-            .await,
-        Ok(1)
-    )
-}
-
 async fn find_series_issue(
     app: &AppState,
     series_slug: &str,

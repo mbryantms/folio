@@ -843,7 +843,7 @@ async fn issue_results_respect_library_acl() {
     assert_eq!(status, StatusCode::OK);
     assert!(ids(&res).is_empty(), "{res}");
     // The owner's view is private to them.
-    let (status, _) = http(
+    let (status, nf) = http(
         &app,
         Method::GET,
         &format!("/api/me/saved-views/{id}/issue-results"),
@@ -853,6 +853,7 @@ async fn issue_results_respect_library_acl() {
     .await;
     // Another user's view answers like an unknown id.
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 // ───── WP-5.7: has_notes / has_bookmarks / has_highlights ─────

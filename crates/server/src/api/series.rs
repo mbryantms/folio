@@ -3531,7 +3531,7 @@ pub async fn collection_report(
         Err(resp) => return resp,
     };
     let acl = access::for_library(&app, &user, row.library_id).await;
-    if !acl.series_ok(row.library_id, row.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &row) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // No `.limit()` — the whole run must be visible for gap detection. The
@@ -4557,7 +4557,7 @@ pub async fn list_issues(
         Err(resp) => return resp,
     };
     let acl = access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &s) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -4885,7 +4885,7 @@ pub async fn resume(
         Err(resp) => return resp,
     };
     let acl = access::for_library(&app, &user, srow.library_id).await;
-    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &srow) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // Active, non-removed issues in canonical sort order. Empty series →

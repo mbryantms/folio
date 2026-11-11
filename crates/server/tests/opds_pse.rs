@@ -618,6 +618,13 @@ async fn library_acl_revoked_returns_404() {
         .unwrap();
     // A hidden issue answers like an unknown one.
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let nf: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
