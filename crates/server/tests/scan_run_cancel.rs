@@ -1073,3 +1073,247 @@ async fn scan_run_prune_keeps_unfinished_rows() {
     assert!(left.contains(&done[2]), "the newest finished row stays");
     assert_eq!(left.len(), 2);
 }
+
+// ─────────────────────────────────────────────────────────────
+// Health findings of a run that did not finish. A full scan resolves every
+// open finding it did not re-emit (the auto-resolve sweep); a cancelled,
+// superseded or failed full scan did not re-check the library, so it must
+// leave those findings open, and still record the ones it did emit.
+// ─────────────────────────────────────────────────────────────
+
+/// One series folder plus a stray archive at the root, which the
+/// enumeration (before any folder is processed) reports as `FileAtRoot`.
+async fn library_with_stray(app: &TestApp, tmp: &Path) -> Uuid {
+    let folder = tmp.join("Alpha (2025)");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(&folder.join("Alpha (2025) 001.cbz"), 1);
+    write_cbz(&tmp.join("stray.cbz"), 2);
+    create_on_disk_library(app, tmp).await
+}
+
+/// An open `EmptyFolder` finding for a folder that is not on disk, last
+/// seen a day ago: no scan re-emits or touches it, so only the full-scan
+/// sweep can resolve it.
+async fn seed_stale_finding(db: &sea_orm::DatabaseConnection, lib_id: Uuid, root: &Path) -> Uuid {
+    use entity::library_health_issue::{ActiveModel, HealthIssueKind};
+    let path = root.join("Gone Folder");
+    let day_ago = (Utc::now() - chrono::Duration::days(1)).fixed_offset();
+    let id = Uuid::now_v7();
+    ActiveModel {
+        id: Set(id),
+        library_id: Set(lib_id),
+        scan_id: Set(None),
+        kind: Set(HealthIssueKind::EmptyFolder),
+        payload: Set(serde_json::json!({ "path": path })),
+        severity: Set("warning".into()),
+        fingerprint: Set(format!("EmptyFolder:{}", path.display())),
+        first_seen_at: Set(day_ago),
+        last_seen_at: Set(day_ago),
+        resolved_at: Set(None),
+        dismissed_at: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+    id
+}
+
+async fn finding_resolved(db: &sea_orm::DatabaseConnection, id: Uuid) -> bool {
+    entity::library_health_issue::Entity::find_by_id(id)
+        .one(db)
+        .await
+        .unwrap()
+        .expect("finding row")
+        .resolved_at
+        .is_some()
+}
+
+/// The `FileAtRoot` row for the stray archive, if any.
+async fn stray_finding(
+    db: &sea_orm::DatabaseConnection,
+    lib_id: Uuid,
+) -> Option<entity::library_health_issue::Model> {
+    use entity::library_health_issue::{Column, Entity, HealthIssueKind};
+    Entity::find()
+        .filter(Column::LibraryId.eq(lib_id))
+        .filter(Column::Kind.eq(HealthIssueKind::FileAtRoot))
+        .one(db)
+        .await
+        .unwrap()
+}
+
+async fn only_run(db: &sea_orm::DatabaseConnection, lib_id: Uuid) -> scan_run::Model {
+    let mut runs = scan_run::Entity::find()
+        .filter(scan_run::Column::LibraryId.eq(lib_id))
+        .all(db)
+        .await
+        .unwrap();
+    assert_eq!(runs.len(), 1, "one run: {runs:?}");
+    runs.pop().unwrap()
+}
+
+/// Control: a full scan that completes resolves a finding it did not
+/// re-emit, and records the one it did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completed_full_scan_resolves_findings_it_did_not_re_emit() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = library_with_stray(&app, tmp.path()).await;
+    let state = app.state();
+    let stale = seed_stale_finding(&state.db, lib_id, tmp.path()).await;
+
+    server::library::scanner::scan_library(&state, lib_id)
+        .await
+        .unwrap();
+
+    let run = only_run(&state.db, lib_id).await;
+    assert_eq!(run.state, scan_run::ScanRunState::Complete);
+    assert!(finding_resolved(&state.db, stale).await, "the sweep ran");
+    let stray = stray_finding(&state.db, lib_id)
+        .await
+        .expect("stray recorded");
+    assert!(stray.resolved_at.is_none());
+    assert_eq!(stray.scan_id, Some(run.id));
+}
+
+/// An admin cancel that lands before any folder is processed: the stale
+/// finding stays open, the `FileAtRoot` the enumeration emitted is recorded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_cancelled_full_scan_leaves_findings_open() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = library_with_stray(&app, tmp.path()).await;
+    let state = app.state();
+    let stale = seed_stale_finding(&state.db, lib_id, tmp.path()).await;
+
+    // Same trick as `cancelled_scan_skips_reconcile_and_preserves_series`:
+    // the run row is already `cancelled`, so the pre-loop poll trips.
+    let run_id = Uuid::now_v7();
+    scan_run::ActiveModel {
+        id: Set(run_id),
+        library_id: Set(lib_id),
+        state: Set(scan_run::ScanRunState::Cancelled),
+        started_at: Set(Utc::now().fixed_offset()),
+        ended_at: Set(None),
+        stats: Set(serde_json::json!({})),
+        error: Set(Some("Cancelled by admin".into())),
+        kind: Set(scan_run::ScanRunKind::Library),
+        series_id: Set(None),
+        issue_id: Set(None),
+        batch_id: Set(None),
+    }
+    .insert(&state.db)
+    .await
+    .unwrap();
+
+    server::library::scanner::scan_library_with_run_id(&state, lib_id, false, Some(run_id))
+        .await
+        .expect("cancelled scan drains");
+
+    let run = only_run(&state.db, lib_id).await;
+    assert_eq!(run.state, scan_run::ScanRunState::Cancelled);
+    assert!(
+        !finding_resolved(&state.db, stale).await,
+        "a cancelled scan must not resolve what it never re-checked",
+    );
+    let stray = stray_finding(&state.db, lib_id)
+        .await
+        .expect("the finding the cancelled run emitted is recorded");
+    assert!(stray.resolved_at.is_none());
+    assert_eq!(stray.scan_id, Some(run_id));
+}
+
+/// A run that lost its lease before doing any work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superseded_full_scan_before_any_work_leaves_findings_open() {
+    use std::sync::{Arc, atomic::AtomicBool};
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = library_with_stray(&app, tmp.path()).await;
+    let state = app.state();
+    let stale = seed_stale_finding(&state.db, lib_id, tmp.path()).await;
+
+    let lost = Arc::new(AtomicBool::new(true));
+    server::library::scanner::scan_library_leased(&state, lib_id, false, None, Some(lost))
+        .await
+        .expect("superseded scan drains");
+
+    let run = only_run(&state.db, lib_id).await;
+    assert_eq!(run.state, scan_run::ScanRunState::Cancelled);
+    assert_eq!(
+        run.error.as_deref(),
+        Some(server::jobs::scan::SUPERSEDED_REASON)
+    );
+    assert!(
+        !finding_resolved(&state.db, stale).await,
+        "a superseded scan must not resolve what it never re-checked",
+    );
+}
+
+/// A run that lost its lease right after its reconcile: it emitted its
+/// findings, which are recorded, but closes as superseded, so the sweep
+/// is left to the run that took the library over.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn superseded_full_scan_after_reconcile_records_findings_and_leaves_others_open() {
+    use server::library::scanner;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = library_with_stray(&app, tmp.path()).await;
+    let state = app.state();
+    let stale = seed_stale_finding(&state.db, lib_id, tmp.path()).await;
+
+    let lost = Arc::new(AtomicBool::new(false));
+    let flag = lost.clone();
+    scanner::after_reconcile::install(lib_id, move || flag.store(true, Ordering::Relaxed));
+    let res = scanner::scan_library_leased(&state, lib_id, false, None, Some(lost)).await;
+    scanner::after_reconcile::remove(lib_id);
+    res.expect("superseded scan drains");
+
+    let run = only_run(&state.db, lib_id).await;
+    assert_eq!(run.state, scan_run::ScanRunState::Cancelled);
+    assert!(
+        !finding_resolved(&state.db, stale).await,
+        "a superseded scan must not run the sweep",
+    );
+    let stray = stray_finding(&state.db, lib_id)
+        .await
+        .expect("the finding the superseded run emitted is recorded");
+    assert!(stray.resolved_at.is_none());
+    assert_eq!(stray.scan_id, Some(run.id));
+}
+
+/// A full scan that fails before it processes any folder (here: the
+/// library's ignore globs do not parse).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_full_scan_leaves_findings_open() {
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = library_with_stray(&app, tmp.path()).await;
+    let state = app.state();
+    let stale = seed_stale_finding(&state.db, lib_id, tmp.path()).await;
+
+    let lib = library::Entity::find_by_id(lib_id)
+        .one(&state.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: library::ActiveModel = lib.into();
+    am.ignore_globs = Set(serde_json::json!("not an array"));
+    am.update(&state.db).await.unwrap();
+
+    let err = server::library::scanner::scan_library(&state, lib_id)
+        .await
+        .expect_err("bad ignore globs fail the scan");
+    assert!(err.to_string().contains("ignore_globs"), "{err:#}");
+
+    let run = only_run(&state.db, lib_id).await;
+    assert_eq!(run.state, scan_run::ScanRunState::Failed);
+    assert!(
+        !finding_resolved(&state.db, stale).await,
+        "a failed scan must not resolve what it never re-checked",
+    );
+}

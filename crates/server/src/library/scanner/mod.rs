@@ -951,6 +951,13 @@ async fn finalize_run(
     let library_id = lib.id;
     state.scan_progress.finish(scan_id);
 
+    // A run that stopped early or failed did not re-check the whole
+    // library: a finding it did not re-emit is unknown, not gone. What it
+    // did emit is still recorded.
+    let mut health = health;
+    if cancelled || result.is_err() {
+        health.skip_auto_resolve();
+    }
     let health_count = health.count();
     if let Err(e) = health.finalize(&state.db).await {
         tracing::error!(
@@ -2681,6 +2688,9 @@ async fn run_phases(
             Err(e) => {
                 // Per-series failures are recoverable (§12.2).
                 tracing::error!(folder = %label, error = %e, "scanner: folder failed");
+                // Nothing in the folder was re-checked to the end: keep its
+                // open findings alive through the auto-resolve sweep.
+                health.touch_folder(std::path::Path::new(&folder_path_str));
             }
         }
         if !folder_processed {
@@ -3546,6 +3556,12 @@ async fn process_planned_folder(
         }
     }
     stats.record_phase_parallel("db_write", db_write_started.elapsed());
+    // A failed batch means some of this folder's files were not re-checked:
+    // keep the folder's open findings alive, or the full-scan sweep would
+    // resolve them although nothing looked at those files.
+    if any_batch_failed {
+        health.touch_folder(&folder);
+    }
 
     // Stamp the series's last_scanned_at if we actually saw it — and only
     // when every batch committed. A stamped folder is mtime-skipped by the

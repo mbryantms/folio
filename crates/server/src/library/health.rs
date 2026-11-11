@@ -840,10 +840,23 @@ impl HealthCollector {
             .push(scope.to_string_lossy().into_owned());
     }
 
+    /// Turn off the library-wide auto-resolve sweep for this run. Called for
+    /// a full scan that was cancelled, superseded or failed: it did not
+    /// re-check the whole library, so a finding it did not re-emit is
+    /// unknown, not gone. `finalize` still records what the run emitted and
+    /// still resolves `UnreadableFolder` rows under the scopes it read.
+    /// One-way: [`Self::merge`] never turns the sweep back on.
+    pub fn skip_auto_resolve(&mut self) {
+        self.auto_resolve = false;
+    }
+
     pub fn count(&self) -> usize {
         self.issues.len()
     }
 
+    /// Fold a worker-local collector into this one. The sweep stays on only
+    /// if both had it on, so a full-scan worker collector merged into a
+    /// scoped or [`Self::skip_auto_resolve`]-d one cannot turn it back on.
     pub fn merge(&mut self, mut other: HealthCollector) {
         self.issues.append(&mut other.issues);
         self.touched_files.append(&mut other.touched_files);
@@ -1059,6 +1072,26 @@ impl HealthCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A full-scan worker collector (sweep on) merged into a run that has
+    /// already turned the sweep off must not turn it back on.
+    #[test]
+    fn merge_never_turns_a_skipped_sweep_back_on() {
+        let now = Utc::now().fixed_offset();
+        let (lib, scan) = (Uuid::now_v7(), Uuid::now_v7());
+        let mut run = HealthCollector::new(lib, scan, now);
+        run.skip_auto_resolve();
+        run.merge(HealthCollector::new(lib, scan, now));
+        assert!(!run.auto_resolve);
+
+        let mut scoped = HealthCollector::new_scoped(lib, scan, now);
+        scoped.merge(HealthCollector::new(lib, scan, now));
+        assert!(!scoped.auto_resolve);
+
+        let mut full = HealthCollector::new(lib, scan, now);
+        full.merge(HealthCollector::new(lib, scan, now));
+        assert!(full.auto_resolve, "control: two full collectors keep it on");
+    }
 
     #[test]
     fn fingerprint_is_stable_across_emissions() {

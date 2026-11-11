@@ -188,3 +188,125 @@ async fn rolled_back_batch_never_removes_rows_the_scan_did_not_see() {
     assert_eq!(active_issues(&app, lib_id).await, 2);
     chmod(&bad, 0o644);
 }
+
+/// An open finding seeded a day ago, built from the scanner's own
+/// `IssueKind` so the payload has the shape `finalize` matches on.
+async fn seed_open_finding(
+    app: &TestApp,
+    lib_id: Uuid,
+    kind: server::library::health::IssueKind,
+) -> Uuid {
+    use sea_orm::{ActiveModelTrait, Set};
+    let day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).fixed_offset();
+    let id = Uuid::now_v7();
+    library_health_issue::ActiveModel {
+        id: Set(id),
+        library_id: Set(lib_id),
+        scan_id: Set(None),
+        kind: Set(kind.kind()),
+        payload: Set(kind.payload()),
+        severity: Set(kind.severity().as_str().to_owned()),
+        fingerprint: Set(kind.fingerprint()),
+        first_seen_at: Set(day_ago),
+        last_seen_at: Set(day_ago),
+        resolved_at: Set(None),
+        dismissed_at: Set(None),
+    }
+    .insert(&app.state().db)
+    .await
+    .unwrap();
+    id
+}
+
+async fn is_resolved(app: &TestApp, id: Uuid) -> bool {
+    library_health_issue::Entity::find_by_id(id)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("finding row")
+        .resolved_at
+        .is_some()
+}
+
+/// A folder whose batch fails inside an otherwise complete full scan keeps
+/// its open findings: the files the failure kept the run from re-checking
+/// were not looked at, so the sweep must not resolve their findings. The
+/// sweep still resolves a stale finding in a healthy folder, and the
+/// failure's own finding is recorded.
+#[tokio::test]
+async fn failed_folder_keeps_its_open_findings_through_the_sweep() {
+    use server::library::health::IssueKind;
+    let app = TestApp::spawn().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let folder = root.join("Batch");
+    std::fs::create_dir_all(&folder).unwrap();
+    write_cbz(&folder.join("Batch 001.cbz"), 1, 21);
+    let bad = folder.join("Batch 002.cbz");
+    write_cbz(&bad, 2, 22);
+    let healthy = root.join("Healthy");
+    std::fs::create_dir_all(&healthy).unwrap();
+    let healthy_file = healthy.join("Healthy 001.cbz");
+    write_cbz(&healthy_file, 1, 23);
+    let lib_id = LibrarySeed::new(root).insert(&app.state().db).await;
+
+    chmod(&bad, 0o000);
+    if std::fs::File::open(&bad).is_ok() {
+        skip_note();
+        return;
+    }
+
+    // Both seeded findings name a file with a valid ComicInfo, so no scan
+    // re-emits them: only a touch keeps them, only the sweep resolves them.
+    let in_failed_folder = seed_open_finding(
+        &app,
+        lib_id,
+        IssueKind::MalformedComicInfo {
+            path: bad.clone(),
+            error: "seeded".into(),
+        },
+    )
+    .await;
+    let in_healthy_folder = seed_open_finding(
+        &app,
+        lib_id,
+        IssueKind::MalformedComicInfo {
+            path: healthy_file.clone(),
+            error: "seeded".into(),
+        },
+    )
+    .await;
+
+    let stats = scanner::scan_library(&app.state(), lib_id).await.unwrap();
+    assert_eq!(stats.files_added, 2, "{stats:?}");
+    let run = entity::scan_run::Entity::find()
+        .filter(entity::scan_run::Column::LibraryId.eq(lib_id))
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.state, entity::scan_run::ScanRunState::Complete);
+
+    assert!(
+        !is_resolved(&app, in_failed_folder).await,
+        "the failed folder's finding was not re-checked and must stay open",
+    );
+    assert!(
+        is_resolved(&app, in_healthy_folder).await,
+        "the sweep still resolves a stale finding in a healthy folder",
+    );
+    let failure = library_health_issue::Entity::find()
+        .filter(library_health_issue::Column::LibraryId.eq(lib_id))
+        .filter(library_health_issue::Column::Kind.eq("UnreadableFile"))
+        .filter(library_health_issue::Column::ResolvedAt.is_null())
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .expect("the failure's own finding is recorded");
+    assert_eq!(
+        failure.payload["data"]["path"],
+        bad.to_string_lossy().as_ref()
+    );
+    assert_eq!(failure.scan_id, Some(run.id));
+    chmod(&bad, 0o644);
+}
