@@ -42,21 +42,29 @@ const ageRatings: LibraryAgeRatingsView[] = [
   },
 ];
 
+const histogramState: {
+  data: LibraryAgeRatingsView[] | undefined;
+  isError: boolean;
+} = {
+  data: ageRatings,
+  isError: false,
+};
 vi.mock("@/lib/api/queries", () => ({
   useLibraryList: () => ({ data: libraries, isLoading: false }),
-  useLibraryAgeRatingsAll: () => ({ data: ageRatings }),
+  useLibraryAgeRatingsAll: () => histogramState,
 }));
 
 import { LibraryAccessMatrix } from "@/components/admin/users/LibraryAccessMatrix";
 
 function user(
   access: { library_id: string; cap: string | null; hide: boolean }[],
+  role: "user" | "admin" = "user",
 ): AdminUserDetailView {
   return {
     id: "u1",
     email: "reader@example.com",
     display_name: "Reader",
-    role: "user",
+    role,
     state: "active",
     email_verified: true,
     created_at: "2026-01-01T00:00:00Z",
@@ -74,6 +82,8 @@ function user(
 afterEach(() => {
   cleanup();
   mutate.mockReset();
+  histogramState.data = ageRatings;
+  histogramState.isError = false;
 });
 
 const capSelect = (name: string) =>
@@ -100,6 +110,7 @@ describe("<LibraryAccessMatrix> age cap (U-09)", () => {
       "All ages",
       "Older children",
       "Teens",
+      "Older teens",
       "Mature",
       "Adults only",
     ]);
@@ -189,5 +200,136 @@ describe("<LibraryAccessMatrix> age cap (U-09)", () => {
     fireEvent.change(capSelect("Comics"), { target: { value: "" } });
     expect(line()).toBe("Hides 4 of 10 series; 4 unrated hidden.");
     expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("switching a switch off removes that library from the map", () => {
+    render(
+      <LibraryAccessMatrix
+        user={user([
+          { library_id: LIB_A, cap: null, hide: true },
+          { library_id: LIB_B, cap: null, hide: true },
+        ])}
+      />,
+    );
+    fireEvent.click(hideSwitch("Comics"));
+    fireEvent.click(save());
+    expect(mutate).toHaveBeenCalledWith({
+      library_ids: [LIB_A, LIB_B],
+      age_rating_caps: {},
+      hide_unrated: { [LIB_B]: true },
+    });
+  });
+
+  it("revoking a library drops its cap and switch", () => {
+    render(
+      <LibraryAccessMatrix
+        user={user([
+          { library_id: LIB_A, cap: "Teen", hide: true },
+          { library_id: LIB_B, cap: "PG", hide: false },
+        ])}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /Comics/ }));
+    fireEvent.click(save());
+    expect(mutate).toHaveBeenCalledWith({
+      library_ids: [LIB_B],
+      age_rating_caps: { [LIB_B]: "PG" },
+      hide_unrated: {},
+    });
+  });
+
+  it("an admin target shows no counts", () => {
+    render(
+      <LibraryAccessMatrix
+        user={user([{ library_id: LIB_A, cap: "Teen", hide: true }], "admin")}
+      />,
+    );
+    expect(screen.queryByTestId(`cap-effect-${LIB_A}`)).toBeNull();
+    expect(screen.getByText(/no series counts are shown/)).toBeTruthy();
+    fireEvent.change(capSelect("Comics"), { target: { value: "PG" } });
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("a stored cap in another spelling shows as its rung, unchanged", () => {
+    render(
+      <LibraryAccessMatrix
+        user={user([{ library_id: LIB_A, cap: " teen ", hide: false }])}
+      />,
+    );
+    expect(capSelect("Comics").value).toBe("Teen");
+    expect(screen.getByTestId(`cap-effect-${LIB_A}`).textContent).toBe(
+      "Hides 4 of 10 series; 4 unrated still shown.",
+    );
+    // The server already enforces it as Teen: nothing to save.
+    expect((save() as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a stored alias shows as no cap and says it hides nothing", () => {
+    render(
+      <LibraryAccessMatrix
+        user={user([
+          { library_id: LIB_A, cap: "Mature", hide: false },
+          { library_id: LIB_B, cap: null, hide: false },
+        ])}
+      />,
+    );
+    expect(capSelect("Comics").value).toBe("");
+    expect(screen.getByTestId(`cap-unenforced-${LIB_A}`).textContent).toMatch(
+      /Mature.*hides nothing/,
+    );
+    expect(screen.getByTestId(`cap-effect-${LIB_A}`).textContent).toBe(
+      "Hides none of 10 series; 4 unrated still shown.",
+    );
+    expect((save() as HTMLButtonElement).disabled).toBe(true);
+    // A save for another row sends no cap for it, not the refused alias.
+    fireEvent.click(hideSwitch("Manga"));
+    fireEvent.click(save());
+    expect(mutate).toHaveBeenCalledWith({
+      library_ids: [LIB_A, LIB_B],
+      age_rating_caps: {},
+      hide_unrated: { [LIB_B]: true },
+    });
+  });
+
+  it("announces only the admin's own changes", () => {
+    render(
+      <LibraryAccessMatrix
+        user={user([{ library_id: LIB_A, cap: "Teen", hide: false }])}
+      />,
+    );
+    const status = screen.getByRole("status");
+    expect(status.textContent).toBe("");
+    fireEvent.click(hideSwitch("Comics"));
+    expect(status.textContent).toBe(
+      "Comics: Hides 8 of 10 series; 4 unrated hidden.",
+    );
+    fireEvent.change(capSelect("Comics"), { target: { value: "X18+" } });
+    expect(status.textContent).toBe(
+      "Comics: Hides 4 of 10 series; 4 unrated hidden.",
+    );
+  });
+
+  it("says when the counts could not be loaded", () => {
+    histogramState.data = undefined;
+    histogramState.isError = true;
+    render(
+      <LibraryAccessMatrix
+        user={user([{ library_id: LIB_A, cap: "Teen", hide: false }])}
+      />,
+    );
+    expect(screen.getByTestId(`cap-effect-${LIB_A}`).textContent).toBe(
+      "Counts unavailable.",
+    );
+  });
+
+  it("keeps the line's room while the counts load", () => {
+    histogramState.data = undefined;
+    render(
+      <LibraryAccessMatrix
+        user={user([{ library_id: LIB_A, cap: "Teen", hide: false }])}
+      />,
+    );
+    expect(screen.queryByTestId(`cap-effect-${LIB_A}`)).toBeNull();
+    expect(screen.queryByText(/Hides/)).toBeNull();
   });
 });

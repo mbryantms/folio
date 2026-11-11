@@ -9,7 +9,11 @@ import { NativeSelect } from "@/components/folio/native-select";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { AGE_RATING_GROUPS, groupOf } from "@/lib/age-rating";
+import {
+  AGE_RATING_GROUPS,
+  AGE_RATING_GROUPS_NOTE,
+  groupOf,
+} from "@/lib/age-rating";
 import { useLibraryAgeRatingsAll, useLibraryList } from "@/lib/api/queries";
 import { useUpdateLibraryAccess } from "@/lib/api/mutations";
 import type { AdminUserDetailView } from "@/lib/api/types";
@@ -20,6 +24,7 @@ import {
   describeCapEffect,
   hideUnratedDirty,
   isDirty,
+  loadGrants,
   selectionDiff,
   setCap,
   setHideUnrated,
@@ -37,7 +42,8 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
   const { data: libraries, isLoading } = useLibraryList();
   // Series per rating rung, per library: the "what this hides" line is
   // worked out from it for whatever is selected, with no request per change.
-  const { data: ageRatings } = useLibraryAgeRatingsAll();
+  const { data: ageRatings, isError: ageRatingsFailed } =
+    useLibraryAgeRatingsAll();
   const histograms = React.useMemo(
     () => new Map((ageRatings ?? []).map((h) => [h.library_id, h])),
     [ageRatings],
@@ -45,28 +51,19 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
   const update = useUpdateLibraryAccess(user.id);
   const hideUnratedHelpId = React.useId();
 
-  const original = React.useMemo(
-    () => new Set(user.library_access.map((g) => g.library_id)),
+  // Stored caps are read the way the server enforces them (another
+  // spelling of a rung loads as that rung; a non-rung loads as no cap), so
+  // the select, the counts and the request agree with what readers see.
+  const loaded = React.useMemo(
+    () => loadGrants(user.library_access),
     [user.library_access],
   );
-  const originalCaps = React.useMemo(
-    () =>
-      new Map(
-        user.library_access
-          .filter((g) => g.age_rating_max)
-          .map((g) => [g.library_id, g.age_rating_max as string]),
-      ),
-    [user.library_access],
-  );
-  const originalHideUnrated = React.useMemo(
-    () =>
-      new Set(
-        user.library_access
-          .filter((g) => g.hide_unrated)
-          .map((g) => g.library_id),
-      ),
-    [user.library_access],
-  );
+  const original = loaded.selected;
+  const originalCaps = loaded.caps;
+  const originalHideUnrated = loaded.hideUnrated;
+  // What the polite status region says: written only from the admin's own
+  // change of a cap or switch, never on load or refetch.
+  const [announcement, setAnnouncement] = React.useState("");
   const [selected, setSelected] = React.useState<Set<string>>(original);
   const [caps, setCaps] = React.useState<Map<string, string>>(originalCaps);
   const [hideUnrated, setHideUnratedState] =
@@ -89,6 +86,20 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
   const diff = selectionDiff(original, selected);
   const isAdmin = user.role === "admin";
 
+  /** Announce a row's new figure after the admin changed its cap or switch. */
+  function announce(
+    libraryId: string,
+    name: string,
+    cap: string | null,
+    hides: boolean,
+  ) {
+    const histogram = histograms.get(libraryId);
+    if (isAdmin || !histogram) return;
+    setAnnouncement(
+      `${name}: ${describeCapEffect(capEffect(histogram, cap, hides))}`,
+    );
+  }
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
 
   if (!libraries || libraries.length === 0) {
@@ -105,9 +116,14 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
         <p className="border-border bg-muted/40 text-muted-foreground rounded-md border px-3 py-2 text-xs">
           Admins implicitly have access to every library. Per-library grants
           here are stored but have no effect while the role stays{" "}
-          <code className="font-mono">admin</code>.
+          <code className="font-mono">admin</code>, so no series counts are
+          shown.
         </p>
       ) : null}
+
+      <p className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </p>
 
       <ul className="divide-border border-border bg-card divide-y rounded-md border">
         {libraries.map((lib) => {
@@ -117,6 +133,7 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
           const group = groupOf(cap);
           const histogram = histograms.get(lib.id);
           const switchId = `lib-hide-unrated-${lib.id}`;
+          const unenforced = loaded.unenforcedCaps.get(lib.id);
           return (
             <li key={lib.id} className="hover:bg-muted/40 space-y-2 px-4 py-2">
               <div className="flex items-center gap-3">
@@ -146,9 +163,10 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
                   groups={CAP_GROUPS}
                   value={cap ?? ""}
                   disabled={!checked}
-                  onChange={(next) =>
-                    setCaps((prev) => setCap(prev, lib.id, next || null))
-                  }
+                  onChange={(next) => {
+                    setCaps((prev) => setCap(prev, lib.id, next || null));
+                    announce(lib.id, lib.name, next || null, hides);
+                  }}
                 />
                 <div className="flex items-center gap-2">
                   <Switch
@@ -157,11 +175,12 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
                     checked={hides}
                     disabled={!checked}
                     aria-describedby={hideUnratedHelpId}
-                    onCheckedChange={(on) =>
+                    onCheckedChange={(on) => {
                       setHideUnratedState((prev) =>
                         setHideUnrated(prev, lib.id, on),
-                      )
-                    }
+                      );
+                      announce(lib.id, lib.name, cap, on);
+                    }}
                   />
                   <Label htmlFor={switchId} className="text-sm font-normal">
                     Hide unrated{" "}
@@ -169,11 +188,14 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
                   </Label>
                 </div>
               </div>
-              {checked && (group || histogram) ? (
-                <div
-                  className="text-muted-foreground space-y-0.5 pl-7 text-xs"
-                  aria-live="polite"
-                >
+              {checked ? (
+                <div className="text-muted-foreground space-y-0.5 pl-7 text-xs">
+                  {unenforced !== undefined && !cap ? (
+                    <p data-testid={`cap-unenforced-${lib.id}`}>
+                      The stored cap &ldquo;{unenforced}&rdquo; is not a rating
+                      on the list, so it hides nothing; saving clears it.
+                    </p>
+                  ) : null}
                   {group ? (
                     <p>
                       <span className="text-foreground font-medium">
@@ -182,11 +204,19 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
                       {group.description}
                     </p>
                   ) : null}
-                  {histogram ? (
+                  {isAdmin ? null : histogram ? (
                     <p data-testid={`cap-effect-${lib.id}`}>
                       {describeCapEffect(capEffect(histogram, cap, hides))}
                     </p>
-                  ) : null}
+                  ) : ageRatingsFailed ? (
+                    <p data-testid={`cap-effect-${lib.id}`}>
+                      Counts unavailable.
+                    </p>
+                  ) : (
+                    // Loading: keep the line's room so it isn't read as
+                    // "hides nothing" and the row doesn't jump.
+                    <p aria-hidden="true" className="h-4" />
+                  )}
                 </div>
               ) : null}
             </li>
@@ -208,6 +238,7 @@ export function LibraryAccessMatrix({ user }: { user: AdminUserDetailView }) {
           The counts are series. An issue rated above the cap inside a series
           that stays visible is hidden too, and isn&apos;t counted.
         </p>
+        <p>{AGE_RATING_GROUPS_NOTE}</p>
         <dl className="grid gap-x-3 gap-y-1 sm:grid-cols-[auto_1fr]">
           {AGE_RATING_GROUPS.map((g) => (
             <div key={g.heading} className="contents">

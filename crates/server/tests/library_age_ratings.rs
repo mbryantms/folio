@@ -330,3 +330,20 @@ fn web_ladder_matches_the_server_ladder() {
     let web: Vec<&str> = body.split('"').skip(1).step_by(2).collect();
     assert_eq!(web, LADDER.to_vec());
 }
+
+/// The histogram joins series on the normalised spellings in
+/// `ladder_values_sql()`; a spelling listed twice (a future alias equal to
+/// a rung, say) would count each such series twice.
+#[test]
+fn histogram_ladder_spellings_are_unique() {
+    let sql = server::library::series_rating::ladder_values_sql();
+    let norms: Vec<&str> = sql
+        .split("('")
+        .skip(1)
+        .map(|row| row.split("',").next().expect("norm"))
+        .collect();
+    let expected = server::library::age_rating::spellings().count();
+    assert_eq!(norms.len(), expected, "{sql}");
+    let unique: std::collections::HashSet<&str> = norms.iter().copied().collect();
+    assert_eq!(unique.len(), norms.len(), "duplicate spelling in {sql}");
+}

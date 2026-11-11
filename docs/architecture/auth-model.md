@@ -251,9 +251,18 @@ server-side on every read surface; the web app never filters client-side.
 The picker lists "No cap" first, then every rung under a plain group
 heading in ladder order (`AGE_RATING_GROUPS` in `web/lib/age-rating.ts`:
 Young children = Early Childhood; All ages = Everyone, G; Older children
-= Everyone 10+, PG, Kids to Adults; Teens = Teen, MA15+; Mature = Mature
-17+, M; Adults only = R18+, Adults Only 18+, X18+), each with a one-line
-description of who it suits. The web copy of the ladder is pinned to the
+= Everyone 10+, PG, Kids to Adults; Teens = Teen; Older teens = MA15+;
+Mature = Mature 17+, M; Adults only = R18+, Adults Only 18+, X18+), each
+with a one-line description written for the most permissive rung under
+it. The legend says the ratings come from several rating systems and the
+descriptions are a guide. The form reads a stored cap the way the server
+enforces it: another spelling of a rung (`teen`, ` Teen `; case and the
+`RATING_TRIM` characters ignored) shows as that rung, and a value that is
+no rung (an alias such as `Mature`, which `is_valid_cap` refuses and
+`access::for_user` does not enforce, or garbage) shows as "No cap" with a
+note, and a save from the page clears it. Neither case on its own counts
+as a change. The counts are not shown for an admin account, which ignores
+grants. The web copy of the ladder is pinned to the
 server's by `tests/library_age_ratings.rs`. Each library row shows what
 the selection does before saving: how many series the cap (and switch)
 hide and how many unrated series stay shown or are hidden. The figures
