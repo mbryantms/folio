@@ -350,6 +350,121 @@ similar-series reasons (see
 Admins and callers without a cap that hides anything keep the rollup
 queries unchanged.
 
+### Hidden and missing answer alike
+
+Two cases are kept apart.
+
+**Hidden by access.** To a caller who may not see an object (a library
+they hold no grant on, a series or issue above their cap, another user's
+personal list, view, collection, batch or marker), the object does not
+exist: every read and write route answers exactly as it does for an id
+that was never issued, with the same status, error code and body. A 403
+is kept only for an action the caller may not take on something they can
+see (a reader editing a shared reading list or a system view, a reader
+calling an admin-only route). Admins have no grant or cap limits.
+
+**Soft-removed content** (the file went missing; it may be restored, and
+its history is kept) is not secret:
+
+- A removed series answers not-found to non-admins on every route
+  addressed through its slug or id, exactly as its page does
+  (`access::series_page_ok` / `series_page_visible`), and so do the issue
+  routes addressed through the series slug (`/series/{s}/issues/{i}` and
+  its sub-routes, `access::issue_page_allowed` /
+  `issue_route_visible`). Admins still open it to restore or confirm the
+  removal. Routes addressed by an issue id alone (page bytes, thumbnails,
+  covers, OCR, the reader's marker overlay, page overrides, the Komga
+  book, the issue and marker permalinks) keep serving its issues as
+  history.
+- A removed issue in a live series keeps its reads: its detail page,
+  cached thumbnails, the reader-side data for it (the reader's marker
+  overlay, page overrides, the issue-level metadata and external-id
+  reads) and the reading log, which lists such issues on purpose.
+- Nobody, admins included, makes new personal writes on removed content:
+  no new progress through any protocol, marker, marker edit, rating,
+  closing note, reading session, page override, collection entry, reader
+  preference or completion override. These key on `access::visible_issue`
+  / `access::visible_series` (the `visible_issues_select` /
+  `visible_series_select` predicates). Deleting one's own rows stays
+  possible (`DELETE` of a marker, of page overrides, of reader
+  preferences, and clearing a completion override). Rows written before
+  the removal stay and come back with a restore.
+- Admin curation of removed rows is deliberate and stays allowed: issue
+  and series `PATCH`, external-id edits, metadata apply and series
+  relationships are how a removed row is prepared for a restore.
+- Two jobs a reader can start keep their earlier behaviour on a removed
+  issue in a live series: a metadata search and OCR.
+
+A caller's own markers follow the two cases. On content hidden by access
+the marker list, count, search, tag index and permalink leave them out;
+reading or editing one by id answers like an unknown marker; deleting
+one by id still works. On removed content the marker surfaces keep
+their earlier behaviour: the list, count, search and tags leave
+markers on removed issues out, and the reader's overlay for the issue
+still shows them.
+
+The notes export (`/me/markers/export`) carries every marker and closing
+note the user owns. Removed content keeps its series and issue identity,
+`available: false`, no jump URL. Content hidden by access names nothing:
+its markers and notes sit in one anonymous "No longer available" group
+with only the fields the user wrote. The account export (`/me/export`)
+blanks the names (series name, year, issue number, library slug) of
+content hidden by access and keeps ids and content hashes for a
+re-import; removed content keeps its names.
+
+A CBL saved view may reference only a reading list the caller owns or a
+shared one; any other list id is refused like a nonexistent one. A view
+row written before that check that points at someone else's list reads
+like a view whose list is gone: no list id, no year range, no covers, no
+Up Next walk, no "appears in" entry, no OPDS pin, and the list itself
+answers 404.
+
+A metadata batch is readable by admins and by its creator only. A
+creator who has since lost the admin role still sees every child of
+their own batch, including children named past a cap set later; such a
+batch can only have been created while they were an admin.
+
+Routes whose answer changed (reader = non-admin; "hidden" = outside the
+grant or above the cap):
+
+| Route | Case | Before | After |
+|---|---|---|---|
+| `POST /me/progress/bulk` | issue in a soft-removed series | written | counted in `not_found` (`forbidden` is always 0) |
+| `POST /me/progress/series-bulk` | soft-removed series | written | counted in `not_found_series` |
+| `POST /series/{slug}/progress`, `…/progress-matching` | soft-removed series | 200 | 404 `not_found` |
+| `POST /progress`, OPDS `PUT …/progress`, KOReader sync `PUT`, OPDS Progression `PUT`, Komga `PATCH` | soft-removed issue or series | written | the route's own unknown-id answer |
+| `POST /me/markers`, `POST /me/markers/restore` | soft-removed issue or series | written | 404 / counted in `skipped` |
+| `PATCH /me/markers/{id}` | another user's marker; own marker on a hidden or removed issue | 403 `forbidden`; 200 | 404 `not_found` (on a removed issue this is a refused write: the reader's overlay still shows the marker) |
+| `DELETE /me/markers/{id}` | another user's marker | 403 `forbidden` | 404 `not_found` |
+| `GET /me/markers/export` | own marker or closing note on a hidden issue | exported with names | exported in the anonymous group |
+| `GET /me/export` | rows on a hidden issue or series | names | ids and content hash only |
+| `GET /me/series/{id}/reader-prefs` | hidden series, removed series for a reader; unknown id | 200 | 404 `not_found` |
+| `PUT /me/series/{id}/reader-prefs` | hidden series; removed series, any role | 200 | 404 `not_found` |
+| `PUT /me/series/{id}/completion-prefs` | removed series, any role, setting an override | 200 | 404 `not_found` |
+| `GET /series/{slug}/external-ids`, `…/provider-ranges`, `…/provider-coverage`, `…/metadata/{search,candidates,coverage-hints,status,lookup,proposed-diff,composite-diff}` | hidden series | 403 `auth.forbidden` | 404 `not_found` |
+| `…/metadata/overview`, `…/metadata/issues`, `/series/{slug}/collection`, `…/issues`, `…/resume`, `…/similar`, `…/relationships`, `…/appearances`, `…/same-universe` | soft-removed series (reader) | 200 | 404 `not_found` |
+| `GET /series/{slug}/issues/{issue}/external-ids` and the issue-level metadata routes | hidden series | 403 `auth.forbidden` | 404 `issue.not_found` |
+| the same | soft-removed series (reader) | 200 | 404 `issue.not_found` |
+| `GET /series/{s}/issues/{i}`, `…/metadata-overview`, `…/next`, `…/prev`, `…/health-issues`, `…/appearances` | soft-removed series (reader) | 200 | 404 `not_found` |
+| `GET /metadata/batch/{id}` | another user's batch | 403 `forbidden`, or 200 with a library grant | 404 `not_found` |
+| `PUT /series/{slug}/rating` | soft-removed series | 200 | 404 `not_found` |
+| `PUT /series/{s}/issues/{i}/rating`, `…/note` | soft-removed issue or series | 200 | 404 `not_found` |
+| `PUT /me/issues/{id}/page-overrides`, `POST /me/reading-sessions` | soft-removed issue or series | 200 | 404 `not_found` |
+| `DELETE /me/issues/{id}/page-overrides` | hidden or unknown issue | 404 | 204 (only the caller's own row is removed) |
+| Every `/series/{s}/issues/{i}/…` route | unknown series slug | 404 "series not found" | 404 "issue not found" (as for a hidden series) |
+| `POST /me/saved-views` (`kind: cbl`) | another user's list; unknown list | 500 on an unknown id | 422 `validation`, field `cbl_list_id`, for both |
+| `PATCH`, `DELETE /me/saved-views/{id}` and its pin, sidebar, icon, results and issue-results routes | another user's view | 403 `forbidden` | 404 `not_found` (a system view stays 403) |
+| `/me/collections/{id}` and every sub-route | another user's collection | 403 `forbidden` | 404 `not_found` |
+| `/me/cbl-lists/{id}` and every sub-route | another user's list | 403 `forbidden` | 404 `not_found` (a reader writing a shared list stays 403) |
+| `GET /opds/pse/…` page stream | hidden issue | 403 `library_access_denied` | 404 `not_found` |
+| `GET` filter-option pickers with `?library=` | hidden library | 403 `forbidden` | 404 `not_found` |
+| `GET /me/saved-views`, `/me/view-covers`, appearances, starter lists, Up Next / Prev Up `?cbl=`, OPDS pins | CBL view row pointing at another user's list | list id, year range, covers, list name, walk, pin | as if the list were gone |
+
+Regression suite: `crates/server/tests/denied_and_missing_alike.rs`
+compares each hidden request with the same request on a random unknown
+id, byte for byte, for a reader without a grant and a capped reader,
+and checks the soft-removed rules for a reader with a grant.
+
 Regression suite: `crates/server/tests/age_rating_cap.rs` (a `Teen`-capped
 user against `Teen` / `Mature 17+` / unrated series, plus an issue-level
 override) and the unit tests in `library/age_rating.rs` / `library/access.rs`.

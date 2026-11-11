@@ -362,7 +362,7 @@ async fn fetch_distinct_lookup(
 
     if let Some(lib) = q.library {
         if !visible.contains(lib) {
-            return error(StatusCode::FORBIDDEN, "forbidden", "library not visible");
+            return error(StatusCode::NOT_FOUND, "not_found", "library not found");
         }
         params.push(Value::from(lib));
         sql.push_str(&format!(" AND s.library_id = ${}", params.len()));
@@ -461,7 +461,7 @@ async fn fetch_distinct_issue_csv(
 
     if let Some(lib) = q.library {
         if !visible.contains(lib) {
-            return error(StatusCode::FORBIDDEN, "forbidden", "library not visible");
+            return error(StatusCode::NOT_FOUND, "not_found", "library not found");
         }
         params.push(Value::from(lib));
         sql.push_str(&format!(" AND s.library_id = ${}", params.len()));
@@ -559,7 +559,7 @@ async fn fetch_distinct_series_column(
 
     if let Some(lib) = q.library {
         if !visible.contains(lib) {
-            return error(StatusCode::FORBIDDEN, "forbidden", "library not visible");
+            return error(StatusCode::NOT_FOUND, "not_found", "library not found");
         }
         params.push(Value::from(lib));
         sql.push_str(&format!(" AND library_id = ${}", params.len()));
@@ -709,7 +709,7 @@ async fn fetch_distinct(
 
     if let Some(lib) = q.library {
         if !visible.contains(lib) {
-            return error(StatusCode::FORBIDDEN, "forbidden", "library not visible");
+            return error(StatusCode::NOT_FOUND, "not_found", "library not found");
         }
         params.push(Value::from(lib));
         sql.push_str(&format!(" AND s.library_id = ${}", params.len()));

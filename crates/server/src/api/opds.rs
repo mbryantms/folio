@@ -1576,9 +1576,16 @@ pub(crate) async fn download(
         _ => return not_found(),
     };
     // Never through a symbolic link, and only a regular file below the
-    // library root; the response streams from this handle.
-    let Some(f) = crate::library::no_follow::open_issue(&app, &row).await else {
-        return not_found();
+    // library root; the response streams from this handle. A failed library
+    // lookup is a server error, not not-found.
+    let f = match crate::library::no_follow::open_issue_archive(&app, &row).await {
+        Ok(f) => f,
+        Err(crate::library::no_follow::Refusal::Lookup(e)) => return server_error(e),
+        Err(_) => return not_found(),
+    };
+    let f = match f.file().try_clone() {
+        Ok(f) => f,
+        Err(e) => return server_error(e),
     };
     let mut f = tokio::fs::File::from_std(f);
     let total = f.metadata().await.ok().map(|m| m.len()).unwrap_or(0);
@@ -3435,6 +3442,14 @@ async fn page_acq(
     };
     let view_by_id: HashMap<Uuid, &saved_view::Model> =
         view_rows.iter().map(|v| (v.id, v)).collect();
+    // A legacy CBL view may point at another user's private list; that
+    // list's feed answers 404, so its pin is skipped.
+    let cbl_ids: Vec<Uuid> = view_rows.iter().filter_map(|v| v.cbl_list_id).collect();
+    let usable_lists =
+        match crate::api::saved_views::usable_cbl_lists(&app.db, user.id, &cbl_ids).await {
+            Ok(u) => u,
+            Err(e) => return server_error(e.to_string()),
+        };
     // Walk pins in pin-position order so the OPDS surface mirrors
     // the order the user sees in the web sidebar / rail grid.
     // Per-kind dispatch (M4 follow-up — CBL pins were silently
@@ -3447,7 +3462,7 @@ async fn page_acq(
             continue;
         };
         let (urn, href) = match v.kind {
-            KIND_CBL => match v.cbl_list_id {
+            KIND_CBL => match v.cbl_list_id.filter(|id| usable_lists.contains(id)) {
                 Some(list_id) => (
                     format!("urn:cbl:{list_id}"),
                     format!("/opds/v1/lists/{list_id}"),
@@ -3885,7 +3900,8 @@ pub(crate) async fn progress_put(
         Ok(None) => return not_found(),
         Err(e) => return server_error(e.to_string()),
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    // Hidden or soft-removed: no new progress, answered like an unknown id.
+    if !access::issue_writable(&app, &user, &row.id).await {
         return not_found();
     }
     // M4: normalize `page` / `position` into the integer `last_page`
@@ -4045,7 +4061,8 @@ async fn koreader_sync_put(
         }
         Err(e) => return server_error(e.to_string()),
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    // Hidden or soft-removed: no new progress, answered like an unknown hash.
+    if !access::issue_writable(&app, &user, &row.id).await {
         return error(
             StatusCode::UNAUTHORIZED,
             "document_unknown",

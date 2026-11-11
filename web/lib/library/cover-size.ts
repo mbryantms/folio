@@ -51,6 +51,23 @@ export const COVER_WIDTH = `var(${COVER_WIDTH_VAR}, var(${COVER_MIN_VAR}, ${DEFA
  *  `computeColumnWidth` mirror it for the virtualized grid. */
 export const COVER_GRID_COLUMNS = `repeat(auto-fill, minmax(min(var(${COVER_MIN_VAR}, ${DEFAULT_COVER_SIZE_PX}px), calc(50% - 0.5rem)), 1fr))`;
 
+/**
+ * `sizes` for a cover image at card size where `sizes="auto"` cannot apply
+ * (eager / priority covers). `sizes` cannot read `--cover-w`, so this is
+ * the *largest* card the size control allows, which never under-serves
+ * against the 300w / 600w candidates (`coverThumbSrcSet`):
+ *
+ * - From `sm` up a card is at most the 300px stop. At 1x that picks 300w
+ *   (enough for every size); above 1x it picks 600w. Cost: a default
+ *   ~160-190px card at DPR 1.25-1.9 also gets 600w where 300w would just
+ *   about do.
+ * - Below `sm` the grid never shows fewer than two per row, so a card is
+ *   under 50vw. At DPR 3 every phone card needs more than 300 device px, so
+ *   600w is right either way; the cost is three-per-row at DPR <= 2
+ *   (~31vw cards) fetching 600w where 300w would do.
+ */
+export const COVER_CARD_SIZES = "(max-width: 639px) 50vw, 300px";
+
 export const COVER_GRID_STYLE = {
   gridTemplateColumns: COVER_GRID_COLUMNS,
 } as const;

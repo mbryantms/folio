@@ -64,6 +64,18 @@ pub enum RefreshError {
     Db(#[from] sea_orm::DbErr),
 }
 
+impl RefreshError {
+    /// The text a response may carry: a database error's own text stays
+    /// in the log.
+    pub fn public_message(&self) -> String {
+        match self {
+            Self::Db(_) => crate::api::INTERNAL_ERROR_TEXT.to_owned(),
+            Self::Catalog(c) => format!("catalog: {}", c.public_message()),
+            other => other.to_string(),
+        }
+    }
+}
+
 /// Refresh one list. `budget` bounds the remote work: request paths pass
 /// [`super::fetch::REQUEST_BUDGET`], the sweep [`SWEEP_BUDGET`].
 pub async fn refresh(
@@ -569,4 +581,27 @@ async fn backfill_status_counts<C: ConnectionTrait>(
         .count(db)
         .await? as i32;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn database_error_text_stays_out_of_the_public_message() {
+        let sql = "relation \"cbl_list\" does not exist";
+        let db = || sea_orm::DbErr::Custom(sql.to_owned());
+        for msg in [
+            RefreshError::Db(db()).public_message(),
+            RefreshError::Catalog(catalog::CatalogError::Db(db())).public_message(),
+            catalog::CatalogError::Db(db()).public_message(),
+        ] {
+            assert!(!msg.contains("cbl_list"), "{msg}");
+            assert!(msg.ends_with(crate::api::INTERNAL_ERROR_TEXT), "{msg}");
+        }
+        assert_eq!(
+            RefreshError::Http("503".into()).public_message(),
+            "HTTP: 503"
+        );
+    }
 }

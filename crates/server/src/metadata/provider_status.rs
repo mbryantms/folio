@@ -52,7 +52,8 @@ pub struct ProviderStatus {
     /// `quota` only: the bucket's suggested wait when it denied the call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_secs: Option<u64>,
-    /// `failed` only: the provider error, for the run detail.
+    /// `failed` only: the provider error, for the run detail. Admin
+    /// responses only; a non-admin's view leaves it out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

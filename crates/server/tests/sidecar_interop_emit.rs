@@ -165,7 +165,7 @@ fn cbz_with_pages() -> Vec<u8> {
 }
 
 fn read_entry(path: &Path, name: &str) -> String {
-    let mut a = archive::open(path, ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(path, ArchiveLimits::default()).unwrap();
     String::from_utf8(
         a.read_entry_bytes(name)
             .unwrap_or_else(|e| panic!("{name}: {e}")),
@@ -410,7 +410,7 @@ async fn folio_written_archive_and_expected_json_for_the_interop_readers() {
     // The archive is what the readers will see: pages intact, both
     // sidecars present.
     {
-        let a = archive::open(&path, ArchiveLimits::default()).unwrap();
+        let a = archive::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
         assert_eq!(a.pages().len(), PAGE_COUNT as usize, "pages survived");
     }
 

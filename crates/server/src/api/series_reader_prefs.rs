@@ -13,6 +13,14 @@
 //! it is NULL / absent; `PUT` takes PATCH semantics (absent = leave,
 //! `null` = clear) and a row whose every slice is cleared is deleted.
 //! Page strip and page animation stay account-wide (D9a).
+//!
+//! Reading goes through the series page's gate
+//! (`access::series_page_visible`): a series outside the caller's grant,
+//! above their age cap, or soft-removed (for a non-admin) answers the same
+//! 404 as an unknown id. Storing additionally refuses a soft-removed series
+//! for every role, admins included: no new writes on removed content.
+//! `DELETE` answers 204 for any id, so it needs no gate: it only ever
+//! removes the caller's own row.
 
 use axum::{
     Json,
@@ -32,6 +40,7 @@ use super::error;
 use crate::api::form_or_json::FormOrJson;
 use crate::auth::CurrentUser;
 use crate::auth::preferences::{FitMode, ReadingDirection, ViewMode};
+use crate::library::access;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -106,6 +115,38 @@ fn token<T: Serialize>(v: &T) -> Option<String> {
         .and_then(|j| j.as_str().map(str::to_owned))
 }
 
+/// `Ok` when the caller may open the series page (and, for a `write`, the
+/// series is not soft-removed), else the 404 an unknown id gets (or a 500
+/// on a lookup error).
+async fn require_visible_series(
+    app: &AppState,
+    user: &CurrentUser,
+    series_id: Uuid,
+    write: bool,
+) -> Result<(), Response> {
+    match series::Entity::find_by_id(series_id).one(&app.db).await {
+        Ok(Some(row))
+            if !(write && row.removed_at.is_some())
+                && access::series_page_visible(app, user, &row).await =>
+        {
+            Ok(())
+        }
+        Ok(_) => Err(error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "series not found",
+        )),
+        Err(e) => {
+            tracing::error!(error = %e, "series reader prefs: series lookup failed");
+            Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ))
+        }
+    }
+}
+
 /// The caller's reader overrides for a series (empty object when none).
 #[utoipa::path(
     operation_id = "series_reader_prefs_get",    get,
@@ -113,7 +154,8 @@ fn token<T: Serialize>(v: &T) -> Option<String> {
     params(("series_id" = String, Path,)),
     responses(
         (status = 200, body = SeriesReaderPrefsView),
-        (status = 401, description = "not authenticated")
+        (status = 401, description = "not authenticated"),
+        (status = 404, description = "series not found")
     )
 )]
 #[handler]
@@ -122,6 +164,9 @@ pub async fn get_one(
     user: CurrentUser,
     AxPath(series_id): AxPath<Uuid>,
 ) -> Response {
+    if let Err(resp) = require_visible_series(&app, &user, series_id, false).await {
+        return resp;
+    }
     match prefs::Entity::find_by_id((user.id, series_id))
         .one(&app.db)
         .await
@@ -156,13 +201,8 @@ pub async fn put(
     AxPath(series_id): AxPath<Uuid>,
     FormOrJson { data: req, .. }: FormOrJson<SeriesReaderPrefsPatch>,
 ) -> Response {
-    match series::Entity::find_by_id(series_id).one(&app.db).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "series not found"),
-        Err(e) => {
-            tracing::error!(error = %e, "series reader prefs: series lookup failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
-        }
+    if let Err(resp) = require_visible_series(&app, &user, series_id, true).await {
+        return resp;
     }
     let existing = match prefs::Entity::find_by_id((user.id, series_id))
         .one(&app.db)

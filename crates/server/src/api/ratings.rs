@@ -95,7 +95,10 @@ pub async fn set_series_rating(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &series_row).await {
+    // Hidden or soft-removed: no new rating, answered like an unknown slug.
+    if series_row.removed_at.is_some()
+        || !crate::library::access::series_visible(&app, &user, &series_row).await
+    {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     write_rating(
@@ -134,7 +137,9 @@ pub async fn set_issue_rating(
             Ok(r) => r,
             Err(resp) => return resp,
         };
-    if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
+    // Hidden or soft-removed (with its series): no new rating, answered
+    // like an unknown slug.
+    if !crate::library::access::issue_writable(&app, &user, &issue_row.id).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     write_rating(&app, user.id, TARGET_TYPE_ISSUE, &issue_row.id, req.rating).await

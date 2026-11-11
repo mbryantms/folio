@@ -66,6 +66,9 @@ use shared::pagination::{CursorPage, decode_cursor, encode_cursor};
 pub(crate) const LIST_DEFAULT_LIMIT: u64 = 60;
 pub(crate) const LIST_MAX_LIMIT: u64 = 100;
 
+/// What a non-admin reads in place of a recorded profile-fetch failure.
+pub const READER_PROFILE_ERROR: &str = "Couldn't load the profile from the provider";
+
 /// Which entity table a landing page is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EntityKind {
@@ -165,6 +168,8 @@ pub struct EntityDetailView {
     pub enrichment: EnrichmentStatus,
     /// Last fetch failure (`enrichment = failed`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Admins get the provider's error text; any other caller gets
+    /// [`READER_PROFILE_ERROR`] whenever a failure is recorded.
     pub enrichment_error: Option<String>,
 }
 
@@ -1227,6 +1232,14 @@ pub(crate) async fn detail_handler(
     // admin's provider budget. A reader is served whatever is cached.
     let may_fetch = user.role == entity::user::UserRole::Admin;
     let (profile, enrichment, enrichment_error) = profile_state(app, kind, row.id, may_fetch).await;
+    // The recorded failure is the provider's own error text, which can
+    // name the provider host; an admin reads it, anyone else a fixed
+    // sentence.
+    let enrichment_error = if may_fetch {
+        enrichment_error
+    } else {
+        enrichment_error.map(|_| READER_PROFILE_ERROR.to_owned())
+    };
     let links = entity_links(app, kind, row.id).await;
     Json(EntityDetailView {
         kind: kind.path().to_owned(),

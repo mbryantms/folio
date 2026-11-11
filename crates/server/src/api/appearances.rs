@@ -104,6 +104,7 @@ const ISSUE_CBLS: &str = "\
     JOIN cbl_lists cl ON cl.id = ce.cbl_list_id \
     JOIN saved_views sv ON sv.cbl_list_id = cl.id AND sv.kind = 'cbl' \
     WHERE ce.matched_issue_id = $1 AND sv.user_id = $2 \
+      AND (cl.owner_user_id IS NULL OR cl.owner_user_id = $2) \
     ORDER BY cl.parsed_name";
 
 const ISSUE_COLLECTIONS: &str = "\
@@ -147,7 +148,7 @@ pub async fn issue_appearances(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !crate::library::access::issue_visible(&app, &user, &row).await {
+    if !crate::library::access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -181,7 +182,8 @@ fn series_cbls_sql(vis: &str) -> String {
          JOIN cbl_lists cl ON cl.id = ce.cbl_list_id \
          JOIN saved_views sv ON sv.cbl_list_id = cl.id AND sv.kind = 'cbl' \
          JOIN issues i ON i.id = ce.matched_issue_id \
-         WHERE i.series_id = $1 AND sv.user_id = $2{vis} \
+         WHERE i.series_id = $1 AND sv.user_id = $2 \
+           AND (cl.owner_user_id IS NULL OR cl.owner_user_id = $2){vis} \
          GROUP BY sv.id, cl.parsed_name \
          ORDER BY cl.parsed_name"
     )
@@ -249,7 +251,7 @@ pub async fn series_appearances(
         }
     };
     let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
+    if !crate::library::access::series_page_ok(&acl, &user, &s) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 

@@ -155,7 +155,7 @@ pub async fn same_universe(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !access::series_visible(&app, &user, &s).await {
+    if !access::series_page_visible(&app, &user, &s).await {
         return respond(
             StatusCode::NOT_FOUND,
             ApiErrorCode::NotFound,

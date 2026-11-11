@@ -1831,7 +1831,7 @@ async fn sidecar_job_requeues_when_rewrite_lock_is_busy() {
         before,
         "requeued job rewrote the archive"
     );
-    let mut a = archive::open(&cbz, archive::ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(&cbz, archive::ArchiveLimits::default()).unwrap();
     assert!(
         String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap())
             .unwrap()
@@ -1885,7 +1885,7 @@ async fn sidecar_rewrite_handles_cbt_in_place() {
     .await
     .unwrap();
 
-    let mut a = archive::open(&cbt, archive::ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(&cbt, archive::ArchiveLimits::default()).unwrap();
     let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
     assert_eq!(
         pages,
@@ -1951,7 +1951,7 @@ async fn sidecar_rewrite_converts_cbr_when_library_allows() {
     );
     assert!(row.last_sidecar_rewrite_at.is_some());
 
-    let mut a = archive::open(&cbz, archive::ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(&cbz, archive::ArchiveLimits::default()).unwrap();
     assert_eq!(a.pages().len(), 3, "all three fixture pages carried over");
     let ci = String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap()).unwrap();
     assert!(ci.contains("<Title>Rewritten</Title>"), "{ci}");
@@ -2108,7 +2108,7 @@ async fn sidecar_rewrite_converts_cb7_when_library_allows() {
     );
     assert!(row.last_sidecar_rewrite_at.is_some());
 
-    let mut a = archive::open(&cbz, archive::ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(&cbz, archive::ArchiveLimits::default()).unwrap();
     assert_eq!(a.pages().len(), 3, "all three fixture pages carried over");
     let ci = String::from_utf8(a.read_entry_bytes("ComicInfo.xml").unwrap()).unwrap();
     assert!(ci.contains("<Title>Rewritten</Title>"), "{ci}");

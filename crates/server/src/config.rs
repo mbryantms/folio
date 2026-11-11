@@ -842,7 +842,7 @@ fn default_scan_hash_buffer_kb() -> usize {
     // hash function used a hardcoded 1 MiB prior to F-9; this default
     // matches that, just now actually plumbed via the env var. See
     // docs/dev/scanner-perf.md F-9. Floor at 64 KB enforced inside
-    // `blake3_file_with_buffer`.
+    // `blake3_open_file`.
     1024
 }
 fn default_watch_debounce_secs() -> u64 {

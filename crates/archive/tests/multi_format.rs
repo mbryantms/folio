@@ -6,7 +6,7 @@
 //! that a non-RAR `.cbr` fails gracefully. CB7 has its own suite in
 //! `cb7_fixture.rs`; here we only check a bogus `.cb7` fails gracefully.
 
-use archive::{ArchiveError, ArchiveLimits, open};
+use archive::{ArchiveError, ArchiveLimits, open_path_unchecked as open};
 use tempfile::tempdir;
 
 fn write_tar(path: &std::path::Path, entries: &[(&str, &[u8])]) {
@@ -181,7 +181,7 @@ fn cbt_rejects_oversized_entry() {
         max_entry_bytes: 1024,
         ..tiny_limits()
     };
-    match archive::cbt::Cbt::open(&p, limits) {
+    match archive::cbt::Cbt::open_path_unchecked(&p, limits) {
         Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "entry size"),
         other => panic!("expected entry-size cap, got {other:?}"),
     }
@@ -206,7 +206,7 @@ fn cbt_rejects_oversized_total() {
         max_total_bytes: 2000,
         ..tiny_limits()
     };
-    match archive::cbt::Cbt::open(&p, limits) {
+    match archive::cbt::Cbt::open_path_unchecked(&p, limits) {
         Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "total bytes"),
         other => panic!("expected total-bytes cap, got {other:?}"),
     }
@@ -227,7 +227,7 @@ fn cbt_rejects_excessive_entry_count() {
         max_entries: 3,
         ..tiny_limits()
     };
-    match archive::cbt::Cbt::open(&p, limits) {
+    match archive::cbt::Cbt::open_path_unchecked(&p, limits) {
         Err(archive::ArchiveError::CapExceeded(which)) => assert_eq!(which, "entry count"),
         other => panic!("expected entry-count cap, got {other:?}"),
     }
@@ -247,7 +247,7 @@ fn cbt_within_limits_still_opens() {
         &p,
         &[("a.png", page.as_slice()), ("b.png", page.as_slice())],
     );
-    let a = archive::cbt::Cbt::open(&p, tiny_limits()).expect("within caps opens");
+    let a = archive::cbt::Cbt::open_path_unchecked(&p, tiny_limits()).expect("within caps opens");
     use archive::comic_archive::ComicArchive;
     assert_eq!(a.pages().len(), 2);
 }

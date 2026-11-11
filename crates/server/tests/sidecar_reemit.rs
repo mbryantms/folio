@@ -44,7 +44,7 @@ fn build_cbz_bytes(label: &str) -> Vec<u8> {
 }
 
 fn read_entry(path: &Path, name: &str) -> Option<String> {
-    let mut a = archive::open(path, ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(path, ArchiveLimits::default()).unwrap();
     a.read_entry_bytes(name)
         .ok()
         .map(|b| String::from_utf8(b).unwrap())

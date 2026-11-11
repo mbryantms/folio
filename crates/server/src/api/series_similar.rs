@@ -154,7 +154,7 @@ pub async fn similar(
         Err(resp) => return resp,
     };
     let acl = access::for_user(&app, &user).await;
-    if !acl.series_ok(row.library_id, row.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &row) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let neighbors = match similarity::neighbors(&app, row.id).await {

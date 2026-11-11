@@ -1,10 +1,12 @@
 //! Vertical-Japanese OCR via the `manga-ocr` crate.
 //!
 //! [`MangaOcr::shared`] returns the process-wide singleton. Cold
-//! init downloads two ONNX models (`encoder_model.onnx`,
+//! init loads two ONNX models (`encoder_model.onnx`,
 //! `decoder_model.onnx`) and a vocab list from
-//! `mayocream/manga-ocr-onnx` on Hugging Face — ~80 MB total, ~3 s
-//! on a warm cache, ~30 s first time.
+//! `mayocream/manga-ocr-onnx`, fetched from a pinned commit and
+//! verified by SHA-256 first ([`crate::ocr::models`]) — ~440 MB total,
+//! a few seconds on a warm cache (the files are hashed once per
+//! process), longer the first time.
 //!
 //! Each `recognize` call runs the encoder once and then greedy-
 //! decodes up to 300 tokens, taking the argmax over the decoder
@@ -36,6 +38,9 @@ impl MangaOcr {
     pub async fn shared() -> anyhow::Result<&'static Self> {
         static CELL: OnceCell<MangaOcr> = OnceCell::const_new();
         CELL.get_or_try_init(|| async {
+            // Pinned + digest-verified before the upstream constructor
+            // reads the cache (`crate::ocr::models`).
+            crate::ocr::models::ensure_pinned(crate::ocr::models::MANGA_FILES).await?;
             let inner = tokio::task::spawn_blocking(MangaOCR::new)
                 .await
                 .map_err(|e| anyhow::anyhow!("manga-ocr init task panicked: {e}"))??;
