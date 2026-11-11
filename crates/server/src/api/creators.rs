@@ -321,7 +321,7 @@ pub async fn list(
     };
     // WP-2.7: age-rating cap per UNION branch — series-level credits
     // check the series rating, issue-level credits the issue's own
-    // rating with the series as fallback.
+    // rating AND its series' rating (`issue_cap_sql_joined`).
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut lib_params);
     let issue_cap = visible.issue_cap_sql_joined("i", "s", &mut lib_params);
 

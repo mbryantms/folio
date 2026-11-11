@@ -2214,7 +2214,14 @@ async fn run_issue_phase(
         .as_deref()
         .and_then(|folder| process::read_series_json(library_root, folder));
     if let Some(folder) = parent_folder.as_deref() {
-        write_declared_rating(&state.db, row.series_id, folder, sidecar.as_ref()).await;
+        write_declared_rating(
+            &state.db,
+            row.series_id,
+            library_root,
+            folder,
+            sidecar.as_ref(),
+        )
+        .await;
     }
     let reconcile_started = Instant::now();
     if let Err(e) =
@@ -2847,21 +2854,23 @@ pub fn spawn_cbl_rematch_all(state: AppState) {
 /// Store the rating `series.json` declares as the series' floor
 /// (`series.declared_age_rating`) and re-derive the series rating. A
 /// sidecar parsed without a rating clears the floor. With no parsed
-/// sidecar the floor is cleared only when the file is really gone — its
-/// lookup says `NotFound` while the folder itself still stats as a
-/// directory; anything else (a sidecar that exists but did not parse, a
-/// vanished folder or dropped network share, a permission or I/O error)
-/// leaves the floor alone, so a transient failure never lowers a rating.
-/// Best-effort: a failure is logged and the next scan retries.
+/// sidecar the floor is cleared only when the file is really gone — the
+/// folder still opens as a directory through the no-follow walk from the
+/// library root and its `series.json` entry is not there; anything else (a
+/// sidecar that exists but did not parse, is over the size cap or is a
+/// link, a vanished folder or dropped network share, a permission or I/O
+/// error) leaves the floor alone, so a transient failure never lowers a
+/// rating. Best-effort: a failure is logged and the next scan retries.
 async fn write_declared_rating(
     db: &sea_orm::DatabaseConnection,
     series_id: Uuid,
+    library_root: &std::path::Path,
     folder: &std::path::Path,
     sidecar: Option<&parsers::series_json::SeriesMetadata>,
 ) {
     let declared = match sidecar {
         Some(meta) => meta.age_rating.as_deref(),
-        None if !sidecar_really_absent(folder) => return,
+        None if !sidecar_really_absent(library_root, folder) => return,
         None => None,
     };
     if let Err(e) =
@@ -2871,15 +2880,19 @@ async fn write_declared_rating(
     }
 }
 
-/// `true` only when `folder/series.json` is definitely not there: its
-/// lookup fails with `NotFound` and `folder` is still a directory. See
-/// [`write_declared_rating`].
-pub(crate) fn sidecar_really_absent(folder: &std::path::Path) -> bool {
-    match std::fs::symlink_metadata(folder.join("series.json")) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::metadata(folder).is_ok_and(|m| m.is_dir())
-        }
-        _ => false,
+/// `true` only when `folder/series.json` is definitely not there: `folder`
+/// opens as a directory through the same no-follow walk from
+/// `library_root` that reads the sidecar
+/// ([`crate::library::no_follow::read_sidecar`]), and that directory has
+/// no `series.json` entry of any kind. See [`write_declared_rating`].
+pub(crate) fn sidecar_really_absent(
+    library_root: &std::path::Path,
+    folder: &std::path::Path,
+) -> bool {
+    use crate::library::no_follow::{EntryKind, open_library_parent};
+    match open_library_parent(library_root, &folder.join("series.json")) {
+        Ok((dir, name)) => matches!(dir.kind(&name), Ok(EntryKind::Missing)),
+        Err(_) => false,
     }
 }
 
@@ -2935,7 +2948,14 @@ async fn process_planned_folder(
     // The sidecar's rating is the series' declared floor; refreshed on
     // every scan that reads the folder, skipped or not.
     if let Some(series_id) = known_series_id {
-        write_declared_rating(&state.db, series_id, &folder, series_json.as_ref()).await;
+        write_declared_rating(
+            &state.db,
+            series_id,
+            library_root,
+            &folder,
+            series_json.as_ref(),
+        )
+        .await;
     }
 
     if planned.skipped_unchanged {
@@ -3108,7 +3128,14 @@ async fn process_planned_folder(
     };
     stats.record_phase_parallel("identity", identity_started.elapsed());
     if known_series_id.is_none() {
-        write_declared_rating(&state.db, series_id, &folder, series_json.as_ref()).await;
+        write_declared_rating(
+            &state.db,
+            series_id,
+            std::path::Path::new(&lib.root_path),
+            &folder,
+            series_json.as_ref(),
+        )
+        .await;
     }
 
     // metadata-providers-1.0 M8: detect identifier tags in the series
@@ -3456,21 +3483,32 @@ mod declared_rating_tests {
     #[test]
     fn only_a_sidecar_that_is_really_gone_clears_the_floor() {
         let tmp = tempfile::tempdir().unwrap();
-        let folder = tmp.path().join("Run (2020)");
+        let root = tmp.path();
+        let folder = root.join("Run (2020)");
         std::fs::create_dir(&folder).unwrap();
         // Present: never absent (even when it fails to parse).
         std::fs::write(folder.join("series.json"), b"{ not json").unwrap();
-        assert!(!sidecar_really_absent(&folder));
+        assert!(!sidecar_really_absent(root, &folder));
         // Removed from a folder that is still there: absent.
         std::fs::remove_file(folder.join("series.json")).unwrap();
-        assert!(sidecar_really_absent(&folder));
+        assert!(sidecar_really_absent(root, &folder));
         // The folder itself is gone (an unmounted share looks like this):
         // not proof the sidecar was removed.
-        assert!(!sidecar_really_absent(&tmp.path().join("Gone (2020)")));
+        assert!(!sidecar_really_absent(root, &root.join("Gone (2020)")));
         // A lookup failing with anything but NotFound (here ENOTDIR: the
         // "folder" is a file) keeps the floor too.
-        let file = tmp.path().join("not-a-dir");
+        let file = root.join("not-a-dir");
         std::fs::write(&file, b"x").unwrap();
-        assert!(!sidecar_really_absent(&file));
+        assert!(!sidecar_really_absent(root, &file));
+        // A sidecar that is a link is there (read refuses it): kept.
+        std::fs::write(root.join("elsewhere.json"), b"{}").unwrap();
+        std::os::unix::fs::symlink(root.join("elsewhere.json"), folder.join("series.json"))
+            .unwrap();
+        assert!(!sidecar_really_absent(root, &folder));
+        std::fs::remove_file(folder.join("series.json")).unwrap();
+        // A folder reached through a link is never looked at: kept.
+        let linked = root.join("Linked (2020)");
+        std::os::unix::fs::symlink(&folder, &linked).unwrap();
+        assert!(!sidecar_really_absent(root, &linked));
     }
 }

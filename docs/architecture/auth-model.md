@@ -434,7 +434,8 @@ unchanged.
 Two cases are kept apart.
 
 **Hidden by access.** To a caller who may not see an object (a library
-they hold no grant on, a series or issue above their cap, another user's
+they hold no grant on, a series or issue above their cap or hidden by
+their grant's *hide unrated* option, another user's
 personal list, view, collection, batch or marker), the object does not
 exist: every read and write route answers exactly as it does for an id
 that was never issued, with the same status, error code and body. A 403
@@ -504,7 +505,8 @@ their own batch, including children named past a cap set later; such a
 batch can only have been created while they were an admin.
 
 Routes whose answer changed (reader = non-admin; "hidden" = outside the
-grant or above the cap):
+grant, above the cap, or unrated under *hide unrated*; an issue is
+hidden also when its series is):
 
 | Route | Case | Before | After |
 |---|---|---|---|

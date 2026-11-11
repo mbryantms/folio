@@ -23,9 +23,9 @@
 //! series branch — never a 403, the context param is advisory.
 //!
 //! ACL: the sequence keeps every entry so positions are stable; the
-//! walks skip issues the caller cannot open (`VisibleLibraries::issue_ok`,
-//! issue rating with the series rating as fallback) exactly as the CBL
-//! walk does.
+//! walks skip issues the caller cannot open (`VisibleLibraries::issue_ok`:
+//! the issue's own rating and its series' rating must both pass) exactly
+//! as the CBL walk does.
 
 use std::collections::HashMap;
 

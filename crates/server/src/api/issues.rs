@@ -2429,8 +2429,8 @@ fn apply_issue_visibility(
             issue::Column::LibraryId.is_in(visible.allowed.iter().copied().collect::<Vec<_>>()),
         );
     }
-    // WP-2.7: age-rating cap — the issue's own rating, falling back to the
-    // series rating (unrated rows pass, see `library::age_rating`).
+    // WP-2.7: age-rating cap — the issue's own rating AND its series'
+    // rating (`hide_unrated` included, see `library::access`).
     if let Some(cap) = visible.issue_cap_condition() {
         select = select.filter(cap);
     }

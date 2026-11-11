@@ -1102,11 +1102,6 @@ pub async fn upsert_bulk(
     // stays in the response so its schema does not change, and is always 0.
     let forbidden: u32 = 0;
 
-    // One parent-rating query for the whole batch, not one per row.
-    let fetched = rows.len();
-    let rows = access::filter_issues(&app, &acl, rows).await;
-    not_found += (fetched - rows.len()) as u32;
-
     for iss in rows {
         let target_page = if req.finished {
             iss.page_count.unwrap_or(1).max(1) - 1

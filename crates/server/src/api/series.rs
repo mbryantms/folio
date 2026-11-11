@@ -1949,7 +1949,8 @@ pub fn apply_series_visibility(
         );
     }
     // WP-2.7: age-rating cap — hide series rated above the grant's cap
-    // (unrated rows pass, see `library::age_rating`).
+    // (unrated rows pass unless the grant hides them, see
+    // `library::access`).
     if let Some(cap) = visible.series_cap_condition() {
         select = select.filter(cap);
     }

@@ -775,7 +775,8 @@ fn apply_visibility(q: &mut SelectStatement, vis: &VisibleLibraries) {
     }
     let allowed: Vec<Uuid> = vis.allowed.iter().copied().collect();
     q.and_where(Expr::col((series::Entity, series::Column::LibraryId)).is_in(allowed));
-    // WP-2.7: age-rating cap on `series.age_rating` (unrated rows pass).
+    // WP-2.7: age-rating cap on `series.age_rating` (unrated rows pass
+    // unless the grant hides them).
     if let Some(cap) = vis.series_cap_condition() {
         q.cond_where(cap);
     }
