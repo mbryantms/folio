@@ -137,7 +137,7 @@ pub async fn get_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
     // PERF-8: the rating, parent-series direction, library row, and
@@ -347,7 +347,7 @@ pub async fn metadata_overview(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1461,10 +1461,10 @@ pub async fn next_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    let acl = access::for_library(&app, &user, row.library_id).await;
-    if !access::issue_allowed(&app, &acl, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
+    let acl = access::for_library(&app, &user, row.library_id).await;
     let limit = q.limit.unwrap_or(5).clamp(1, 20);
 
     // Match the series-page sort: sort_number ASC NULLS LAST, then id.
@@ -1561,10 +1561,10 @@ pub async fn prev_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    let acl = access::for_library(&app, &user, row.library_id).await;
-    if !access::issue_allowed(&app, &acl, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
+    let acl = access::for_library(&app, &user, row.library_id).await;
 
     let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.series_id))
@@ -1651,7 +1651,7 @@ pub async fn list_issue_health(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 

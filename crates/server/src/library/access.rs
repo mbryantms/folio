@@ -571,6 +571,24 @@ pub async fn issue_page_allowed<T: IssueAclFields>(
     issue_allowed(app, acl, issue_row).await
 }
 
+/// [`issue_page_allowed`] for a route addressed through a `(series, issue)`
+/// slug pair whose handler holds only the issue row: loads the parent
+/// series. A lookup error or a missing series reads as not allowed.
+pub async fn issue_route_visible<T: IssueAclFields>(
+    app: &AppState,
+    user: &CurrentUser,
+    issue_row: &T,
+) -> bool {
+    let Ok(Some(series_row)) = series::Entity::find_by_id(issue_row.acl_series_id())
+        .one(&app.db)
+        .await
+    else {
+        return false;
+    };
+    let acl = for_library(app, user, issue_row.acl_library_id()).await;
+    issue_page_allowed(app, &acl, user, &series_row, issue_row).await
+}
+
 /// Drop issues the caller can't see (membership + cap), preserving
 /// order. One extra query for the parent ratings, and only when the
 /// caller is capped somewhere and some candidate lacks its own rating.

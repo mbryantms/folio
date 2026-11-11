@@ -1790,6 +1790,90 @@ async fn series_sub_routes_answer_hidden_and_removed_series_like_unknown() {
             String::from_utf8_lossy(&body)
         );
     }
+    // Issue routes addressed through the series slug answer like the
+    // series: a removed series makes them not-found for a reader.
+    let issue_suffixes = [
+        "",
+        "/metadata-overview",
+        "/next",
+        "/prev",
+        "/health-issues",
+        "/appearances",
+    ];
+    let issue_callers = [
+        (
+            "no grant",
+            &f.nogrant,
+            &f.live.series_slug,
+            &f.live.issue_slug,
+        ),
+        (
+            "capped",
+            &f.capped,
+            &f.mature.series_slug,
+            &f.mature.issue_slug,
+        ),
+        (
+            "removed",
+            &f.reader,
+            &f.removed.series_slug,
+            &f.in_removed_series_slug,
+        ),
+    ];
+    for (who, user, slug, issue) in issue_callers {
+        for suffix in issue_suffixes {
+            let (status, body) = assert_alike(
+                &app,
+                user,
+                who,
+                Method::GET,
+                &format!("/api/series/{slug}/issues/{issue}{suffix}"),
+                None,
+                &format!(
+                    "/api/series/{}/issues/{}{suffix}",
+                    unknown_slug(),
+                    unknown_slug()
+                ),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{who} issue {suffix}");
+            assert_eq!(code(&body), "not_found", "{who} issue {suffix}");
+        }
+    }
+    for suffix in issue_suffixes {
+        let (status, body) = call(
+            &app,
+            &f.admin,
+            Method::GET,
+            &format!(
+                "/api/series/{}/issues/{}{suffix}",
+                f.removed.series_slug, f.in_removed_series_slug
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "admin issue {suffix}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    // A removed issue in a live series still opens for the reader.
+    let (status, _) = call(
+        &app,
+        &f.reader,
+        Method::GET,
+        &format!(
+            "/api/series/{}/issues/{}",
+            f.removed.issue_series_slug, f.removed.issue_slug
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "removed issue in a live series");
+
     // The reader still opens a live series that has a removed issue.
     let (status, _) = call(
         &app,

@@ -148,7 +148,7 @@ pub async fn issue_appearances(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !crate::library::access::issue_visible(&app, &user, &row).await {
+    if !crate::library::access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 

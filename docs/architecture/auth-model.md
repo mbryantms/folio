@@ -263,23 +263,34 @@ calling an admin-only route). Admins have no grant or cap limits.
 **Soft-removed content** (the file went missing; it may be restored, and
 its history is kept) is not secret:
 
-- A removed series answers not-found to non-admins on every series-slug
-  and series-id route, exactly as its page does
-  (`access::series_page_ok` / `series_page_visible`). Admins still open
-  it to restore or confirm the removal.
+- A removed series answers not-found to non-admins on every route
+  addressed through its slug or id, exactly as its page does
+  (`access::series_page_ok` / `series_page_visible`), and so do the issue
+  routes addressed through the series slug (`/series/{s}/issues/{i}` and
+  its sub-routes, `access::issue_page_allowed` /
+  `issue_route_visible`). Admins still open it to restore or confirm the
+  removal. Routes addressed by an issue id alone (page bytes, thumbnails,
+  covers, OCR, the reader's marker overlay, page overrides, the Komga
+  book, the issue and marker permalinks) keep serving its issues as
+  history.
 - A removed issue in a live series keeps its reads: its detail page,
   cached thumbnails, the reader-side data for it (the reader's marker
   overlay, page overrides, the issue-level metadata and external-id
   reads) and the reading log, which lists such issues on purpose.
-- Nobody, admins included, makes new writes on removed content: no new
-  progress, marker, marker edit, rating, closing note, reading session,
-  page override, collection entry, reader preference or completion
-  override. New writes key on `access::visible_issue` /
-  `access::visible_series` (the `visible_issues_select` /
+- Nobody, admins included, makes new personal writes on removed content:
+  no new progress through any protocol, marker, marker edit, rating,
+  closing note, reading session, page override, collection entry, reader
+  preference or completion override. These key on `access::visible_issue`
+  / `access::visible_series` (the `visible_issues_select` /
   `visible_series_select` predicates). Deleting one's own rows stays
   possible (`DELETE` of a marker, of page overrides, of reader
   preferences, and clearing a completion override). Rows written before
   the removal stay and come back with a restore.
+- Admin curation of removed rows is deliberate and stays allowed: issue
+  and series `PATCH`, external-id edits, metadata apply and series
+  relationships are how a removed row is prepared for a restore.
+- Two jobs a reader can start keep their earlier behaviour on a removed
+  issue in a live series: a metadata search and OCR.
 
 A caller's own markers follow the two cases. On content hidden by access
 the marker list, count, search, tag index and permalink leave them out;
@@ -305,7 +316,10 @@ like a view whose list is gone: no list id, no year range, no covers, no
 Up Next walk, no "appears in" entry, no OPDS pin, and the list itself
 answers 404.
 
-A metadata batch is readable by admins and by its creator only.
+A metadata batch is readable by admins and by its creator only. A
+creator who has since lost the admin role still sees every child of
+their own batch, including children named past a cap set later; such a
+batch can only have been created while they were an admin.
 
 Routes whose answer changed (reader = non-admin; "hidden" = outside the
 grant or above the cap):
@@ -317,7 +331,7 @@ grant or above the cap):
 | `POST /series/{slug}/progress`, `…/progress-matching` | soft-removed series | 200 | 404 `not_found` |
 | `POST /progress`, OPDS `PUT …/progress`, KOReader sync `PUT`, OPDS Progression `PUT`, Komga `PATCH` | soft-removed issue or series | written | the route's own unknown-id answer |
 | `POST /me/markers`, `POST /me/markers/restore` | soft-removed issue or series | written | 404 / counted in `skipped` |
-| `PATCH /me/markers/{id}` | another user's marker; own marker on a hidden or removed issue | 403 `forbidden`; 200 | 404 `not_found` |
+| `PATCH /me/markers/{id}` | another user's marker; own marker on a hidden or removed issue | 403 `forbidden`; 200 | 404 `not_found` (on a removed issue this is a refused write: the reader's overlay still shows the marker) |
 | `DELETE /me/markers/{id}` | another user's marker | 403 `forbidden` | 404 `not_found` |
 | `GET /me/markers/export` | own marker or closing note on a hidden issue | exported with names | exported in the anonymous group |
 | `GET /me/export` | rows on a hidden issue or series | names | ids and content hash only |
@@ -328,6 +342,7 @@ grant or above the cap):
 | `…/metadata/overview`, `…/metadata/issues`, `/series/{slug}/collection`, `…/issues`, `…/resume`, `…/similar`, `…/relationships`, `…/appearances`, `…/same-universe` | soft-removed series (reader) | 200 | 404 `not_found` |
 | `GET /series/{slug}/issues/{issue}/external-ids` and the issue-level metadata routes | hidden series | 403 `auth.forbidden` | 404 `issue.not_found` |
 | the same | soft-removed series (reader) | 200 | 404 `issue.not_found` |
+| `GET /series/{s}/issues/{i}`, `…/metadata-overview`, `…/next`, `…/prev`, `…/health-issues`, `…/appearances` | soft-removed series (reader) | 200 | 404 `not_found` |
 | `GET /metadata/batch/{id}` | another user's batch | 403 `forbidden`, or 200 with a library grant | 404 `not_found` |
 | `PUT /series/{slug}/rating` | soft-removed series | 200 | 404 `not_found` |
 | `PUT /series/{s}/issues/{i}/rating`, `…/note` | soft-removed issue or series | 200 | 404 `not_found` |
