@@ -292,3 +292,60 @@ describe("ArchiveSafetyRefusal", () => {
     ).toBe("/lib/Big (2020)/Big 001.cbz — archive cap exceeded: entry count");
   });
 });
+
+describe("LargeRemoval", () => {
+  const payload = {
+    kind: "large_removal",
+    data: {
+      scan_id: "0190a4f2-0000-7000-8000-0000000000aa",
+      removed_at: "2026-11-11T03:00:00.123456Z",
+      issues_removed: 600,
+      issues_total: 1000,
+      series_removed: 3,
+      series_total: 10,
+      top_folders: [
+        { folder: "Marvel", issues: 550 },
+        { folder: "Image", issues: 50 },
+      ],
+      folder_count: 7,
+    },
+  };
+
+  it("labels the kind, says what causes it and that the content is purged after the removal window", () => {
+    expect(healthKindLabel("LargeRemoval")).toBe("Large removal in one scan");
+    const hint = healthPayloadHint("LargeRemoval", payload);
+    expect(hint).toMatch(/mount or network share was missing/);
+    expect(hint).toMatch(/moved aside/);
+    expect(hint).toMatch(/come back with their reading progress/);
+    expect(hint).toMatch(/before they are purged/);
+    expect(hint).toMatch(/soft-delete window/);
+    expect(hint).toMatch(/purge multiplier/);
+    expect(hint).toMatch(/new issue with no read state/);
+    expect(hint).toMatch(/Removed tab/);
+    // It must not promise more than the lifecycle gives.
+    expect(hint).not.toMatch(/Nothing is lost/i);
+    expect(hint).not.toMatch(/nothing is purged/i);
+  });
+
+  it("summarizes the numbers", () => {
+    expect(healthPayloadSummary("LargeRemoval", payload)).toBe(
+      "One scan removed 600 of 1000 issues (60%) and 3 of 10 series",
+    );
+  });
+
+  it("lists the folders, with the ones left out counted", () => {
+    expect(healthPayloadDetails("LargeRemoval", payload)).toEqual({
+      title: "Folders with the most removed issues",
+      lines: ["Marvel — 550 issues", "Image — 50 issues"],
+      more: 5,
+    });
+  });
+
+  it("carries no entity links", () => {
+    expect(healthPayloadRefs(payload)).toEqual({
+      seriesIds: [],
+      issueId: undefined,
+      ownerIssueId: undefined,
+    });
+  });
+});
