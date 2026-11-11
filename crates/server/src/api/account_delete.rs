@@ -261,6 +261,13 @@ pub async fn delete_me(
         match failed_auth::verify_password_counted(&app, &ctx, &row, given).await {
             PasswordCheck::Ok => {}
             PasswordCheck::LockedOut(retry) => return failed_auth::lockout_response(retry),
+            PasswordCheck::Internal => {
+                return respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ApiErrorCode::Internal,
+                    "internal",
+                );
+            }
             PasswordCheck::Wrong => {
                 tracing::info!(reason = "bad_password", "account delete rejected");
                 return respond(

@@ -3495,6 +3495,9 @@ export interface paths {
          * @description Implementation note: dismissals require comparing `progress_records.
          *     updated_at` against `rail_dismissals.dismissed_at`, so we let Postgres
          *     do that in one SQL pass rather than re-filtering rows in Rust.
+         *
+         *     Cursor-paginated on `(progress.updated_at, issue_id)` descending (see
+         *     [`progress_cards`]).
          */
         get: operations["rails_continue_reading"];
         put?: never;
@@ -3827,6 +3830,53 @@ export interface paths {
         patch: operations["markers_update"];
         trace?: never;
     };
+    "/api/me/new-in-series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Issues added to the library in the last [`NEW_IN_SERIES_WINDOW_DAYS`]
+         *     days (`issues.created_at`, the scanner's ingest time — the same stamp
+         *     the New issues rail orders by) to a series the caller was already
+         *     reading when the issue arrived, minus issues the caller finished.
+         *     Newest addition first, tie-break on id; cursor-paginated on
+         *     `(created_at, id)`, `total` on the first page.
+         * @description "Already reading" means the issue was added after the caller started
+         *     the series. No start time is stored, so per series the start is
+         *     `MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading
+         *     rows (finished, or read past page 0): a finished row's `finished_at`
+         *     is stamped once when it flips to finished and kept while it stays
+         *     finished, so for anyone who finished an issue the start is when they
+         *     first finished one. A whole series added at once and then started is
+         *     therefore not "new". Known limits: when the caller's only reading row
+         *     in a series is one unfinished issue, its `updated_at` moves with every
+         *     read, so an issue added while they are still on that first issue can
+         *     be missed; and restarting a finished issue clears its `finished_at`,
+         *     so if that was the only finished row the start moves to the re-read.
+         *
+         *     Excludes removed issues and series, issues outside the caller's
+         *     libraries or over their age cap (issue rating, series fallback), and
+         *     series the caller hid from the rails — with On deck's auto-restore: a
+         *     series dismissal stops hiding once the caller reads in the series again.
+         *
+         *     One query: the started-series CTE reads the caller's progress rows
+         *     (`progress_records` primary key on `(user_id, issue_id)`), the issue
+         *     side walks `issues_active_created_idx` (`created_at DESC, id DESC`,
+         *     partial on active + not removed) inside the window, and the finished
+         *     check is a primary-key probe. The window bounds the scan.
+         */
+        get: operations["rails_new_in_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/on-deck": {
         parameters: {
             query?: never;
@@ -3841,6 +3891,14 @@ export interface paths {
          *     queue) and `cbl_next` cards (lowest-position unfinished matched entry
          *     in a CBL the user has any progress in). Series with an active in-
          *     progress issue are skipped — they already surface in Continue Reading.
+         * @description Paging: the cards are merged and ranked in Rust (the series walk and
+         *     the reading-list frontier are not expressible as one SQL ordering), so
+         *     a paged request recomputes the merge over a *bounded* candidate set —
+         *     the [`ON_DECK_PAGED_CANDIDATES`] most recently active series and as
+         *     many reading lists — and keysets over the ranked result (`OnDeckCursor`).
+         *     `total` counts that set, and `bounded_to` says when the bound was hit.
+         *     The home-rail preview (no `cursor`, no `limit`) keeps the rail's
+         *     smaller candidate set and returns no cursor.
          */
         get: operations["rails_on_deck"];
         put?: never;
@@ -8263,6 +8321,13 @@ export interface components {
         };
         ContinueReadingView: {
             items: components["schemas"]["ContinueReadingCard"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching cards in total; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description `sharp` | `default` | `round` — the `--radius` token every corner in
@@ -9352,7 +9417,7 @@ export interface components {
          *     Similar series rail, and the OPDS Continue reading feeds.
          * @enum {string}
          */
-        DismissalRail: "continue_reading" | "recent_history" | "on_deck" | "random_picks" | "similar_series" | "opds_continue_reading";
+        DismissalRail: "continue_reading" | "recent_history" | "on_deck" | "random_picks" | "similar_series" | "opds_continue_reading" | "new_in_series";
         DowHourCell: {
             /** Format: int64 */
             active_ms: number;
@@ -12065,6 +12130,22 @@ export interface components {
          * @enum {string}
          */
         Motion: "system" | "reduced";
+        /**
+         * @description "New in series you're reading" page: issues added in the last
+         *     `NEW_IN_SERIES_WINDOW_DAYS` days to a series the caller was already
+         *     reading (added after they started it), that the caller has not
+         *     finished, newest addition first.
+         */
+        NewInSeriesView: {
+            items: components["schemas"]["IssueSummaryView"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching issues in total; first page only.
+             */
+            total?: number | null;
+        };
         NextInSeriesView: {
             items: components["schemas"]["IssueSummaryView"][];
         };
@@ -12443,7 +12524,25 @@ export interface components {
             position: number;
         };
         OnDeckView: {
+            /**
+             * Format: int32
+             * @description First page of a paged request only, and only when the merge hit
+             *     its bound: the cards come from at most this many most recently
+             *     active series and this many reading lists (see
+             *     `ON_DECK_PAGED_CANDIDATES`), so older ones are not listed.
+             */
+            bounded_to?: number | null;
             items: components["schemas"]["OnDeckCard"][];
+            /**
+             * @description Opaque cursor for the next page; `null` on the last page and on
+             *     the home-rail preview (a request with neither `cursor` nor `limit`).
+             */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Cards in the ranked list; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description On-this-day rail: issues released on this calendar day (any year),
@@ -13499,6 +13598,13 @@ export interface components {
          */
         RecentHistoryView: {
             items: components["schemas"]["ContinueReadingCard"][];
+            /** @description Opaque cursor for the next page; `null` on the last page. */
+            next_cursor?: string | null;
+            /**
+             * Format: int64
+             * @description Matching cards in total; first page of a paged request only.
+             */
+            total?: number | null;
         };
         /**
          * @description Newest-ingests rail. Items are plain issue cards (`series_name`
@@ -23676,7 +23782,15 @@ export interface operations {
     };
     rails_continue_reading: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -23690,6 +23804,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ContinueReadingView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -24491,9 +24612,48 @@ export interface operations {
             };
         };
     };
+    rails_new_in_series: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /** @description Page size; default 24, max 100. */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NewInSeriesView"];
+                };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     rails_on_deck: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -24507,6 +24667,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OnDeckView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -25136,7 +25303,15 @@ export interface operations {
     };
     rails_recent_history: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+                /**
+                 * @description Page size; default 24, max 100. Sending it asks for `total` on the
+                 *     first page.
+                 */
+                limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -25150,6 +25325,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RecentHistoryView"];
                 };
+            };
+            /** @description invalid cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

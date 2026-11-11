@@ -138,3 +138,60 @@ pub async fn capture(state: &AppState, row: &issue::Model, page: i32) -> Option<
         }
     }
 }
+
+/// Most `(user, issue)` progress rows [`ProgressHashHints`] remembers.
+/// Each entry is a user id, an issue id and three small fields; the cap
+/// bounds memory regardless of how many people read at once.
+pub const PROGRESS_HASH_HINTS_CAP: usize = 8192;
+
+/// The parts of a stored progress row that decide whether the next
+/// single-issue write stores the page hash it was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProgressHashHint {
+    pub run: i32,
+    pub last_page: i32,
+    pub has_hash: bool,
+}
+
+/// What the last progress write left in each recently written row
+/// (audit 2026-11 P-08). `api::progress::upsert_for_run` asks it whether
+/// a write will store the page hash, and reads the page only when it will.
+/// The answer is a prediction: another writer (a bulk mark, a rescan's
+/// page remap, the lazy backfill, a deletion) may have changed the row
+/// since, so the upsert checks the row it wrote and, when the hash was in
+/// fact due, reads the page then and stores it. A wrong prediction costs
+/// one page read or one extra statement, never a different stored row.
+pub struct ProgressHashHints {
+    inner: std::sync::Mutex<lru::LruCache<(uuid::Uuid, String), ProgressHashHint>>,
+}
+
+impl Default for ProgressHashHints {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProgressHashHints {
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(PROGRESS_HASH_HINTS_CAP).expect("nonzero"),
+            )),
+        }
+    }
+
+    pub fn get(&self, user_id: uuid::Uuid, issue_id: &str) -> Option<ProgressHashHint> {
+        self.inner
+            .lock()
+            .expect("progress hash hints mutex")
+            .get(&(user_id, issue_id.to_owned()))
+            .copied()
+    }
+
+    pub fn put(&self, user_id: uuid::Uuid, issue_id: &str, hint: ProgressHashHint) {
+        self.inner
+            .lock()
+            .expect("progress hash hints mutex")
+            .put((user_id, issue_id.to_owned()), hint);
+    }
+}

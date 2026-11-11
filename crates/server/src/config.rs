@@ -178,6 +178,11 @@ pub struct Config {
     pub jwt_access_ttl: String,
     #[serde(default = "default_jwt_refresh")]
     pub jwt_refresh_ttl: String,
+    /// Absolute session lifetime: a refresh session cannot be rotated past
+    /// `created_at + session_max_age`, however often it is refreshed. DB
+    /// setting `auth.session.max_age` (live for the next refresh).
+    #[serde(default = "default_session_max_age")]
+    pub session_max_age: String,
 
     #[serde(default = "default_true")]
     pub rate_limit_enabled: bool,
@@ -596,6 +601,7 @@ impl std::fmt::Debug for Config {
             .field("local_registration_open", &self.local_registration_open)
             .field("jwt_access_ttl", &self.jwt_access_ttl)
             .field("jwt_refresh_ttl", &self.jwt_refresh_ttl)
+            .field("session_max_age", &self.session_max_age)
             .field("rate_limit_enabled", &self.rate_limit_enabled)
             .field("check_upstream_releases", &self.check_upstream_releases)
             .field("opds_panels_mode", &self.opds_panels_mode)
@@ -747,12 +753,12 @@ fn default_true() -> bool {
     true
 }
 fn default_jwt_access() -> String {
-    // Long-lived access cookie. Comic reading sessions are content-consumption
-    // workloads — getting kicked back to sign-in mid-issue is friction with no
-    // proportional security win. The refresh cookie still rotates on every
-    // refresh and is bound by `jwt_refresh_ttl`, so a leaked access cookie
-    // window is at most 24h before the next forced rotation.
-    "24h".into()
+    // One hour. Sign-out revokes the refresh session but cannot recall an
+    // access token already issued (there is no per-request session lookup),
+    // so this TTL is how long a copied access cookie keeps working after
+    // sign-out. The web client refreshes silently on a 401, so a reader is
+    // never sent back to sign-in when it lapses mid-issue.
+    "1h".into()
 }
 fn default_jwt_refresh() -> String {
     // Refresh-token TTL (the "stay signed in for a month" budget). The web
@@ -761,6 +767,19 @@ fn default_jwt_refresh() -> String {
     // within this window.
     "30d".into()
 }
+fn default_session_max_age() -> String {
+    // Absolute session lifetime: re-enter the password at least this often,
+    // however regularly the session is refreshed.
+    "90d".into()
+}
+/// Floor for `session_max_age`: shorter than a day would sign users out
+/// mid-day on a typo such as `1h`.
+pub const SESSION_MAX_AGE_FLOOR: Duration = Duration::from_secs(24 * 60 * 60);
+/// Ceiling for the access and refresh lifetimes and `session_max_age`
+/// (3650 days). Larger values overflow timestamp arithmetic in Postgres and
+/// chrono; the PATCH answers 422 above it and the accessors clamp to it, so
+/// a row saved before the cap still cannot overflow.
+pub const AUTH_DURATION_CAP: Duration = Duration::from_secs(3650 * 24 * 60 * 60);
 fn default_smtp_port() -> u16 {
     587
 }
@@ -972,10 +991,34 @@ impl Config {
         for r in rows {
             apply_overlay_row(&mut next, &r);
         }
+        next.clamp_stored_auth_durations();
         next.resolve_auth()?;
         next.validate()?;
         *self = next;
         Ok(())
+    }
+
+    /// Read a stored auth duration above [`AUTH_DURATION_CAP`] as the cap,
+    /// with a warning. Such a row can predate the cap or have been written
+    /// to the table by hand; refusing it would fail validation of the whole
+    /// overlay and drop every saved setting. Only the load path does this:
+    /// a settings change through the API is validated as written and
+    /// answers 422. Values that do not parse are left for `validate`.
+    fn clamp_stored_auth_durations(&mut self) {
+        for (key, value) in [
+            ("auth.jwt.access_ttl", &mut self.jwt_access_ttl),
+            ("auth.jwt.refresh_ttl", &mut self.jwt_refresh_ttl),
+            ("auth.session.max_age", &mut self.session_max_age),
+        ] {
+            if Self::parse_duration(value).is_ok_and(|d| d > AUTH_DURATION_CAP) {
+                tracing::warn!(
+                    key,
+                    stored = %value,
+                    "stored duration is above the 3650d ceiling; using 3650d"
+                );
+                *value = "3650d".to_owned();
+            }
+        }
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -1038,15 +1081,43 @@ impl Config {
             );
         }
         // Fail fast on misconfigured TTL strings rather than at first sign-in.
-        Self::parse_duration(&self.jwt_access_ttl)
+        let access = Self::parse_duration(&self.jwt_access_ttl)
             .map_err(|e| anyhow::anyhow!("jwt_access_ttl: {e}"))?;
         let refresh = Self::parse_duration(&self.jwt_refresh_ttl)
             .map_err(|e| anyhow::anyhow!("jwt_refresh_ttl: {e}"))?;
-        let access = Self::parse_duration(&self.jwt_access_ttl)?;
+        for (name, value, parsed) in [
+            ("jwt_access_ttl", &self.jwt_access_ttl, access),
+            ("jwt_refresh_ttl", &self.jwt_refresh_ttl, refresh),
+        ] {
+            if parsed > AUTH_DURATION_CAP {
+                anyhow::bail!("{name} ({value}) must be at most 3650d");
+            }
+        }
         if refresh < access {
             anyhow::bail!(
                 "jwt_refresh_ttl ({}) must be ≥ jwt_access_ttl ({}); otherwise the refresh cookie expires before the access cookie and users get stuck on a hard logout",
                 self.jwt_refresh_ttl,
+                self.jwt_access_ttl,
+            );
+        }
+        let max_age = Self::parse_duration(&self.session_max_age)
+            .map_err(|e| anyhow::anyhow!("session_max_age: {e}"))?;
+        if max_age > AUTH_DURATION_CAP {
+            anyhow::bail!(
+                "session_max_age ({}) must be at most 3650d",
+                self.session_max_age
+            );
+        }
+        if max_age < SESSION_MAX_AGE_FLOOR {
+            anyhow::bail!(
+                "session_max_age ({}) must be at least 1d",
+                self.session_max_age
+            );
+        }
+        if max_age < access {
+            anyhow::bail!(
+                "session_max_age ({}) must be ≥ jwt_access_ttl ({}); an access token must not outlive its session",
+                self.session_max_age,
                 self.jwt_access_ttl,
             );
         }
@@ -1138,27 +1209,52 @@ impl Config {
     }
 
     /// Access-cookie + access-JWT TTL. Validated at startup so unwrap is safe
-    /// once the server is running.
+    /// once the server is running; never above [`AUTH_DURATION_CAP`].
     pub fn access_ttl(&self) -> Duration {
-        Self::parse_duration(&self.jwt_access_ttl).expect("jwt_access_ttl validated at startup")
+        Self::parse_duration(&self.jwt_access_ttl)
+            .expect("jwt_access_ttl validated at startup")
+            .min(AUTH_DURATION_CAP)
     }
 
-    /// Refresh-cookie + DB session TTL. Validated at startup.
+    /// Refresh-cookie + DB session TTL. Validated at startup; never above
+    /// [`AUTH_DURATION_CAP`].
     pub fn refresh_ttl(&self) -> Duration {
-        Self::parse_duration(&self.jwt_refresh_ttl).expect("jwt_refresh_ttl validated at startup")
+        Self::parse_duration(&self.jwt_refresh_ttl)
+            .expect("jwt_refresh_ttl validated at startup")
+            .min(AUTH_DURATION_CAP)
+    }
+
+    /// Absolute refresh-session lifetime, counted from the session's
+    /// `created_at`. Validated at startup; never above [`AUTH_DURATION_CAP`].
+    pub fn session_max_age(&self) -> Duration {
+        Self::parse_duration(&self.session_max_age)
+            .expect("session_max_age validated at startup")
+            .min(AUTH_DURATION_CAP)
     }
 
     pub fn parse_duration(s: &str) -> anyhow::Result<Duration> {
-        // Accepts `15m`, `30d`, `60s`, `1h`. Anything else errors.
-        let (num, unit) = s.split_at(s.len() - 1);
-        let n: u64 = num.parse()?;
-        Ok(match unit {
-            "s" => Duration::from_secs(n),
-            "m" => Duration::from_secs(n * 60),
-            "h" => Duration::from_secs(n * 60 * 60),
-            "d" => Duration::from_secs(n * 60 * 60 * 24),
+        // Accepts `15m`, `30d`, `60s`, `1h` (surrounding whitespace is
+        // ignored). Anything else errors — never panics, whatever the input.
+        let t = s.trim();
+        let Some((split, unit)) = t.char_indices().last() else {
+            anyhow::bail!("empty duration (use a number and s|m|h|d, e.g. 15m)");
+        };
+        let multiplier: u64 = match unit {
+            's' => 1,
+            'm' => 60,
+            'h' => 60 * 60,
+            'd' => 60 * 60 * 24,
             _ => anyhow::bail!("invalid duration unit (use s|m|h|d): {s}"),
-        })
+        };
+        let num = &t[..split];
+        if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+            anyhow::bail!("invalid duration number (use digits then s|m|h|d): {s}");
+        }
+        let n: u64 = num.parse()?;
+        let secs = n
+            .checked_mul(multiplier)
+            .ok_or_else(|| anyhow::anyhow!("duration too large: {s}"))?;
+        Ok(Duration::from_secs(secs))
     }
 }
 
@@ -1432,6 +1528,13 @@ pub(crate) fn apply_overlay_row(cfg: &mut Config, row: &crate::settings::Resolve
             Some(s) => {
                 warn_if_diverges(&row.key, Some(cfg.jwt_refresh_ttl.as_str()), s);
                 cfg.jwt_refresh_ttl = s.to_owned();
+            }
+            None => bad_type(&row.key, "duration", &row.value),
+        },
+        "auth.session.max_age" => match row.value.as_str() {
+            Some(s) => {
+                warn_if_diverges(&row.key, Some(cfg.session_max_age.as_str()), s);
+                cfg.session_max_age = s.to_owned();
             }
             None => bad_type(&row.key, "duration", &row.value),
         },
@@ -2040,8 +2143,9 @@ mod tests {
             oidc_auto_redirect: false,
             oidc_grant_all_libraries: false,
             local_registration_open: true,
-            jwt_access_ttl: "24h".into(),
+            jwt_access_ttl: "1h".into(),
             jwt_refresh_ttl: "30d".into(),
+            session_max_age: "90d".into(),
             rate_limit_enabled: true,
             check_upstream_releases: true,
             otlp_endpoint: None,
@@ -2123,5 +2227,158 @@ mod tests {
             restart_setting_value(&cfg, "smtp.host").is_none(),
             "non-restart key must not map to a restart value"
         );
+    }
+
+    /// Defaults for the token lifetimes, as a fresh install (no env, no DB
+    /// rows) loads them: a 1 h access token, a 30 d sliding refresh session
+    /// and a 90 d absolute session age.
+    #[test]
+    fn default_token_lifetimes() {
+        let cfg: Config = Figment::new()
+            .merge(Toml::string(
+                "database_url = 'postgres://x'\nredis_url = 'redis://x'\n\
+                 library_path = '/l'\ndata_path = '/d'\npublic_url = 'http://localhost'\n",
+            ))
+            .extract()
+            .expect("minimal config extracts");
+        assert_eq!(cfg.access_ttl(), Duration::from_secs(60 * 60));
+        assert_eq!(cfg.refresh_ttl(), Duration::from_secs(30 * 24 * 60 * 60));
+        assert_eq!(
+            cfg.session_max_age(),
+            Duration::from_secs(90 * 24 * 60 * 60)
+        );
+        cfg.validate().expect("defaults validate");
+    }
+
+    #[test]
+    fn session_max_age_has_a_floor_and_bounds_the_access_ttl() {
+        let mut cfg = test_config_skeleton();
+        cfg.session_max_age = "23h".into();
+        assert!(cfg.validate().is_err(), "under the 1 d floor");
+        cfg.session_max_age = "1d".into();
+        cfg.validate().expect("the floor itself is accepted");
+        cfg.jwt_access_ttl = "2d".into();
+        assert!(
+            cfg.validate().is_err(),
+            "access TTL longer than the max age"
+        );
+        cfg.jwt_access_ttl = "1h".into();
+        cfg.session_max_age = "ninety days".into();
+        assert!(cfg.validate().is_err(), "unparseable");
+    }
+
+    #[test]
+    fn parse_duration_accepts_the_four_units() {
+        assert_eq!(
+            Config::parse_duration("60s").unwrap(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            Config::parse_duration("15m").unwrap(),
+            Duration::from_secs(900)
+        );
+        assert_eq!(
+            Config::parse_duration("1h").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            Config::parse_duration("90d").unwrap(),
+            Duration::from_secs(90 * 86_400)
+        );
+    }
+
+    #[test]
+    fn parse_duration_refuses_empty_input_without_panicking() {
+        for s in ["", " ", "\t", "d", "h"] {
+            assert!(Config::parse_duration(s).is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn parse_duration_refuses_non_ascii_without_panicking() {
+        for s in ["1日", "日", "1é", "１h", "1ｈ", "-1h", "+1h"] {
+            assert!(Config::parse_duration(s).is_err(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn parse_duration_refuses_overflow() {
+        assert!(Config::parse_duration("18446744073709551615d").is_err());
+        assert!(Config::parse_duration("99999999999999999999s").is_err());
+        assert_eq!(
+            Config::parse_duration("18446744073709551615s").unwrap(),
+            Duration::from_secs(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn parse_duration_trims_outer_whitespace_only() {
+        assert_eq!(
+            Config::parse_duration(" 1h ").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(
+            Config::parse_duration("1h\n").unwrap(),
+            Duration::from_secs(3600)
+        );
+        assert!(Config::parse_duration("1 h").is_err());
+        assert!(Config::parse_duration("1h 2m").is_err());
+    }
+
+    #[test]
+    fn auth_durations_above_the_cap_are_refused_and_clamped() {
+        let mut cfg = test_config_skeleton();
+        cfg.jwt_access_ttl = "1h".into();
+        for bad in ["10000000000d", "18446744073709551615s", "3651d"] {
+            cfg.session_max_age = bad.into();
+            assert!(cfg.validate().is_err(), "{bad}");
+            // A value that bypassed validation is clamped, never wrapped.
+            assert_eq!(cfg.session_max_age(), AUTH_DURATION_CAP, "{bad}");
+        }
+        cfg.session_max_age = "3650d".into();
+        assert!(cfg.validate().is_ok());
+        cfg.jwt_refresh_ttl = "3651d".into();
+        assert!(cfg.validate().is_err());
+        assert_eq!(cfg.refresh_ttl(), AUTH_DURATION_CAP);
+    }
+
+    #[test]
+    fn a_stored_duration_above_the_cap_is_read_as_the_cap() {
+        let mut cfg = test_config_skeleton();
+        for key in [
+            "auth.jwt.access_ttl",
+            "auth.jwt.refresh_ttl",
+            "auth.session.max_age",
+        ] {
+            apply_overlay_row(
+                &mut cfg,
+                &crate::settings::Resolved {
+                    key: key.to_owned(),
+                    value: serde_json::Value::String("10000000000d".to_owned()),
+                    is_secret: false,
+                },
+            );
+        }
+        // As written, the rows fail validation: a settings change through
+        // the API is refused.
+        assert!(cfg.validate().is_err());
+        // The load path reads them as the cap, so the overlay validates
+        // and the other saved settings still load.
+        cfg.clamp_stored_auth_durations();
+        assert_eq!(cfg.jwt_access_ttl, "3650d");
+        assert_eq!(cfg.jwt_refresh_ttl, "3650d");
+        assert_eq!(cfg.session_max_age, "3650d");
+        assert!(cfg.validate().is_ok());
+        // An ordinary value is left as written.
+        apply_overlay_row(
+            &mut cfg,
+            &crate::settings::Resolved {
+                key: "auth.session.max_age".to_owned(),
+                value: serde_json::Value::String("30d".to_owned()),
+                is_secret: false,
+            },
+        );
+        cfg.clamp_stored_auth_durations();
+        assert_eq!(cfg.session_max_age, "30d");
     }
 }

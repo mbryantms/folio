@@ -13,10 +13,23 @@
 //!     → persist → run matcher → write `cbl_refresh_log` row.
 //!   - [`refresh`] — the scheduled / manual refresh entrypoint that
 //!     dispatches per `source_kind`.
+//!   - [`fetch`] — the vetted outbound fetch for URL lists and the
+//!     refresh time budgets.
 
 pub use parsers::cbl as parser;
 
+/// Most entries a reading list may have. Enforced at import (upload, URL,
+/// catalog) and again on every refresh and check, so a remote file that
+/// grows past it is refused rather than stored or truncated.
+pub const MAX_BOOKS_PER_LIST: usize = 5_000;
+
+/// The refusal text for a file over [`MAX_BOOKS_PER_LIST`].
+pub fn too_many_entries_message() -> String {
+    format!("exceeds {MAX_BOOKS_PER_LIST} entries")
+}
+
 pub mod catalog;
+pub mod fetch;
 pub mod import;
 pub mod matcher;
 pub mod quota;

@@ -16,10 +16,12 @@ import {
   SeriesCardSkeleton,
 } from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
+import { InfiniteSentinel } from "@/components/folio/infinite-sentinel";
 import { RailError } from "@/components/saved-views/RailError";
 import type { OnDeckCard as OnDeckCardData } from "@/lib/api/types";
 import {
   useContinueReading,
+  useNewInSeriesInfinite,
   useOnDeck,
   useOnThisDay,
   useRandomPicks,
@@ -305,6 +307,95 @@ export function OnThisDayRailBody({
   );
 }
 
+/**
+ * "New in series you're reading" rail body: issues added in the last 30
+ * days to series the user was already reading, that they haven't finished, newest
+ * addition first. First page only — the "see all" page walks the cursor
+ * (`SystemViewDetail`). Hidden when empty, like its siblings.
+ */
+export function NewInSeriesRailBody({
+  itemStyle,
+}: {
+  itemStyle: React.CSSProperties;
+}) {
+  const q = useNewInSeriesInfinite();
+  if (q.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={itemStyle} className="shrink-0">
+            <IssueCardSkeleton />
+          </div>
+        ))}
+      </>
+    );
+  }
+  if (q.isError && !q.data) {
+    return <RailError onRetry={() => void q.refetch()} />;
+  }
+  const items = q.data?.pages[0]?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((issue) => (
+        <div key={issue.id} style={itemStyle} className="shrink-0">
+          <IssueCard issue={issue} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** The "see all" grid of New in series (`SystemViewDetail`): every
+ *  recent addition to a series the user is reading, walked page by page
+ *  through the shared sentinel. Shares the rail's cache entry. */
+export function NewInSeriesGrid() {
+  const query = useNewInSeriesInfinite();
+  if (query.isLoading) {
+    return (
+      <>
+        {Array.from({ length: 12 }).map((_, i) => (
+          <IssueCardSkeleton key={i} />
+        ))}
+      </>
+    );
+  }
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="text-muted-foreground col-span-full text-sm">
+        Nothing new in the series you&apos;re reading. Issues added in the last
+        30 days to a series you were already reading show up here until you
+        finish them.
+      </p>
+    );
+  }
+  return (
+    <>
+      {items.map((issue) => (
+        <IssueCard key={issue.id} issue={issue} />
+      ))}
+      <div className="col-span-full">
+        <InfiniteSentinel query={query} />
+      </div>
+    </>
+  );
+}
+
+/** The New in series "see all" count: the first page's `total`. Shares
+ *  the rail's cache entry. */
+export function NewInSeriesCount() {
+  const total = useNewInSeriesInfinite().data?.pages[0]?.total;
+  if (total == null) return null;
+  return (
+    <p className="text-muted-foreground mt-2 text-sm">
+      {total === 0
+        ? "Nothing here yet."
+        : `${total} ${total === 1 ? "item" : "items"}`}
+    </p>
+  );
+}
+
 /** "Because you read <seed>" — shown beside the similar rail's title.
  *  Shares the rail body's query cache entry. */
 export function SimilarRailSeedNote() {
@@ -350,6 +441,9 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   const rh = useRecentHistory({ enabled: systemKey === "recent_history" });
   const rp = useRandomPicks({ enabled: systemKey === "random_picks" });
   const otd = useOnThisDay({ enabled: systemKey === "on_this_day" });
+  const nis = useNewInSeriesInfinite({
+    enabled: systemKey === "new_in_series",
+  });
   // An errored query with nothing cached is NOT empty — the rail stays
   // mounted so its body can show the retry state (post-audit T2.4).
   if (systemKey === "continue_reading") {
@@ -377,6 +471,13 @@ export function useSystemRailIsEmpty(systemKey: string): boolean {
   if (systemKey === "on_this_day") {
     return (
       !otd.isLoading && !otd.isError && (otd.data?.items.length ?? 0) === 0
+    );
+  }
+  if (systemKey === "new_in_series") {
+    return (
+      !nis.isLoading &&
+      !nis.isError &&
+      (nis.data?.pages[0]?.items.length ?? 0) === 0
     );
   }
   return false;

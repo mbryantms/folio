@@ -308,6 +308,7 @@ the pin picker.
 | …0010 / …0011 / …0012 | system | Continue reading / On deck / New issues | ✓ |
 | …0013 | system | Similar series | — |
 | …0014 / …0015 / …0016 | system | Random picks (`/me/random-picks`) / On this day (`/me/on-this-day`) / Recently read (`/me/recent-history`) | — |
+| …0017 | system | New in series you're reading (`/me/new-in-series`, `m20271110_000001`) | — |
 | …0020 | filter_issues | Recently finished issues (was "Recently finished" in v0.60.0; renamed by `m20271020_000002`) | ✓ |
 | …0021 – …0027 | filter_issues | Finished this week, Rate what you read, Top rated issues, Annuals & specials, Short unread reads, Favorite issues, Annotated issues | — |
 | …0028 – …0034 | filter_series | Jump back in, Almost done, Complete runs to start, Ended but unfinished, Top rated series, Incomplete collections, Favorite series | — |
@@ -317,6 +318,32 @@ runs every filter template for a fresh user, so a DSL / sort that drifts
 from the registry fails CI rather than the home page. Adding a template:
 append to `TEMPLATES` in `m20271020_000001_builtin_views_wave2` (or a new
 migration), bump that test's expected count.
+
+### New in series you're reading
+
+`GET /me/new-in-series` (`rails::new_in_series`): issues whose
+`issues.created_at` (the scanner's ingest stamp, as for New issues) falls
+in the last `NEW_IN_SERIES_WINDOW_DAYS` (30) days to a series the caller
+was already reading at the time, that the caller has not finished. "Already
+reading" means `created_at` is after the series' start, taken per series as
+`MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading rows
+(finished, or read past page 0); no start time is stored. `finished_at` is
+stamped once when a row flips to finished and kept while it stays finished,
+so a whole series added at once and then started never counts as new.
+Known limits: a reader whose only progress in the series is one unfinished
+issue has a start that moves with every read (its `updated_at`), so an
+issue added while they are still on it can be missed; and restarting a
+finished issue clears its `finished_at`, so when that was their only
+finished issue the start moves to the re-read. Newest addition first, tie-break on id; cursor-paginated on
+`(created_at, id)` (`limit` default 24, max 100, `total` on the first
+page). Removed issues and series, issues outside the caller's libraries
+or over the age cap, and series the caller hid from the rails (On Deck's
+auto-restore: newer progress in the series un-hides it) are left out.
+One query: the started-series CTE over the caller's `progress_records`,
+the issue side on `issues_active_created_idx` inside the window, the
+finished check on the `progress_records` primary key. Opt-in like the
+other recent rails; the home rail shows the first page, the "see all"
+page walks the cursor.
 
 ## Save-as-view from the library grid
 
@@ -390,6 +417,72 @@ found changes and spins while anything runs, so the panel can stay
 hidden. State lives in `CblUpdatesProvider`, so hiding the panel keeps
 the results.
 
+### Fetching reading lists
+
+A URL list is fetched by `cbl::fetch::fetch_cbl_url` at import and on a
+forced refresh, and by `fetch_cbl_url_conditional` on refresh and "Check
+for updates", which send the stored ETag and Last-Modified as
+`If-None-Match` / `If-Modified-Since`. Both go through the same code
+(`util::ssrf::fetch_public`). It accepts only `https://`, resolves the
+host once and refuses the URL when any address is internal (the ranges
+are listed on `util::ssrf::is_internal_ip`), connects to the address it
+vetted, follows at most 2 redirects by hand with each target vetted
+again, caps the body at 4 MiB while streaming, and gives the whole fetch
+one deadline on top of the 30 s per-step timeout. A `304` is "not
+modified" only when validators were sent. A refused URL gets a generic
+message that names neither the address nor the range; the address is
+logged at DEBUG.
+
+**Proxies.** Reading lists fetched from a user-supplied URL always
+connect directly and ignore `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`,
+so the address check is the last word. A server that reaches the
+internet only through a proxy therefore cannot import reading lists by
+URL. Catalog lists and provider fetches (covers, metadata APIs) honour
+the proxy environment; behind a proxy, the proxy performs the final name
+resolution.
+
+Catalog lists talk to fixed GitHub hosts (only the repository is
+admin-configured), so names are not vetted: the client uses the default
+resolver and the proxy environment, follows at most 2 redirects, each
+required to stay on https and refused when its host is an internal
+address literal, bounds each request at 30 s including the body, and
+reads the tree listing (16 MiB) and blob (4 MiB) with a running cap that
+also refuses an oversize `Content-Length` before reading.
+
+**Time budgets** (`cbl::fetch`). Refresh, check, their `-all` variants
+and URL or catalog import run under the 60 s JSON route timeout, so they
+use `REQUEST_BUDGET`: 40 s per fetch and 40 s for one list's remote work,
+returning their own timeout error. `refresh-all` / `check-all` give each
+list at most 15 s (`CBL_REQUEST_BULK_LIST_BUDGET`), work through the
+lists in random order so the same stalling hosts cannot hold the others
+back on every run, stop starting lists after 45 s
+(`CBL_REQUEST_BULK_BUDGET`, or when less than 5 s is left) and report the
+rest as "not attempted"; results keep the lists' own order. Matching a
+large list after a slow fetch can still take a request past the route
+timeout: the write is then rolled back and the request answers 408,
+while lists finished earlier in the same bulk request stay updated. The
+hourly sweep
+uses `SWEEP_BUDGET` (60 s per fetch, 120 s per list), visits due lists
+in random order and starts no new list after 30 minutes
+(`CBL_SWEEP_BUDGET`); lists it did not reach stay due for the next run.
+
+**Atomic writes.** The fetch happens first. Replacing the entries,
+updating the list row (and URL validators) and writing the refresh-log
+row then commit in one transaction, as does creating a new list. An
+error or a dropped request at any step leaves the stored list, its
+entries and its log exactly as before.
+
+A list may have at most 5000 entries (`cbl::MAX_BOOKS_PER_LIST`). The
+cap applies at import and to new content on refresh and check: a source
+whose content has changed and is over the cap is refused with the
+import's `413 too_many_entries` ("exceeds 5000 entries") before anything
+is written. Stored content that has not changed (an upload, a `304`, an
+unchanged catalog blob or an identical body digest) is not re-checked,
+so a list already over the cap keeps re-matching until its source
+changes. The bulk check and refresh report a refusal as that list's
+error. The scheduled sweep only logs failures (WARN); they are not shown
+in the app.
+
 ## OPDS
 
 Pinned or sidebar-visible filter views appear in the OPDS personal feeds
@@ -428,8 +521,8 @@ hydrated for display (name, subtitle, slug / series slug / saved-view id,
 cover) and `hidden_from`, the rails that kind is filtered out of — the
 row does not record which rail the click came from, so this is the fixed
 set per kind (issue: Continue reading, Recently read and the OPDS
-Continue reading feeds; series: On Deck, Random picks, Similar series;
-cbl: On Deck). A row the rails already ignore — the caller has progress
+Continue reading feeds; series: On Deck, Random picks, Similar series,
+New in series; cbl: On Deck). A row the rails already ignore — the caller has progress
 newer than `dismissed_at` on the issue, or on any issue of the series —
 is not listed or counted (`still_hiding_condition`); CBL rows stay,
 since On Deck's restore rule for them reads the list's reading frontier.
@@ -447,6 +540,30 @@ answers the same 404 as a missing one and stores nothing.
 The rails themselves (Continue reading, Recently read, On this day,
 Recently added, On Deck series) also skip issues of a removed series, so
 nothing a rail shows is undismissable.
+
+## Paging the progress rails
+
+`/me/continue-reading`, `/me/recent-history` and `/me/on-deck` take
+`?cursor=&limit=` (default 24, max 100) and return `next_cursor`; `total`
+rides the first page of a request that names `limit`. A request with
+neither parameter is the home-rail preview: the first 24 cards in one
+query path and no `total` (On deck also returns no cursor there). The
+"see all" pages walk the cursor with `useInfiniteQuery` +
+`<InfiniteSentinel>`.
+
+- **Continue reading / Recently read** keyset on
+  `(progress.updated_at, issue_id)` descending inside the one SQL query
+  (`progress_cards`); `total` is `COUNT(*) OVER ()` on that query. A card
+  whose progress moves while someone pages jumps to the head: one already
+  listed is not listed again, one not yet reached is skipped by that walk.
+- **On deck** is merged and ranked in Rust (series walk + reading-list
+  frontier), so a paged request recomputes the merge over a bounded set —
+  the `ON_DECK_PAGED_CANDIDATES` (200) most recently active series and as
+  many reading lists — and keysets over the ranked list (activity
+  descending, reading-list cards before series cards, issue id). `total`
+  counts that set; `bounded_to` is set on the first page when either
+  source hit the bound, and the page says so. The preview, the OPDS On
+  Deck feeds and the next-up fallback keep the rail's 40 candidates.
 
 ## Visibility on the other personal surfaces
 

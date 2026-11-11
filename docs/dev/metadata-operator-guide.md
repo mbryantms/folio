@@ -145,6 +145,19 @@ strong match, from a non-manual run — the refresh runs as
 | `metadata.alternate_cover_fetch_cap` | uint | 3 | Alternate-cover URLs fetched and hashed per candidate on top of the primary cover; `0` hashes primaries only. **No UI field** — set it with `PATCH /api/admin/settings` or the `COMIC_METADATA_ALTERNATE_COVER_FETCH_CAP` env bootstrap. |
 | `metadata.merge.provider_preference` | string | — | Comma-separated provider order (`metron,comicvine,gcd`) used as the tiebreaker when several providers offer a value for the same field in a composite merge; empty = Metron, ComicVine, GCD. Sets only the default per-field source — the compare view still overrides per field. **No UI field** — `PATCH /api/admin/settings` or `COMIC_METADATA_MERGE_PROVIDER_PREFERENCE`. |
 
+### Outbound proxy
+
+Provider API calls, cover downloads and the reading-list catalog honour
+`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` (and `NO_PROXY`); behind a
+proxy the proxy performs the final name resolution. Reading lists
+imported from a user-supplied URL are the exception: they always connect
+directly and ignore those variables, so the server's own address check
+decides what may be reached. A server that can reach the internet only
+through a proxy cannot import reading lists by URL (catalog and upload
+imports still work). The search-time cover hashing client vets every
+name it resolves, including a proxy given by hostname, so point the
+proxy variables at a private proxy by IP address.
+
 ## Operations
 
 ### Manual bulk refresh

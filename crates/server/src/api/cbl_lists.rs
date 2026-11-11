@@ -26,7 +26,7 @@ use chrono::Utc;
 use entity::{catalog_source, cbl_entry, cbl_list, cbl_refresh_log, issue};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, FromQueryResult, ModelTrait,
-    QueryFilter, QueryOrder, RelationTrait,
+    QueryFilter, QueryOrder, RelationTrait, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use utoipa_axum::router::OpenApiRouter;
@@ -50,7 +50,6 @@ use server_macros::handler;
 const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
 /// Request-body limit on `POST /me/cbl-lists/upload` (see [`routes`]).
 const UPLOAD_BODY_LIMIT: usize = MAX_UPLOAD_BYTES + 64 * 1024;
-const MAX_BOOKS_PER_FILE: usize = 5_000;
 const CBL_XML_TYPES: &[&str] = &[
     "application/xml",
     "text/xml",
@@ -1471,11 +1470,11 @@ pub async fn upload(
         Ok(p) => p,
         Err(e) => return error(StatusCode::BAD_REQUEST, "parse_failed", &e.to_string()),
     };
-    if parsed.books.len() > MAX_BOOKS_PER_FILE {
+    if parsed.books.len() > crate::cbl::MAX_BOOKS_PER_LIST {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
-            "file exceeds 5000 entries",
+            &format!("file {}", crate::cbl::too_many_entries_message()),
         );
     }
     create_list_from_parsed(
@@ -1552,25 +1551,17 @@ async fn create_from_url(
     description: Option<String>,
     refresh_schedule: Option<String>,
 ) -> axum::response::Response {
-    let fetched = match crate::util::ssrf::fetch_public_bytes(
-        &url,
-        MAX_UPLOAD_BYTES,
-        std::time::Duration::from_secs(30),
-        crate::build_info::USER_AGENT,
-        2,
-        true,
-    )
-    .await
-    {
-        Ok(fetched) => fetched,
-        Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
-            return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
-        }
-        Err(crate::util::ssrf::FetchBytesError::TooLarge { .. }) => {
-            return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "exceeds 4 MiB");
-        }
-        Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
-    };
+    let fetched =
+        match crate::cbl::fetch::fetch_cbl_url(&url, crate::cbl::fetch::REQUEST_BUDGET).await {
+            Ok(fetched) => fetched,
+            Err(crate::util::ssrf::FetchBytesError::Ssrf(e)) => {
+                return error(StatusCode::BAD_REQUEST, "invalid_url", &e.to_string());
+            }
+            Err(crate::util::ssrf::FetchBytesError::TooLarge { .. }) => {
+                return error(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "exceeds 4 MiB");
+            }
+            Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
+        };
     if !is_allowed_cbl_response_type(
         fetched
             .headers
@@ -1599,11 +1590,11 @@ async fn create_from_url(
         Ok(p) => p,
         Err(e) => return error(StatusCode::BAD_REQUEST, "parse_failed", &e.to_string()),
     };
-    if parsed.books.len() > MAX_BOOKS_PER_FILE {
+    if parsed.books.len() > crate::cbl::MAX_BOOKS_PER_LIST {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
-            "exceeds 5000 entries",
+            &crate::cbl::too_many_entries_message(),
         );
     }
     create_list_from_parsed(
@@ -1639,7 +1630,21 @@ async fn create_from_catalog(
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "catalog source"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    let blob = match catalog::fetch_blob(&app.db, &source, &catalog_path, false).await {
+    // Index and blob fetches together stay under the route timeout, so a
+    // slow host ends in this handler's own error.
+    let fetched = tokio::time::timeout(
+        crate::cbl::fetch::REQUEST_BUDGET.list_budget,
+        catalog::fetch_blob(&app.db, &source, &catalog_path, false),
+    )
+    .await;
+    let Ok(fetched) = fetched else {
+        return error(
+            StatusCode::BAD_GATEWAY,
+            "fetch_failed",
+            "the catalog took too long to answer",
+        );
+    };
+    let blob = match fetched {
         Ok(b) => b,
         Err(catalog::CatalogError::NotFound(m)) => {
             return error(StatusCode::NOT_FOUND, "not_found", &m);
@@ -1651,11 +1656,11 @@ async fn create_from_catalog(
                 "GitHub rate-limited the catalog index fetch",
             );
         }
-        Err(catalog::CatalogError::TooLarge { actual, limit }) => {
+        Err(catalog::CatalogError::TooLarge { limit }) => {
             return error(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "too_large",
-                &format!("blob {actual} bytes > limit {limit}"),
+                &format!("blob exceeds limit {limit} bytes"),
             );
         }
         Err(e) => return error(StatusCode::BAD_GATEWAY, "fetch_failed", &e.to_string()),
@@ -1665,11 +1670,11 @@ async fn create_from_catalog(
         Ok(p) => p,
         Err(e) => return error(StatusCode::BAD_REQUEST, "parse_failed", &e.to_string()),
     };
-    if parsed.books.len() > MAX_BOOKS_PER_FILE {
+    if parsed.books.len() > crate::cbl::MAX_BOOKS_PER_LIST {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "too_many_entries",
-            "exceeds 5000 entries",
+            &crate::cbl::too_many_entries_message(),
         );
     }
     create_list_from_parsed(
@@ -1786,14 +1791,26 @@ async fn create_list_from_parsed(
             am.refresh_schedule = Set(refresh_schedule.or(Some("0 0 * * 0".to_owned())));
         }
     }
-    if let Err(e) = am.insert(&app.db).await {
+    // The list row, its entries and the first refresh-log row commit
+    // together: an error or a dropped request leaves no half-built list.
+    let txn = match app.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "cbl_lists: begin failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+    };
+    if let Err(e) = am.insert(&txn).await {
         tracing::error!(error = %e, "cbl_lists: insert failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
-    if let Err(e) =
-        import::apply_parsed(&app.db, id, parsed, xml, None, RefreshTrigger::Manual).await
+    if let Err(e) = import::apply_parsed(&txn, id, parsed, xml, None, RefreshTrigger::Manual).await
     {
         tracing::error!(error = %e, "cbl_lists: apply_parsed failed");
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    }
+    if let Err(e) = txn.commit().await {
+        tracing::error!(error = %e, "cbl_lists: commit failed");
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
     // Re-read the freshly-written row + stats so the response shape
@@ -1935,7 +1952,15 @@ pub async fn refresh_one(
         Ok(b) => b,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    match refresh::refresh(&app.db, id, RefreshTrigger::Manual, false).await {
+    match refresh::refresh(
+        &app.db,
+        id,
+        RefreshTrigger::Manual,
+        false,
+        crate::cbl::fetch::REQUEST_BUDGET,
+    )
+    .await
+    {
         Ok(mut summary) => {
             audit_admin_list_write(
                 &app,
@@ -1954,6 +1979,11 @@ pub async fn refresh_one(
             }
             Json(summary).into_response()
         }
+        Err(refresh::RefreshError::TooManyEntries) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_many_entries",
+            &crate::cbl::too_many_entries_message(),
+        ),
         Err(e) => {
             tracing::warn!(error = %e, "cbl_lists: refresh failed");
             error(StatusCode::BAD_GATEWAY, "refresh_failed", &e.to_string())
@@ -2059,6 +2089,39 @@ fn item_error(list: &cbl_list::Model, applied: bool, msg: String) -> CblBulkItem
     }
 }
 
+/// Time left in one `refresh-all` / `check-all` request
+/// ([`crate::cbl::fetch::CBL_REQUEST_BULK_BUDGET`]).
+struct BulkDeadline(tokio::time::Instant);
+
+impl BulkDeadline {
+    fn start() -> Self {
+        Self(tokio::time::Instant::now() + crate::cbl::fetch::CBL_REQUEST_BULK_BUDGET)
+    }
+
+    /// The budget for the next list, or `None` when too little time is
+    /// left to start one (the list is then reported as not attempted).
+    fn next_list_budget(&self) -> Option<crate::cbl::fetch::FetchBudget> {
+        let remaining = self
+            .0
+            .saturating_duration_since(tokio::time::Instant::now());
+        (remaining >= crate::cbl::fetch::CBL_REQUEST_MIN_LIST_BUDGET).then(|| {
+            crate::cbl::fetch::REQUEST_BUDGET
+                .capped_at(remaining.min(crate::cbl::fetch::CBL_REQUEST_BULK_LIST_BUDGET))
+        })
+    }
+}
+
+/// The order a bulk request works through its lists: shuffled, so lists
+/// whose hosts keep stalling cannot use up the request's time ahead of
+/// the same others on every run. Results are still reported in the
+/// lists' own order.
+fn bulk_order(len: usize) -> Vec<usize> {
+    use rand::seq::SliceRandom;
+    let mut order: Vec<usize> = (0..len).collect();
+    order.shuffle(&mut rand::rng());
+    order
+}
+
 fn bulk_result(items: Vec<CblBulkItemView>) -> axum::response::Response {
     let changed_count = items.iter().filter(|i| i.changed).count() as i32;
     let failed_count = items.iter().filter(|i| !i.ok).count() as i32;
@@ -2097,8 +2160,20 @@ pub async fn check_one(
     }
     let acl = crate::library::access::for_user(&app, &user).await;
     let caller_view = check_caller_view(&app, acl).await;
-    match crate::cbl::refresh::check(&app.db, id, caller_view.as_ref()).await {
+    match crate::cbl::refresh::check(
+        &app.db,
+        id,
+        caller_view.as_ref(),
+        crate::cbl::fetch::REQUEST_BUDGET,
+    )
+    .await
+    {
         Ok(outcome) => Json(item_from_check(&row, &outcome)).into_response(),
+        Err(crate::cbl::refresh::RefreshError::TooManyEntries) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "too_many_entries",
+            &crate::cbl::too_many_entries_message(),
+        ),
         Err(e) => {
             tracing::warn!(error = %e, "cbl_lists: check failed");
             error(StatusCode::BAD_GATEWAY, "check_failed", &e.to_string())
@@ -2125,18 +2200,30 @@ pub async fn check_all(State(app): State<AppState>, user: CurrentUser) -> impl I
     };
     let acl = crate::library::access::for_user(&app, &user).await;
     let caller_view = check_caller_view(&app, acl).await;
-    let mut items = Vec::with_capacity(lists.len());
-    for list in &lists {
-        let item = match crate::cbl::refresh::check(&app.db, list.id, caller_view.as_ref()).await {
+    let mut slots: Vec<Option<CblBulkItemView>> = lists.iter().map(|_| None).collect();
+    let deadline = BulkDeadline::start();
+    for idx in bulk_order(lists.len()) {
+        let list = &lists[idx];
+        let Some(budget) = deadline.next_list_budget() else {
+            slots[idx] = Some(item_error(
+                list,
+                false,
+                crate::cbl::refresh::RefreshError::NotAttempted.to_string(),
+            ));
+            continue;
+        };
+        let item = match crate::cbl::refresh::check(&app.db, list.id, caller_view.as_ref(), budget)
+            .await
+        {
             Ok(o) => item_from_check(list, &o),
             Err(e) => {
                 tracing::warn!(error = %e, list_id = %list.id, "cbl_lists: check-all item failed");
                 item_error(list, false, e.to_string())
             }
         };
-        items.push(item);
+        slots[idx] = Some(item);
     }
-    bulk_result(items)
+    bulk_result(slots.into_iter().flatten().collect())
 }
 
 #[utoipa::path(
@@ -2165,13 +2252,25 @@ pub async fn refresh_all(
     // (GitHub catalog, arbitrary URLs) with no real latency win here.
     // `rematched` / `changed` are the caller's view, as on `refresh_one`.
     let acl = crate::library::access::for_user(&app, &user).await;
-    let mut items = Vec::with_capacity(lists.len());
-    for list in &lists {
+    let mut slots: Vec<Option<CblBulkItemView>> = lists.iter().map(|_| None).collect();
+    let deadline = BulkDeadline::start();
+    for idx in bulk_order(lists.len()) {
+        let list = &lists[idx];
+        let Some(budget) = deadline.next_list_budget() else {
+            slots[idx] = Some(item_error(
+                list,
+                true,
+                refresh::RefreshError::NotAttempted.to_string(),
+            ));
+            continue;
+        };
         let before = match snapshot_for_caller(&app.db, list.id, &acl).await {
             Ok(b) => b,
             Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
         };
-        let item = match refresh::refresh(&app.db, list.id, RefreshTrigger::Manual, false).await {
+        let item = match refresh::refresh(&app.db, list.id, RefreshTrigger::Manual, false, budget)
+            .await
+        {
             Ok(mut s) => {
                 audit_admin_list_write(
                     &app,
@@ -2195,9 +2294,9 @@ pub async fn refresh_all(
                 item_error(list, true, e.to_string())
             }
         };
-        items.push(item);
+        slots[idx] = Some(item);
     }
-    bulk_result(items)
+    bulk_result(slots.into_iter().flatten().collect())
 }
 
 #[utoipa::path(

@@ -373,6 +373,57 @@ pub async fn reconcile_library_seen(
     .await
 }
 
+/// [`reconcile_library_seen`] that stops between its units of work once
+/// `stop` is set: the scan's coalescing-key lease was lost (R-03), so
+/// another run owns the library and this one must stop removing rows.
+/// Returns an error when it stopped early.
+#[expect(clippy::too_many_arguments)]
+pub async fn reconcile_library_seen_until(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    scanned_series_ids: &HashSet<Uuid>,
+    seen_paths: &HashSet<String>,
+    scanned_folder_paths: &HashSet<String>,
+    present_folders: &HashSet<String>,
+    missing_scope: Option<&[std::path::PathBuf]>,
+    unreadable_folders: &HashSet<String>,
+    stats: &mut ScanStats,
+    events: &mut EventCollector,
+    stop: Option<ReconcileStop<'_>>,
+) -> anyhow::Result<u64> {
+    reconcile_library_seen_inner(
+        db,
+        library_id,
+        scanned_series_ids,
+        seen_paths,
+        scanned_folder_paths,
+        present_folders,
+        missing_scope,
+        unreadable_folders,
+        stats,
+        events,
+        RECONCILE_ID_CHUNK,
+        stop,
+    )
+    .await
+}
+
+/// Asked between a reconcile's units of work; `true` stops it. See
+/// [`reconcile_library_seen_until`].
+pub type ReconcileStop<'a> = &'a (dyn Fn() -> bool + Send + Sync);
+
+fn stop_requested(stop: Option<ReconcileStop<'_>>) -> bool {
+    stop.is_some_and(|s| s())
+}
+
+/// Error out when `stop` says so; see [`reconcile_library_seen_until`].
+fn check_stop(stop: Option<ReconcileStop<'_>>) -> anyhow::Result<()> {
+    if stop_requested(stop) {
+        anyhow::bail!("reconcile stopped: another scan of this library took over");
+    }
+    Ok(())
+}
+
 /// [`reconcile_library_seen`] with an explicit id-list chunk size. Public so
 /// the integration suite can cross a chunk boundary with a handful of
 /// series; production always goes through [`reconcile_library_seen`].
@@ -407,8 +458,41 @@ pub async fn reconcile_library_seen_with_chunk(
     events: &mut EventCollector,
     chunk: usize,
 ) -> anyhow::Result<u64> {
+    reconcile_library_seen_inner(
+        db,
+        library_id,
+        scanned_series_ids,
+        seen_paths,
+        scanned_folder_paths,
+        present_folders,
+        missing_scope,
+        unreadable_folders,
+        stats,
+        events,
+        chunk,
+        None,
+    )
+    .await
+}
+
+#[expect(clippy::too_many_arguments)]
+async fn reconcile_library_seen_inner(
+    db: &DatabaseConnection,
+    library_id: Uuid,
+    scanned_series_ids: &HashSet<Uuid>,
+    seen_paths: &HashSet<String>,
+    scanned_folder_paths: &HashSet<String>,
+    present_folders: &HashSet<String>,
+    missing_scope: Option<&[std::path::PathBuf]>,
+    unreadable_folders: &HashSet<String>,
+    stats: &mut ScanStats,
+    events: &mut EventCollector,
+    chunk: usize,
+    stop: Option<ReconcileStop<'_>>,
+) -> anyhow::Result<u64> {
     let now = Utc::now().fixed_offset();
     let chunk = chunk.max(1);
+    check_stop(stop)?;
 
     if !scanned_series_ids.is_empty() {
         let scanned: Vec<Uuid> = scanned_series_ids.iter().copied().collect();
@@ -432,6 +516,10 @@ pub async fn reconcile_library_seen_with_chunk(
                     .await?,
             );
         }
+        // No stop checks in this block: the removals, restores and
+        // empty-series marks for the series this run scanned finish together
+        // once started. A later non-forced scan skips an unchanged folder, so
+        // a series emptied here and left unmarked would stay live for good.
         reconcile_issue_rows_seen(
             db,
             issues,
@@ -449,7 +537,11 @@ pub async fn reconcile_library_seen_with_chunk(
         .filter(series::Column::LibraryId.eq(library_id))
         .all(db)
         .await?;
-    let mut missing_series = Vec::new();
+    // The folder-missing sweep checks the stop between series. A stop leaves
+    // the rest to the next reconcile, which judges them by what is on disk
+    // and in the table; the series handled so far are completed below.
+    let mut missing_series: Vec<(Uuid, NewEvent)> = Vec::new();
+    let mut stopped = false;
     for srow in series_rows {
         let Some(folder) = srow.folder_path.as_deref() else {
             continue;
@@ -470,9 +562,12 @@ pub async fn reconcile_library_seen_with_chunk(
             );
             continue;
         }
+        if stop_requested(stop) {
+            stopped = true;
+            break;
+        }
         let series_label = srow.name.clone();
         let series_id = srow.id;
-        missing_series.push(series_id);
         let res = IssueEntity::update_many()
             .col_expr(issue::Column::RemovedAt, Expr::value(now))
             .col_expr(
@@ -496,22 +591,32 @@ pub async fn reconcile_library_seen_with_chunk(
             )
             .entity("series", series_id.to_string(), Some(series_label))
             .detail(serde_json::json!({ "issues_removed": res.rows_affected }));
-        events.push(ev);
+        missing_series.push((series_id, ev));
     }
-    if !missing_series.is_empty() {
-        for chunk in missing_series.chunks(500) {
+    // Each chunk's events are recorded once its series rows are written.
+    let mut missing_series = missing_series.into_iter().peekable();
+    while missing_series.peek().is_some() {
+        let batch: Vec<(Uuid, NewEvent)> = missing_series.by_ref().take(500).collect();
+        let ids: Vec<Uuid> = batch.iter().map(|(id, _)| *id).collect();
+        {
             let res = series::Entity::update_many()
                 .col_expr(series::Column::RemovedAt, Expr::value(now))
                 .col_expr(
                     series::Column::RemovalConfirmedAt,
                     Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
                 )
-                .filter(series::Column::Id.is_in(chunk.to_vec()))
+                .filter(series::Column::Id.is_in(ids))
                 .filter(series::Column::RemovedAt.is_null())
                 .exec(db)
                 .await?;
             stats.series_removed += res.rows_affected;
         }
+        for (_, ev) in batch {
+            events.push(ev);
+        }
+    }
+    if stopped {
+        anyhow::bail!("reconcile stopped: another scan of this library took over");
     }
 
     // Last, after the folder-missing sweep: lift the removal off every
@@ -521,6 +626,7 @@ pub async fn reconcile_library_seen_with_chunk(
     // older scanner, a forced or issue scan, or a failure between the issue
     // and series writes). A series the sweep removed has no live issue left,
     // so it stays removed: restoring it any earlier made it flap.
+    check_stop(stop)?;
     restore_library_series_with_live_issues(db, library_id, events, chunk).await
 }
 
@@ -698,8 +804,9 @@ async fn reconcile_issue_rows_seen(
     stats: &mut ScanStats,
     events: &mut EventCollector,
 ) -> anyhow::Result<()> {
-    let mut remove_ids = Vec::new();
-    let mut restore_ids = Vec::new();
+    // Each chunk's events are recorded once its rows are written.
+    let mut remove_ids: Vec<(String, NewEvent)> = Vec::new();
+    let mut restore_ids: Vec<(String, NewEvent)> = Vec::new();
     for row in issues {
         let seen = seen_paths.contains(&row.file_path);
         match (row.removed_at.is_some(), seen) {
@@ -722,8 +829,7 @@ async fn reconcile_issue_rows_seen(
                             "series_id": row.series_id,
                             "file_path": row.file_path,
                         }));
-                    events.push(ev);
-                    remove_ids.push(row.id);
+                    remove_ids.push((row.id, ev));
                 }
             }
             (true, true) => {
@@ -735,26 +841,34 @@ async fn reconcile_issue_rows_seen(
                         format!("Restored issue {}", row.slug),
                     )
                     .entity("issue", row.id.clone(), Some(row.slug.clone()));
-                events.push(ev);
-                restore_ids.push(row.id);
+                restore_ids.push((row.id, ev));
             }
             _ => {}
         }
     }
 
-    for chunk in remove_ids.chunks(500) {
+    let mut removals = remove_ids.into_iter().peekable();
+    while removals.peek().is_some() {
+        let batch: Vec<(String, NewEvent)> = removals.by_ref().take(500).collect();
+        let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
         let res = IssueEntity::update_many()
             .col_expr(issue::Column::RemovedAt, Expr::value(now))
             .col_expr(
                 issue::Column::RemovalConfirmedAt,
                 Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
             )
-            .filter(issue::Column::Id.is_in(chunk.to_vec()))
+            .filter(issue::Column::Id.is_in(ids))
             .exec(db)
             .await?;
         stats.issues_removed += res.rows_affected;
+        for (_, ev) in batch {
+            events.push(ev);
+        }
     }
-    for chunk in restore_ids.chunks(500) {
+    let mut restores = restore_ids.into_iter().peekable();
+    while restores.peek().is_some() {
+        let batch: Vec<(String, NewEvent)> = restores.by_ref().take(500).collect();
+        let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
         let res = IssueEntity::update_many()
             .col_expr(
                 issue::Column::RemovedAt,
@@ -764,10 +878,13 @@ async fn reconcile_issue_rows_seen(
                 issue::Column::RemovalConfirmedAt,
                 Expr::value(Option::<chrono::DateTime<chrono::FixedOffset>>::None),
             )
-            .filter(issue::Column::Id.is_in(chunk.to_vec()))
+            .filter(issue::Column::Id.is_in(ids))
             .exec(db)
             .await?;
         stats.issues_restored += res.rows_affected;
+        for (_, ev) in batch {
+            events.push(ev);
+        }
     }
     // The series of restored issues come back in the caller's last step
     // (`restore_*series_with_live_issues`), after every removal sweep.

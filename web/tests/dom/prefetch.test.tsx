@@ -1,8 +1,19 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+
+const session = vi.hoisted(() => ({
+  needsRefresh: vi.fn(() => false),
+  ensureFreshSession: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/api/session-refresh", () => session);
+
 import { useReaderPrefetch } from "@/lib/reader/use-prefetch";
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  session.needsRefresh.mockReturnValue(false);
+  session.ensureFreshSession.mockClear();
+});
 it("warms nearest forward pages before older pages and stops on unmount", async () => {
   const urls: string[] = [];
   const waiting: (() => void)[] = [];
@@ -87,5 +98,41 @@ it("turning a page keeps the loads still inside the new window (T3.6)", async ()
   expect(cancelled).toEqual(
     expect.arrayContaining(["/issues/a/pages/5", "/issues/a/pages/6"]),
   );
+  unmount();
+});
+
+it("near expiry, renews the session before starting a batch", async () => {
+  const urls: string[] = [];
+  class ImageStub {
+    naturalWidth = 100;
+    naturalHeight = 100;
+    fetchPriority = "";
+    set src(value: string) {
+      if (value) urls.push(value);
+    }
+    decode() {
+      return new Promise<void>(() => {});
+    }
+  }
+  vi.stubGlobal("Image", ImageStub);
+  session.needsRefresh.mockReturnValue(true);
+  let release!: () => void;
+  session.ensureFreshSession.mockImplementationOnce(
+    () => new Promise<void>((r) => (release = r)),
+  );
+  const { unmount } = renderHook(() =>
+    useReaderPrefetch({
+      issueId: "a",
+      currentPage: 4,
+      totalPages: 20,
+      currentGroupIdx: 0,
+      groups: [],
+      viewMode: "single",
+    }),
+  );
+  expect(session.ensureFreshSession).toHaveBeenCalledTimes(1);
+  expect(urls).toEqual([]);
+  await act(async () => release());
+  expect(urls).toHaveLength(4);
   unmount();
 });

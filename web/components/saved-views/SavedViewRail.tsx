@@ -26,6 +26,7 @@ import type { SavedViewView } from "@/lib/api/types";
 
 import {
   ContinueReadingRailBody,
+  NewInSeriesRailBody,
   OnDeckRailBody,
   OnThisDayRailBody,
   RandomPicksRailBody,
@@ -164,6 +165,12 @@ function renderRailBody(
   if (view.kind === "system" && view.system_key === "on_this_day") {
     return {
       body: <OnThisDayRailBody itemStyle={itemStyle} />,
+      hasMore: true,
+    };
+  }
+  if (view.kind === "system" && view.system_key === "new_in_series") {
+    return {
+      body: <NewInSeriesRailBody itemStyle={itemStyle} />,
       hasMore: true,
     };
   }

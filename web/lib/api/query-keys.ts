@@ -577,6 +577,12 @@ export const queryKeys = {
   continueReading: ["rails", "continue-reading"] as const,
   /** On-deck rail (`/me/on-deck`). Same invalidation set as continueReading. */
   onDeck: ["rails", "on-deck"] as const,
+  /** "See all" pages of the progress rails: the cursor-paginated walk
+   *  (`?limit=&cursor=`). Nested under the rail keys so every
+   *  invalidation of a rail also drops its see-all walk. */
+  continueReadingAll: ["rails", "continue-reading", "all"] as const,
+  onDeckAll: ["rails", "on-deck", "all"] as const,
+  recentHistoryAll: ["rails", "recent-history", "all"] as const,
   /** Settings → Pages "Hidden from rails" list (`GET /me/rail-dismissals`,
    *  cursor-paginated). `invalidateRails` drops it, so a dismiss or a
    *  restore anywhere refreshes the list. */
@@ -596,6 +602,11 @@ export const queryKeys = {
    *  calendar day so a session that crosses midnight re-fetches. */
   onThisDay: (month: number, day: number) =>
     ["rails", "on-this-day", month, day] as const,
+  /** "New in series you're reading" rail (`/me/new-in-series`,
+   *  cursor-paginated; the home rail is the first page, the see-all page
+   *  walks on). Progress and series dismissals change it, so
+   *  `invalidateRails` drops it. */
+  newInSeries: ["rails", "new-in-series"] as const,
   /** WP-7.4 "Similar series" rail on the series page
    *  (`/series/{slug}/similar`, cursor-paginated). Lives under the
    *  `["similar"]` prefix so `invalidateRails` (hide / progress) drops it

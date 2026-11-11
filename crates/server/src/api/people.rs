@@ -131,11 +131,7 @@ pub async fn list(
     };
     // WP-2.7: age-rating cap per UNION branch (mirrors `creators`).
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
-    let issue_cap = visible.raw_cap_clause(
-        "s.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
+    let issue_cap = visible.entity_issue_cap_sql("i", "s", &mut params);
 
     // Aggregate (UNION over both credit tables → distinct names with
     // role + count rollup) inside the `agg` CTE so the outer SELECT
@@ -146,14 +142,15 @@ pub async fn list(
     // L-4 (WP-6.3): bind LIMIT as a parameter rather than interpolating it.
     params.push(Value::from(limit));
     let limit_param = params.len();
+    let series_arm = super::creators::series_credit_arm(
+        &library_filter,
+        &series_cap,
+        &issue_cap,
+        visible.hides_any(),
+    );
     let sql = format!(
         "WITH all_credits AS ( \
-           SELECT sc.person AS person, sc.role AS role, \
-                  'series:' || sc.series_id::text AS ref_id, \
-                  s.library_id AS library_id \
-             FROM series_credits sc \
-             JOIN series s ON s.id = sc.series_id \
-            WHERE s.removed_at IS NULL{library_filter}{series_cap} \
+           {series_arm} \
            UNION ALL \
            SELECT ic.person AS person, ic.role AS role, \
                   'issue:' || ic.issue_id AS ref_id, \

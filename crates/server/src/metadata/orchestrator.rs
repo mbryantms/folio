@@ -1030,6 +1030,8 @@ fn cover_http_client() -> reqwest::Client {
                 crate::build_info::USER_AGENT_COVER,
                 COVER_PHASH_FETCH_TIMEOUT,
                 2,
+                // Covers are https (SE-6); a redirect may not leave it.
+                true,
             )
         })
         .clone()
