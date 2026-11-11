@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 import { useCoverPriority } from "@/components/library/cover-priority";
 import { applyTint, getTone, rememberTone } from "@/lib/ui/cover-tone";
+import { COVER_CARD_SIZES } from "@/lib/library/cover-size";
 import { coverThumbSrcSet } from "@/lib/urls";
 
 /**
@@ -32,6 +33,17 @@ import { coverThumbSrcSet } from "@/lib/urls";
 // and painted a near-black tile on the light/amber themes.
 const BOX =
   "cover-box aspect-[2/3] bg-muted rounded-md border border-border overflow-hidden";
+
+/** The `sizes` attribute for a cover: none without a `srcset`, `auto` for
+ *  lazy covers (the browser measures the box), the static card-width hint
+ *  for eager priority covers, where `auto` does not apply. */
+export function coverSizes(
+  srcSet: string | undefined,
+  priority: boolean,
+): string | undefined {
+  if (!srcSet) return undefined;
+  return priority ? COVER_CARD_SIZES : "auto";
+}
 
 export function Cover({
   src,
@@ -80,11 +92,13 @@ export function Cover({
   };
 
   if (src) {
-    // Responsive cover (G9): lazy grid covers get a `srcset` + `sizes="auto"`
+    // Responsive cover (G9): lazy covers get a `srcset` + `sizes="auto"`
     // so the browser picks the small (300px) variant for low-DPR / small-card
-    // renders instead of always pulling the full 600px. Priority (LCP) covers
-    // skip `sizes` so they default to the full-res step. Non-thumb URLs
-    // (provider covers) get a plain `src`.
+    // renders instead of always pulling the full 600px. `auto` is only
+    // honoured on lazy images, so priority (eager, LCP) covers — only ever
+    // the first home rail's cards — take the static card-width hint
+    // `COVER_CARD_SIZES` instead of defaulting to the viewport width.
+    // Non-thumb URLs (provider covers) get a plain `src`.
     const srcSet = coverThumbSrcSet(src) ?? undefined;
     return (
       // The box owns the aspect-ratio + placeholder + caller classes
@@ -96,7 +110,7 @@ export function Cover({
           ref={ref}
           src={src}
           srcSet={srcSet}
-          sizes={srcSet && !priority ? "auto" : undefined}
+          sizes={coverSizes(srcSet, priority)}
           alt={alt}
           loading={priority ? "eager" : "lazy"}
           fetchPriority={priority ? "high" : undefined}
