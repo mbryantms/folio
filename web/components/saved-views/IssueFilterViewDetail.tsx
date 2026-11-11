@@ -15,9 +15,9 @@ import {
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import {
   PhoneControlsBar,
   PhoneMenuAction,
@@ -25,7 +25,6 @@ import {
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
-import { useCardSize } from "@/components/library/use-card-size";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { EmptyState } from "@/components/folio/empty-state";
 import {
@@ -35,25 +34,18 @@ import {
 import { useMe, useSavedViewIssueResultsInfinite } from "@/lib/api/queries";
 import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import type { SavedViewView } from "@/lib/api/types";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
-import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
-
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
-/** Shared with `<FilterViewDetail>` so one density slider covers every
- *  filter-view page. */
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 
 /** Issue-level (`filter_issues`, WP-5.4) view detail page: header +
  *  cursor-paginated issue grid, auto-loading the next page from an
- *  IntersectionObserver sentinel like `<FilterViewDetail>`.
+ *  IntersectionObserver sentinel like `<FilterViewDetail>`. The grid
+ *  takes the app-wide cover size (`COVER_GRID_STYLE`).
  *
  *  Multi-select (audit 2026-11 N-O4): the same `useSelection` +
  *  `SelectionToolbar` wiring as the series twin, with the issue-shaped
@@ -95,15 +87,6 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
     createBatch.mutate({ saved_view_id: view.id });
   };
 
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
-  const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
-  };
   const items = React.useMemo(
     () => (results.data?.pages ?? []).flatMap((p) => p.items),
     [results.data],
@@ -204,17 +187,10 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
                 onExit={() => selection.exit()}
               />
             )}
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-            />
+            <CoverSizeOptions />
           </>
         }
-        // Phone (< sm): the desktop cluster above is hidden; card size
+        // Phone (< sm): the desktop cluster above is hidden; cover size
         // and Select move into the sticky bar's View options sheet. The
         // bar yields to `SelectionToolbar` (also sticky) while selecting.
         phoneControlsPlacement="inline"
@@ -224,15 +200,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
             hidden={selection.selectMode}
             menu={(close) => (
               <>
-                <CardSizeFields
-                  cardSize={cardSize}
-                  onCardSize={setCardSize}
-                  min={CARD_SIZE_MIN}
-                  max={CARD_SIZE_MAX}
-                  step={CARD_SIZE_STEP}
-                  defaultSize={CARD_SIZE_DEFAULT}
-                  fieldId="phone-card-size"
-                />
+                <CoverSizeFields fieldId="phone-card-size" />
                 {items.length > 0 ? (
                   <PhoneMenuAction
                     icon={<ListChecks className="size-4" />}
@@ -286,7 +254,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
       />
 
       {results.isLoading ? (
-        <ul role="list" className="grid gap-4" style={gridStyle}>
+        <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
           {Array.from({ length: 12 }).map((_, i) => (
             <li key={i}>
               <IssueCardSkeleton />
@@ -304,7 +272,7 @@ export function IssueFilterViewDetail({ view }: { view: SavedViewView }) {
           description="No issues match this view yet. Tweak the conditions to broaden the search."
         />
       ) : (
-        <ul role="list" className="grid gap-4" style={gridStyle}>
+        <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
           {items.map((issue) => (
             <li key={issue.id}>
               <IssueCard

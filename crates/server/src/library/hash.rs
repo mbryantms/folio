@@ -16,21 +16,26 @@ use std::path::Path;
 /// Matches `default_scan_hash_buffer_kb` in `crate::config`.
 const DEFAULT_CHUNK_KB: usize = 1024;
 
+/// Hash a file opened by name with an ordinary open (links followed).
+/// Tests only: library files are hashed through the handle the no-follow
+/// opener returned ([`blake3_open_file`]).
 pub fn blake3_file(path: impl AsRef<Path>) -> std::io::Result<String> {
-    blake3_file_with_buffer(path, DEFAULT_CHUNK_KB)
+    blake3_open_file(&File::open(path.as_ref())?, DEFAULT_CHUNK_KB)
 }
 
-/// Same as [`blake3_file`], with an explicit chunk size in KB. Caller
-/// passes `state.cfg().scan_hash_buffer_kb` from the scanner hot path so the
-/// buffer is tunable without touching code.
-pub fn blake3_file_with_buffer(
-    path: impl AsRef<Path>,
-    buffer_kb: usize,
-) -> std::io::Result<String> {
+/// Hash an already-open file from offset 0, with an explicit chunk size in
+/// KB. Reads with positioned reads through the handle (never by name), so
+/// the bytes hashed are the bytes of the file the caller opened. The
+/// scanner passes `state.cfg().scan_hash_buffer_kb` so the buffer is
+/// tunable without touching code.
+pub fn blake3_open_file(f: &File, buffer_kb: usize) -> std::io::Result<String> {
     let chunk = buffer_kb.max(64) * 1024; // floor at 64 KB to avoid pathological tiny reads
-    let f = File::open(path.as_ref())?;
-    advise_sequential(&f);
-    let mut reader = BufReader::with_capacity(chunk, f);
+    advise_sequential(f);
+    let dup = f.try_clone()?;
+    let mut reader = BufReader::with_capacity(
+        chunk,
+        archive::ArchiveFile::new(dup, std::path::PathBuf::new()).reader(),
+    );
     let mut hasher = Hasher::new();
     let mut buf = vec![0u8; chunk];
     loop {

@@ -6,11 +6,8 @@ import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail"
 import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
 import { SimilarSeriesCard } from "@/components/library/SimilarSeriesCard";
 import { useSimilarSeriesInfinite } from "@/lib/api/queries";
+import { DEFAULT_COVER_SIZE_PX } from "@/lib/library/cover-size";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
-
-/** Card width when the caller doesn't size the rail (the series card
- *  grid's default `minmax`). */
-const DEFAULT_CARD_WIDTH_PX = 160;
 
 /**
  * WP-7.4 "Similar series" rail on the series page. Content-based
@@ -25,12 +22,12 @@ const DEFAULT_CARD_WIDTH_PX = 160;
  *
  * WP-7.7: lives in the series page's Related tab (mounted only when the
  * tab opens, so the query is lazy) and takes `itemWidthPx` — the issue
- * grid's effective column width — so its covers match the page's
- * card-size slider instead of a fixed 160 px.
+ * grid's effective column width — so its covers match the app-wide
+ * cover size instead of a fixed 160 px.
  */
 export function SimilarSeriesRail({
   seriesSlug,
-  itemWidthPx = DEFAULT_CARD_WIDTH_PX,
+  itemWidthPx = DEFAULT_COVER_SIZE_PX,
 }: {
   seriesSlug: string;
   itemWidthPx?: number;

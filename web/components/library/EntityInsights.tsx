@@ -8,6 +8,7 @@ import { EntityInsightsSkeleton } from "@/components/skeletons/LoadingShapes";
 import { useEntityInsights, type EntityKindPath } from "@/lib/api/queries";
 import type { EntityInsightsView } from "@/lib/api/types";
 import { entityUrl } from "@/lib/entities";
+import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 import { seriesUrl } from "@/lib/urls";
 import { RailError } from "@/components/saved-views/RailError";
 
@@ -104,7 +105,7 @@ export function EntityInsights({
             style={{ scrollbarWidth: "thin" }}
           >
             {data.earliest.map((issue) => (
-              <li key={issue.id} className="w-[120px] shrink-0">
+              <li key={issue.id} className="shrink-0" style={COVER_ITEM_STYLE}>
                 <IssueCard issue={issue} />
               </li>
             ))}

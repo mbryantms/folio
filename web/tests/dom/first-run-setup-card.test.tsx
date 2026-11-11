@@ -27,10 +27,6 @@ vi.mock("@/lib/api/queries", () => ({
   useLibraryList: () => ({ data: state.libraries }),
   useMe: () => ({ data: { role: state.role } }),
 }));
-vi.mock("@/components/library/use-card-size", () => ({
-  useCardSize: () => [160, () => undefined] as const,
-  usePageSlugRecord: () => undefined,
-}));
 vi.mock("@/components/saved-views/PageActionsMenu", () => ({
   PageActionsMenu: () => null,
 }));

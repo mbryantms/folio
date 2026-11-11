@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
  * also means the focus-restore-on-exit pattern has a stable target.
  *
  * Toolbar-row convention: `h-9` (36px) so it lines up with the
- * `<Input>` / `CardSizeOptions` / `NotesExportMenu` siblings in every
+ * `<Input>` / `CoverSizeOptions` / `NotesExportMenu` siblings in every
  * header it sits in — `size="sm"` alone is 32px and read as a smaller
  * button beside them.
  */

@@ -267,10 +267,10 @@ The "Similar series" rail lives in the series page's **Related** tab
 and the "Same universe" section. The tab panel is unmounted while
 inactive, so `GET /series/{slug}/similar` fires only when the tab opens.
 
-Its cards are sized by the page's card-size slider (Issues panel → View
-options, key `folio.series.cardSize`) instead of a fixed 160 px:
-`SimilarSeriesRail` takes `itemWidthPx`, which the tab sets to the issue
-grid's effective column width (`useGridColumnWidth` over
+Its cards are sized by the app-wide cover size (View options → "Cover
+size", see `phone-layout.md` → "One cover size") instead of a fixed
+160 px: `SimilarSeriesRail` takes `itemWidthPx`, which the tab sets to the
+issue grid's effective column width (`useGridColumnWidth` over
 `effectiveColumnWidth`, see `series-relationships.md` → "Related tab"), so
-the covers match the grid exactly and follow the slider live. Without the
+the covers match the grid exactly and follow the control live. Without the
 prop the rail falls back to 160 px.

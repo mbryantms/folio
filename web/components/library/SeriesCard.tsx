@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { BookMinus, LibraryBig } from "lucide-react";
 import { CoverSkeleton } from "@/components/CoverSkeleton";
 import { seriesCoverName, useCoverMorph } from "@/lib/ui/cover-morph";
 import { useRouter } from "next/navigation";
@@ -24,6 +25,8 @@ import {
 } from "@/components/library/BulkMarkReadDialog";
 import { SelectionCheckbox } from "@/components/library/SelectionCheckbox";
 import { SeriesHoverPreview } from "@/components/library/CardHoverPreview";
+import { ProgressFill } from "@/components/library/ProgressFill";
+import { ReadCheck } from "@/components/library/ReadCheck";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 import {
   HoverCard,
@@ -35,9 +38,10 @@ import { jsonFetch, useMe } from "@/lib/api/queries";
 import { useUpsertSeriesProgress } from "@/lib/api/mutations";
 import type { SeriesResumeView, SeriesView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-import { statusToneDot, statusToneSolid } from "@/lib/ui/status-tone";
+import { statusToneSolid } from "@/lib/ui/status-tone";
 import { formatPublicationStatus } from "@/lib/format";
 import { collectionStatus, collectionTooltip } from "@/lib/series-status";
+import { seriesReadState } from "@/lib/series-read-state";
 import { seriesUrl } from "@/lib/urls";
 import { useShareLink } from "@/lib/ui/use-share-link";
 
@@ -112,6 +116,10 @@ function SeriesCardImpl({
   });
   const share = useShareLink();
   const morph = useCoverMorph(seriesCoverName(series.slug), series.cover_url);
+  // The viewer's read state (`progress_summary`, sent by every list
+  // endpoint via `hydrate_series`). `null` → the payload has no summary:
+  // show nothing rather than call a series unread.
+  const read = seriesReadState(series.progress_summary);
   const menuActions: CoverMenuAction[] = [
     {
       label: "Mark all read",
@@ -241,13 +249,15 @@ function SeriesCardImpl({
             }
           />
         )}
-        {/* Top-right indicator stack: publication status + the
-         *  metadata-needs chip. Both live here (not top-left) so the
-         *  kebab affordance owns the canonical top-left across all card
-         *  types — and so the *interactive* meta chip stays clickable on
-         *  desktop, where hovering the card reveals the kebab over the
-         *  top-left corner. */}
+        {/* Top-right indicator stack: the finished check (same corner
+         *  and mark as on issue cards), publication status, and the
+         *  metadata-needs chip — see docs/dev/card-corner-conventions.md.
+         *  They live here (not top-left) so the kebab affordance owns the
+         *  canonical top-left across all card types — and so the
+         *  *interactive* meta chip stays clickable on desktop, where
+         *  hovering the card reveals the kebab over the top-left corner. */}
         <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+          {read?.kind === "finished" && <ReadCheck label={read.label} />}
           {status && status !== "Active" && (
             <Badge
               variant="secondary"
@@ -258,7 +268,26 @@ function SeriesCardImpl({
           )}
           <MetaNeedsBadge series={series} interactive={!inSelectMode} />
         </div>
-        <CollectionDot series={series} />
+        {/* Bottom-full: share of issues finished, the issue cards' bar.
+         *  Absolutely positioned, so every read state keeps the same card
+         *  box (no shift between neighbours in a row). */}
+        {read?.kind === "started" && (
+          <div
+            role="img"
+            aria-label={read.label}
+            title={read.label}
+            data-read-state="started"
+            className="bg-background/70 absolute inset-x-0 bottom-0 h-1.5 overflow-hidden rounded-b-md"
+          >
+            <ProgressFill id={`series:${series.id}`} percent={read.percent} />
+          </div>
+        )}
+        {read?.kind === "unread" && (
+          <span className="sr-only" data-read-state="unread">
+            {read.label}
+          </span>
+        )}
+        <CollectionBadge series={series} />
         {!inSelectMode && (
           <>
             <CoverMenuButton
@@ -369,30 +398,42 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
   );
 }
 
-/** Small green/amber dot in the cover's bottom-left corner. Lives opposite
- *  the play overlay so the 32px hover button doesn't cover it. The
- *  symmetric bottom-left slot on issue cards hosts the "finished"
- *  check badge — same idiom, different axis (ownership vs. read state).
+/** Collection-ownership badge in the cover's bottom-left corner
+ *  (opposite the play overlay, so the 32px hover button never covers
+ *  it; just above the bottom-full progress bar). The icon carries the
+ *  meaning, not only the tone: a full shelf (`LibraryBig`) when the
+ *  viewer owns every issue the publisher counts, a book with a
+ *  minus (`BookMinus`) when some are missing. `role="img"` + `aria-label`
+ *  give screen readers the same words as the tooltip.
  *
- *  Suppressed entirely when the user has disabled
- *  `useCoverCollectionDot` from the CardSizeOptions popover — gives
- *  readers who want pristine covers an opt-out. */
-function CollectionDot({ series }: { series: SeriesView }) {
+ *  Suppressed entirely when the user has turned the "Collection badge"
+ *  preference (`useCoverCollectionDot`) off in View options — readers
+ *  who want pristine covers opt out. */
+export function CollectionBadge({ series }: { series: SeriesView }) {
   const dotPref = useCoverCollectionDot();
   const state = collectionStatus(series);
   if (!state || !dotPref.enabled) return null;
-  const tooltip = collectionTooltip(series);
+  const counts = collectionTooltip(series).replace(/^Complete: /, "");
+  const label =
+    state === "complete"
+      ? `Collection complete: ${counts}`
+      : `Collection incomplete: ${counts}`;
+  const Icon = state === "complete" ? LibraryBig : BookMinus;
   return (
     <span
-      title={tooltip}
-      aria-label={tooltip}
+      role="img"
+      aria-label={label}
+      title={label}
+      data-collection={state}
       className={cn(
-        "absolute bottom-2 left-2 h-2.5 w-2.5 rounded-full ring-1 ring-black/10 dark:ring-white/10",
+        "absolute bottom-2.5 left-2 inline-flex size-5 items-center justify-center rounded-full shadow-sm ring-1 ring-black/10 dark:ring-white/10",
         state === "complete"
-          ? statusToneDot("success")
-          : statusToneDot("warning"),
+          ? statusToneSolid("success")
+          : statusToneSolid("warning"),
       )}
-    />
+    >
+      <Icon aria-hidden="true" className="size-3" />
+    </span>
   );
 }
 

@@ -1082,19 +1082,17 @@ tab strip directly; nothing relationship-related renders in the page body.
   kind set mirrors the server's `CHAIN_BEFORE` / `CHAIN_AFTER` by hand.
 - **Cover size.** Every cover in the tab — reading-order strip, relationship
   cards, same-universe and similar rails — renders at the issue grid's
-  effective column width for the page's card-size slider. The slider stays
-  in the Issues panel's "View options"; both read `folio.series.cardSize`
-  (`SERIES_CARD_SIZE` in `web/lib/library/series-card-size.ts`).
-  `useCardSize` syncs every instance sharing a key: the setter broadcasts a
-  `folio:card-size` window event (same page) and other browser tabs follow
-  through the native `storage` event. `useGridColumnWidth`
+  effective column width for the app-wide cover size (`phone-layout.md` →
+  "One cover size"). The control stays in the Issues panel's "View
+  options"; the tab reads the same target through `useCoverTarget`
+  (`web/components/library/use-cover-size.ts`), a module store every
+  instance subscribes to, and other browser tabs follow through the native
+  `storage` event. `useGridColumnWidth`
   (`web/lib/library/use-grid-column-width.ts`) measures the tab panel (as
   wide as the grid) with a `ResizeObserver` and applies
   `effectiveColumnWidth` (`web/lib/library/grid-window.ts`):
-  `cols = max(1, floor((W + gap) / (size + gap)))`,
-  `width = (W − gap·(cols − 1)) / cols` with the grid's 16 px gap. Browser
-  check on the dev library: 180.28 px covers in both the grid and the tab
-  at slider 160, 327.5 px at 280, 121.39 px at 120.
+  `cols = max(1, floor((W + gap) / (size + gap)))` (with the two-column
+  floor), `width = (W − gap·(cols − 1)) / cols` with the grid's 16 px gap.
 - **Empty / loading.** A cover-sized skeleton while loading; readers see
   "No related series linked yet." when there are none, admins a prompt.
   Group headings render a skeleton until the kind catalogue loads (never
@@ -1238,8 +1236,10 @@ groups contiguous runs and a later page never reopens an earlier group.
   pages and admin visibility of removed series; the tie-in role in
   similar-series reasons). Web: `web/tests/dom/series-related-tab.test.tsx`
   (no fetch before the tab opens, `?tab=` deep link and URL sync, live
-  count), `web/tests/dom/card-size-sync.test.tsx` (column-width math,
-  same-page and cross-tab sync), `web/tests/dom/relationship-form.test.tsx`
+  count), `web/tests/dom/card-size-sync.test.tsx` (column-width math; the
+  bookmarks slider's same-page and cross-tab sync) and
+  `web/tests/dom/cover-size-store.test.tsx` (the app-wide cover size),
+  `web/tests/dom/relationship-form.test.tsx`
   (picker groups / search / skeleton / filter, edit PATCH body, scope per
   kind, 422 binding, arc target toggle) and
   `web/tests/library/arc-tie-ins.test.ts` (role grouping, cursor).

@@ -74,7 +74,7 @@ export function ViewActionsMenu({
             variant="outline"
             size="icon"
             // Toolbar-row convention: h-9 square button matches
-            // the adjacent search input + CardSizeOptions trigger.
+            // the adjacent search input + CoverSizeOptions trigger.
             className="h-9 w-9"
             aria-label="More actions"
             title="More actions"

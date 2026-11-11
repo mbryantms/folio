@@ -155,7 +155,9 @@ pub fn prune_library(
             tally.add(meta);
             return;
         }
-        match std::fs::remove_file(entry.path()) {
+        // Through the no-follow walk from the root: a folder on the way that
+        // has become a link since the walk listed it is refused.
+        match crate::library::no_follow::remove_library_file(root, entry.path()) {
             Ok(()) => {
                 stats.removed += 1;
                 stats.bytes += meta.len();

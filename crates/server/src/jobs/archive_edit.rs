@@ -368,6 +368,14 @@ pub enum EditError {
     Archive(#[from] ArchiveError),
 }
 
+impl EditError {
+    /// The file itself was refused (a link, not a regular file, outside
+    /// the root, the `.cbz` name taken): nothing was written.
+    pub fn is_refusal(&self) -> bool {
+        matches!(self, Self::Rewrite(e) if e.is_refusal())
+    }
+}
+
 /// Core edit path. Caller holds the per-issue rewrite mutex. Dispatches
 /// on the source format: CBZ/CBT rewrite in place; CBR converts to a
 /// sibling `.cbz` (RAR has no writer) and reports the new path via
@@ -417,17 +425,41 @@ pub async fn edit_one_issue(
         src_path.clone()
     };
     let dst_for_closure = dst_path.clone();
+    // Every read and write of the archive goes through the library root's
+    // no-follow walk (`library::no_follow`, `archive_rewrite`): a link (the
+    // archive or a folder on its path) is refused.
+    // From the library row loaded above: no second lookup that could fail
+    // and be mistaken for "library gone".
+    let root = crate::library::no_follow::library_root_of(state, &lib).await;
 
-    let (backup, before, after) = tokio::task::spawn_blocking(
-        move || -> Result<(Option<PathBuf>, usize, usize), EditError> {
+    // A CBR converts to a new name: the result holds the original at its
+    // old name too (`archive_rewrite::Converted`) until the row is
+    // repointed below; `pending` is settled after the commit (or undone).
+    //
+    // The new archive's page hashes (for re-stamping anchors) are taken from
+    // the staged file through its handle, before it is renamed into place,
+    // so the time between the rename and the row update stays short.
+    use crate::reading::page_remap::issue_has_anchors;
+    let has_anchors = issue_has_anchors(&state.db, &row.id).await?;
+    type Edited = (
+        Option<PathBuf>,
+        usize,
+        usize,
+        Option<Vec<String>>,
+        Option<archive_rewrite::Converted>,
+    );
+    let (backup, before, after, new_hashes, pending) =
+        tokio::task::spawn_blocking(move || -> Result<Edited, EditError> {
             let mut before = 0usize;
             let mut after = 0usize;
+            let mut hashes = None;
+            let mut pending = None;
             let backup = match format {
                 EditFormat::Cbz => {
                     let outcome =
-                        archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
-                            let mut src =
-                                Cbz::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
+                        archive_rewrite::rewrite_atomic(&root, &src_path, retain_count, |io| {
+                            let mut src = Cbz::open_file(io.source()?, limits)
+                                .map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
                             let ops = resolve_ops(before);
@@ -439,17 +471,26 @@ pub async fn edit_one_issue(
                             after = output.len();
                             let extras =
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
-                            cbz_write::rebuild_pages(&mut src, output, extras, tmp, limits)
-                                .map_err(RewriteError::ArchiveErr)?;
+                            cbz_write::rebuild_pages(
+                                &mut src,
+                                output,
+                                extras,
+                                io.staging_file()?,
+                                limits,
+                            )
+                            .map_err(RewriteError::ArchiveErr)?;
+                            if has_anchors {
+                                hashes = hash_staged(io, limits);
+                            }
                             Ok(())
                         })?;
                     outcome.backup
                 }
                 EditFormat::Cbt => {
                     let outcome =
-                        archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
-                            let mut src =
-                                Cbt::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
+                        archive_rewrite::rewrite_atomic(&root, &src_path, retain_count, |io| {
+                            let mut src = Cbt::open_file(io.source()?, limits)
+                                .map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
                             let ops = resolve_ops(before);
@@ -460,17 +501,23 @@ pub async fn edit_one_issue(
                             after = mats.len();
                             let extras =
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
-                            cbt_write::write_pages(mats, extras, tmp, limits)
+                            cbt_write::write_pages(mats, extras, io.staging_file()?, limits)
                                 .map_err(RewriteError::ArchiveErr)?;
+                            if has_anchors {
+                                hashes = hash_staged(io, limits);
+                            }
                             Ok(())
                         })?;
                     outcome.backup
                 }
                 EditFormat::Cbr => {
-                    let outcome =
-                        archive_rewrite::convert_atomic(&src_path, &dst_for_closure, |tmp| {
-                            let mut src =
-                                Cbr::open(&src_path, limits).map_err(RewriteError::ArchiveErr)?;
+                    let outcome = archive_rewrite::convert_atomic(
+                        &root,
+                        &src_path,
+                        &dst_for_closure,
+                        |io| {
+                            let mut src = Cbr::open_file(io.source()?, limits)
+                                .map_err(RewriteError::ArchiveErr)?;
                             let page_meta = page_meta(&src);
                             before = page_meta.len();
                             let ops = resolve_ops(before);
@@ -483,18 +530,83 @@ pub async fn edit_one_issue(
                             after = mats.len();
                             let extras =
                                 read_preserved_sidecars(&mut src).map_err(rewrite_from_edit)?;
-                            cbz_write::write_pages(mats, extras, tmp, limits)
+                            cbz_write::write_pages(mats, extras, io.staging_file()?, limits)
                                 .map_err(RewriteError::ArchiveErr)?;
+                            if has_anchors {
+                                hashes = hash_staged(io, limits);
+                            }
                             Ok(())
-                        })?;
-                    outcome.backup
+                        },
+                    )?;
+                    let backup = outcome.outcome.backup.clone();
+                    pending = Some(outcome);
+                    backup
                 }
             };
-            Ok((backup, before, after))
-        },
+            Ok((backup, before, after, hashes, pending))
+        })
+        .await
+        .map_err(|e| EditError::Image(format!("join: {e}")))??;
+
+    // Everything from here to the commit repoints the row; a CBR
+    // conversion's old name is removed only once that committed. When it
+    // reports an error the row is read again (the commit may have been
+    // applied all the same) and the conversion is settled by what the row
+    // names, so the row never names a file that is not there.
+    let committed = finish_edit(
+        state,
+        job,
+        &row,
+        &lib,
+        format,
+        &archive_path,
+        &dst_path,
+        (before, after),
+        new_hashes,
     )
-    .await
-    .map_err(|e| EditError::Image(format!("join: {e}")))??;
+    .await;
+    match (committed, pending) {
+        (Ok(anchors), pending) => {
+            if let Some(c) = pending {
+                let _ = tokio::task::spawn_blocking(move || c.finish()).await;
+            }
+            let moved = (dst_path != archive_path).then(|| dst_path.clone());
+            Ok(EditResult {
+                library_id: row.library_id,
+                series_id: row.series_id,
+                archive_path: dst_path,
+                page_count_before: before,
+                page_count_after: after,
+                backup_path: backup,
+                moved_to: moved,
+                anchors,
+            })
+        }
+        (Err(e), pending) => {
+            if let Some(c) = pending {
+                archive_rewrite::settle_unclear_repoint(&state.db, &row.id, c).await;
+            }
+            Err(e)
+        }
+    }
+}
+
+/// The bookkeeping after the archive was rewritten: thumbnails, anchors,
+/// the issue row (repointed at a CBR's new `.cbz`), committed in one
+/// transaction.
+#[allow(clippy::too_many_arguments)]
+async fn finish_edit(
+    state: &AppState,
+    job: &ArchiveEditJob,
+    row: &issue::Model,
+    lib: &entity::library::Model,
+    format: EditFormat,
+    archive_path: &Path,
+    dst_path: &Path,
+    (before, after): (usize, usize),
+    new_hashes: Option<Vec<String>>,
+) -> Result<crate::reading::page_remap::RemapOutcome, EditError> {
+    let cfg = state.cfg();
 
     state.zip_lru.invalidate(&row.id);
 
@@ -516,7 +628,7 @@ pub async fn edit_one_issue(
         }
     }
 
-    let moved = (dst_path != archive_path).then(|| dst_path.clone());
+    let moved = (dst_path != archive_path).then(|| dst_path.to_path_buf());
 
     // Bookkeeping: clear thumbnail stamps so the post-scan pipeline
     // regenerates them, stamp the edit, reset the cover index when the
@@ -557,7 +669,7 @@ pub async fn edit_one_issue(
     // ordinal. Otherwise the follow-up rescan would read the rotated
     // page's markers as drifted. The rewritten archive is hashed only
     // when the issue has anchors to re-stamp.
-    use crate::reading::page_remap::{Authority, PageMap, issue_has_anchors, reanchor_issue};
+    use crate::reading::page_remap::{Authority, PageMap, reanchor_issue};
     let map = if structural {
         let final_ops = match job.bulk_op {
             Some(b) => b.lower(before),
@@ -575,11 +687,7 @@ pub async fn edit_one_issue(
     } else {
         Some(PageMap::truncation(before, after))
     };
-    let new_hashes = if map.is_some() && issue_has_anchors(&state.db, &row.id).await? {
-        crate::reading::page_hash::hash_all_pages(state, dst_path.clone()).await
-    } else {
-        None
-    };
+    let new_hashes = if map.is_some() { new_hashes } else { None };
     use sea_orm::TransactionTrait;
     let txn = state.db.begin().await?;
     let anchors = match map {
@@ -612,16 +720,24 @@ pub async fn edit_one_issue(
         }
     }
 
-    Ok(EditResult {
-        library_id: row.library_id,
-        series_id: row.series_id,
-        archive_path: dst_path,
-        page_count_before: before,
-        page_count_after: after,
-        backup_path: backup,
-        moved_to: moved,
-        anchors,
-    })
+    Ok(anchors)
+}
+
+/// Page hashes of the staged archive, read through its handle (the same
+/// bytes the rename puts in place). `None` when it can't be read: anchors
+/// then fall back to ordinals, as when the hash read failed before.
+fn hash_staged(
+    io: &archive_rewrite::RewriteIo<'_>,
+    limits: archive::ArchiveLimits,
+) -> Option<Vec<String>> {
+    let staged = io.staged_archive().ok()?;
+    match crate::reading::page_hash::hash_all_pages_blocking(staged, limits) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::warn!(error = %e, "archive edit: staged archive not hashed; anchors fall back to ordinals");
+            None
+        }
+    }
 }
 
 /// Map an [`OpError`]/[`EditError`] raised inside the rewrite closure back
@@ -1023,11 +1139,19 @@ async fn record_edit_manifest(
                     Category::Archive,
                     Action::Errored,
                     Severity::Error,
-                    format!("Archive rewrite failed for {}", row.slug),
+                    // A refusal reaches the admin the same way a failed
+                    // edit does (this error event in the library log), with
+                    // the reason in its detail; the summary says which.
+                    if e.is_refusal() {
+                        format!("Archive edit refused for {}", row.slug)
+                    } else {
+                        format!("Archive rewrite failed for {}", row.slug)
+                    },
                 )
                 .entity("issue", row.id.clone(), Some(row.slug.clone()))
                 .detail(serde_json::json!({
                     "error": e.to_string(),
+                    "refused": e.is_refusal(),
                     "series": series,
                     "path": row.file_path,
                 })),

@@ -1,7 +1,9 @@
 //! CBZ (ZIP) archive reader with §4.1.1 defenses.
 //!
 //! Workflow:
-//!   `Cbz::open(path, limits)?`            — parses central directory + validates limits
+//!   `Cbz::open_file(src, limits)?`        — parses central directory + validates limits
+//!                                            (reads through the caller's handle, see
+//!                                            [`crate::source`])
 //!   `cbz.entries()`                        — all non-skipped entries (sanitized names)
 //!   `cbz.pages()`                          — page-image entries in natural-sort order
 //!   `cbz.find("ComicInfo.xml")`            — case-insensitive lookup
@@ -11,11 +13,11 @@
 //! decompressing — so a 42 KB → 4 GiB bomb is rejected without allocation.
 
 use crate::entry_name;
+use crate::source::{ArchiveFile, PosReader};
 use crate::{ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, image_sniff, recovery};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::{Cursor, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use zip::ZipArchive;
 use zip::read::ZipFile;
 
@@ -59,7 +61,8 @@ fn is_page_name(name: &str) -> bool {
 }
 
 pub struct Cbz {
-    path: PathBuf,
+    /// The open file every read goes through (never reopened by name).
+    source: ArchiveFile,
     limits: ArchiveLimits,
     /// Holds either the file-backed reader (happy path, default) or a
     /// memory-backed reader that owns a rewritten copy of the file with
@@ -150,7 +153,7 @@ impl PreadIndex {
 /// of every Cbz handle. Methods that touch the archive dispatch via the
 /// [`ZipFileLike`] trait so the duplication stays at the entry-open boundary.
 enum OpenedZip {
-    File(ZipArchive<File>),
+    File(ZipArchive<PosReader>),
     Mem(ZipArchive<Cursor<Vec<u8>>>),
 }
 
@@ -184,17 +187,27 @@ impl<R: Read> ZipFileLike for ZipFile<'_, R> {
 impl std::fmt::Debug for Cbz {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Cbz")
-            .field("path", &self.path)
+            .field("path", &self.source.display_path())
             .field("entries", &self.entries.len())
             .finish_non_exhaustive()
     }
 }
 
 impl Cbz {
-    pub fn open(path: impl AsRef<Path>, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
-        let path = path.as_ref().to_path_buf();
-        let (archive, recovery) = open_zip_with_recovery(&path)?;
-        Self::finish(path, limits, archive, recovery)
+    /// Open from a file the caller already opened. Every later read goes
+    /// through this handle.
+    pub fn open_file(source: ArchiveFile, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
+        let (archive, recovery) = open_zip_with_recovery(&source)?;
+        Self::finish(source, limits, archive, recovery)
+    }
+
+    /// Open a file outside any library root by name (links followed).
+    /// Tests and temp files only; see [`crate::source`].
+    pub fn open_path_unchecked(
+        path: impl AsRef<Path>,
+        limits: ArchiveLimits,
+    ) -> Result<Self, ArchiveError> {
+        Self::open_file(ArchiveFile::open_path_unchecked(path)?, limits)
     }
 
     /// Returns the recovery technique tag if `open_zip_with_recovery` had
@@ -332,7 +345,7 @@ impl Cbz {
     /// Build the index/entry tables. Shared between the happy-path (File)
     /// open and the recovery-path (in-memory cursor over rewritten bytes).
     fn finish(
-        path: PathBuf,
+        source: ArchiveFile,
         limits: ArchiveLimits,
         mut archive: OpenedZip,
         recovery: Option<&'static str>,
@@ -410,7 +423,7 @@ impl Cbz {
                 || (cmp > 0 && unc / cmp > limits.max_compression_ratio as u64);
             if ratio_suspect {
                 tracing::warn!(
-                    path = %path.display(),
+                    path = %source.display_path().display(),
                     entry = %name,
                     unc, cmp,
                     "cbz: skipping entry with suspicious compression ratio",
@@ -466,7 +479,7 @@ impl Cbz {
         }
 
         let mut me = Self {
-            path,
+            source,
             limits,
             archive,
             entries,
@@ -511,7 +524,7 @@ impl Cbz {
                 Ok(head) => head,
                 Err(e) => {
                     tracing::debug!(
-                        path = %self.path.display(),
+                        path = %self.source.display_path().display(),
                         entry = %entry.name,
                         error = %e,
                         "cbz: page prefix unreadable during sniff; keeping entry",
@@ -523,7 +536,7 @@ impl Cbz {
                 continue;
             }
             tracing::warn!(
-                path = %self.path.display(),
+                path = %self.source.display_path().display(),
                 entry = %entry.name,
                 size = entry.uncompressed_size,
                 "cbz: dropping image-named entry whose bytes aren't an image",
@@ -573,13 +586,12 @@ impl Cbz {
         if !matches!(self.archive, OpenedZip::File(_)) {
             return PreadIndex { extents };
         }
-        let Ok(mut file) = File::open(&self.path) else {
+        // Read through the handle the archive was opened from, never the
+        // path: the extents must describe the bytes this reader serves.
+        let mut file = self.source.reader();
+        let Ok(file_len) = self.source.len() else {
             return PreadIndex { extents };
         };
-        let Ok(meta) = file.metadata() else {
-            return PreadIndex { extents };
-        };
-        let file_len = meta.len();
 
         for layout in &self.entry_layout {
             if !layout.stored {
@@ -642,7 +654,12 @@ impl Cbz {
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.source.display_path()
+    }
+
+    /// The open file this archive reads from.
+    pub fn source(&self) -> &ArchiveFile {
+        &self.source
     }
 
     pub fn entries(&self) -> &[ArchiveEntry] {
@@ -859,16 +876,18 @@ impl Cbz {
 ///     publisher's packing tool didn't account for). The recovery
 ///     walks the file forward, finds each entry's actual LFH by
 ///     filename match, and rewrites the CD with corrected offsets.
-fn open_zip_with_recovery(path: &Path) -> Result<(OpenedZip, Option<&'static str>), ArchiveError> {
-    let f = File::open(path)?;
-    let opened = match ZipArchive::new(f) {
+fn open_zip_with_recovery(
+    source: &ArchiveFile,
+) -> Result<(OpenedZip, Option<&'static str>), ArchiveError> {
+    let path = source.display_path();
+    let opened = match ZipArchive::new(source.reader()) {
         Ok(a) => OpenedZip::File(a),
         Err(zip::result::ZipError::InvalidArchive(msg))
             if msg.contains("CRC32 checksum failed on Unicode extra field")
                 || msg.contains("Could not find EOCD")
                 || msg.contains("No CDFH found") =>
         {
-            let bytes = std::fs::read(path)?;
+            let bytes = source.read_all()?;
             let recovered = recover_zip_bytes(&bytes).ok_or_else(|| {
                 ArchiveError::Malformed(format!("{msg} (recovery rewrite failed)"))
             })?;
@@ -904,11 +923,10 @@ fn open_zip_with_recovery(path: &Path) -> Result<(OpenedZip, Option<&'static str
     // cheap compared to the value of a working archive.
     let probe_err = match &opened {
         OpenedZip::File(a) => {
-            // SAFETY: cloning the archive's `len()` is fine; we
-            // re-open the file for the probe so the original `a`
-            // isn't moved/dropped.
+            // Probe through a second cursor over the same handle so the
+            // original `a` isn't moved/dropped.
             let n = a.len();
-            let mut probed = ZipArchive::new(File::open(path)?).map_err(map_zip_err)?;
+            let mut probed = ZipArchive::new(source.reader()).map_err(map_zip_err)?;
             (0..n).find_map(|i| probed.by_index_raw(i).err().map(|e| (i, e)))
         }
         OpenedZip::Mem(_) => None, // recovered archives are pre-validated
@@ -916,7 +934,7 @@ fn open_zip_with_recovery(path: &Path) -> Result<(OpenedZip, Option<&'static str
     if let Some((idx, err)) = probe_err {
         let msg = format!("{err}");
         if msg.contains("Invalid local file header") {
-            let bytes = std::fs::read(path)?;
+            let bytes = source.read_all()?;
             let recovered = rebuild_cd_from_lfh_scan(&bytes).ok_or_else(|| {
                 ArchiveError::Malformed(format!(
                     "Invalid local file header at entry {idx} (LFH-scan rebuild failed)"
@@ -1280,6 +1298,7 @@ fn map_zip_err(e: zip::result::ZipError) -> ArchiveError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
     use zip::write::SimpleFileOptions;
 
@@ -1337,7 +1356,7 @@ mod tests {
         let p0 = png_signed((0..600u32).map(|i| (i % 251) as u8));
         let p1 = png_signed((0..777u32).map(|i| ((i * 7 + 3) % 253) as u8));
         let tmp = build_cbz_with(&[("p0.png", &p0), ("p1.png", &p1)], true);
-        let mut cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let mut cbz = Cbz::open_path_unchecked(tmp.path(), ArchiveLimits::default()).expect("open");
 
         let pages: Vec<ArchiveEntry> = cbz.pages().iter().map(|e| (*e).clone()).collect();
         let index = cbz.build_pread_index();
@@ -1389,7 +1408,7 @@ mod tests {
         // absent from the index — the caller falls back to the locked path.
         let p = png_signed(std::iter::repeat_n(42u8, 4096));
         let tmp = build_cbz_with(&[("c.png", &p)], false); // Deflated
-        let cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let cbz = Cbz::open_path_unchecked(tmp.path(), ArchiveLimits::default()).expect("open");
         let index = cbz.build_pread_index();
         assert!(index.is_empty(), "deflated entry must not be indexed");
         for entry in cbz.pages() {
@@ -1580,8 +1599,8 @@ mod tests {
     #[test]
     fn rebuild_cd_recovers_drifting_offset_fixture() {
         let cbz = build_drifting_offset_cbz();
-        let mut a =
-            Cbz::open(cbz.path(), ArchiveLimits::default()).expect("recovery should succeed");
+        let mut a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default())
+            .expect("recovery should succeed");
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["page1.png", "page2.png", "page3.png"]);
         // Confirm we can actually read entry 1's bytes through the
@@ -1690,7 +1709,7 @@ mod tests {
             ("10.png", &png), // out of natural order on purpose
             ("ComicInfo.xml", b"<ComicInfo/>"),
         ]);
-        let mut a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let mut a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["01.png", "02.png", "10.png"]);
         let ci = a.find("ComicInfo.xml").cloned().expect("ci");
@@ -1713,7 +1732,7 @@ mod tests {
             max_entries: 10,
             ..ArchiveLimits::default()
         };
-        let err = Cbz::open(cbz.path(), limits).unwrap_err();
+        let err = Cbz::open_path_unchecked(cbz.path(), limits).unwrap_err();
         assert!(matches!(err, ArchiveError::CapExceeded("entry count")));
     }
 
@@ -1725,7 +1744,7 @@ mod tests {
             max_entry_bytes: 1024 * 1024,
             ..ArchiveLimits::default()
         };
-        let err = Cbz::open(cbz.path(), limits).unwrap_err();
+        let err = Cbz::open_path_unchecked(cbz.path(), limits).unwrap_err();
         assert!(matches!(err, ArchiveError::CapExceeded(_)));
     }
 
@@ -1738,7 +1757,7 @@ mod tests {
         // whole-archive expansion attacks.
         let bomb = vec![0u8; 1024 * 1024];
         let cbz = build_cbz(&[("bomb.png", &bomb)]);
-        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).expect("open");
+        let a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).expect("open");
         assert!(a.pages().is_empty(), "bomb entry must be dropped");
     }
 
@@ -1757,7 +1776,7 @@ mod tests {
             ("02.png", &png),
             ("03.png", &png),
         ]);
-        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).expect("open");
+        let a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).expect("open");
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["01.png", "02.png", "03.png"]);
     }
@@ -1801,7 +1820,7 @@ mod tests {
         bytes[cd_offset + 24..cd_offset + 28].copy_from_slice(&bogus_unc.to_le_bytes());
         std::fs::write(scratch.path(), &bytes).unwrap();
 
-        let a = Cbz::open(scratch.path(), ArchiveLimits::default())
+        let a = Cbz::open_path_unchecked(scratch.path(), ArchiveLimits::default())
             .expect("open should survive bogus dir-entry size");
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["subdir/page.png"]);
@@ -1812,7 +1831,7 @@ mod tests {
         // We have to construct this carefully because the zip crate enforces
         // some name validation; using leading "../" through the zip writer:
         let bad = build_cbz(&[("../escape.png", b"x")]);
-        let err = Cbz::open(bad.path(), ArchiveLimits::default()).unwrap_err();
+        let err = Cbz::open_path_unchecked(bad.path(), ArchiveLimits::default()).unwrap_err();
         assert!(matches!(err, ArchiveError::UnsafeEntry(_)), "got: {err:?}");
         assert_eq!(
             err.safety_check(),
@@ -1884,7 +1903,7 @@ mod tests {
             ("__MACOSX/foo.png", &png), // macOS noise
             ("Thumbs.db", b"\0\0"),     // Windows noise
         ]);
-        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["01.png"]);
     }
@@ -1904,7 +1923,7 @@ mod tests {
             ("Issue 036/Issue-036-0003.jpg", &png),
             ("ComicInfo.xml", b"<ComicInfo/>"),
         ]);
-        let mut a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let mut a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(
             pages,
@@ -1946,7 +1965,7 @@ mod tests {
         let p1 = png_signed((0..300u32).map(|i| (i % 7) as u8));
         let p2 = png_signed((0..333u32).map(|i| (i % 11) as u8));
         let tmp = build_cbz_with(&[("00.png", junk), ("01.png", &p1), ("02.png", &p2)], true);
-        let mut cbz = Cbz::open(tmp.path(), ArchiveLimits::default()).unwrap();
+        let mut cbz = Cbz::open_path_unchecked(tmp.path(), ArchiveLimits::default()).unwrap();
         assert_eq!(cbz.entries_skipped().len(), 1);
         let pages: Vec<ArchiveEntry> = cbz.pages().iter().map(|e| (*e).clone()).collect();
         assert_eq!(pages.len(), 2);
@@ -1971,7 +1990,7 @@ mod tests {
     fn empty_image_named_entry_is_dropped() {
         let png = one_pixel_png();
         let cbz = build_cbz(&[("00.jpg", b""), ("01.png", &png)]);
-        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["01.png"]);
         assert_eq!(a.entries_skipped().len(), 1);
@@ -1990,7 +2009,7 @@ mod tests {
             ("06.jxl", b"\xFF\x0A\x00\x00"),
         ];
         let cbz = build_cbz(&entries);
-        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         assert_eq!(a.pages().len(), 6);
         assert!(a.entries_skipped().is_empty());
     }
@@ -2003,7 +2022,7 @@ mod tests {
             ("page-10.png", &png),
             ("page-1.png", &png),
         ]);
-        let a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["page-1.png", "page-2.png", "page-10.png"]);
     }
@@ -2014,7 +2033,7 @@ mod tests {
         let payload = png_signed(0u8..=255u8);
         let len = payload.len() as u64;
         let cbz = build_cbz(&[("01.png", &payload)]);
-        let mut a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let mut a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         let entry = a.pages().first().cloned().cloned().unwrap();
 
         // Full range
@@ -2038,7 +2057,7 @@ mod tests {
     fn read_entry_range_works_on_stored_entries() {
         let payload = png_signed(0u8..=255u8);
         let cbz = build_cbz_with(&[("01.png", &payload)], true);
-        let mut a = Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap();
+        let mut a = Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap();
         let entry = a.pages().first().cloned().cloned().unwrap();
         let mid = a.read_entry_range(&entry, 100, 10).unwrap();
         assert_eq!(mid, payload[100..110]);
@@ -2050,7 +2069,7 @@ mod tests {
         let png = one_pixel_png();
         let cbz = build_cbz(&[("01.png", &png), ("ComicInfo.xml", b"<x/>")]);
         let mut a: Box<dyn ComicArchive> =
-            Box::new(Cbz::open(cbz.path(), ArchiveLimits::default()).unwrap());
+            Box::new(Cbz::open_path_unchecked(cbz.path(), ArchiveLimits::default()).unwrap());
         assert_eq!(a.pages().len(), 1);
         assert!(a.find("ComicInfo.xml").is_some());
         let bytes = a.read_entry_bytes("ComicInfo.xml").unwrap();
@@ -2126,7 +2145,7 @@ mod tests {
             .tempfile()
             .expect("tempfile");
         std::fs::write(tmp.path(), &poisoned).expect("write poisoned");
-        let mut a = Cbz::open(tmp.path(), ArchiveLimits::default())
+        let mut a = Cbz::open_path_unchecked(tmp.path(), ArchiveLimits::default())
             .expect("recovery should make the archive openable");
         let pages: Vec<_> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["page.png"]);
@@ -2146,7 +2165,7 @@ mod tests {
             max_entry_bytes: 10,
             ..ArchiveLimits::default()
         };
-        let err = Cbz::open(cbz.path(), limits).unwrap_err();
+        let err = Cbz::open_path_unchecked(cbz.path(), limits).unwrap_err();
         assert!(matches!(err, ArchiveError::CapExceeded(_)));
     }
 }

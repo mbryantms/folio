@@ -239,7 +239,7 @@ fn known_matches(known: &Known, d: &Diff) -> bool {
 // ───────── pipeline helpers ─────────
 
 fn read_entry(path: &Path, name: &str) -> Option<Vec<u8>> {
-    let mut a = archive::open(path, ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(path, ArchiveLimits::default()).unwrap();
     a.read_entry_bytes(name).ok()
 }
 
@@ -563,7 +563,7 @@ async fn folio_rewrite_of_a_comictagger_file_agrees_on_every_shared_field() {
 
     let ct_xml = String::from_utf8(read_entry(&path, "ComicInfo.xml").unwrap()).unwrap();
     let original_pages: Vec<(String, Vec<u8>)> = {
-        let mut a = archive::open(&path, ArchiveLimits::default()).unwrap();
+        let mut a = archive::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
         let names: Vec<String> = a.pages().iter().map(|p| p.name.clone()).collect();
         names
             .into_iter()
@@ -622,7 +622,7 @@ async fn folio_rewrite_of_a_comictagger_file_agrees_on_every_shared_field() {
     );
 
     // 3. The rewrite never touched the page bytes.
-    let mut a = archive::open(&path, ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
     for (name, bytes) in &original_pages {
         assert_eq!(
             &a.read_entry_bytes(name).unwrap(),

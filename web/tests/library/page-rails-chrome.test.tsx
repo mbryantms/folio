@@ -2,10 +2,13 @@
 /**
  * `<PageRails>` chrome (phone-layout rule 3): a rails page pins its two
  * controls at every width. From `sm` up the heading stays in flow and a
- * `StickyToolbarRow` beneath it carries card size + page actions; below
+ * `StickyToolbarRow` beneath it carries cover size + page actions; below
  * `sm` the title rides in the sticky `PhoneControlsBar` beside View
  * options and `⋯`, with the description following in flow. jsdom has no
  * CSS, so both compositions render — the assertions pin the wiring.
+ *
+ * The cover-size control is the real shared `CoverSizeOptions`: closed,
+ * it is just its "View options" trigger, so nothing here needs a size.
  */
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -14,10 +17,6 @@ vi.mock("@/lib/api/queries", () => ({
   useSavedViews: () => ({ data: { items: [] }, isLoading: false }),
   useLibraryList: () => ({ data: { items: [] } }),
   useMe: () => ({ data: { role: "admin" } }),
-}));
-vi.mock("@/components/library/use-card-size", () => ({
-  useCardSize: () => [160, () => undefined] as const,
-  usePageSlugRecord: () => undefined,
 }));
 vi.mock("@/components/saved-views/PageActionsMenu", () => ({
   PageActionsMenu: () => (
@@ -36,7 +35,7 @@ vi.mock("@/components/saved-views/LazyRail", () => ({
 const { PageRails } = await import("@/components/saved-views/PageRails");
 
 describe("PageRails chrome", () => {
-  it("pins card size + page actions under the heading from sm up, and in the phone bar with the title", () => {
+  it("pins cover size + page actions under the heading from sm up, and in the phone bar with the title", () => {
     const { container } = render(
       <PageRails
         pageId="page-marvel"
