@@ -852,6 +852,15 @@ pub async fn login(
     .await
 }
 
+/// How long after a rotation the token it replaced is still accepted, once.
+///
+/// A rotation commits before its response leaves the server; when that
+/// response is lost the browser keeps the previous token. Within this
+/// window `refresh` accepts that previous token a single time and retires
+/// the current one (whose response was lost), so one token line stays
+/// valid. A named constant, deliberately not a setting.
+pub const REFRESH_GRACE: Duration = Duration::from_secs(60);
+
 #[utoipa::path(
     operation_id = "local_refresh",    post,
     path = "/auth/refresh",
@@ -887,25 +896,42 @@ pub async fn refresh(
 
     // Rotation is ONE conditional statement: the WHERE re-checks the
     // presented hash under the row lock, so of two concurrent refreshes
-    // carrying the same token exactly one matches; the other sees the
-    // rotated hash and gets zero rows. The new sliding expiry never runs
-    // past the session's absolute age (`created_at + max_age`).
+    // carrying the same token exactly one matches the current hash; the
+    // other re-evaluates against the rotated row. The new sliding expiry
+    // never runs past the session's absolute age (`created_at + max_age`).
+    //
+    // Two ways to match (every other condition is shared):
+    // - normal: the presented token is the current one. It becomes the
+    //   remembered previous token, stamped with the rotation time.
+    // - grace: the presented token is the remembered previous one and the
+    //   last rotation is younger than `REFRESH_GRACE` (its response was
+    //   probably lost). The previous hash is cleared, so the grace is
+    //   single-use per rotation, and the current token is replaced, so the
+    //   token whose response was lost is dead from here on.
+    // SET expressions read the pre-update row, so the CASE sees the hash
+    // that was current before this statement.
     let rotated = match sea_orm::ConnectionTrait::query_one_raw(
         &txn,
         sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Postgres,
             "UPDATE auth_sessions \
-                SET refresh_token_hash = $1, \
+                SET previous_refresh_token_hash = \
+                        CASE WHEN refresh_token_hash = $6 THEN refresh_token_hash END, \
+                    refresh_rotated_at = now(), \
+                    refresh_token_hash = $1, \
                     last_used_at = now(), \
                     expires_at = LEAST(now() + make_interval(secs => $2), \
                                        created_at + make_interval(secs => $3)), \
                     ip = COALESCE($4, ip), \
                     user_agent = COALESCE($5, user_agent) \
-              WHERE refresh_token_hash = $6 \
+              WHERE (refresh_token_hash = $6 \
+                     OR (previous_refresh_token_hash = $6 \
+                         AND refresh_rotated_at > now() - make_interval(secs => $7))) \
                 AND revoked_at IS NULL \
                 AND expires_at > now() \
                 AND created_at + make_interval(secs => $3) > now() \
-          RETURNING id, user_id, created_at",
+          RETURNING id, user_id, created_at, \
+                    previous_refresh_token_hash IS NULL AS via_grace",
             [
                 new_hash.into(),
                 refresh_secs.into(),
@@ -913,6 +939,7 @@ pub async fn refresh(
                 ctx.ip_string().into(),
                 ctx.user_agent.clone().into(),
                 presented_hash.clone().into(),
+                REFRESH_GRACE.as_secs_f64().into(),
             ],
         ),
     )
@@ -926,8 +953,9 @@ pub async fn refresh(
     };
     let Some(rotated) = rotated else {
         drop(txn);
-        // Unknown, already rotated (a replay, or the loser of two tabs
-        // refreshing at once), revoked, expired, or past its absolute age.
+        // Unknown, already rotated and outside the grace (a replay, a
+        // previous token already used once, or a token older than the
+        // previous one), revoked, expired, or past its absolute age.
         // The last case also marks the row revoked so it stops showing as a
         // live session. We can't tell which user an unknown hash belonged
         // to, so no sibling session is touched.
@@ -938,11 +966,20 @@ pub async fn refresh(
             "refresh replay or expired",
         );
     };
-    let (user_id, created_at): (Uuid, chrono::DateTime<chrono::FixedOffset>) = match (
+    let (session_id, user_id, created_at, via_grace): (
+        Uuid,
+        Uuid,
+        chrono::DateTime<chrono::FixedOffset>,
+        bool,
+    ) = match (
+        rotated.try_get("", "id"),
         rotated.try_get("", "user_id"),
         rotated.try_get("", "created_at"),
+        rotated.try_get("", "via_grace"),
     ) {
-        (Ok(user_id), Ok(created_at)) => (user_id, created_at),
+        (Ok(id), Ok(user_id), Ok(created_at), Ok(via_grace)) => {
+            (id, user_id, created_at, via_grace)
+        }
         _ => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
     // What is left of the session's absolute age; the refresh cookie never
@@ -982,6 +1019,14 @@ pub async fn refresh(
     if txn.commit().await.is_err() {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
     }
+    if via_grace {
+        tracing::info!(
+            session_id = %session_id,
+            user_id = %user_id,
+            "refresh accepted the previous token within the grace window; \
+             the token it had been rotated to is retired"
+        );
+    }
 
     // Refresh always replies JSON — the JS-side `useRefresh` driver is the
     // only caller, no form path exists.
@@ -997,8 +1042,10 @@ pub async fn refresh(
     )
 }
 
-/// Mark the session holding `presented_hash` revoked when it has outlived
-/// the absolute session age. Called after a refused rotation; best-effort.
+/// Mark the session holding `presented_hash` (as its current or its
+/// remembered previous token) revoked when it has outlived the absolute
+/// session age. Called after a refused rotation; best-effort. Revoking a
+/// session that can no longer refresh changes nothing but its listing.
 async fn revoke_if_past_max_age(
     db: &sea_orm::DatabaseConnection,
     presented_hash: &str,
@@ -1009,7 +1056,7 @@ async fn revoke_if_past_max_age(
         sea_orm::Statement::from_sql_and_values(
             sea_orm::DbBackend::Postgres,
             "UPDATE auth_sessions SET revoked_at = now() \
-              WHERE refresh_token_hash = $1 \
+              WHERE (refresh_token_hash = $1 OR previous_refresh_token_hash = $1) \
                 AND revoked_at IS NULL \
                 AND created_at + make_interval(secs => $2) <= now()",
             [presented_hash.into(), max_age_secs.into()],
@@ -1091,8 +1138,22 @@ pub async fn logout(
     let mut user_external_id: Option<String> = None;
     if let Some(rt) = jar.get(REFRESH_COOKIE).map(|c| c.value().to_owned()) {
         let presented_hash = sha256_hex(&rt);
+        // The browser may still hold the previous token (its last refresh
+        // response was lost); `refresh` would accept that one within
+        // `REFRESH_GRACE`, so signing out with it must end the session too.
+        let session_match = sea_orm::Condition::any()
+            .add(auth_session::Column::RefreshTokenHash.eq(presented_hash.clone()))
+            .add(
+                sea_orm::Condition::all()
+                    .add(auth_session::Column::PreviousRefreshTokenHash.eq(presented_hash.clone()))
+                    .add(
+                        auth_session::Column::RefreshRotatedAt.gt((chrono::Utc::now()
+                            - crate::auth::cookies::chrono_delta(REFRESH_GRACE))
+                        .fixed_offset()),
+                    ),
+            );
         if let Ok(Some(sess)) = SessionEntity::find()
-            .filter(auth_session::Column::RefreshTokenHash.eq(presented_hash.clone()))
+            .filter(session_match.clone())
             .one(&app.db)
             .await
         {
@@ -1114,7 +1175,7 @@ pub async fn logout(
                 auth_session::Column::RevokedAt,
                 sea_orm::sea_query::Expr::value(chrono::Utc::now().fixed_offset()),
             )
-            .filter(auth_session::Column::RefreshTokenHash.eq(presented_hash))
+            .filter(session_match)
             .exec(&app.db)
             .await;
     }
@@ -2193,6 +2254,8 @@ async fn issue_session(
         id: Set(session_id),
         user_id: Set(user_row.id),
         refresh_token_hash: Set(hash),
+        previous_refresh_token_hash: Set(None),
+        refresh_rotated_at: Set(None),
         created_at: Set(now.fixed_offset()),
         last_used_at: Set(now.fixed_offset()),
         expires_at: Set(expires.fixed_offset()),

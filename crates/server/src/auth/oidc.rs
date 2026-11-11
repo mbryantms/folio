@@ -1058,6 +1058,8 @@ pub async fn callback(
         id: Set(session_id),
         user_id: Set(user_row.id),
         refresh_token_hash: Set(hash),
+        previous_refresh_token_hash: Set(None),
+        refresh_rotated_at: Set(None),
         created_at: Set(session_now.fixed_offset()),
         last_used_at: Set(session_now.fixed_offset()),
         expires_at: Set(expires.fixed_offset()),

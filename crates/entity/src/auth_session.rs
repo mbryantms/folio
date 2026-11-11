@@ -11,6 +11,16 @@ pub struct Model {
     /// SHA-256 of the refresh token; raw token never persisted.
     pub refresh_token_hash: String,
 
+    /// SHA-256 of the token the last normal rotation replaced. A refresh
+    /// presenting it within `REFRESH_GRACE` of `refresh_rotated_at` is
+    /// accepted once (its response may have been lost); the grace path
+    /// clears it. `None` before the first rotation and after a grace use.
+    #[sea_orm(nullable)]
+    pub previous_refresh_token_hash: Option<String>,
+    /// When the refresh token was last rotated (either path).
+    #[sea_orm(nullable)]
+    pub refresh_rotated_at: Option<DateTimeWithTimeZone>,
+
     pub created_at: DateTimeWithTimeZone,
     pub last_used_at: DateTimeWithTimeZone,
     pub expires_at: DateTimeWithTimeZone,

@@ -271,11 +271,26 @@ async fn refresh_token_reuse_is_rejected() {
     let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
     let original_refresh = extract_cookie(&reg, "__Host-comic_refresh").unwrap();
 
+    let body = body_json(reg.into_body()).await;
+    let user_id: uuid::Uuid = body["user"]["id"].as_str().unwrap().parse().unwrap();
+
     // Rotate once.
     let rotated = refresh_call(&app, &original_refresh, &csrf).await;
     assert_eq!(rotated.status(), StatusCode::OK);
 
-    // Try to use the original (now-rotated) token again.
+    // Once the grace window after the rotation has passed (see
+    // `auth_refresh_grace.rs` for inside it), the original token is dead.
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    sea_orm::ConnectionTrait::execute_unprepared(
+        &db,
+        &format!(
+            "UPDATE auth_sessions SET refresh_rotated_at = now() - interval '{} seconds' \
+             WHERE user_id = '{user_id}'",
+            server::auth::local::REFRESH_GRACE.as_secs() + 1
+        ),
+    )
+    .await
+    .unwrap();
     let replay = refresh_call(&app, &original_refresh, &csrf).await;
     assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
 }
@@ -563,11 +578,14 @@ async fn csrf_wrong_value_rejected() {
     assert_eq!(resp.status(), StatusCode::OK, "correct value still passes");
 }
 
-/// Refresh rotation is one conditional UPDATE: of two concurrent refreshes
-/// presenting the same token, exactly one rotates it. Repeated a few times
-/// so the two requests really interleave on the database at least once.
+/// Refresh rotation is one conditional UPDATE. Two concurrent refreshes
+/// presenting the same token both get a pair: one rotates normally, the
+/// other takes the single grace use of the previous token, which retires
+/// the first one's token. Exactly one of the two issued tokens works
+/// afterwards and the presented one is spent. Repeated a few times so the
+/// two requests really interleave on the database at least once.
 #[tokio::test]
-async fn concurrent_refreshes_with_one_token_have_one_winner() {
+async fn concurrent_refreshes_with_one_token_leave_one_valid_token() {
     let app = TestApp::spawn().await;
     let reg = register(&app, "race@example.com", "correctly-horse-battery").await;
     let csrf = extract_cookie(&reg, "__Host-comic_csrf").unwrap();
@@ -578,46 +596,52 @@ async fn concurrent_refreshes_with_one_token_have_one_winner() {
             refresh_call(&app, &current, &csrf),
             refresh_call(&app, &current, &csrf)
         );
-        let mut statuses = [a.status(), b.status()];
-        statuses.sort();
         assert_eq!(
-            statuses,
-            [StatusCode::OK, StatusCode::UNAUTHORIZED],
-            "round {round}: exactly one refresh may win"
+            [a.status(), b.status()],
+            [StatusCode::OK, StatusCode::OK],
+            "round {round}: one rotation and one grace use"
         );
-        let (winner, loser) = if a.status() == StatusCode::OK {
-            (a, b)
-        } else {
-            (b, a)
-        };
-        let loser_body = body_json(loser.into_body()).await;
-        assert_eq!(loser_body["error"]["code"], "auth.invalid");
-        let rotated = extract_cookie(&winner, "__Host-comic_refresh").unwrap();
-        let access = extract_cookie(&winner, "__Host-comic_session").unwrap();
-        assert_ne!(rotated, current);
+        let issued = [
+            extract_cookie(&a, "__Host-comic_refresh").unwrap(),
+            extract_cookie(&b, "__Host-comic_refresh").unwrap(),
+        ];
 
-        // The presented token is dead for good.
+        // The presented token is spent: its single grace use is gone.
         let replay = refresh_call(&app, &current, &csrf).await;
         assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
 
-        // The winner's access token works.
-        let me = app
-            .router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/auth/me")
-                    .header(header::COOKIE, format!("__Host-comic_session={access}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(me.status(), StatusCode::OK);
-        current = rotated;
+        // Exactly one of the issued tokens is live.
+        let mut live = Vec::new();
+        for t in &issued {
+            let r = refresh_call(&app, t, &csrf).await;
+            if r.status() == StatusCode::OK {
+                let access = extract_cookie(&r, "__Host-comic_session").unwrap();
+                let me = app
+                    .router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri("/auth/me")
+                            .header(header::COOKIE, format!("__Host-comic_session={access}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(me.status(), StatusCode::OK);
+                live.push(extract_cookie(&r, "__Host-comic_refresh").unwrap());
+            } else {
+                assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+            }
+        }
+        assert_eq!(
+            live.len(),
+            1,
+            "round {round}: exactly one issued token is live"
+        );
+        current = live.pop().unwrap();
     }
 
-    // ... and so does the winner's refresh token.
     let next = refresh_call(&app, &current, &csrf).await;
     assert_eq!(next.status(), StatusCode::OK);
 }
@@ -864,9 +888,11 @@ async fn refresh_and_csrf_cookies_are_clamped_to_the_remaining_session_age() {
 
 /// Hold the session row so both refreshes are queued on its lock, then
 /// release it: the rotation is decided by the conditional UPDATE, so exactly
-/// one wins even when the two are guaranteed to overlap.
+/// one rotates normally even when the two are guaranteed to overlap, and
+/// the other takes the grace path (a third is refused: see
+/// `auth_refresh_grace.rs`).
 #[tokio::test]
-async fn refreshes_queued_on_a_locked_row_have_exactly_one_winner() {
+async fn refreshes_queued_on_a_locked_row_leave_one_valid_token() {
     use sea_orm::{ConnectionTrait, TransactionTrait};
     let app = TestApp::spawn().await;
     let reg = register(&app, "locked@example.com", "correctly-horse-battery").await;
@@ -893,9 +919,18 @@ async fn refreshes_queued_on_a_locked_row_have_exactly_one_winner() {
             holder.commit().await.unwrap();
         }
     );
-    let mut statuses = [a.status(), b.status()];
-    statuses.sort();
-    assert_eq!(statuses, [StatusCode::OK, StatusCode::UNAUTHORIZED]);
+    assert_eq!([a.status(), b.status()], [StatusCode::OK, StatusCode::OK]);
+    let issued = [
+        extract_cookie(&a, "__Host-comic_refresh").unwrap(),
+        extract_cookie(&b, "__Host-comic_refresh").unwrap(),
+    ];
+    let mut live = 0;
+    for t in &issued {
+        if refresh_call(&app, t, &csrf).await.status() == StatusCode::OK {
+            live += 1;
+        }
+    }
+    assert_eq!(live, 1, "one token line survives");
 }
 
 /// The first of two queued refreshes finds the account disabled and rolls

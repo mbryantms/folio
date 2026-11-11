@@ -17,6 +17,8 @@ fn make_session(user_id: Uuid, expires_at: chrono::DateTime<chrono::FixedOffset>
         id: Set(Uuid::now_v7()),
         user_id: Set(user_id),
         refresh_token_hash: Set(format!("hash-{}", Uuid::now_v7())),
+        previous_refresh_token_hash: Set(None),
+        refresh_rotated_at: Set(None),
         created_at: Set(now),
         last_used_at: Set(now),
         expires_at: Set(expires_at),
