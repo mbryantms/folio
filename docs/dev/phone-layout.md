@@ -219,7 +219,10 @@ views, search, the series Issues panel and Related tab, creator and
 entity pages, the loading skeletons — shares one size, at every width.
 Bookmarks are the exception: their cards are page thumbnails, so they
 keep their own px slider (`CardSizeOptions`, key
-`folio.bookmarks.cardSize`).
+`folio.bookmarks.cardSize`). The collection and saved-view tile boards
+(`CollectionsIndex`, `GroupedViewsBoard`'s `large` grid) are not cover
+surfaces either: a tile is a fixed 15rem card with a title and counts,
+so those grids keep `repeat(auto-fill, 15rem)` and ignore the setting.
 
 - **The library row drives it.** `CoverSizeSync` (mounted in
   `MainShell`) measures the content box of `#main-content`, the row the
@@ -242,7 +245,10 @@ keep their own px slider (`CardSizeOptions`, key
   as a grid cover. Both variables are set before first paint by
   `COVER_SIZE_BOOTSTRAP` (inline script in `app/layout.tsx`;
   `folio.cover.width` carries the last measured width) and kept current
-  by the store in `components/library/use-cover-size.ts`.
+  by the store in `components/library/use-cover-size.ts`. The store
+  sets the variables on every change but writes `folio.cover.width` at
+  most once per 250 ms while a window is being dragged. A cover grid's
+  gap is always `gap-4`: the stops assume 16px between columns.
 - **In code:** `<CoverSizeOptions />` (desktop popover) and
   `<CoverSizeFields fieldId=… />` (phone sheet) take no size props.
   `useCoverTarget()` is for layout math over a surface's own measured

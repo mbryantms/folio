@@ -70,6 +70,25 @@ describe("useCoverSize", () => {
     expect(localStorage.getItem(COVER_WIDTH_KEY)).toBe("186.66");
   });
 
+  it("writes the stored width once per burst of resize frames", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      renderHook(() => useCoverSize());
+      act(() => setCoverContainerWidth(1200));
+      expect(localStorage.getItem(COVER_WIDTH_KEY)).toBe("186.66");
+      // The frames of a window drag: the CSS variable follows each one,
+      // the storage write waits for the burst to settle.
+      act(() => setCoverContainerWidth(1100));
+      act(() => setCoverContainerWidth(1000));
+      expect(v("--cover-w")).toBe("187.2px");
+      expect(localStorage.getItem(COVER_WIDTH_KEY)).toBe("186.66");
+      act(() => vi.advanceTimersByTime(250));
+      expect(localStorage.getItem(COVER_WIDTH_KEY)).toBe("187.2");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sets one size for every instance, as a column count", () => {
     const a = renderHook(() => useCoverSize());
     const b = renderHook(() => useCoverSize());

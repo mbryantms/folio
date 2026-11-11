@@ -749,7 +749,6 @@ export function IssuesPanel({
       {!searching && specialItems.length > 0 && (
         <SpecialsExtrasSection
           items={specialItems}
-          gridStyle={COVER_GRID_STYLE}
           renderCard={renderIssueCard}
         />
       )}

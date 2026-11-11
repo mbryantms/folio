@@ -40,6 +40,7 @@ import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { CoverGallery } from "@/components/library/CoverGallery";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
+import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 import {
   StableTabsPanel,
@@ -1213,7 +1214,7 @@ function NextInSeries({
       <h2 className="text-base font-semibold tracking-tight">More in series</h2>
       <HorizontalScrollRail className="-mx-1">
         {prev && (
-          <div className="w-36 shrink-0 space-y-2 sm:w-40">
+          <div className="shrink-0 space-y-2" style={COVER_ITEM_STYLE}>
             <p className="text-muted-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase">
               <ArrowLeft aria-hidden="true" className="size-3" />
               Previous issue
@@ -1223,7 +1224,11 @@ function NextInSeries({
         )}
 
         {items.map((it, index) => (
-          <div key={it.id} className="w-36 shrink-0 space-y-2 sm:w-40">
+          <div
+            key={it.id}
+            className="shrink-0 space-y-2"
+            style={COVER_ITEM_STYLE}
+          >
             <p
               aria-hidden={index === 0 ? undefined : "true"}
               className={cn(
@@ -1238,7 +1243,7 @@ function NextInSeries({
           </div>
         ))}
 
-        <div className="w-36 shrink-0 space-y-2 sm:w-40">
+        <div className="shrink-0 space-y-2" style={COVER_ITEM_STYLE}>
           <p
             aria-hidden="true"
             className="invisible flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase"

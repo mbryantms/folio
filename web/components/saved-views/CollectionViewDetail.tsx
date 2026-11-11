@@ -561,7 +561,7 @@ export function CollectionViewDetail({
       />
 
       {entriesQ.isLoading ? (
-        <CoverGridSkeleton className="gap-3" label="Loading collection…" />
+        <CoverGridSkeleton label="Loading collection…" />
       ) : entriesQ.isError && !entriesQ.data ? (
         <RailError
           message="Couldn't load this collection."
@@ -586,7 +586,7 @@ export function CollectionViewDetail({
             onDragEnd={dndDisabled ? undefined : handleDragEnd}
           >
             <SortableContext items={renderIds} strategy={rectSortingStrategy}>
-              <ul role="list" className="grid gap-3" style={COVER_GRID_STYLE}>
+              <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
                 {orderedEntries.map((entry) => (
                   <SortableEntry
                     key={entry.id}

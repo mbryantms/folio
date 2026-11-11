@@ -77,20 +77,54 @@ function emit(): void {
   for (const l of listeners) l();
 }
 
-/** Mirror the state onto `<html>` (and persist the width for the
- *  pre-paint bootstrap). */
-function publish(): void {
+/** How long a burst of width changes is collapsed for before the stored
+ *  width is written again. */
+const WIDTH_WRITE_INTERVAL_MS = 250;
+let widthWriteTimer: ReturnType<typeof setTimeout> | null = null;
+let lastWidthWriteAt = 0;
+
+function writeStoredWidth(): void {
+  widthWriteTimer = null;
+  if (state.containerWidth <= 0) return;
+  lastWidthWriteAt = Date.now();
+  try {
+    window.localStorage.setItem(
+      COVER_WIDTH_KEY,
+      String(coverColumnWidth(state.containerWidth, state.target)),
+    );
+  } catch {
+    // Storage blocked: the size still applies for this page.
+  }
+}
+
+/**
+ * Persist the cover width for the pre-paint bootstrap. Dragging a window
+ * edge reports a new width every frame and `localStorage` writes are
+ * synchronous, so a burst writes at most once per interval and once more
+ * when it settles. `now` skips the wait for a change the reader made.
+ */
+function persistWidth(now: boolean): void {
+  if (widthWriteTimer !== null) {
+    clearTimeout(widthWriteTimer);
+    widthWriteTimer = null;
+  }
+  if (now || Date.now() - lastWidthWriteAt >= WIDTH_WRITE_INTERVAL_MS) {
+    writeStoredWidth();
+    return;
+  }
+  widthWriteTimer = setTimeout(writeStoredWidth, WIDTH_WRITE_INTERVAL_MS);
+}
+
+/** Mirror the state onto `<html>` (immediately) and persist the width for
+ *  the pre-paint bootstrap (`persistWidth`). */
+function publish(persistNow = false): void {
   if (typeof document === "undefined") return;
   const style = document.documentElement.style;
   style.setProperty(COVER_MIN_VAR, `${state.target}px`);
   if (state.containerWidth <= 0) return;
   const width = coverColumnWidth(state.containerWidth, state.target);
   style.setProperty(COVER_WIDTH_VAR, `${width}px`);
-  try {
-    window.localStorage.setItem(COVER_WIDTH_KEY, String(width));
-  } catch {
-    // Storage blocked: the size still applies for this page.
-  }
+  persistWidth(persistNow);
 }
 
 function onStorage(e: StorageEvent): void {
@@ -144,7 +178,7 @@ export function setCoverTarget(next: number): void {
   } catch {
     // Storage blocked: the size still applies for this page.
   }
-  publish();
+  publish(true);
   emit();
 }
 
@@ -162,6 +196,9 @@ export function setCoverContainerWidth(width: number): void {
 export function resetCoverSizeStoreForTests(): void {
   if (loaded && typeof window !== "undefined")
     window.removeEventListener("storage", onStorage);
+  if (widthWriteTimer !== null) clearTimeout(widthWriteTimer);
+  widthWriteTimer = null;
+  lastWidthWriteAt = 0;
   loaded = false;
   state = SERVER_STATE;
 }

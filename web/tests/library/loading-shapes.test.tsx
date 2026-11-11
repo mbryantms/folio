@@ -48,16 +48,6 @@ describe("loading shapes", () => {
     expect(html).toContain("var(--cover-min, 160px)");
   });
 
-  it("uses the caller's grid template for a grid that is not the cover grid", () => {
-    const html = renderToStaticMarkup(
-      createElement(CoverGridSkeleton, {
-        style: { gridTemplateColumns: "repeat(auto-fill, minmax(123px, 1fr))" },
-      }),
-    );
-    expect(html).toContain("minmax(123px, 1fr)");
-    expect(html).not.toContain(COVER_GRID_CSS);
-  });
-
   it("rails render one header per rail", () => {
     const html = renderToStaticMarkup(
       createElement(RailsSkeleton, { rails: 3, label: "Loading views…" }),
@@ -118,9 +108,11 @@ describe("loading shapes", () => {
     // Profile card: the 176x256 image beside the fact grid.
     expect(html).toContain("h-64 w-44");
     expect(html).toContain("lg:grid-cols-3");
-    // Four stat tiles, then the earliest-appearances rail of 120px cards.
+    // Four stat tiles, then the earliest-appearances strip: ten cards at
+    // the app-wide cover width, like the loaded strip.
     expect(html).toContain("grid-cols-2 gap-3 lg:grid-cols-4");
-    expect(count(html, "w-[120px]")).toBe(10);
+    expect(html).not.toContain("w-[120px]");
+    expect(count(html, COVER_WIDTH_CSS)).toBe(10);
   });
 
   it("region layout classes space the boxes themselves", () => {

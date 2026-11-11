@@ -714,7 +714,7 @@ function CblViewDetailInner({
       />
 
       {entriesQuery.isLoading ? (
-        <CoverGridSkeleton className="gap-3" label="Loading entries…" />
+        <CoverGridSkeleton label="Loading entries…" />
       ) : list.stats.total === 0 ? (
         <div className="border-border/60 text-muted-foreground rounded-lg border border-dashed p-8 text-center text-sm">
           This list has no entries yet.
@@ -729,7 +729,7 @@ function CblViewDetailInner({
         </div>
       ) : (
         <>
-          <ul role="list" className="grid gap-3" style={COVER_GRID_STYLE}>
+          <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
             {items.map((item) =>
               item.kind === "entry" ? (
                 <li key={item.entry.id} id={`cbl-entry-${item.entry.position}`}>

@@ -67,21 +67,18 @@ export function LoadingRegion({
  *  for. */
 export function CoverGridSkeleton({
   count = 24,
-  style = COVER_GRID_STYLE,
   className,
   label = "Loading…",
 }: {
   /** Enough to fill a wide screen at the smallest size; rows past the
    *  fold cost nothing. */
   count?: number;
-  /** Grid template, for a page whose grid is not the shared cover grid. */
-  style?: React.CSSProperties;
   className?: string;
   label?: string;
 }) {
   return (
     <LoadingRegion label={label}>
-      <ul className={cn("grid gap-4", className)} style={style}>
+      <ul className={cn("grid gap-4", className)} style={COVER_GRID_STYLE}>
         {Array.from({ length: count }, (_, i) => (
           <li key={i}>
             <IssueCardSkeleton />
@@ -518,7 +515,9 @@ export function EntityInsightsSkeleton() {
         <TextLineSkeleton className="h-3.5 w-48" />
         <div className="flex gap-3 overflow-hidden pb-1">
           {Array.from({ length: 10 }, (_, i) => (
-            <IssueCardSkeleton key={i} className="w-[120px] shrink-0" />
+            <div key={i} className="shrink-0" style={COVER_ITEM_STYLE}>
+              <IssueCardSkeleton />
+            </div>
           ))}
         </div>
       </div>
