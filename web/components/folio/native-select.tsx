@@ -9,6 +9,7 @@ import * as React from "react";
 
 import {
   NativeSelect as UiNativeSelect,
+  NativeSelectOptGroup,
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
@@ -23,16 +24,24 @@ export interface NativeSelectOptionItem {
   label: string;
 }
 
+/** A labelled `<optgroup>` of options, listed after the flat `options`. */
+export interface NativeSelectGroupItem {
+  label: string;
+  options: NativeSelectOptionItem[];
+}
+
 export interface NativeSelectProps extends Omit<
   React.ComponentProps<typeof UiNativeSelect>,
   "onChange" | "children"
 > {
   options: NativeSelectOptionItem[];
+  groups?: NativeSelectGroupItem[];
   onChange?: (next: string) => void;
 }
 
 export function NativeSelect({
   options,
+  groups,
   onChange,
   size = "default",
   className,
@@ -49,6 +58,15 @@ export function NativeSelect({
         <NativeSelectOption key={o.value} value={o.value}>
           {o.label}
         </NativeSelectOption>
+      ))}
+      {groups?.map((g) => (
+        <NativeSelectOptGroup key={g.label} label={g.label}>
+          {g.options.map((o) => (
+            <NativeSelectOption key={o.value} value={o.value}>
+              {o.label}
+            </NativeSelectOption>
+          ))}
+        </NativeSelectOptGroup>
       ))}
     </UiNativeSelect>
   );

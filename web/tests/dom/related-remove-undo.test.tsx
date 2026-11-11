@@ -34,6 +34,9 @@ vi.mock("@/lib/api/queries", () => ({
     isLoading: false,
   }),
 }));
+vi.mock("@/lib/api/queries-me", () => ({
+  useMe: () => ({ data: { role: "admin" } }),
+}));
 vi.mock("@/lib/api/mutations", () => ({
   useCreateSeriesRelationship: () => ({
     mutate: vi.fn(),

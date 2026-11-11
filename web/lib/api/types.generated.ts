@@ -180,6 +180,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/libraries/age-ratings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_library_age_ratings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/libraries/scan-all": {
         parameters: {
             query?: never;
@@ -6548,6 +6564,17 @@ export interface components {
             role: components["schemas"]["UserRole"];
             state: components["schemas"]["UserState"];
         };
+        /** @description Series at one ladder rung. */
+        AgeRatingRungCount: {
+            /** @description The rung's canonical ladder spelling (a valid cap value). */
+            rating: string;
+            /**
+             * Format: int64
+             * @description Active series whose rating ranks at this rung, aliases included
+             *     (`Mature` counts under `Mature 17+`).
+             */
+            series_count: number;
+        };
         /** @description Where this issue maps in one provider, plus its current match state. */
         AlternateProviderSeries: {
             /** Format: int32 */
@@ -11169,6 +11196,23 @@ export interface components {
              *     server replaces the user's `library_user_access` rows with this list.
              */
             library_ids: string[];
+        };
+        /** @description One library's series, by age rating. */
+        LibraryAgeRatingsView: {
+            library_id: string;
+            /** @description Every ladder rung, youngest audience first, zeros included. */
+            rungs: components["schemas"]["AgeRatingRungCount"][];
+            /**
+             * Format: int64
+             * @description Every active series of the library: the rungs plus `unrated_count`.
+             */
+            series_count: number;
+            /**
+             * Format: int64
+             * @description Active series with no rating the ladder ranks (none, `Unknown`,
+             *     `Rating Pending` or a word the ladder does not know).
+             */
+            unrated_count: number;
         };
         LibraryEventView: {
             action: string;
@@ -17184,6 +17228,32 @@ export interface operations {
             };
             /** @description invalid filter value, including a scan_id or library_id that is not a UUID */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_library_age_ratings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAgeRatingsView"][];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
-import { queryKeys } from "@/lib/api/queries";
+import { queryKeys } from "@/lib/api/query-keys";
 import type { MeView, SidebarLayoutView } from "@/lib/api/types";
 
 /**

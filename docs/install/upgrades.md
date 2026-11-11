@@ -233,11 +233,21 @@ docker compose -f compose.prod.yml up -d --no-deps app
   `library_user_access.hide_unrated`, off for every existing grant).
   When on, a series with no rating is hidden from that user as if it
   were rated above the cap, along with its issues; without a cap it
-  hides only unrated content. The admin screen control for it comes in
-  a later release; until then it is set through the API field
-  `hide_unrated` on `POST /api/admin/users/{id}/library-access` (a map
-  of library id to `true` / `false`). Saving library access from the
-  current admin screen keeps whatever value is stored.
+  hides only unrated content. Set it per library with the **Hide
+  unrated** switch beside the cap on `/admin/users/{id}` → *Library
+  access*, or through the API field `hide_unrated` on
+  `POST /api/admin/users/{id}/library-access` (a map of library id to
+  `true` / `false`).
+- **The age-cap picker groups the ratings** under plain headings (Young
+  children, All ages, Older children, Teens, Older teens, Mature, Adults
+  only; the descriptions are a guide across several rating systems), and
+  each library row says how many of its series the chosen cap and switch
+  hide and how many unrated series stay shown, before you save (from the
+  new read-only `GET /api/admin/libraries/age-ratings`). Existing caps
+  are unchanged; every rating is still selectable. A stored cap that is
+  not a rating on the list (hand-edited, such as `Mature`) is not
+  enforced today; the screen shows it as "No cap" with a note, and the
+  next save of that user's access clears it.
 
 ### Unreleased — hardened compose template; optional Redis password
 

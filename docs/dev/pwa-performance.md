@@ -55,6 +55,7 @@ neither are lazy `next/dynamic` chunks.
 | 2026-11-04, Folio Flair 1.0 (drag-to-turn, page curl, cover morph into the reader, finishing moment) | 161.47 KB | 17 | 170 KB | 120 KB |
 | 2026-11-10, deferred drag-turn motion + peek, health toast, mutations-barrel import | 148.58 KB | 16 | 152 KB | 120 KB |
 | 2026-11-11, session refresh retries an unanswered refresh inside the grace window | 152.19 KB | 17 | 153 KB | 120 KB |
+| 2026-11-11, first load off the queries barrel, lazy sheet swipe, standalone check sharded | 139.95 KB | 17 | 143 KB | 120 KB |
 
 The ceiling is measured + 10% (117.45 × 1.1 = 129.2 → 130 KB; 130.13 × 1.1 =
 143.1 → 145 KB). Going over the ceiling fails CI; going over the target only
@@ -130,6 +131,53 @@ drag-turn physics and the finishing-progress queries), and the bundle
 report has no per-module breakdown without source maps, so that work
 starts by producing one. A local build reads about 0.36 KB lower than
 CI's for the same tree, so only CI's number decides.
+
+The second 2026-11-11 row pays that back: 152.19 KB → 139.95 KB in CI
+(151.83 KB → 139.57 KB in a local build), about 12.2 KB. The per-module view came from a local build with
+`productionBrowserSourceMaps: true` (not committed), attributing each
+first-load chunk's bytes to its sources through the maps and scaling to
+the chunk's gzip size. Do this rather than trust the report's analyzer
+column: `--report` pairs analyzer chunks with build chunks by raw size,
+and on this tree it put `lib/pwa/downloads.ts` (5.5 KB, which no
+first-load module imports) on a chunk that was really the reading
+session, keybinds and outbox. The largest item that was not reader code
+was `lib/api/queries.ts`, shipped whole (10.1 KB) for the barrel reason
+the mutations had: the root layout imported `useMe`, `HttpError` and
+`queryKeys` from it, and the reader its own six hooks. Those now live in
+shards that the barrel re-exports, so library pages are unchanged:
+`lib/api/json-fetch.ts` (`HttpError`, `jsonFetch`), `queries-me.ts`
+(`useMe`, `isAuthSurface`) and `queries-reader.ts` (series, CBL, saved
+view, markers, spread overrides, next-up / prev-up), and first-load code
+takes `queryKeys` from `query-keys.ts` directly. That move alone was
+10.43 KB; it is an import change, not a lazy load, so it has no new
+failure mode. A test that mocks `@/lib/api/queries` to stub `useMe` for a
+component that now reads the shard mocks the shard as well. The other
+1.83 KB is root-layout code: `SheetSwipe` fetches the drag-to-dismiss
+code after hydration, as `OfflineBootstrap` does (`installSheetSwipe`
+wires sheets already open when it runs; if the chunk fails, sheets still
+close by button, Escape and overlay, covered by
+`tests/dom/sheet-swipe-lazy.test.tsx`), and `isStandaloneDisplay` moved
+to `lib/pwa/display-mode.ts`, so `SafeAreaProbe` and `InstallEvents` no
+longer pull in the whole pull-to-refresh hook. The new sheet-swipe chunk
+is named inside a first-load chunk, so the offline shell crawl stores it.
+
+What stayed, and why: the drag-turn hook and the finishing-progress
+queries the earlier rows named are now small (the hook 0.75 KB with its
+engine already deferred, `finish-progress.ts` 0.06 KB; the queries cost
+was the barrel, now gone). Everything else of size is first paint, first
+interaction or failure handling: `Reader.tsx` 11.2, TanStack Query 11.3,
+sonner 9.4, `@use-gesture` 9.0 (the first swipe), tailwind-merge 8.5, the
+cover hand-off (`ReaderCoverMorph`, `Cover` and the cover helpers, about
+9 KB, partly duplicated between the `loading.tsx` and page chunks by the
+bundler's chunking), the three error boundaries (about 13.8 KB, each
+with its own copy of `Button`, Radix Slot and `StatusScreen`; they must
+render when chunks fail), the ICU message parser (about 7 KB), the
+reading session, keybinds and outbox (about 6 KB; session timing, the
+first key press, offline progress). The next candidates, each needing
+more than an import change: dedupe the error-boundary and cover chunks
+(a chunking question, not a lazy load), precompiled messages to drop the
+ICU parser, and the marker toggle's mutations (about 2.5 KB, used on the
+first bookmark tap).
 
 The C5 row: +1.0 KB for the `usePinchZoom` shim, the swipe layer's
 `isPinching` gate, `readerTouchAction` and the store's first-open chrome

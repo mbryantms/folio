@@ -7,7 +7,7 @@ import {
   invalidateRails,
   invalidateSeriesProgress,
 } from "@/lib/api/mutations/rails";
-import { queryKeys } from "@/lib/api/queries";
+import { queryKeys } from "@/lib/api/query-keys";
 import { TOAST } from "@/lib/api/toast-strings";
 import { getOutbox, startOutboxReplay } from "@/lib/pwa/outbox";
 import {

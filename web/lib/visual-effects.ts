@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 
-import { useMe } from "@/lib/api/queries";
+import { useMe } from "@/lib/api/queries-me";
 import type { MeView } from "@/lib/api/types";
 
 /**

@@ -14,6 +14,9 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api/queries", () => ({
   useMe: () => ({ data: undefined }),
 }));
+vi.mock("@/lib/api/queries-me", () => ({
+  useMe: () => ({ data: undefined }),
+}));
 
 import { GlobalShortcutsSheet } from "@/components/GlobalShortcutsSheet";
 
