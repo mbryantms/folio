@@ -2215,7 +2215,18 @@ async fn run_issue_phase(
         // Single-archive scan: no need to pre-fetch slugs; the per-call DB
         // allocator's one COUNT query is fine.
         match process::persist_prepared(&ctx, &txn, prepared, None, &mut outputs).await {
-            Ok(()) => txn.commit().await?,
+            Ok(()) => {
+                if let Err(e) = txn.commit().await {
+                    // A failed commit may still have landed: re-derive the
+                    // series before the error returns.
+                    crate::library::series_rating::recompute_best_effort(
+                        &state.db,
+                        &[row.series_id],
+                    )
+                    .await;
+                    return Err(e.into());
+                }
+            }
             Err(e) => {
                 if let Err(rollback) = txn.rollback().await {
                     tracing::warn!(error = %rollback, "scanner: issue transaction rollback failed");
