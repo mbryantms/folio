@@ -32,17 +32,22 @@ const PLACEHOLDER_STYLE = { minHeight: `calc(${COVER_WIDTH} + 120px)` };
 export function LazyRail({
   view,
   priority = false,
+  eager = priority,
 }: {
   view: SavedViewView;
   /** First/above-the-fold rail: mount immediately (skip the
    *  intersection-observer wait) and eager-load its covers, so the LCP
    *  cover paints fast instead of being deferred. */
   priority?: boolean;
+  /** Mount immediately without prioritizing covers: a leading system rail
+   *  the server prefetch found empty, which renders nothing (so it leaves
+   *  no placeholder-height gap above the priority rail). */
+  eager?: boolean;
 }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   // The priority rail is in view at load — mount now rather than waiting
   // for the observer to fire.
-  const [mounted, setMounted] = React.useState(priority);
+  const [mounted, setMounted] = React.useState(eager);
 
   React.useEffect(() => {
     if (mounted) return;
