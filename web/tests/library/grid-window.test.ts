@@ -4,6 +4,7 @@ import {
   computeColumnsPerRow,
   computeColumnWidth,
   computeRowCount,
+  effectiveColumnWidth,
   estimateRowHeight,
   rowItemRange,
   GRID_GAP_PX,
@@ -22,8 +23,9 @@ describe("computeColumnsPerRow", () => {
   it("floors at two columns on phone-width rows (phone-layout.md)", () => {
     // 390px phone: 358 content, 350 with the A–Z gutter reserved.
     // 375px phone: 343 / 335. All stay two-up at the default 160 and
-    // at the 280 maximum — the effective card width is capped at half
-    // the row, matching `cardGridColumns`'s `min(cardSize, 50% - 0.5rem)` tracks.
+    // at a 280 target — the effective card width is capped at half the
+    // row, matching `COVER_GRID_COLUMNS`'s `min(<target>, 50% - 0.5rem)`
+    // tracks.
     for (const w of [358, 350, 343, 335]) {
       expect(computeColumnsPerRow(w, 160)).toBe(2);
       expect(computeColumnsPerRow(w, 280)).toBe(2);
@@ -81,21 +83,51 @@ describe("rowItemRange", () => {
 });
 
 describe("computeColumnWidth", () => {
-  it("is the card size, never stretched to fill the row", () => {
-    // 1000 wide fits 4 × 200 (+ gaps) with 136px left over: the columns
-    // stay 200, matching the home rails' `width: 200px` cards.
-    expect(computeColumnWidth(1000, 4, 200)).toBe(200);
-    expect(computeColumnWidth(864, 5, 160)).toBe(160);
+  it("stretches the columns to fill the row (1fr tracks)", () => {
+    // 1000 wide, 4 columns: the three 16px gaps leave 952 to share, so
+    // each column is 238 and the row never ends in a blank strip.
+    expect(computeColumnWidth(1000, 4)).toBe(238);
+    // Five columns in 864 = 5 × 160 + 4 gaps: nothing left over to share.
+    expect(computeColumnWidth(864, 5)).toBe(160);
+    // A single column takes the whole row.
+    expect(computeColumnWidth(200, 1)).toBe(200);
   });
 
   it("halves the row under the two-column phone floor", () => {
-    // 390 phone, 200 card: half the row (minus one gap) is narrower.
-    expect(computeColumnWidth(390, 2, 200)).toBe((390 - 16) / 2);
+    // 390 phone, two columns: half the row minus the one gap.
+    expect(computeColumnWidth(390, 2)).toBe((390 - 16) / 2);
+  });
+
+  it("subtracts the caller's gap when one is given", () => {
+    expect(computeColumnWidth(1000, 4, 8)).toBe((1000 - 3 * 8) / 4);
+    expect(computeColumnWidth(1000, 4, GRID_GAP_PX)).toBe(
+      computeColumnWidth(1000, 4),
+    );
   });
 
   it("guards zero width / zero columns", () => {
-    expect(computeColumnWidth(0, 4, 160)).toBe(0);
-    expect(computeColumnWidth(500, 0, 160)).toBe(0);
+    expect(computeColumnWidth(0, 4)).toBe(0);
+    expect(computeColumnWidth(500, 0)).toBe(0);
+  });
+});
+
+describe("effectiveColumnWidth", () => {
+  it("is the stretched width of the columns the target fits", () => {
+    // A 200 target fits 4 columns in 1000 (4 × 200 + 3 gaps = 848), and
+    // those four share the row: 238 each, never the bare 200.
+    expect(effectiveColumnWidth(1000, 200)).toBe(238);
+    expect(effectiveColumnWidth(864, 160)).toBe(160);
+    // One fewer pixel drops a column, and the remaining four widen.
+    expect(effectiveColumnWidth(863, 160)).toBe((863 - 3 * 16) / 4);
+  });
+
+  it("is never narrower than half a phone row", () => {
+    // 358px of content at a 280 target: the two-column floor applies.
+    expect(effectiveColumnWidth(358, 280)).toBe((358 - 16) / 2);
+  });
+
+  it("falls back to the target before the first measurement", () => {
+    expect(effectiveColumnWidth(0, 160)).toBe(160);
   });
 });
 

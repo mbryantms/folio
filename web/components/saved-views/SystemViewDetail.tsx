@@ -17,11 +17,10 @@ import {
   ProgressIssueCard,
   ProgressIssueCardSkeleton,
 } from "@/components/library/ProgressIssueCard";
-import { useCardSize } from "@/components/library/use-card-size";
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import {
   SeriesCard,
@@ -44,8 +43,8 @@ import type {
   SavedViewView,
   SeriesView,
 } from "@/lib/api/types";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { seriesUrl } from "@/lib/urls";
-import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 import type { InfiniteSentinelQuery } from "@/lib/ui/use-infinite-sentinel";
 import {
   InfiniteSentinel,
@@ -59,17 +58,11 @@ import {
  *  constant so both hook call sites hash to the same query key. */
 const NEW_ISSUES_FILTERS = { sort: "created_at", order: "desc" } as const;
 
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 180;
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.systemView;
-
 /**
  * Full-page detail view for system rails (Continue reading / On deck).
  * Renders the same cards as the home rail but in a wrapping responsive
- * grid (so the entire dataset fits on one page) and exposes a density
- * slider that matches the home page's affordance.
+ * grid (so the entire dataset fits on one page) at the app-wide cover
+ * size, with the same cover-size control as the home page.
  */
 export function SystemViewDetail({ view }: { view: SavedViewView }) {
   const isContinueReading = view.system_key === "continue_reading";
@@ -93,12 +86,6 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
   const sim = useSimilarRailInfinite({ enabled: isSimilar });
   const similarSeed = sim.data?.pages[0]?.seed ?? null;
   const isNewInSeries = view.system_key === "new_in_series";
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
 
   const itemCount = isContinueReading
     ? (cr.data?.pages[0]?.total ?? null)
@@ -178,41 +165,19 @@ export function SystemViewDetail({ view }: { view: SavedViewView }) {
           )}
           {isNewInSeries ? <NewInSeriesCount /> : null}
         </div>
-        {/* Desktop: the card-size popover. Phones: the same fields in a
+        {/* Desktop: the cover-size popover. Phones: the same fields in a
          *  bottom sheet behind a single icon, inline in the header row
          *  (one row, no sticky band — this page has no search). */}
         <div className="max-sm:hidden">
-          <CardSizeOptions
-            cardSize={cardSize}
-            onCardSize={setCardSize}
-            min={CARD_SIZE_MIN}
-            max={CARD_SIZE_MAX}
-            step={CARD_SIZE_STEP}
-            defaultSize={CARD_SIZE_DEFAULT}
-          />
+          <CoverSizeOptions />
         </div>
         <PhoneControlsBar
           sticky={false}
-          menu={() => (
-            <CardSizeFields
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-              fieldId="phone-card-size"
-            />
-          )}
+          menu={() => <CoverSizeFields fieldId="phone-card-size" />}
         />
       </header>
 
-      <div
-        className="grid gap-4"
-        style={{
-          gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
-        }}
-      >
+      <div className="grid gap-4" style={COVER_GRID_STYLE}>
         {isContinueReading ? (
           <ContinueReadingGrid loading={cr.isLoading} query={cr} />
         ) : isOnDeck ? (

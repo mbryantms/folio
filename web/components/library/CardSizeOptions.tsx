@@ -13,10 +13,10 @@ import { Slider } from "@/components/folio/slider";
 import { Switch } from "@/components/ui/switch";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 
-/** Reusable popover with a single "Card size" slider — drives the
- *  `minmax` of an auto-fill cover grid. Used by the series Issues
- *  panel and by saved-view detail pages so users get the same density
- *  control everywhere they see covers. */
+/** Popover with a px "Card size" slider for a surface that keeps its own
+ *  size. Bookmarks are the only one (components/markers/MarkersList.tsx);
+ *  every cover grid and rail shares the app-wide cover size and renders
+ *  `CoverSizeOptions` instead. */
 export function CardSizeOptions({
   cardSize,
   onCardSize,

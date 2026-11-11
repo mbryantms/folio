@@ -8,8 +8,7 @@ import { PageRailsSkeleton } from "@/components/skeletons/LoadingShapes";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import SeriesDetailLoading from "./series/[slug]/loading";
-import { CARD_SIZE_KEYS } from "@/lib/library/card-size";
-import { RouteCardGrid } from "@/components/skeletons/RouteCardGrid";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 
 /**
  * `(library)` group fallback. Renders as the child of `MainShell` (the
@@ -35,13 +34,7 @@ export default function LibraryLoading() {
       <Suspense fallback={grid}>
         <LibraryQuerySwitch
           grid={grid}
-          home={
-            <PageRailsSkeleton
-              rails={3}
-              cardSizeKey={CARD_SIZE_KEYS.home}
-              label="Loading home…"
-            />
-          }
+          home={<PageRailsSkeleton rails={3} label="Loading home…" />}
         />
       </Suspense>
     </MorphAwareLoading>
@@ -66,11 +59,11 @@ function LibraryGridSkeleton() {
         </div>
       </div>
 
-      <RouteCardGrid aria-hidden className="grid gap-4">
+      <div aria-hidden className="grid gap-4" style={COVER_GRID_STYLE}>
         {Array.from({ length: 24 }, (_, i) => (
           <SeriesCardSkeleton key={i} />
         ))}
-      </RouteCardGrid>
+      </div>
       <span className="sr-only">Loading…</span>
     </div>
   );

@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { BottomTabBar } from "./BottomTabBar";
 import { MainSidebar } from "./MainSidebar";
 import type { MainNavSection } from "./main-nav";
+import { CoverSizeSync } from "./use-cover-size";
 
 /**
  * Library shell: Folio's full-width sticky topbar above the upstream shadcn
@@ -105,6 +106,9 @@ export function MainShell({
           tabIndex={-1}
           className="min-w-0 px-4 py-6 pt-[calc(var(--safe-top)+1.5rem)] pb-[calc(var(--bottom-tab-h)+var(--safe-bottom)+1.5rem)] md:px-8 md:py-8"
         >
+          {/* Measures this column: its width is the library row every
+              cover size is derived from (use-cover-size.ts). */}
+          <CoverSizeSync />
           {/* Cross-fades the content column between top-level pages. */}
           <RouteFade>{children}</RouteFade>
         </SidebarInset>

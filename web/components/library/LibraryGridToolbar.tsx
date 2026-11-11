@@ -3,7 +3,7 @@
 import * as React from "react";
 import { BookmarkPlus, Filter, X } from "lucide-react";
 
-import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { CoverSizeOptions } from "@/components/library/CoverSizeOptions";
 import type { LibraryGridMode } from "@/components/library/library-grid-filters";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
@@ -89,7 +89,7 @@ export function ModeSegmentedToggle({
  * Desktop (`sm+`) toolbar above the library grid: mode toggle
  * (Series/Issues), search input, per-mode sort dropdown, order arrow,
  * Filters button, Save-as-view button, Clear-filters button, and the
- * card-size slider on the far right. Extracted from
+ * cover-size control on the far right. Extracted from
  * `LibraryGridView.tsx` in audit-remediation M7.3 to keep the composer
  * under the 400-LOC target. Phones render `PhoneControlsBar` instead —
  * this row folded into six on a 390px viewport.
@@ -120,12 +120,6 @@ export function LibraryGridToolbar({
   canSaveView,
   onSaveView,
   onClearFacets,
-  cardSize,
-  onCardSize,
-  cardSizeMin,
-  cardSizeMax,
-  cardSizeStep,
-  cardSizeDefault,
   canSelect,
   selectMode,
   onEnterSelect,
@@ -148,12 +142,6 @@ export function LibraryGridToolbar({
   canSaveView: boolean;
   onSaveView: () => void;
   onClearFacets: () => void;
-  cardSize: number;
-  onCardSize: (n: number) => void;
-  cardSizeMin: number;
-  cardSizeMax: number;
-  cardSizeStep: number;
-  cardSizeDefault: number;
   /** True once the grid has at least one loaded card to act on. */
   canSelect: boolean;
   /** Whether the grid is currently in multi-select mode. */
@@ -186,7 +174,7 @@ export function LibraryGridToolbar({
         data-library-toolbar=""
         className="mb-4 justify-between"
       >
-        {/* Left controls flow + wrap as a group; the Select + card-size
+        {/* Left controls flow + wrap as a group; the Select + cover-size
           group below sits opposite via the container's justify-between —
           so it right-aligns when there's room and drops to a left-aligned
           new line (no stranded empty space) when the toolbar wraps. */}
@@ -338,14 +326,7 @@ export function LibraryGridToolbar({
               onExit={onExitSelect}
             />
           ) : null}
-          <CardSizeOptions
-            cardSize={cardSize}
-            onCardSize={onCardSize}
-            min={cardSizeMin}
-            max={cardSizeMax}
-            step={cardSizeStep}
-            defaultSize={cardSizeDefault}
-          />
+          <CoverSizeOptions />
         </div>
       </StickyToolbarRow>
     </>

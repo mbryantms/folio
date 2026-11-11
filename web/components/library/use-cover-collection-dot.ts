@@ -82,7 +82,8 @@ function getServerSnapshot(): boolean {
 export interface CoverCollectionDotApi {
   /** True iff series cards should render their collection-ownership dot. */
   enabled: boolean;
-  /** Imperative setter — used by the `CardSizeOptions` toggle. */
+  /** Imperative setter — used by the View options toggle
+   *  (`CoverSizeFields`, and the bookmarks' `CardSizeFields`). */
   setEnabled: (next: boolean) => void;
 }
 
