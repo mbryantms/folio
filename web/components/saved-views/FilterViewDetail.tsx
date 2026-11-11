@@ -16,9 +16,9 @@ import {
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import {
   PhoneControlsBar,
   PhoneMenuAction,
@@ -29,7 +29,6 @@ import {
 } from "@/components/library/SeriesCard";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
-import { useCardSize } from "@/components/library/use-card-size";
 import { EmptyState } from "@/components/folio/empty-state";
 import { apiMutate } from "@/lib/api/mutations";
 import {
@@ -38,6 +37,7 @@ import {
 } from "@/lib/api/mutations";
 import { DropdownMenuItem } from "@/components/folio/dropdown-menu";
 import { useMe, useSavedViewResultsInfinite } from "@/lib/api/queries";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
@@ -45,23 +45,14 @@ import type { SavedViewView } from "@/lib/api/types";
 
 import { EditFilterViewSheet } from "./EditFilterViewSheet";
 import { ViewHeader } from "./ViewHeader";
-import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 import { LoadMoreError } from "@/components/folio/infinite-sentinel";
-
-/** Saved-view-page card-size bounds. Mirrors the series Issues panel
- *  but stored under a separate localStorage key so users can tune the
- *  saved-view density independently. */
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 
 /** Filter-view detail page: header + paginated series grid. The
  *  cursor-paginated results endpoint pages at 60; an IntersectionObserver
  *  sentinel auto-loads the next page on scroll — matching the creators
  *  index, library grid, IssuesPanel, and CblViewDetail (no manual "Load
- *  more" button). */
+ *  more" button). The grid takes the app-wide cover size
+ *  (`COVER_GRID_STYLE`); the page holds no size state of its own. */
 export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const results = useSavedViewResultsInfinite(view.id);
@@ -98,12 +89,6 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   const fetchViewMetadata = () => {
     createBatch.mutate({ saved_view_id: view.id });
   };
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
 
   const items = (results.data?.pages ?? []).flatMap((p) => p.items);
   const isInitialLoading = results.isLoading;
@@ -200,13 +185,6 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
     selection.exit();
   };
 
-  // Auto-fill grid driven by the slider — column count adapts as the
-  // user drags. Falls back to the default px while localStorage
-  // rehydrates so the SSR markup stays stable.
-  const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
-  };
-
   return (
     <div className="space-y-6">
       <ViewHeader
@@ -234,17 +212,10 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
                 onExit={() => selection.exit()}
               />
             )}
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-            />
+            <CoverSizeOptions />
           </>
         }
-        // Phone (< sm): the desktop cluster above is hidden; card size
+        // Phone (< sm): the desktop cluster above is hidden; cover size
         // and Select move into the sticky bar's View options sheet. The bar
         // yields to `SelectionToolbar` (also sticky) while selecting.
         phoneControlsPlacement="inline"
@@ -254,15 +225,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
             hidden={selection.selectMode}
             menu={(close) => (
               <>
-                <CardSizeFields
-                  cardSize={cardSize}
-                  onCardSize={setCardSize}
-                  min={CARD_SIZE_MIN}
-                  max={CARD_SIZE_MAX}
-                  step={CARD_SIZE_STEP}
-                  defaultSize={CARD_SIZE_DEFAULT}
-                  fieldId="phone-card-size"
-                />
+                <CoverSizeFields fieldId="phone-card-size" />
                 {items.length > 0 || selection.selectMode ? (
                   <PhoneMenuAction
                     icon={<ListChecks className="size-4" />}
@@ -346,7 +309,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
       />
 
       {isInitialLoading ? (
-        <SeriesGridSkeleton style={gridStyle} />
+        <SeriesGridSkeleton />
       ) : results.isError && items.length === 0 ? (
         <EmptyState
           size="sm"
@@ -358,7 +321,7 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
           description="Nothing matches this view yet. Tweak the conditions to broaden the search."
         />
       ) : (
-        <ul role="list" className="grid gap-4" style={gridStyle}>
+        <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
           {items.map((s) => (
             <li key={s.id}>
               <SeriesCard
@@ -417,9 +380,9 @@ export function FilterViewDetail({ view }: { view: SavedViewView }) {
   );
 }
 
-function SeriesGridSkeleton({ style }: { style: React.CSSProperties }) {
+function SeriesGridSkeleton() {
   return (
-    <ul role="list" className="grid gap-4" style={style}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {Array.from({ length: 12 }).map((_, i) => (
         <li key={i}>
           <SeriesCardSkeleton size="md" />

@@ -46,15 +46,15 @@ indexes.
    icons for search / sort / filters / View options, an optional leading
    slot (mode toggle, stats pills, item count) and one optional inline
    `primary` icon (CBL's Up Next, a collection's Continue). Anything
-   secondary — card size, Select, Save as view, Clear filters — goes in
+   secondary — cover size, Select, Save as view, Clear filters — goes in
    the View options bottom sheet via `menu={(close) => …}`.
 
    **Two menu icons, two meanings, at every width.** The four-squares
    glyph (`LayoutGrid`) is _View options_: a panel of presentation
-   settings (card size, collection dots, layout) plus the grid-wide
-   tools above. It is `CardSizeOptions`' popover on desktop and the
-   bar's bottom sheet on phones, and the bar's trigger defaults to that
-   glyph. `⋯` is _More actions_ on the page's subject — Edit, Export,
+   settings (cover size, collection badges, layout) plus the grid-wide
+   tools above. It is `CoverSizeOptions`' popover on desktop (bookmarks:
+   `CardSizeOptions`, their own size) and the bar's bottom sheet on
+   phones, and the bar's trigger defaults to that glyph. `⋯` is _More actions_ on the page's subject — Edit, Export,
    Pin, Refresh — and is a dropdown list at every width (`ViewHeader`,
    `PageActionsMenu`). So the same icon always opens the same kind of
    surface, and a page never shows two `⋯`.
@@ -63,10 +63,10 @@ indexes.
    pins under the topbar at every width if and only if it holds tools
    you need _while scrolling_: search, sort, filters, bulk selection —
    and, on a rails page (Home, custom pages), the density control, since
-   you tune card size while browsing a long stack of rails. Everything
+   you tune cover size while browsing a long stack of rails. Everything
    else scrolls away — titles, descriptions, breadcrumbs, tab strips,
    chip rows, the A–Z rail, and one-time settings in a title row such as
-   Continue and `⋯` (a grid's card size and `⋯` ride in the pinned row
+   Continue and `⋯` (a grid's cover size and `⋯` ride in the pinned row
    when the page has one, but never earn a row by themselves). So the
    library grid, bookmarks, CBL reading lists, the series Issues panel
    and the rails pages pin their row; filter / system / collection
@@ -130,13 +130,17 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    pass an `<h1>` as the bar's `leading` (bookmarks). Title and controls
    then share one sticky row instead of two stacked bordered bands; the
    desktop header is untouched.
-8. **Two columns minimum.** Every cover grid uses
-   `repeat(auto-fill, minmax(min(<cardSize>px, calc(50% - 0.5rem)), 1fr))`
+8. **Two columns minimum, and the row is always full.** Every cover
+   grid uses `COVER_GRID_COLUMNS` (`lib/library/cover-size.ts`):
+   `repeat(auto-fill, minmax(min(var(--cover-min, 160px), calc(50% - 0.5rem)), 1fr))`
    and the virtualized library grid applies the same half-row cap in
-   `computeColumnsPerRow` (down to 96px cards), so a large saved card
+   `computeColumnsPerRow` (down to 96px cards), so a large saved cover
    size or the reserved A–Z column can never collapse a phone grid to
    one column; desktop is unaffected because half a wide column exceeds
-   any card size.
+   any cover size. The `1fr` maximum stretches the columns over whatever
+   the gaps leave, so a row never ends in a blank strip. The size itself
+   is one app-wide setting chosen as _covers per row_ — see
+   [One cover size](#one-cover-size).
 9. **One visible size, an invisible touch target.** Controls keep
    shadcn's size on every pointer — 36px toolbar controls and tab strip,
    28px chips — so iPad looks like desktop and no toolbar is taller than
@@ -162,7 +166,7 @@ max-sm:line-clamp-2`; `PageHeader` takes `phoneDescription="hidden"`
    `<Input>` / `<NativeSelect>` beside it — never `size="sm"` (32px at
    12px), and never `size="sm"` with an `h-9` override, which fixed the
    height but left the label two sizes smaller than the input. The shared controls — `SelectModeButton`,
-   `NotesExportMenu`, `CardSizeOptions`, `AddWidgetMenu`, the `/log`
+   `NotesExportMenu`, `CoverSizeOptions`, `CardSizeOptions`, `AddWidgetMenu`, the `/log`
    `ActivityRangeSelector` — bake it in; `tests/dom/toolbar-row-height.test.tsx`
    guards them.
 10. **Prefer CSS to JS.** Use `max-sm:` / `sm:` whenever the difference
@@ -208,13 +212,67 @@ height (36px); the horizontal +4px each side still applies.
     the header appends `[Built-in] [⋯]`. Standardised 2026-10-31
     (bookmarks, library, home and custom pages, CBL, saved views).
 
+## One cover size
+
+Every cover surface — library grid, Home and custom-page rails, saved
+views, search, the series Issues panel and Related tab, creator and
+entity pages, the loading skeletons — shares one size, at every width.
+Bookmarks are the exception: their cards are page thumbnails, so they
+keep their own px slider (`CardSizeOptions`, key
+`folio.bookmarks.cardSize`). The collection and saved-view tile boards
+(`CollectionsIndex`, `GroupedViewsBoard`'s `large` grid) are not cover
+surfaces either: a tile is a fixed 15rem card with a title and counts,
+so those grids keep `repeat(auto-fill, 15rem)` and ignore the setting.
+
+- **The library row drives it.** `CoverSizeSync` (mounted in
+  `MainShell`) measures the content box of `#main-content`, the row the
+  library grid lays out in. The control is a slider over **covers per
+  row** of that row (`coverStops`: every count whose cover is 100–300px
+  wide), labelled "N per row", Compact to Roomy. Each stop is a layout
+  that fills the row exactly, so no stop leaves a blank strip at the
+  row's end.
+- **What is stored** is a target width in px, not the count
+  (`folio.cover.size`; `coverTargetForColumns` picks the middle of the
+  band that yields the chosen count, so a scrollbar or a few px of
+  layout shift cannot tip the count). A different window or device
+  re-derives its own count from the same target; a resize re-counts
+  without changing the setting. `folio.libraryGrid.cardSize` (the old
+  library slider) seeds it once; the other per-surface keys are ignored.
+- **Grids** use `COVER_GRID_STYLE`, which reads `--cover-min` (the
+  target) from `<html>`. **Rails and strips** use `COVER_ITEM_STYLE` /
+  `<HorizontalScrollRail coverSized>`, which read `--cover-w`: the
+  library grid's real column width, so a rail cover is exactly as wide
+  as a grid cover. Both variables are set before first paint by
+  `COVER_SIZE_BOOTSTRAP` (inline script in `app/layout.tsx`;
+  `folio.cover.width` carries the last measured width) and kept current
+  by the store in `components/library/use-cover-size.ts`. The store
+  sets the variables on every change but writes `folio.cover.width` at
+  most once per 250 ms while a window is being dragged. A cover grid's
+  gap is always `gap-4`: the stops assume 16px between columns.
+- **In code:** `<CoverSizeOptions />` (desktop popover) and
+  `<CoverSizeFields fieldId=… />` (phone sheet) take no size props.
+  `useCoverTarget()` is for layout math over a surface's own measured
+  width (`VirtualizedCardGrid`, the Related tab); `getCoverWidth()` is
+  for effects. Do not add a per-surface size key or a fixed-track grid
+  (`repeat(auto-fill, <px>)`) — that is what left the blank strip.
+- **The glide.** A change through the control snapshots the cards
+  (`captureCardLayout`) and plays the FLIP after the commit
+  (`lib/ui/card-flip.ts`); a width change (resize, sidebar toggle) does
+  not animate.
+
+Tests: `tests/library/cover-size.test.ts` (stops, targets, bootstrap),
+`tests/dom/cover-size-store.test.tsx` (store, sync, glide, the control)
+and `tests/dom/card-size-sync.test.tsx` (the bookmarks slider stays
+independent).
+
 ## Primitives
 
 | Piece                      | File                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | -------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PhoneControlsBar`         | `components/library/PhoneControlsBar.tsx`    | `leading`, `search`, `sort` (bottom sheet with radio list + asc/desc), `filters {count,onOpen}`, `primary`, `menu(close)`, `sticky`, `hidden`. `sort.onChange` is untyped (`string`); narrow it back to your sort union.                                                                                                                                                                                                                  |
 | `PhoneMenuAction`          | same file                                    | Full-width `h-11` row button for the View options sheet; supports `asChild` for download links.                                                                                                                                                                                                                                                                                                                                           |
-| `CardSizeFields`           | `components/library/CardSizeOptions.tsx`     | The card-size popover's body (slider, collection-dot switch, Reset) for use inside the sheet. Pass a unique `fieldId`.                                                                                                                                                                                                                                                                                                                    |
+| `CoverSizeFields`          | `components/library/CoverSizeOptions.tsx`    | The app-wide cover-size popover's body ("N per row" slider, collection-dot switch, Reset) for use inside the sheet. Takes only a unique `fieldId`; the size lives in `use-cover-size.ts`.                                                                                                                                                                                                                                                 |
+| `CardSizeFields`           | `components/library/CardSizeOptions.tsx`     | Bookmarks only: the same body over a px slider with its own key (`folio.bookmarks.cardSize`).                                                                                                                                                                                                                                                                                                                                             |
 | `AtoZScrubber`             | `components/library/AtoZScrubber.tsx`        | Same `value` / `onSelect` contract as `AtoZJumpRail`.                                                                                                                                                                                                                                                                                                                                                                                     |
 | `ModeSegmentedToggle`      | `components/library/LibraryGridToolbar.tsx`  | Series ⇄ Issues segmented control for the bar's leading slot.                                                                                                                                                                                                                                                                                                                                                                             |
 | `StickyToolbarRow`         | `components/library/StickyToolbarRow.tsx`    | The `sm`-and-up pinned control row (rule 3): `enabled`, `className`, extra `data-*` pass through. Wraps `useStickyToolbar`; `data-sticky` / `data-stuck` report state. Edge to edge in the shell column.                                                                                                                                                                                                                                  |
@@ -226,26 +284,26 @@ height (36px); the horizontal +4px each side still applies.
 
 - **Home and custom pages** (`PageRails`): from `sm` up the heading
   (title + description) is in flow and a `StickyToolbarRow` beneath it
-  carries card size + `⋯`, right aligned; below `sm` the title rides in
-  the sticky bar's leading slot beside View options (card size as a
+  carries cover size + `⋯`, right aligned; below `sm` the title rides in
+  the sticky bar's leading slot beside View options (cover size as a
   sheet) and `⋯`, with the description following in flow. The bar is
   the first element, so it is `pageTop` (flush with the status bar). Inline
   title editing is `sm`-and-up; phones rename through `⋯`.
 - **Library grid** (`LibraryGridView`): title (`text-xl`) + count, sticky
   bar `[Series|Issues] … [🔍][⇅][⚲][▦]`, chips row, grid with the
-  scrubber in series mode. The View options sheet holds card size,
+  scrubber in series mode. The View options sheet holds cover size,
   Select, Save as view, Clear filters.
 - **Saved views** (filter / issue filter / collection / CBL / system):
-  `ViewHeader` title row with the card-size icon and `⋯`, clamped
+  `ViewHeader` title row with the cover-size icon and `⋯`, clamped
   description. Filter, issue-filter, collection and system views place
-  the bar inline in the title row (one row total), with card size and
+  the bar inline in the title row (one row total), with cover size and
   Select in its View options sheet; collection shows the item count in
   `leading` and Continue as `primary`. CBL's title
   row is title-only (`actions="none"`): everything else rides in the
   one pinned control row at every width — the stats pills in
   `leading`, search, Up Next and the `⋯` (`ViewActionsMenu`) as
   `primary` on phones; from `sm` up a `StickyToolbarRow` with Up Next,
-  search, card size, Select, then the pills and `⋯` on the right. System
+  search, cover size, Select, then the pills and `⋯` on the right. System
   views hide the breadcrumb and eyebrow.
 - **Series detail**: cover beside the title block (≈40% width) with
   the Read row under both; Writers / Publication fact blocks hidden
@@ -254,11 +312,12 @@ height (36px); the horizontal +4px each side still applies.
   the metadata tabs (`max-sm:order-last` on `SeriesTabs`); the Issues
   panel is one sticky row `Issues · N … [🔍][⇅][▦]` with the heading in
   `leading`, pinned once scrolled to; from `sm` up the heading has its
-  own row and the input / Sort / card size / Select cluster is a
+  own row and the input / Sort / cover size / Select cluster is a
   `StickyToolbarRow`. `SeriesTabs`' `scroll-mt` clears the pinned row.
 - **Bookmarks**: no separate header — the title rides in the sticky
   bar's leading slot beside search, a Filters sheet (layout toggle,
-  sort, series, tags, match mode), View options (card size, Select)
+  sort, series, tags, match mode), View options (the bookmarks' own
+  card size, Select)
   and `⋯` (export); the bar is the page's top bar (rule 0, `pageTop`);
   kind pills scroll horizontally. From `sm` up: search · sort · series on the
   left, Select · ▦ · `⋯` on the right. From `sm` up the header keeps the title and

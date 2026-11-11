@@ -13,10 +13,10 @@ import { Slider } from "@/components/folio/slider";
 import { Switch } from "@/components/ui/switch";
 import { useCoverCollectionDot } from "@/components/library/use-cover-collection-dot";
 
-/** Reusable popover with a single "Card size" slider — drives the
- *  `minmax` of an auto-fill cover grid. Used by the series Issues
- *  panel and by saved-view detail pages so users get the same density
- *  control everywhere they see covers. */
+/** Popover with a px "Card size" slider for a surface that keeps its own
+ *  size. Bookmarks are the only one (components/markers/MarkersList.tsx);
+ *  every cover grid and rail shares the app-wide cover size and renders
+ *  `CoverSizeOptions` instead. */
 export function CardSizeOptions({
   cardSize,
   onCardSize,
@@ -128,7 +128,7 @@ export function CardSizeFields({
       </div>
       {/* Global preference, persisted in localStorage by
        *  use-cover-collection-dot.ts. When off, series cards
-       *  stop painting the small ownership dot in their
+       *  stop painting the small ownership badge in their
        *  bottom-left corner — letting readers who prefer pure
        *  cover art opt out of the overlay. Kebab actions are
        *  unaffected; they're only visible after the user opens
@@ -136,18 +136,18 @@ export function CardSizeFields({
       <div className="border-border space-y-1.5 border-t pt-3">
         <div className="flex items-center justify-between gap-3">
           <Label htmlFor={collectionFieldId} className="text-xs font-medium">
-            Collection dot
+            Collection badge
           </Label>
           <Switch
             id={collectionFieldId}
             checked={collectionDot.enabled}
             onCheckedChange={collectionDot.setEnabled}
-            aria-label="Show the collection ownership dot on series covers"
+            aria-label="Collection badge on series covers"
           />
         </div>
         <p className="text-muted-foreground/80 text-[11px] leading-snug">
-          Show a small green or amber dot on series covers to mark collection
-          ownership.
+          Mark series covers with a badge: a full shelf when you own every
+          issue, a book with a minus when some are missing.
         </p>
       </div>
       <div className="flex justify-end">

@@ -3,14 +3,23 @@
 //! Worker entry point for the apalis `scan` queue. The HTTP-side handler in
 //! [`crate::api::libraries::scan`] only enqueues — the actual filesystem
 //! traversal happens here, via [`crate::library::scanner::scan_library`].
-//! After the scan completes, the runtime calls
-//! [`crate::jobs::JobRuntime::release_scan`] to clear coalescing state and
-//! re-enqueue if a trigger arrived during execution.
+//! While the scan runs, a [`ScanLease`] keeps the library's coalescing key
+//! alive for this run; after the scan, the runtime calls
+//! [`crate::jobs::JobRuntime::release_scan`] to release the key (only if
+//! this run still holds it) and re-enqueue if a trigger arrived during
+//! execution.
 
+use crate::jobs::scan_lease::{LeaseCheck, ScanLease, ScanLeaseTiming};
 use crate::state::AppState;
 use apalis::prelude::*;
+use entity::scan_run::{Entity as ScanRunEntity, ScanRunState};
+use sea_orm::EntityTrait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Recorded on a run that stopped because another scan of the same library
+/// holds the coalescing key.
+pub const SUPERSEDED_REASON: &str = "Superseded: another scan of this library is running";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
@@ -38,6 +47,12 @@ pub struct Job {
 pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> {
     // Data<AppState> derefs to &AppState; clone the AppState to drop the Data wrapper.
     let state: AppState = (*state).clone();
+    run(&state, job, ScanLeaseTiming::PRODUCTION).await;
+    Ok(())
+}
+
+/// [`handle`] with an explicit lease timing (tests pass short lifetimes).
+pub async fn run(state: &AppState, job: Job, timing: ScanLeaseTiming) {
     tracing::info!(
         library_id = %job.library_id,
         scan_run_id = %job.scan_run_id,
@@ -46,37 +61,111 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> 
         "scan job started",
     );
 
+    // A run already closed (an admin cancelled it while it was queued, which
+    // also released its claim) never starts: it must neither take the key
+    // back nor hand its request on.
+    match ScanRunEntity::find_by_id(job.scan_run_id)
+        .one(&state.db)
+        .await
+    {
+        Ok(Some(row)) if row.state.is_terminal() => {
+            tracing::info!(
+                library_id = %job.library_id,
+                scan_run_id = %job.scan_run_id,
+                state = row.state.as_str(),
+                "scan job skipped: its run is already closed",
+            );
+            return;
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "scan job: run lookup failed; scanning anyway"),
+    }
+
+    // Hold the library's coalescing key for this run while it scans. A key
+    // that another run holds means that run owns the library now (this job
+    // was re-queued after a restart, or its queued claim lapsed): close this
+    // run as cancelled without scanning, leave the key alone, and hand this
+    // run's request to the holder as its follow-up.
+    let (lease, first_check) = ScanLease::start(
+        state.jobs.redis.clone(),
+        job.library_id,
+        job.scan_run_id,
+        timing,
+    )
+    .await;
+    if first_check == Some(LeaseCheck::Lost) {
+        tracing::warn!(
+            library_id = %job.library_id,
+            scan_run_id = %job.scan_run_id,
+            "scan job superseded before it started: another run holds the library",
+        );
+        // Hand the request on first, so a new run joins this run's scan-all
+        // batch before closing this run can finalize that batch.
+        hand_on_request(state, &job).await;
+        crate::library::scanner::cancel_superseded_run(
+            state,
+            job.library_id,
+            job.scan_run_id,
+            SUPERSEDED_REASON,
+        )
+        .await;
+        return;
+    }
+
+    let lease_lost = lease.lost_flag();
+    let lost_flag = lease.lost_flag();
     let scan_result = match job.scope.as_deref() {
         Some(dirs) => {
             let scope: Vec<std::path::PathBuf> =
                 dirs.iter().map(std::path::PathBuf::from).collect();
-            crate::library::scanner::scan_library_scoped(
-                &state,
+            crate::library::scanner::scan_library_scoped_leased(
+                state,
                 job.library_id,
                 &scope,
                 Some(job.scan_run_id),
+                Some(lease_lost),
             )
             .await
         }
         None => {
-            crate::library::scanner::scan_library_with_run_id(
-                &state,
+            crate::library::scanner::scan_library_leased(
+                state,
                 job.library_id,
                 job.force,
                 Some(job.scan_run_id),
+                Some(lease_lost),
             )
             .await
         }
     };
 
+    // Stop refreshing before the release, so no refresh lands after it.
+    lease.stop().await;
     // Release coalescing state regardless of success — a failed scan still
     // needs to clear the in-flight marker so the next trigger isn't blocked.
-    if let Err(e) = state.jobs.release_scan(job.library_id).await {
+    // The release is compare-and-delete: a run that lost the key leaves the
+    // new holder's key in place.
+    if let Err(e) = state
+        .jobs
+        .release_scan(job.library_id, job.scan_run_id)
+        .await
+    {
         tracing::error!(
             library_id = %job.library_id,
             error = %e,
-            "release_scan failed (coalescing keys may be stale)",
+            "release_scan failed (the coalescing key expires on its own)",
         );
+    }
+    // A run stopped mid-scan because another run took the library closes
+    // as superseded; its request goes on to the holder.
+    if lost_flag.load(std::sync::atomic::Ordering::Relaxed)
+        && matches!(
+            ScanRunEntity::find_by_id(job.scan_run_id).one(&state.db).await,
+            Ok(Some(row)) if row.state == ScanRunState::Cancelled
+                && row.error.as_deref() == Some(SUPERSEDED_REASON)
+        )
+    {
+        hand_on_request(state, &job).await;
     }
 
     match scan_result {
@@ -89,7 +178,6 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> 
                 files_unchanged = stats.files_unchanged,
                 "scan job completed",
             );
-            Ok(())
         }
         Err(e) => {
             // Failure already recorded by the scanner finalize (scan_runs row +
@@ -105,13 +193,44 @@ pub async fn handle(job: Job, state: Data<AppState>) -> Result<(), BoxDynError> 
             // …except when it failed before opening the run (library gone,
             // validation): the pre-inserted `queued` row is still open.
             crate::library::scanner::fail_unstarted_run(
-                &state,
+                state,
                 job.library_id,
                 Some(job.scan_run_id),
                 &e.to_string(),
             )
             .await;
-            Ok(())
         }
+    }
+}
+
+/// Give a superseded run's request to the library's current holder as its
+/// queued follow-up, or start a new run if the key has become free. Once per
+/// superseded run: the follow-up is a new run with a new id.
+async fn hand_on_request(state: &AppState, job: &Job) {
+    // A new run joins the superseded run's scan-all batch, if it had one.
+    let batch_id = ScanRunEntity::find_by_id(job.scan_run_id)
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.batch_id);
+    match state
+        .jobs
+        .requeue_superseded_request(job.library_id, job.force, job.scope.clone(), batch_id)
+        .await
+    {
+        Ok(outcome) => tracing::info!(
+            library_id = %job.library_id,
+            superseded_run = %job.scan_run_id,
+            scan_id = %outcome.scan_id(),
+            coalesced = outcome.was_coalesced(),
+            "superseded scan request handed on",
+        ),
+        Err(e) => tracing::error!(
+            library_id = %job.library_id,
+            superseded_run = %job.scan_run_id,
+            error = %e,
+            "superseded scan request could not be handed on",
+        ),
     }
 }

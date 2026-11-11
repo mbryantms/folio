@@ -2,6 +2,7 @@
 
 import { IssueCard } from "@/components/library/IssueCard";
 import type { IssueSummaryView } from "@/lib/api/types";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 
 /**
  * Split issues into main-run and specials/extras buckets. Mirrors the
@@ -133,11 +134,9 @@ export function groupSpecials(items: IssueSummaryView[]): SpecialGroup[] {
  */
 export function SpecialsExtrasSection({
   items,
-  gridStyle,
   renderCard,
 }: {
   items: IssueSummaryView[];
-  gridStyle: React.CSSProperties;
   renderCard?: (issue: IssueSummaryView) => React.ReactNode;
 }) {
   const groups = groupSpecials(items);
@@ -176,7 +175,7 @@ export function SpecialsExtrasSection({
           {g.blurb && (
             <p className="text-muted-foreground mb-3 text-xs">{g.blurb}</p>
           )}
-          <ul role="list" className="mt-2 grid gap-4" style={gridStyle}>
+          <ul role="list" className="mt-2 grid gap-4" style={COVER_GRID_STYLE}>
             {g.items.map((iss) => (
               <li key={iss.id}>{render(iss)}</li>
             ))}

@@ -14,7 +14,7 @@ import { ViewActionsMenu } from "./ViewActionsMenu";
  *    [title]                                      [extraActions] [⋯]
  *
  *  `extraActions` are the inline controls that stay visible at-a-glance
- *  (stats pills, CardSizeOptions, badges). Everything else — Edit,
+ *  (stats pills, CoverSizeOptions, badges). Everything else — Edit,
  *  Sidebar toggle, Pin/Unpin, and any caller-supplied `extraMenuItems`
  *  (Export, Refresh, …) — collapses into the `⋯` overflow menu. Mobile
  *  used to overflow with seven inline buttons; collapsing keeps the
@@ -68,7 +68,7 @@ export function ViewHeader({
   /** Where `phoneControls` goes. `"row"` (default): its own sticky row
    *  under the header — for bars that carry search or a leading slot
    *  (CBL). `"inline"`: inside the title row's right cluster, before
-   *  the `⋯` actions menu — for bars that are a single icon (card size
+   *  the `⋯` actions menu — for bars that are a single icon (cover size
    *  + Select); pass `sticky={false}` on the bar then. */
   phoneControlsPlacement?: "row" | "inline";
   /** Where the `⋯` More-actions menu renders. `"inline"` (default): at

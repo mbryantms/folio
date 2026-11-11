@@ -2,18 +2,11 @@
 
 import * as React from "react";
 
-import { useParams } from "next/navigation";
-
-import {
-  cardSizeVarName,
-  PAGE_SLUG_ID_PREFIX,
-  syncCardSizeVars,
-} from "@/lib/library/card-size";
 import { captureCardLayout, playCardFlip } from "@/lib/ui/card-flip";
 
 /** Same-page broadcast for card-size changes (WP-7.7). Every
- *  `useCardSize` instance sharing a storage key listens, so the series
- *  page's Related tab covers follow the Issues panel's slider live. Other
+ *  `useCardSize` instance sharing a storage key listens, so two controls
+ *  for the same key (toolbar popover + phone menu) agree live. Other
  *  browser tabs hear about it through the native `storage` event. */
 export const CARD_SIZE_EVENT = "folio:card-size";
 
@@ -46,15 +39,16 @@ function readStored(key: string, min: number, max: number): number | null {
 
 const noopSubscribe = () => () => {};
 
-/** Hook + storage key handling for the card-size sliders that live on
- *  every page with a cover grid (series issues, saved-view detail).
+/** Hook + storage key handling for a px card-size slider with its own
+ *  size. Bookmarks are the one surface that has one
+ *  (components/markers/MarkersList.tsx); every cover grid and rail shares
+ *  the app-wide cover size instead (use-cover-size.ts).
  *
  *  Returns `[cardSize, setCardSize]`. A component mounted on the client
  *  (a soft navigation) starts at the stored size. While hydrating
  *  server markup it starts at `defaultSize` so the markup matches, and a
- *  mount-time effect rehydrates from `localStorage`; the grid itself is
- *  already the right size by then through the `--card-size-*` variable
- *  (lib/library/card-size.ts). Persistence is wired into the setter rather than a
+ *  mount-time effect rehydrates from `localStorage`.
+ *  Persistence is wired into the setter rather than a
  *  separate effect — a mount-time persist effect would race the
  *  rehydrate effect and clobber the saved value with the default
  *  before the rehydrated state landed, so adjustments wouldn't survive
@@ -97,7 +91,6 @@ export function useCardSize(opts: {
     const onStorage = (e: StorageEvent) => {
       // `key === null` is a `localStorage.clear()` in another tab.
       if (e.key !== null && e.key !== storageKey) return;
-      syncCardSizeVars();
       setCardSize(parseStoredCardSize(e.newValue, min, max) ?? defaultSize);
     };
     window.addEventListener(CARD_SIZE_EVENT, onLocal);
@@ -128,13 +121,6 @@ export function useCardSize(opts: {
       } catch {
         // Storage unavailable: the in-page broadcast still syncs.
       }
-      syncCardSizeVars();
-      // Set directly too, so a failed write can't leave a stale variable
-      // overriding the new size.
-      document.documentElement.style.setProperty(
-        cardSizeVarName(storageKey),
-        `${next}px`,
-      );
       window.dispatchEvent(
         new CustomEvent<CardSizeEventDetail>(CARD_SIZE_EVENT, {
           detail: { key: storageKey, value: next },
@@ -145,23 +131,4 @@ export function useCardSize(opts: {
   );
 
   return [cardSize, persistAndSet] as const;
-}
-
-/** `/pages/<slug>`'s route skeleton only knows the slug: record which
- *  page it is (`folio.page.slugId.<slug>` → id), so the next load of
- *  that page draws its rails at the page's card size
- *  (lib/library/card-size.ts). `null` (the system Home page) skips it. */
-export function usePageSlugRecord(pageId: string | null): void {
-  const slug = useParams<{ slug?: string }>()?.slug;
-  React.useEffect(() => {
-    if (!pageId || !slug) return;
-    try {
-      const key = PAGE_SLUG_ID_PREFIX + slug;
-      if (localStorage.getItem(key) === pageId) return;
-      localStorage.setItem(key, pageId);
-    } catch {
-      return;
-    }
-    syncCardSizeVars();
-  }, [pageId, slug]);
 }

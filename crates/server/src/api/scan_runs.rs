@@ -707,15 +707,79 @@ pub async fn cancel(
     }
     let now = chrono::Utc::now().fixed_offset();
     let cancel_msg = "Cancelled by admin".to_string();
-    let mut am: scan_run::ActiveModel = row.into();
-    am.state = Set(ScanRunState::Cancelled);
-    am.ended_at = Set(Some(now));
-    am.error = Set(Some(cancel_msg.clone()));
-    let updated = match am.update(&app.db).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "scan cancel: row update failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+    // A queued run is cancelled only while it is still queued: one
+    // conditional update, so a job that started in between keeps its row
+    // and its claim (it is then cancelled as a running scan below).
+    let mut row = row;
+    if row.state == ScanRunState::Queued {
+        let res = scan_run::Entity::update_many()
+            .col_expr(
+                scan_run::Column::State,
+                sea_orm::sea_query::Expr::value(ScanRunState::Cancelled),
+            )
+            .col_expr(
+                scan_run::Column::EndedAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .col_expr(
+                scan_run::Column::Error,
+                sea_orm::sea_query::Expr::value(cancel_msg.clone()),
+            )
+            .filter(scan_run::Column::Id.eq(scan_uuid))
+            .filter(scan_run::Column::State.eq(ScanRunState::Queued))
+            .exec(&app.db)
+            .await;
+        let cancelled_queued = match res {
+            Ok(r) => r.rows_affected == 1,
+            Err(e) => {
+                tracing::warn!(error = %e, "scan cancel: queued row update failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+        // Re-read either way: the cancelled row for the response, or the row
+        // a job (or a finished scan) has moved on since.
+        row = match scan_run::Entity::find_by_id(scan_uuid).one(&app.db).await {
+            Ok(Some(r)) => r,
+            Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "scan run not found"),
+            Err(e) => {
+                tracing::warn!(error = %e, "scan cancel: re-read failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        };
+        if cancelled_queued {
+            // A queued library scan holds its library's coalescing key with
+            // its run id and nothing would run to release it: release it
+            // (compare-and-delete, or hand-over to a recorded follow-up) so
+            // the library can scan again at once. The job skips itself when
+            // it is picked up.
+            if row.kind == ScanRunKind::Library
+                && let Err(e) = app.jobs.release_scan(lib.id, scan_uuid).await
+            {
+                tracing::warn!(error = %e, library_id = %lib.id, "scan cancel: claim release failed; it expires on its own");
+            }
+        } else if row.state.is_terminal() {
+            return error(
+                StatusCode::CONFLICT,
+                "already_terminal",
+                &format!("scan run already in terminal state: {}", row.state.as_str()),
+            );
+        }
+    }
+    let updated = if row.state == ScanRunState::Cancelled {
+        row
+    } else {
+        // A running scan: flip the row; the scan notices at its next cancel
+        // poll and keeps its claim until it stops and releases it.
+        let mut am: scan_run::ActiveModel = row.into();
+        am.state = Set(ScanRunState::Cancelled);
+        am.ended_at = Set(Some(now));
+        am.error = Set(Some(cancel_msg.clone()));
+        match am.update(&app.db).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "scan cancel: row update failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
         }
     };
 

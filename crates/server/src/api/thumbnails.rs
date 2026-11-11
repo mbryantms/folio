@@ -254,15 +254,16 @@ pub async fn thumb(
     }
 
     // Same rules as the page routes (`library::no_follow`): no symbolic
-    // link below the root, a regular file, or no thumbnail.
-    if !crate::library::no_follow::issue_path_ok(&app, &row).await {
-        return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable");
-    }
-    let arc = match app
-        .zip_lru
-        .get_or_open(&row.id, std::path::Path::new(&row.file_path))
-        .await
-    {
+    // link below the root, a regular file, or no thumbnail. The reader is
+    // built from this handle (or reused only for the same file).
+    let archive_file = match crate::library::no_follow::open_issue_archive(&app, &row).await {
+        Ok(f) => f,
+        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable"),
+    };
+    let arc = match app.zip_lru.get_or_open(&row.id, archive_file).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e, "zip_lru open failed for thumb");

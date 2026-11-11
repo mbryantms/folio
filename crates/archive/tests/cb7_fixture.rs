@@ -10,7 +10,7 @@
 
 use archive::cb7::Cb7;
 use archive::comic_archive::ComicArchive;
-use archive::{ArchiveError, ArchiveLimits, open};
+use archive::{ArchiveError, ArchiveLimits, open_path_unchecked as open};
 use sevenz_rust2::{
     ArchiveEntry, ArchiveWriter, EncoderConfiguration, EncoderMethod, SourceReader,
 };
@@ -38,7 +38,7 @@ fn hex(s: &str) -> Vec<u8> {
 }
 
 fn assert_fixture_contents(path: &Path, expect_solid: bool) {
-    let mut a = Cb7::open(path, ArchiveLimits::default()).expect("open cb7");
+    let mut a = Cb7::open_path_unchecked(path, ArchiveLimits::default()).expect("open cb7");
     assert_eq!(a.is_solid(), expect_solid);
     let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
     assert_eq!(pages, ["page-001.jpg", "page-002.jpg", "page-003.jpg"]);
@@ -84,7 +84,7 @@ fn dispatch_by_extension_opens_cb7() {
 
 #[test]
 fn preload_all_serves_every_entry_from_one_pass() {
-    let mut a = Cb7::open(
+    let mut a = Cb7::open_path_unchecked(
         fixture("synthetic-3page-solid.cb7"),
         ArchiveLimits::default(),
     )
@@ -116,7 +116,7 @@ fn encrypted_fixtures_are_refused_as_encrypted() {
         "synthetic-3page-encrypted.cb7",
         "synthetic-3page-encrypted-data.cb7",
     ] {
-        let err = Cb7::open(fixture(name), ArchiveLimits::default())
+        let err = Cb7::open_path_unchecked(fixture(name), ArchiveLimits::default())
             .expect_err("encrypted cb7 must not open");
         assert!(
             matches!(err, ArchiveError::Encrypted),
@@ -131,7 +131,7 @@ fn garbage_bytes_are_malformed() {
     let p = tmp.path().join("junk.cb7");
     std::fs::write(&p, b"definitely not a 7z archive").unwrap();
     assert!(matches!(
-        Cb7::open(&p, ArchiveLimits::default()),
+        Cb7::open_path_unchecked(&p, ArchiveLimits::default()),
         Err(ArchiveError::Malformed(_))
     ));
 }
@@ -173,7 +173,8 @@ fn decompression_bomb_is_rejected_by_ratio_cap() {
     let mut page = page_bytes(1);
     page.resize(4 << 20, 0);
     write_7z(&p, &[("page-001.jpg", page)], true, EncoderMethod::LZMA2);
-    let err = Cb7::open(&p, ArchiveLimits::default()).expect_err("bomb must not open");
+    let err =
+        Cb7::open_path_unchecked(&p, ArchiveLimits::default()).expect_err("bomb must not open");
     assert!(
         matches!(err, ArchiveError::CapExceeded("compression ratio")),
         "got {err:?}"
@@ -199,7 +200,7 @@ fn traversal_and_backslash_names_are_rejected() {
             false,
             EncoderMethod::COPY,
         );
-        let err = Cb7::open(&p, ArchiveLimits::default()).expect_err(bad);
+        let err = Cb7::open_path_unchecked(&p, ArchiveLimits::default()).expect_err(bad);
         assert!(
             matches!(err, ArchiveError::UnsafeEntry(_)),
             "{bad}: expected UnsafeEntry, got {err:?}"
@@ -227,7 +228,7 @@ fn misnamed_sidecar_is_skipped_and_stream_stays_aligned() {
             solid,
             EncoderMethod::LZMA2,
         );
-        let mut a = Cb7::open(&p, ArchiveLimits::default()).unwrap();
+        let mut a = Cb7::open_path_unchecked(&p, ArchiveLimits::default()).unwrap();
         let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, ["page-001.jpg", "page-003.jpg"], "solid={solid}");
         let skipped: Vec<&str> = a
@@ -250,7 +251,7 @@ fn misnamed_sidecar_is_skipped_and_stream_stays_aligned() {
 #[test]
 fn caps_reject_when_tightened() {
     let path = fixture("synthetic-3page.cb7");
-    let base = Cb7::open(&path, ArchiveLimits::default()).unwrap();
+    let base = Cb7::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
     let n = base.entries().len() as u64;
     let biggest = base
         .entries()
@@ -284,7 +285,7 @@ fn caps_reject_when_tightened() {
         ),
     ];
     for (limits, want) in cases {
-        match Cb7::open(&path, limits) {
+        match Cb7::open_path_unchecked(&path, limits) {
             Err(ArchiveError::CapExceeded(got)) => assert_eq!(got, want),
             other => panic!("{want}: expected CapExceeded, got {other:?}"),
         }
