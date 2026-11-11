@@ -733,7 +733,7 @@ fn cbr_fixture() -> PathBuf {
     p
 }
 
-/// One rescan batch mixing every ingest shape, with hashed anchors on the
+/// One rescan batch mixing ingest shapes, with hashed anchors on the
 /// CBZ, the CBT and the archive whose page cannot be read. The results
 /// below are the ones the scanner produced when persist still read the
 /// pages inside the transaction: the same body was run against that code
@@ -767,11 +767,14 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
     bookmark(&app, &auth, &bad_id, 1).await; // PURPLE
 
     // The rescan batch: two reorders, a reorder whose new first page is
-    // unreadable, a byte-identical copy, and a CBR to convert. The copy
-    // sorts before the original, so it is persisted before the original's
-    // row takes the new content hash: no row matches it yet and it is
-    // ingested as its own issue, no `DuplicateContent` finding (the
-    // scanner did the same before the change).
+    // unreadable, and a CBR to convert.
+    //
+    // No byte-identical copy of a file that changes in the same batch: a
+    // folder's files are ingested in the order the filesystem lists them,
+    // so whether such a copy meets a row that already carries its content
+    // hash (a duplicate) or not (its own issue) differs from one
+    // filesystem to the next. `page_hashes_are_read_only_when_an_anchor_can_use_them`
+    // covers a copy whose original is unchanged, which has one answer.
     replace(&cbz, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
     replace(&cbt, &cbt_bytes(&[RED, PURPLE, GREEN, BLUE]), 60);
     replace(
@@ -779,8 +782,6 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
         &cbz_with_unreadable_page(&[RED, YELLOW, PURPLE], 0),
         60,
     );
-    let dup = series.join("Mixed 001 (copy).cbz");
-    replace(&dup, &std::fs::read(&cbz).unwrap(), 60);
     std::fs::copy(cbr_fixture(), series.join("Mixed 004.cbr")).unwrap();
     let stats = scanner::scan_library(&state, lib).await.unwrap();
     assert_eq!(
@@ -790,7 +791,7 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
             stats.files_converted,
             stats.files_duplicate
         ),
-        (3, 2, 1, 0),
+        (3, 1, 1, 0),
         "{stats:?}"
     );
 
@@ -815,12 +816,8 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
     assert_eq!(bad_row.page_count, Some(3));
     assert_eq!(bad_row.state, issue::IssueState::Active);
 
-    // The copy got its own row (fresh id, no anchors); the CBR was
-    // converted and ingested as a CBZ, the original kept as `.cbr.bak`.
-    let dup_row = row_at(&app, &dup).await.expect("the copy is ingested");
-    assert_ne!(dup_row.id, cbz_id);
-    assert_eq!(dup_row.page_count, Some(4));
-    assert!(markers(&app, &dup_row.id).await.is_empty());
+    // The CBR was converted and ingested as a CBZ, the original kept as
+    // `.cbr.bak`.
     let cbr_row = row_at(&app, &series.join("Mixed 004.cbz"))
         .await
         .expect("converted and ingested");
