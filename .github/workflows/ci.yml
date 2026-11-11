@@ -313,6 +313,7 @@ jobs:
       - name: install xmllint
         run: |
           command -v xmllint >/dev/null || {
+            scripts/ci/apt-retries.sh
             sudo apt-get update -qq
             sudo apt-get install -y -qq --no-install-recommends libxml2-utils
           }
@@ -1210,8 +1211,11 @@ jobs:
       - name: Install Chromium
         if: env.SMOKE == 'true'
         # --with-deps every time (OS libs are not cached); the browser download
-        # itself is skipped on a cache hit.
-        run: pnpm --filter web exec playwright install --with-deps chromium
+        # itself is skipped on a cache hit. Playwright runs apt for the OS
+        # libs, so let apt retry first (scripts/ci/apt-retries.sh).
+        run: |
+          scripts/ci/apt-retries.sh
+          pnpm --filter web exec playwright install --with-deps chromium
       - name: Playwright e2e (reader flow, relationships, a11y)
         if: env.SMOKE == 'true'
         env:
