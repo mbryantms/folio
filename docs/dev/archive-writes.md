@@ -27,9 +27,68 @@ the scanner and is documented in
 | Manual metadata edit → sidecar rewrite (WP-2.10) | `metadata::manual_writeback::{enqueue_issue_rewrite, enqueue_series_rewrite}` from the issue PATCH, bulk-metadata, series PATCH and external-id add / unlink handlers | Returns `NotWriteback` without composing anything unless `allow_archive_writeback && metadata_writeback_enabled`; `sidecar_refusal` gates the format; the job re-checks the flag | `manual_writeback.rs::issue_patch_in_non_writeback_library_enqueues_nothing`, `::cbr_without_conversion_is_refused_and_the_edit_stays_in_the_database` |
 | Metadata drift flush | `POST /libraries/{slug}/metadata-drift/flush` → `api::health_issues::flush_metadata_drift` | 409 `writeback_disabled` unless `metadata_writeback_enabled && allow_archive_writeback`; composes both sidecars from the database for every drifted issue and enqueues one `RewriteIssueSidecarsJob` each; the job re-checks the flag | `metadata_drift.rs::flush_endpoint_409s_when_writeback_disabled`, `::flush_endpoint_enqueues_rewrite_jobs_and_audits` |
 | Library-wide sidecar re-emit (audit 2026-11 A7) | `POST /libraries/{slug}/sidecar-reemit` (admin) → `jobs::sidecar_reemit` → `manual_writeback::enqueue_reemit_issue`, one `RewriteIssueSidecarsJob` per active issue | 409 `writeback_disabled` unless `allow_archive_writeback && metadata_writeback_enabled`; each tick re-checks both flags and aborts the run when either is off; `sidecar_refusal` archives are skipped and counted; the rewrite job re-checks the flag | `sidecar_reemit.rs::refused_unless_both_writeback_flags_are_on`, `::turning_writeback_off_aborts_the_run`, `::run_rewrites_every_archive_skips_refused_and_rescans_per_series` |
-| `.bak` retention prune | `jobs::backup_prune` (daily) | Deletes only under libraries with `allow_archive_writeback = true` and `archive_backup_retain_days > 0`. Every library is walked read-only for the health page's backup tally (`library_backup_stats`, see [`library::backup_stats`](../../crates/server/src/library/backup_stats.rs)); the walk under a non-writeback library counts and never removes | `backup_prune.rs::libraries_without_archive_writeback_are_skipped`, `::sweep_stores_a_backup_tally_for_every_library` |
+| `.bak` retention prune | `jobs::backup_prune` (daily) | Deletes only under libraries with `allow_archive_writeback = true` and `archive_backup_retain_days > 0`, and only Folio's backups made more than that many days ago (see [Backups](#backups-what-counts-and-how-old-they-are)). Every library is walked read-only for the health page's backup tally (`library_backup_stats`, see [`library::backup_stats`](../../crates/server/src/library/backup_stats.rs)); the walk under a non-writeback library counts and never removes | `backup_prune.rs::libraries_without_archive_writeback_are_skipped`, `::sweep_stores_a_backup_tally_for_every_library`, `::todays_sweep_keeps_a_fresh_backup_of_an_old_archive_and_foreign_bak_files`; `jobs::backup_prune` unit tests |
 | Startup staging-file cleanup | `archive_rewrite::spawn_startup_cleanup` → `startup_cleanup`, started once at boot after the HTTP listener is bound, walking on the blocking pool in the background | Walks only libraries with `allow_archive_writeback = true`. Deletes only names `archive_rewrite::is_staging_name` matches — exactly what the stager (`temp_staging`) produces: a recognized archive file name (`.cbz` / `.cbt` / `.cbr` / `.cb7`), a dot, 32 lowercase hex characters, `.tmp` — and only when older than `STARTUP_CLEANUP_TTL` (10 min, cutoff fixed when the walk starts, so a rewrite that begins during the walk is never touched). Any other `.tmp` (`notes.tmp`, another tool's `x.cbz.tmp`) and every `.bak` are left alone | `archive_edit.rs::startup_cleanup_removes_only_own_staging_in_writeback_libraries`, `archive_rewrite/mod.rs` unit tests (`is_staging_name_matches_only_folio_staging_files`, `startup_cleanup_leaves_other_tmp_files`) |
 
+
+## Backups: what counts, and how old they are
+
+A rewrite keeps the original as `<archive>.bak` (older ones rotated to
+`.bak.1` … `.bak.4`; see [How every writer touches the library](#how-every-writer-touches-the-library-through-a-folder-handle)).
+Three surfaces read those files back: the daily retention prune
+(`jobs::backup_prune`), the health page's backup tally
+(`library::backup_stats`) and the series Metadata tab's backup count
+(`api::series_metadata_tab::inspect_folder`). All three apply one rule
+(ARC-BAK):
+
+- **A backup is a regular file named `<archive>.bak` or
+  `<archive>.bak.<n>`**, `n` in `1..=5` without leading zeros, where
+  `<archive>` is a recognised comic-archive file name (`.cbz` / `.cbt` /
+  `.cbr` / `.cb7`, any case, non-empty stem):
+  `archive_rewrite::is_backup_name`. Pre-conversion backups match
+  (`X.cbr.bak` / `X.cb7.bak` beside the converted `X.cbz`). A user's
+  `notes.bak`, `photo.jpg.bak`, `X.cbz.bak.txt`, `X.cbz.bak.01`, a
+  directory or a symbolic link with a backup's name is never deleted,
+  counted or listed. The walk follows no link.
+- The per-issue backups listing and restore never search: they name the
+  issue's own `<file>.bak[.n]` (`archive_rewrite::backup_slot`) and accept
+  only a regular file there.
+- Not distinguished: a file the user named exactly like a Folio backup
+  (`cp X.cbz X.cbz.bak`). Only a record of the backups Folio made would
+  tell those apart; the name rule cannot. Requiring the sibling archive
+  to exist was considered and not taken: it does not separate that case
+  either (the sibling is right there), and it would hide and never prune
+  the backups of an archive that was later deleted or renamed.
+
+**A backup's age counts from when Folio made it** (ARC-WRITE a), read as
+the file's inode change time (`ctime`, `archive_rewrite::backup_made_at`),
+never its mtime. The backup is a hard link to the original where the
+filesystem allows one, and a hard link shares the original's inode,
+mtime included; by mtime a backup of an archive last modified a year ago
+was "a year old" the moment it was made, and the next sweep deleted it
+with the default 30-day retention. How each path leaves the backup:
+
+| Path | Backup made by | mtime | ctime |
+|---|---|---|---|
+| `rewrite_atomic` (page edit, sidecar rewrite, in-place conversion) | `linkat` archive → `.bak` | the original's (old) | the link (now) |
+| same, hard links refused (SMB / some NAS / FAT) | copy into a new `.bak` | now | now |
+| `convert_atomic` to a new name (`X.cbr` → `X.cbz`) | `linkat` / copy to a staging name, renamed over `X.cbr.bak` | as above | the link or copy, then the rename (now) |
+| `rename_into_place` (a ZIP named `.cbr`) | no backup | | |
+| slot rotation (`.bak` → `.bak.1`) | rename | unchanged | the rename (later) |
+
+`link(2)` sets the inode's ctime (POSIX; ext4, btrfs, XFS, ZFS, tmpfs and
+NFS servers do), a copy is a new file, and nothing in user space can set
+a ctime back, so the ctime is never earlier than the backup. Anything
+later (the rewrite unlinking the archive's old name, a rotation, a
+`chmod` / `chown`, a torrent client dropping its own hard link to the
+same inode) only moves it forward: a backup may be kept longer than the
+retention, never deleted sooner. A backup whose ctime is missing (zero)
+or earlier than its mtime (a filesystem that does not keep ctime) has an
+unknown age and is **kept**. The tally's oldest / newest dates use the
+same clock. Stamping the backup's mtime instead was rejected: for a hard
+link it would also change the mtime of every other name of that inode
+(a download client's hard link, or the archive itself before the swap,
+which the scanner fingerprints by size + mtime).
 ## How every writer touches the library: through a folder handle
 
 No writer creates, renames, links or deletes a file under a library root

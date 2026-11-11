@@ -52,9 +52,10 @@
 //! Per-library `archive_backup_retain_count` controls how many older
 //! slots (`.bak.1`, `.bak.2`, …) are also retained — capped at 5. The
 //! daily backup sweep ([`crate::jobs::backup_prune`], 04:45 UTC) walks
-//! each writeback-enabled library root for `.bak` / `.bak.N` files
-//! (see [`is_backup_name`]) whose mtime is older than
-//! `library.archive_backup_retain_days` and removes them; `0` keeps
+//! each writeback-enabled library root for Folio's backups (regular files
+//! named `<archive>.bak` / `<archive>.bak.N`, see [`is_backup_name`])
+//! made more than `library.archive_backup_retain_days` ago (by the inode
+//! change time, see [`backup_made_at`]) and removes them; `0` keeps
 //! backups forever.
 
 pub mod mutex;
@@ -1104,19 +1105,89 @@ pub fn backup_slot(target: &Path, slot: i32) -> PathBuf {
     backup_slot_path(target, slot)
 }
 
-/// Whether `name` is a backup file this module produces: `<original>.bak`
-/// (slot 0) or `<original>.bak.<n>` (slots 1+, numeric suffix only). The
-/// inverse of [`backup_slot`] — shared by the backup-storage rollup card
-/// and the retention sweep so both agree on what counts as a backup.
+/// Highest backup slot any Folio version names: `retain_count` is capped at
+/// 5, so the rotation writes slots `0..=4`; the backups listing looks at
+/// `0..=5`, and so does [`is_backup_name`].
+pub const MAX_BACKUP_SLOT: i32 = 5;
+
+/// Whether `name` (a bare file name) is a backup this module produces:
+/// `<archive>.bak` (slot 0) or `<archive>.bak.<n>` with `n` in
+/// `1..=`[`MAX_BACKUP_SLOT`] written without leading zeros, where
+/// `<archive>` is a recognised comic-archive file name (`.cbz` / `.cbt` /
+/// `.cbr` / `.cb7`, any case, non-empty stem). Every archive Folio rewrites
+/// or converts has such a name, so this covers the pre-conversion backups
+/// too (`X.cbr.bak` beside the converted `X.cbz`). The exact inverse of
+/// [`backup_slot`] over an archive path.
+///
+/// Anything else is not a backup: a user's `notes.bak`, `photo.jpg.bak`,
+/// `X.cbz.bak.txt`, `X.cbz.bak.01`. The retention sweep, the backup-storage
+/// tally and the series folder's backup count all go through this, so a
+/// file that fails it is never deleted, counted or offered. Callers also
+/// require a regular file (no link, no directory); the name alone is not
+/// enough.
 pub fn is_backup_name(name: &str) -> bool {
-    if name.ends_with(".bak") {
-        return true;
+    let base = if let Some(base) = name.strip_suffix(".bak") {
+        base
+    } else if let Some((base, slot)) = name.rsplit_once(".bak.") {
+        let valid_slot = !slot.starts_with('0')
+            && slot.bytes().all(|b| b.is_ascii_digit())
+            && slot
+                .parse::<i32>()
+                .is_ok_and(|n| (1..=MAX_BACKUP_SLOT).contains(&n));
+        if !valid_slot {
+            return false;
+        }
+        base
+    } else {
+        return false;
+    };
+    let base = Path::new(base);
+    base.file_stem().is_some_and(|s| !s.is_empty())
+        && base
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(crate::library::ignore::is_recognized_archive_ext)
+}
+
+/// When Folio made the backup described by `meta` (the `lstat` of a file
+/// [`is_backup_name`] accepts), for the retention sweep and the
+/// backup-storage dates. `None` when that cannot be known: the sweep then
+/// keeps the file.
+///
+/// The inode change time (`ctime`), not the modification time. A backup is
+/// usually a hard link to the original archive, which keeps the
+/// original's (often years old) mtime, so by mtime a backup made a minute
+/// ago could already be "older than the retention". Making the link sets
+/// the inode's ctime to the moment of the link (POSIX `link(2)`: ext4,
+/// btrfs, XFS, ZFS, tmpfs, NFS servers), and the copy fallback creates a
+/// new file, so ctime is never earlier than the backup. Nothing in user
+/// space can set ctime back. Later changes (the rewrite unlinking the
+/// archive's old name, a slot rotation's rename, a `chmod` / `chown`)
+/// only move it forward, which keeps a backup longer, never shorter.
+///
+/// Unknown (`None`): no ctime (zero or before the epoch), or a ctime
+/// earlier than the mtime, which a filesystem that keeps ctime cannot
+/// produce (every mtime change also sets ctime), so its ctime is not to be
+/// trusted.
+pub fn backup_made_at(meta: &fs::Metadata) -> Option<SystemTime> {
+    use std::os::unix::fs::MetadataExt;
+    let ctime = u64::try_from(meta.ctime())
+        .ok()
+        .filter(|&s| s > 0)
+        .map(|s| {
+            let nanos = u32::try_from(meta.ctime_nsec()).unwrap_or(0);
+            SystemTime::UNIX_EPOCH + std::time::Duration::new(s, nanos)
+        });
+    made_at(ctime, meta.modified().ok())
+}
+
+/// [`backup_made_at`]'s rule over the two timestamps.
+fn made_at(ctime: Option<SystemTime>, mtime: Option<SystemTime>) -> Option<SystemTime> {
+    let ctime = ctime?;
+    match mtime {
+        Some(m) if ctime < m => None,
+        _ => Some(ctime),
     }
-    if let Some(idx) = name.rfind(".bak.") {
-        let suffix = &name[idx + 5..];
-        return !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit());
-    }
-    false
 }
 
 /// Restore the most recent backup (`<target>.bak`) over `target` — the
@@ -2349,5 +2420,99 @@ mod tests {
             fs::symlink_metadata(f.series.join(&staged_name)).is_ok(),
             "the link is left for the operator"
         );
+    }
+
+    // ── what counts as a backup, and how old it is ──
+
+    #[test]
+    fn is_backup_name_accepts_every_backup_folio_writes() {
+        for ext in ["cbz", "cbt", "cbr", "cb7", "CBZ", "Cbr"] {
+            let archive = format!("Saga (2012) 001.{ext}");
+            for slot in 0..=MAX_BACKUP_SLOT {
+                let p = backup_slot(Path::new(&archive), slot);
+                let name = p.to_str().unwrap();
+                assert!(is_backup_name(name), "{name}");
+            }
+        }
+        // Pre-conversion names: the converted `.cbz` sits beside them.
+        for name in ["issue.cbr.bak", "issue.cb7.bak", "issue.cbz.bak"] {
+            assert!(is_backup_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn is_backup_name_rejects_what_folio_never_writes() {
+        for name in [
+            "notes.bak",
+            "photo.jpg.bak",
+            "X.cbz.bak.txt",
+            "X.cbz.bak.01",
+            "X.cbz.bak.0",
+            "X.cbz.bak.6",
+            "X.cbz.bak.",
+            "X.cbz.bak.1x",
+            ".cbz.bak",
+            "X.zip.bak",
+            "X.cbz.BAK",
+            "X.bak.1",
+            "bak",
+            ".bak",
+            "X.cbz",
+            "X.cbz.bak.bak",
+        ] {
+            assert!(!is_backup_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn made_at_is_the_ctime_unless_it_cannot_be_trusted() {
+        let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let earlier = t - std::time::Duration::from_secs(400 * 86_400);
+        // A hard link of an old file: old mtime, fresh ctime.
+        assert_eq!(made_at(Some(t), Some(earlier)), Some(t));
+        assert_eq!(made_at(Some(t), Some(t)), Some(t));
+        assert_eq!(made_at(Some(t), None), Some(t));
+        // No ctime, or a ctime before the mtime: unknown.
+        assert_eq!(made_at(None, Some(earlier)), None);
+        assert_eq!(made_at(Some(earlier), Some(t)), None);
+    }
+
+    /// The copy fallback (hard links refused) makes a new file: its age, too,
+    /// counts from when the backup was made, not from the original's old
+    /// mtime, and it is pruned once that is past the retention.
+    #[test]
+    fn copied_backup_ages_from_when_it_was_made() {
+        use std::os::unix::fs::MetadataExt;
+        let day = std::time::Duration::from_secs(86_400);
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        let old = filetime::FileTime::from_system_time(SystemTime::now() - 400 * day);
+        filetime::set_file_mtime(&src, old).unwrap();
+        // A stale slot makes `hard_link` fail with EEXIST → copy path.
+        let bak = dir.path().join("issue.cbz.bak");
+        fs::write(&bak, b"stale").unwrap();
+        let (folder, name) = root(&dir).open_parent(&src).unwrap();
+        let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original).unwrap();
+        assert_ne!(
+            fs::metadata(&bak).unwrap().ino(),
+            fs::metadata(&src).unwrap().ino(),
+            "the backup is a copy"
+        );
+        assert_eq!(fs::read(&bak).unwrap(), b"payload");
+
+        let (stats, _) =
+            crate::jobs::backup_prune::prune_library(dir.path(), 30, SystemTime::now() + day);
+        assert_eq!(stats.removed, 0, "{stats:?}");
+        assert!(
+            bak.exists(),
+            "a copy made today survives a 30-day retention"
+        );
+        let (stats, _) =
+            crate::jobs::backup_prune::prune_library(dir.path(), 30, SystemTime::now() + 31 * day);
+        assert_eq!(stats.removed, 1, "{stats:?}");
+        assert!(!bak.exists());
+        assert!(src.exists(), "the archive is never touched");
     }
 }

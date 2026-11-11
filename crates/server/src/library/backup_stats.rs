@@ -43,19 +43,25 @@ pub struct Tally {
 }
 
 impl Tally {
-    /// Fold one surviving backup file into the tally.
+    /// Fold one surviving backup file into the tally. The dates are when
+    /// each backup was made ([`crate::archive_rewrite::backup_made_at`],
+    /// the same clock the retention sweep ages by), not the file's mtime,
+    /// which for a hard-linked backup is the original archive's.
     pub fn add(&mut self, meta: &std::fs::Metadata) {
         self.file_count += 1;
         self.total_bytes += meta.len();
-        if let Ok(modified) = meta.modified() {
-            self.oldest_modified = Some(self.oldest_modified.map_or(modified, |o| o.min(modified)));
-            self.newest_modified = Some(self.newest_modified.map_or(modified, |n| n.max(modified)));
+        if let Some(made) = crate::archive_rewrite::backup_made_at(meta) {
+            self.oldest_modified = Some(self.oldest_modified.map_or(made, |o| o.min(made)));
+            self.newest_modified = Some(self.newest_modified.map_or(made, |n| n.max(made)));
         }
     }
 }
 
-/// Visit every `.bak` / `.bak.N` file under `root` (walk errors are
-/// logged and skipped). The callback gets the entry and its metadata.
+/// Visit every Folio backup under `root`: a regular file (never a link or
+/// a directory; the walk follows no link) whose name
+/// [`crate::archive_rewrite::is_backup_name`] accepts. Walk errors are
+/// logged and skipped. The callback gets the entry and its `lstat`
+/// metadata.
 pub fn for_each_backup(root: &Path, mut f: impl FnMut(&walkdir::DirEntry, &std::fs::Metadata)) {
     for entry in walkdir::WalkDir::new(root)
         .into_iter()

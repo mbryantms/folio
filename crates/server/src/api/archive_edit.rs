@@ -686,7 +686,7 @@ pub async fn backups(
 
     let target = std::path::PathBuf::from(&row.file_path);
     let mut out = Vec::new();
-    for slot in 0..=5 {
+    for slot in 0..=archive_rewrite::MAX_BACKUP_SLOT {
         let p = archive_rewrite::backup_slot(&target, slot);
         // Listed without following links: only a regular file is a backup.
         let Ok(meta) = tokio::fs::symlink_metadata(&p).await else {

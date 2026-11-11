@@ -646,8 +646,11 @@ export function LibrarySettingsForm({ id }: { id: string }) {
                       />
                     </FormControl>
                     <FormDescription>
-                      Backups older than this are pruned by the nightly cleanup.
-                      0 keeps backups forever.
+                      Backups Folio made more than this many days ago are pruned
+                      by the nightly cleanup, counted from when the backup was
+                      made, not from the archive&apos;s own date. Other{" "}
+                      <span className="font-mono">.bak</span> files are never
+                      touched. 0 keeps backups forever.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

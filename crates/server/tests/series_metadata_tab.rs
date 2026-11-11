@@ -129,6 +129,17 @@ async fn fixture(app: &TestApp) -> Fixture {
     )
     .unwrap();
     std::fs::write(dir.path().join("Wonder Woman 001.cbz.bak"), b"old").unwrap();
+    // ARC-BAK: things that only look like backups are not counted — a
+    // user's own `.bak` files, a directory and a link with a backup's name.
+    std::fs::write(dir.path().join("notes.bak"), b"mine").unwrap();
+    std::fs::write(dir.path().join("photo.jpg.bak"), b"mine").unwrap();
+    std::fs::write(dir.path().join("Wonder Woman 001.cbz.bak.txt"), b"mine").unwrap();
+    std::fs::create_dir(dir.path().join("Wonder Woman 009.cbz.bak")).unwrap();
+    std::os::unix::fs::symlink(
+        dir.path().join("Wonder Woman 001.cbz.bak"),
+        dir.path().join("Wonder Woman 002.cbz.bak"),
+    )
+    .unwrap();
     entity::series::ActiveModel {
         id: Set(series_id),
         folder_path: Set(Some(dir.path().to_string_lossy().into_owned())),
@@ -243,7 +254,11 @@ async fn overview_reports_ids_tiers_sync_files_and_provenance() {
     assert_eq!(body["files"]["by_extension"][0]["extension"], "cbz");
     assert_eq!(body["files"]["by_extension"][0]["count"], 3);
     assert_eq!(body["files"]["cvinfo_present"], true);
-    assert_eq!(body["files"]["backups"], 1);
+    assert_eq!(
+        body["files"]["backups"], 1,
+        "only Folio's own backup file counts: {}",
+        body["files"]
+    );
     // One issue per tool in the fixture: ties break on the key.
     let tools: Vec<(&str, i64)> = body["files"]["tagged_by"]
         .as_array()

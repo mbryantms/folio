@@ -7,8 +7,21 @@
 //! are full-size copies, so without a reaper a library that gets edited
 //! slowly doubles on disk. This sweep walks every library that has
 //! `allow_archive_writeback = true` and a non-zero
-//! `archive_backup_retain_days`, and removes backup files whose mtime is
-//! older than that many days. `0` means "keep forever".
+//! `archive_backup_retain_days`, and removes the backups made more than
+//! that many days ago. `0` means "keep forever".
+//!
+//! **What is a backup:** a regular file (never a link or a directory)
+//! named `<archive>.bak` or `<archive>.bak.<1..=5>`, where `<archive>` is a
+//! recognised comic-archive name
+//! ([`crate::archive_rewrite::is_backup_name`]). A user's `notes.bak` or
+//! `photo.jpg.bak` is never touched.
+//!
+//! **How old a backup is:** counted from when Folio made it, which is the
+//! inode change time ([`crate::archive_rewrite::backup_made_at`]), not the
+//! mtime. A backup is usually a hard link to the original archive and
+//! carries that archive's old mtime, so by mtime a backup made minutes
+//! ago could be deleted at the next sweep. When the time cannot be known
+//! the file is kept.
 //!
 //! Best-effort, like the thumbnail orphan sweep: a per-file delete error
 //! is counted and logged, and the walk continues. Libraries without
@@ -58,9 +71,14 @@ impl PruneStats {
 /// fresh backup tally for all of them, and emits one `archive.removed`
 /// library event per library that had at least one backup pruned.
 pub async fn run(state: &AppState) -> anyhow::Result<PruneStats> {
+    run_at(state, SystemTime::now()).await
+}
+
+/// [`run`] with the clock fixed at `now`, so tests can move time forward
+/// instead of back-dating a timestamp nothing in user space can set.
+pub async fn run_at(state: &AppState, now: SystemTime) -> anyhow::Result<PruneStats> {
     let libs = library::Entity::find().all(&state.db).await?;
 
-    let now = SystemTime::now();
     let mut total = PruneStats::default();
     for lib in libs {
         let root = std::path::PathBuf::from(&lib.root_path);
@@ -122,9 +140,10 @@ pub async fn run(state: &AppState) -> anyhow::Result<PruneStats> {
     Ok(total)
 }
 
-/// Walk `root` once: delete every `.bak` / `.bak.N` file whose mtime is
-/// more than `retain_days` days before `now`, and tally the ones that
-/// stay. `retain_days <= 0` deletes nothing (an empty [`PruneStats`] with
+/// Walk `root` once: delete every backup
+/// ([`backup_stats::for_each_backup`]) made more than `retain_days` days
+/// before `now` ([`crate::archive_rewrite::backup_made_at`]; a backup whose
+/// making time is unknown is kept), and tally the ones that stay. `retain_days <= 0` deletes nothing (an empty [`PruneStats`] with
 /// `libraries = 0`) but still tallies. An unreadable root (unmounted
 /// share) prunes nothing and yields no tally, so the stored count is left
 /// alone rather than zeroed.
@@ -147,8 +166,8 @@ pub fn prune_library(
     });
 
     backup_stats::for_each_backup(root, |entry, meta| {
-        let expired = match (cutoff, meta.modified()) {
-            (Some(cutoff), Ok(modified)) => modified < cutoff,
+        let expired = match (cutoff, crate::archive_rewrite::backup_made_at(meta)) {
+            (Some(cutoff), Some(made)) => made < cutoff,
             _ => false,
         };
         if !expired {
@@ -176,35 +195,56 @@ pub fn prune_library(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::no_follow::LibraryRoot;
     use std::fs;
+    use std::os::unix::fs::MetadataExt;
 
-    fn touch(path: &Path, age: Duration, now: SystemTime) {
+    const DAY: Duration = Duration::from_secs(86_400);
+
+    fn write(path: &Path) {
         fs::write(path, b"x").unwrap();
-        let t = filetime::FileTime::from_system_time(now - age);
+    }
+
+    /// Set `path`'s mtime to `age` before now. Its ctime stays "now":
+    /// nothing in user space can move a ctime back, which is the point.
+    fn backdate_mtime(path: &Path, age: Duration) {
+        let t = filetime::FileTime::from_system_time(SystemTime::now() - age);
         filetime::set_file_mtime(path, t).unwrap();
     }
 
+    /// Two moments around which files are made, far enough apart that the
+    /// filesystem's (coarse) ctime tells them apart.
+    fn pause() {
+        std::thread::sleep(Duration::from_millis(60));
+    }
+
     #[test]
-    fn prunes_only_old_backups_and_tallies_the_rest() {
+    fn prunes_only_backups_made_before_the_cutoff_and_tallies_the_rest() {
         let dir = tempfile::tempdir().unwrap();
-        let now = SystemTime::now();
-        let day = Duration::from_secs(86_400);
         let old = dir.path().join("a.cbz.bak");
         let old_slot = dir.path().join("a.cbz.bak.2");
-        let young = dir.path().join("b.cbz.bak");
         let not_backup = dir.path().join("c.cbz");
-        touch(&old, 40 * day, now);
-        touch(&old_slot, 40 * day, now);
-        touch(&young, 5 * day, now);
-        touch(&not_backup, 400 * day, now);
+        write(&old);
+        write(&old_slot);
+        write(&not_backup);
+        backdate_mtime(&not_backup, 400 * DAY);
+        pause();
+        let mid = SystemTime::now();
+        pause();
+        let young = dir.path().join("b.cbz.bak");
+        write(&young);
 
-        let (stats, tally) = prune_library(dir.path(), 30, now);
+        // 29 days after `mid`: nothing is old enough yet.
+        let (stats, _) = prune_library(dir.path(), 30, mid + 29 * DAY);
+        assert_eq!(stats.removed, 0);
+
+        let (stats, tally) = prune_library(dir.path(), 30, mid + 30 * DAY);
         let tally = tally.expect("readable root");
-        assert_eq!(stats.removed, 2);
+        assert_eq!(stats.removed, 2, "{stats:?}");
         assert_eq!(stats.errors, 0);
         assert!(!old.exists());
         assert!(!old_slot.exists());
-        assert!(young.exists());
+        assert!(young.exists(), "made after the cutoff");
         assert!(not_backup.exists(), "non-backup files are never touched");
         assert_eq!(
             tally.file_count, 1,
@@ -216,10 +256,9 @@ mod tests {
     #[test]
     fn zero_retain_days_is_a_no_op_that_still_tallies() {
         let dir = tempfile::tempdir().unwrap();
-        let now = SystemTime::now();
         let old = dir.path().join("a.cbz.bak");
-        touch(&old, Duration::from_secs(400 * 86_400), now);
-        let (stats, tally) = prune_library(dir.path(), 0, now);
+        write(&old);
+        let (stats, tally) = prune_library(dir.path(), 0, SystemTime::now() + 4_000 * DAY);
         assert_eq!(stats, PruneStats::default());
         assert!(old.exists());
         assert_eq!(tally.expect("readable root").file_count, 1);
@@ -231,5 +270,136 @@ mod tests {
         let (stats, tally) = prune_library(&dir.path().join("unmounted"), 30, SystemTime::now());
         assert_eq!(stats, PruneStats::default());
         assert_eq!(tally, None, "a missing root must not zero the stored count");
+    }
+
+    /// ARC-BAK: only `<archive>.bak[.N]` regular files are Folio's. A user's
+    /// own `.bak` files, a directory or a link with a backup's name are never
+    /// deleted or counted, however old. `real.cbz.bak` is the control: the
+    /// same sweep deletes it.
+    #[test]
+    fn files_folio_did_not_write_are_never_deleted_or_counted() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let foreign = [
+            "notes.bak",
+            "photo.jpg.bak",
+            "X.cbz.bak.txt",
+            "X.cbz.bak.01",
+            "X.cbz.bak.6",
+            "X.cbz.bak.",
+            ".cbz.bak",
+            "X.zip.bak",
+            "X.cbz.BAK",
+        ];
+        for name in foreign {
+            write(&root.join(name));
+            backdate_mtime(&root.join(name), 4_000 * DAY);
+        }
+        // A directory named like a backup, with a file inside that is not.
+        fs::create_dir(root.join("something.cbz.bak")).unwrap();
+        write(&root.join("something.cbz.bak").join("inner.txt"));
+        fs::create_dir(root.join("something.bak")).unwrap();
+        // A link named like a backup, pointing out of the library.
+        let victim = outside.path().join("victim.cbz.bak");
+        write(&victim);
+        std::os::unix::fs::symlink(&victim, root.join("link.cbz.bak")).unwrap();
+        // The control.
+        let real = root.join("real.cbz.bak");
+        write(&real);
+
+        let (_, tally) = prune_library(root, 0, SystemTime::now());
+        assert_eq!(tally.unwrap().file_count, 1, "only real.cbz.bak is counted");
+
+        let (stats, tally) = prune_library(root, 30, SystemTime::now() + 10_000 * DAY);
+        assert_eq!(stats.removed, 1, "{stats:?}");
+        assert_eq!(stats.errors, 0, "{stats:?}");
+        assert!(!real.exists(), "the control is pruned");
+        assert_eq!(tally.unwrap().file_count, 0);
+        for name in foreign {
+            assert!(root.join(name).exists(), "{name} must survive");
+        }
+        assert!(root.join("something.cbz.bak").join("inner.txt").exists());
+        assert!(root.join("something.bak").is_dir());
+        assert!(root.join("link.cbz.bak").symlink_metadata().is_ok());
+        assert!(victim.exists(), "a link is never followed");
+    }
+
+    /// ARC-WRITE a: a rewrite hard-links the original into `.bak`, so the
+    /// backup carries the ORIGINAL's mtime. A backup of a 400-day-old archive
+    /// made just now must survive a 30-day retention until 30 days have
+    /// really passed.
+    #[test]
+    fn hard_linked_backup_of_an_old_archive_ages_from_when_it_was_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("issue.cbz");
+        fs::write(&target, b"v1").unwrap();
+        backdate_mtime(&target, 400 * DAY);
+        let old_ino = fs::metadata(&target).unwrap().ino();
+        pause();
+        let before = SystemTime::now();
+        pause();
+
+        let root = LibraryRoot::resolve(dir.path());
+        let outcome = crate::archive_rewrite::rewrite_atomic(&root, &target, 1, |io| {
+            use std::io::Write;
+            io.staging_file()?.write_all(b"v2")?;
+            Ok(())
+        })
+        .unwrap();
+        let bak = outcome.backup.expect("a backup was made");
+        let meta = fs::symlink_metadata(&bak).unwrap();
+        assert_eq!(meta.ino(), old_ino, "the backup is a hard link");
+        assert!(
+            meta.modified().unwrap() < SystemTime::now() - 399 * DAY,
+            "the backup carries the original's old mtime"
+        );
+
+        // A sweep tomorrow keeps it.
+        let (stats, _) = prune_library(dir.path(), 30, SystemTime::now() + DAY);
+        assert_eq!(stats.removed, 0, "{stats:?}");
+        assert!(
+            bak.exists(),
+            "a backup made today survives a 30-day retention"
+        );
+        // 30 days after a moment before the backup was made: still kept.
+        let (stats, _) = prune_library(dir.path(), 30, before + 30 * DAY);
+        assert_eq!(stats.removed, 0, "{stats:?}");
+        assert!(bak.exists());
+
+        // Once it really is older than the retention, it goes.
+        let (stats, _) = prune_library(dir.path(), 30, SystemTime::now() + 31 * DAY);
+        assert_eq!(stats.removed, 1, "{stats:?}");
+        assert!(!bak.exists());
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            b"v2",
+            "the archive is untouched"
+        );
+    }
+
+    /// A backup whose making time cannot be known is kept. Here the mtime is
+    /// set into the future, so the ctime (the moment of that change) is
+    /// earlier than the mtime, which a filesystem that keeps ctime cannot
+    /// produce. `known.cbz.bak` is the control.
+    #[test]
+    fn a_backup_of_unknown_age_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let unknown = dir.path().join("unknown.cbz.bak");
+        let known = dir.path().join("known.cbz.bak");
+        write(&unknown);
+        write(&known);
+        let future = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
+        filetime::set_file_mtime(&unknown, future).unwrap();
+        assert_eq!(
+            crate::archive_rewrite::backup_made_at(&fs::symlink_metadata(&unknown).unwrap()),
+            None
+        );
+
+        let (stats, tally) = prune_library(dir.path(), 30, SystemTime::now() + 10_000 * DAY);
+        assert_eq!(stats.removed, 1, "{stats:?}");
+        assert!(!known.exists(), "the control is pruned");
+        assert!(unknown.exists(), "unknown age: kept");
+        assert_eq!(tally.unwrap().file_count, 1, "kept and still counted");
     }
 }
