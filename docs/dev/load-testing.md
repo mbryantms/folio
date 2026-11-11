@@ -848,6 +848,30 @@ PERF_PG_CONTAINER=… PERF_REDIS_CONTAINER=… PERF_KEEP=1 just perf-explain
 # → perf-out/explain-<ts>/oha-<label>.txt (latency histogram, RPS, status codes)
 ```
 
+**What `oha` can measure.** Token buckets
+([rate-limits.md](../architecture/rate-limits.md)) stay on whatever the
+settings say: `COMIC_RATE_LIMIT_ENABLED=false` / `auth.rate_limit_enabled`
+only switch off the failed-auth lockout and the CBL import window, and
+there is deliberately no switch for the buckets. One user's token therefore
+gets at most a bucket's sustained rate on any bucketed route, and an
+unpaced run past the burst measures the 429 path (a 2026-11 baseline got
+about 31,800 answers of 429 per 200 on the entity labels).
+
+- Throughput and latency under load: every label in `endpoints.txt` /
+  `endpoints-m7.txt` not listed below (`series-issues`, the progress
+  rails, saved-view and CBL results, `creators-*`, the series detail
+  routes, the admin per-library pages, `similar-*`, `relationships-*`).
+- Latency only: the labels on the per-user `search` bucket (10/s, burst
+  60), i.e. `series-*` list labels (`/api/series`), `issues-browse-recent`,
+  `issues-filter-writer`, `issues-search`, `characters-*`, `teams-list`,
+  `locations-list`, `people-search`. The harness runs them paced at
+  `PERF_OHA_SEARCH_QPS` (default 8/s) so every answer is a real one; the
+  oha file's latency is valid, its requests/sec is the pace. For their
+  behaviour under concurrency use the `pgbench` SQL replay described
+  above (each label's statements, parameters inlined, `pgbench -c 16`).
+  Spreading the load over several users does not help much: each user
+  adds one bucket's 10/s.
+
 To drive a server by hand, whether the perf server, `just dev` or a
 compose stack:
 

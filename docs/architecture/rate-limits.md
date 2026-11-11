@@ -128,10 +128,12 @@ Defaults are conservative for single-tenant-to-small-family scale (the spec's pr
 - Search and autocomplete are cheap to relax; the OPDS reading path (`opds_stream`) is I/O-bound, raise carefully.
 - Auth endpoints should stay tight regardless of scale.
 
-Override via env (planned; not yet implemented in Phase 0):
+There is no runtime override: changing a bucket means changing its constant in `middleware/rate_limit.rs`.
 
-```
-COMIC_RATE_LIMIT_OVERRIDE=pages_read=120/600,pages_thumb=400/2000
-```
+## Key-store pruning
 
-Form is `bucket_name=per_ip/per_user`. PR-able once the buckets stabilize in real-world use.
+governor keeps one entry per key in each bucket's store and never drops one by itself, so a per-IP store would grow with every address a client rotates through. Every `Bucket::build()` / `build_per_user()` registers its store in a process-wide registry (`rate_limit::LimiterRegistry`), and one background task (`rate_limit::spawn_pruner`, started by `app::serve` next to the metrics upkeep and stopped by the same shutdown token) sweeps it every 60 s (`PRUNE_INTERVAL`): each store drops the keys whose bucket has refilled completely (governor's `retain_recent`, which leaves a key exactly as a fresh one would be) and then releases the freed capacity (`shrink_to_fit`). A key that is still spending tokens is kept with its state, so pruning never hands anyone a refilled bucket early. Between sweeps a store holds at most the keys seen in the last minute plus the ones still refilling.
+
+The registry holds its stores weakly: a router that is dropped frees its stores, and the registry forgets the dead handles on its next registration or sweep. The integration tests build many routers per process and never start the sweep. Unit tests in `rate_limit::tests` pin both properties.
+
+Verified against the code at `c7846c06` on 2026-11-11 (pruning, override removal).
