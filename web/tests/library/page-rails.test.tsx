@@ -163,8 +163,22 @@ describe("PageRails prop wiring", () => {
       pinned = { items, isLoading: false };
       const rails = collectByType(PageRails(props), LazyRail);
       expect(rails.map((rail) => rail.props)).toEqual([
-        { view: items[0], priority: true },
-        { view: items[1], priority: false },
+        { view: items[0], priority: true, eager: true },
+        { view: items[1], priority: false, eager: false },
+      ]);
+    });
+
+    it("prioritizes the rail the server prefetch settled on, mounting the hidden ones before it", () => {
+      const items = [view("v1"), view("v2"), view("v3")];
+      pinned = { items, isLoading: false };
+      const rails = collectByType(
+        PageRails({ ...props, priorityViewId: "v2" }),
+        LazyRail,
+      );
+      expect(rails.map((rail) => rail.props)).toEqual([
+        { view: items[0], priority: false, eager: true },
+        { view: items[1], priority: true, eager: true },
+        { view: items[2], priority: false, eager: false },
       ]);
     });
 
