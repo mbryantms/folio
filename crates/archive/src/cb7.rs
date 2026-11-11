@@ -55,6 +55,7 @@
 //!     mirroring [`crate::cbr::CBR_SNIFF_MAX_ENTRY_BYTES`] — only entries of
 //!     at most [`CB7_SNIFF_MAX_ENTRY_BYTES`] are sniffed there.
 
+use crate::source::ArchiveFile;
 use crate::{
     ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, comic_archive::ComicArchive,
     entry_name::validate as sanitize_entry_name, image_sniff,
@@ -62,7 +63,7 @@ use crate::{
 use sevenz_rust2::{Archive, BlockDecoder, EncoderMethod, Password};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const IGNORED_NAMES: &[&str] = &["Thumbs.db", "desktop.ini"];
 
@@ -79,7 +80,8 @@ pub const CB7_SNIFF_MAX_ENTRY_BYTES: u64 = 256 * 1024;
 pub const MAX_DECODER_MEMORY_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct Cb7 {
-    path: PathBuf,
+    /// The open file every decode reads from (never reopened by name).
+    source: ArchiveFile,
     archive: Archive,
     entries: Vec<ArchiveEntry>,
     /// `ArchiveEntry::index` → index into `archive.files`.
@@ -95,7 +97,7 @@ pub struct Cb7 {
 impl std::fmt::Debug for Cb7 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Cb7")
-            .field("path", &self.path)
+            .field("path", &self.source.display_path())
             .field("entries", &self.entries.len())
             .field("solid", &self.archive.is_solid)
             .finish_non_exhaustive()
@@ -103,9 +105,19 @@ impl std::fmt::Debug for Cb7 {
 }
 
 impl Cb7 {
-    pub fn open(path: impl AsRef<Path>, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
-        let path_buf = path.as_ref().to_path_buf();
-        let archive = Archive::open(&path_buf).map_err(map_err)?;
+    /// Open a file outside any library root by name (links followed).
+    /// Tests and temp files only; see [`crate::source`].
+    pub fn open_path_unchecked(
+        path: impl AsRef<Path>,
+        limits: ArchiveLimits,
+    ) -> Result<Self, ArchiveError> {
+        Self::open_file(ArchiveFile::open_path_unchecked(path)?, limits)
+    }
+
+    /// Open from a file the caller already opened. Every later decode reads
+    /// through this handle.
+    pub fn open_file(source: ArchiveFile, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
+        let archive = Archive::read(&mut source.reader(), &Password::empty()).map_err(map_err)?;
         preflight_blocks(&archive, limits)?;
 
         let mut entries: Vec<ArchiveEntry> = Vec::new();
@@ -143,7 +155,7 @@ impl Cb7 {
         }
 
         let mut me = Self {
-            path: path_buf,
+            source,
             archive,
             entries,
             file_index,
@@ -218,7 +230,7 @@ impl Cb7 {
             .map(|(i, e)| (std::ptr::from_ref(e) as usize, i))
             .collect();
         let password = Password::empty();
-        let mut source = std::fs::File::open(&self.path)?;
+        let mut source = self.source.reader();
         for (block, mut targets) in by_block {
             let mut failure: Option<ArchiveError> = None;
             let decoder = BlockDecoder::new(1, block, &self.archive, &password, &mut source);
@@ -302,7 +314,7 @@ impl Cb7 {
         });
         if let Err(e) = res {
             tracing::debug!(
-                path = %self.path.display(),
+                path = %self.source.display_path().display(),
                 error = %e,
                 "cb7: content sniff pass failed; keeping every entry",
             );
@@ -323,7 +335,7 @@ impl Cb7 {
                 continue;
             }
             tracing::warn!(
-                path = %self.path.display(),
+                path = %self.source.display_path().display(),
                 entry = %entry.name,
                 size = entry.uncompressed_size,
                 "cb7: dropping image-named entry whose bytes aren't an image",
@@ -500,7 +512,7 @@ impl ComicArchive for Cb7 {
         &self.skipped
     }
     fn path(&self) -> &Path {
-        &self.path
+        self.source.display_path()
     }
 }
 

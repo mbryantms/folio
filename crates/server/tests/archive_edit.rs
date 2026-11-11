@@ -120,20 +120,20 @@ fn bulk_job(issue_id: &str, op: BulkArchiveOp) -> ArchiveEditJob {
 }
 
 fn page_bytes(path: &Path, name: &str) -> Vec<u8> {
-    let mut c = Cbz::open(path, ArchiveLimits::default()).unwrap();
+    let mut c = Cbz::open_path_unchecked(path, ArchiveLimits::default()).unwrap();
     c.read_entry_bytes_by_name(name).unwrap()
 }
 
 /// Format-agnostic page-name list (works for cbz + cbt) via the dispatch
 /// reader.
 fn open_page_names(path: &Path) -> Vec<String> {
-    let a = archive::open(path, ArchiveLimits::default()).unwrap();
+    let a = archive::open_path_unchecked(path, ArchiveLimits::default()).unwrap();
     a.pages().iter().map(|e| e.name.clone()).collect()
 }
 
 /// Format-agnostic single-page read.
 fn read_any_page(path: &Path, name: &str) -> Vec<u8> {
-    let mut a = archive::open(path, ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(path, ArchiveLimits::default()).unwrap();
     a.read_entry_bytes(name).unwrap()
 }
 
@@ -165,7 +165,7 @@ async fn remove_and_reorder_rewrites_archive() {
     assert_eq!(res.page_count_before, 4);
     assert_eq!(res.page_count_after, 3);
 
-    let c = Cbz::open(&path, ArchiveLimits::default()).unwrap();
+    let c = Cbz::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
     let names: Vec<String> = c.pages().iter().map(|e| e.name.clone()).collect();
     assert_eq!(names, vec!["p0001.png", "p0002.png", "p0003.png"]);
     drop(c);
@@ -368,7 +368,7 @@ async fn transform_crop_changes_dimensions() {
     .unwrap();
 
     // Page count is unchanged; the page is re-encoded to the cropped dims.
-    let cbz = Cbz::open(&path, ArchiveLimits::default()).unwrap();
+    let cbz = Cbz::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
     assert_eq!(cbz.pages().len(), 1);
     let bytes = page_bytes(&path, "p0001.png");
     let img = image::load_from_memory(&bytes).unwrap();
@@ -397,7 +397,11 @@ async fn restore_from_bak_reverts_archive() {
         "edit changed the file"
     );
 
-    archive_rewrite::restore_latest_backup(&path).unwrap();
+    archive_rewrite::restore_latest_backup(
+        &server::library::no_follow::LibraryRoot::resolve(dir.path()),
+        &path,
+    )
+    .unwrap();
     assert_eq!(
         std::fs::read(&path).unwrap(),
         original,
@@ -445,7 +449,7 @@ async fn handle_serializes_on_held_mutex() {
     )
     .await
     .unwrap();
-    let c = Cbz::open(&path, ArchiveLimits::default()).unwrap();
+    let c = Cbz::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
     assert_eq!(c.pages().len(), 1, "second handle rewrote the archive");
 
     // observability-split M3b: the successful rewrite wrote a durable
@@ -533,7 +537,7 @@ async fn page_op_sequences_match_simulation() {
         let res = edit_one_issue(&state, &job(&issue_id, ops)).await.unwrap();
         assert_eq!(res.page_count_after, predicted, "seq {i}: count mismatch");
 
-        let c = Cbz::open(&path, ArchiveLimits::default()).unwrap();
+        let c = Cbz::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
         assert_eq!(
             c.pages().len(),
             predicted,
@@ -626,7 +630,7 @@ async fn cbr_edit_converts_to_cbz_and_repoints_issue() {
         .await;
     let state = app.state();
 
-    let pre = archive::open(&cbr_path, ArchiveLimits::default())
+    let pre = archive::open_path_unchecked(&cbr_path, ArchiveLimits::default())
         .unwrap()
         .pages()
         .len();
@@ -656,7 +660,7 @@ async fn cbr_edit_converts_to_cbz_and_repoints_issue() {
     );
 
     // The converted CBZ is a valid zip with the surviving pages.
-    let cbz = Cbz::open(&cbz_path, ArchiveLimits::default()).unwrap();
+    let cbz = Cbz::open_path_unchecked(&cbz_path, ArchiveLimits::default()).unwrap();
     assert_eq!(cbz.pages().len(), pre - 1);
 
     // The issue row repoints to the .cbz and the library remembers the
@@ -733,7 +737,7 @@ async fn page_edit_preserves_foreign_sidecars_cbz_and_cbt() {
             .await
             .unwrap();
 
-        let mut a = archive::open(&path, ArchiveLimits::default()).unwrap();
+        let mut a = archive::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
         assert_eq!(open_page_names(&path), vec!["p0001.png"], "{file_name}");
         assert_eq!(
             a.read_entry_bytes("CoMet.xml").unwrap(),

@@ -265,11 +265,18 @@ async fn settle_row(
             .await
             .map_err(|e| anyhow::anyhow!("archive work semaphore closed: {e}"))?;
         let p = path.clone();
+        let root = std::path::PathBuf::from(&lib.root_path);
         tokio::task::spawn_blocking(move || {
-            let hash = crate::library::hash::blake3_file_with_buffer(&p, buffer_kb)?;
-            // Re-stat: bytes that changed mid-read hash to garbage.
-            let after = file_fingerprint(&p)?;
-            Ok::<_, anyhow::Error>((after == expected).then_some(hash))
+            // Through the no-follow walk (`library::no_follow`); a refused
+            // file is left pending for the next scan to reconcile.
+            let Ok(f) = crate::library::no_follow::open_library_file(&root, &p) else {
+                return Ok::<_, anyhow::Error>(None);
+            };
+            let hash = crate::library::hash::blake3_open_file(&f, buffer_kb)?;
+            // Re-stat the handle that was hashed: bytes that changed
+            // mid-read hash to garbage.
+            let after = crate::library::scanner::process::open_file_fingerprint(&f)?;
+            Ok((after == expected).then_some(hash))
         })
         .await
         .map_err(|e| anyhow::anyhow!("hash task failed: {e}"))??

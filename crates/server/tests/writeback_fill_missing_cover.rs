@@ -291,7 +291,7 @@ fn sidecars(
     parsers::comicinfo::ComicInfo,
     parsers::metroninfo::MetronInfo,
 ) {
-    let mut a = archive::open(cbz, archive::ArchiveLimits::default()).unwrap();
+    let mut a = archive::open_path_unchecked(cbz, archive::ArchiveLimits::default()).unwrap();
     let ci = parsers::comicinfo::parse(&a.read_entry_bytes("ComicInfo.xml").unwrap()).unwrap();
     let mi = parsers::metroninfo::parse(&a.read_entry_bytes("MetronInfo.xml").unwrap()).unwrap();
     (ci, mi)

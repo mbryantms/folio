@@ -2211,7 +2211,9 @@ async fn run_issue_phase(
             .folder_path
             .as_deref()
             .map(std::path::Path::new)
-            .and_then(process::read_series_json),
+            .and_then(|folder| {
+                process::read_series_json(std::path::Path::new(&lib.root_path), folder)
+            }),
         None => None,
     };
     let reconcile_started = Instant::now();
@@ -2889,7 +2891,7 @@ async fn process_planned_folder(
     // produce the same DB state. Without this, a sidecar that landed
     // (or shipped enriched) after the previous scan would never apply
     // to series rows whose folders haven't been touched since.
-    let series_json = process::read_series_json(&folder);
+    let series_json = process::read_series_json(std::path::Path::new(&lib.root_path), &folder);
 
     if planned.skipped_unchanged {
         stats.series_skipped_unchanged += 1;
@@ -2946,6 +2948,7 @@ async fn process_planned_folder(
         // threads (PERF-7).
         let mut hint = {
             let path = archives[0].clone();
+            let root = PathBuf::from(&lib.root_path);
             let limits = state.cfg().archive_limits();
             let opts = process::filename_opts(lib);
             let _permit = state
@@ -2954,9 +2957,11 @@ async fn process_planned_folder(
                 .acquire_owned()
                 .await
                 .ok();
-            tokio::task::spawn_blocking(move || process::peek_identity_hint(&path, limits, opts))
-                .await
-                .map_err(|e| anyhow::anyhow!("identity peek task failed: {e}"))?
+            tokio::task::spawn_blocking(move || {
+                process::peek_identity_hint(&root, &path, limits, opts)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("identity peek task failed: {e}"))?
         };
 
         // Folder-leaf `V<N>` fallback. Filename inference rejects

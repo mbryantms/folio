@@ -141,7 +141,7 @@ async fn scan_converts_rar_named_cbz_in_place_when_enabled() {
     // Same path, now a ZIP; the RAR bytes survive as `<name>.cbz.bak`.
     assert!(cbz_path.exists(), ".cbz still at its path");
     assert_eq!(
-        archive::container::detect_container(&cbz_path).unwrap(),
+        archive::container::detect_container_path_unchecked(&cbz_path).unwrap(),
         archive::container::Container::Zip
     );
     let bak = folder.join("Martian Manhunter V2006 002 (November 2006).cbz.bak");

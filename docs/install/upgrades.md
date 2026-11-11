@@ -169,6 +169,14 @@ docker compose -f compose.prod.yml up -d --no-deps app
   expire with the access cookie, which made the silent refresh fail once
   the access cookie had expired).
 
+### Unreleased — multi-part RAR comics are no longer read
+
+- Comics stored as a multi-part RAR set (`.part1.rar`, `.r00`, …) are
+  no longer read. In a library with CBR conversion on, the scan reports
+  each as a malformed archive with that reason; with conversion off a
+  `.cbr` gets the unsupported-format finding, as before. Repack the
+  parts as a single archive (CBZ, or a one-part RAR).
+
 ### Unreleased — app passwords are looked up by digest
 
 - **App passwords gain a lookup digest** (migration
