@@ -951,6 +951,13 @@ async fn finalize_run(
     let library_id = lib.id;
     state.scan_progress.finish(scan_id);
 
+    // A run that stopped early or failed did not re-check the whole
+    // library: a finding it did not re-emit is unknown, not gone. What it
+    // did emit is still recorded.
+    let mut health = health;
+    if cancelled || result.is_err() {
+        health.skip_auto_resolve();
+    }
     let health_count = health.count();
     if let Err(e) = health.finalize(&state.db).await {
         tracing::error!(
