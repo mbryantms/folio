@@ -122,11 +122,17 @@ impl Cbr {
 
             let size = header.unpacked_size;
             if size > limits.max_entry_bytes {
-                return Err(ArchiveError::CapExceeded("entry size"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntrySize,
+                    "entry size",
+                )));
             }
             total_bytes = total_bytes.saturating_add(size);
             if total_bytes > limits.max_total_bytes {
-                return Err(ArchiveError::CapExceeded("total bytes"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::TotalSize,
+                    "total bytes",
+                )));
             }
 
             entries.push(ArchiveEntry {
@@ -136,7 +142,10 @@ impl Cbr {
                 compressed_size: size,
             });
             if entries.len() as u64 > limits.max_entries {
-                return Err(ArchiveError::CapExceeded("entry count"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntryCount,
+                    "entry count",
+                )));
             }
         }
 
@@ -353,7 +362,10 @@ impl ComicArchive for Cbr {
 
             if header.is_file() && canonical == want {
                 if header.unpacked_size > self.limits.max_entry_bytes {
-                    return Err(ArchiveError::CapExceeded("entry size"));
+                    return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                        crate::SafetyCheck::EntrySize,
+                        "entry size",
+                    )));
                 }
                 let (data, _next) = open
                     .read()

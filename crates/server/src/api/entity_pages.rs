@@ -1722,6 +1722,7 @@ pub(crate) async fn series_handler(
         items,
         next_cursor,
         total: first_page.then_some(series_count),
+        suggestions: None,
     })
     .into_response()
 }

@@ -736,6 +736,8 @@ export function useAdminHealthIssues(filters: {
   severity?: string;
   include_resolved?: boolean;
   include_dismissed?: boolean;
+  /** One scan run's findings (`scan_id`), filtered server-side. */
+  scan_id?: string;
   limit?: number;
 }) {
   return useInfiniteQuery({
@@ -750,12 +752,15 @@ export function useAdminHealthIssues(filters: {
       if (filters.include_dismissed) {
         params.set("include_dismissed", "true");
       }
+      if (filters.scan_id) params.set("scan_id", filters.scan_id);
       if (filters.limit != null) params.set("limit", String(filters.limit));
       if (pageParam) params.set("cursor", pageParam);
       const qs = params.toString();
       return jsonFetch<{
         items: CrossLibHealthIssueView[];
         next_cursor: string | null;
+        /** First page only. */
+        total?: number | null;
       }>(`/admin/health-issues${qs ? `?${qs}` : ""}`);
     },
     getNextPageParam: cursorNextPage,

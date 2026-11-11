@@ -352,7 +352,10 @@ impl Cbz {
     ) -> Result<Self, ArchiveError> {
         let n = archive.len();
         if n as u64 > limits.max_entries {
-            return Err(ArchiveError::CapExceeded("entry count"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntryCount,
+                "entry count",
+            )));
         }
 
         let mut entries: Vec<ArchiveEntry> = Vec::with_capacity(n);
@@ -409,7 +412,10 @@ impl Cbz {
             }
 
             if unc > limits.max_entry_bytes {
-                return Err(ArchiveError::CapExceeded("single entry uncompressed bytes"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntrySize,
+                    "single entry uncompressed bytes",
+                )));
             }
             // Compression-ratio defense — soft. If a single entry's
             // claimed uncompressed bytes blow past the ratio cap, we drop
@@ -438,7 +444,10 @@ impl Cbz {
             }
             total_uncompressed = total_uncompressed.saturating_add(unc);
             if total_uncompressed > limits.max_total_bytes {
-                return Err(ArchiveError::CapExceeded("total uncompressed bytes"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::TotalSize,
+                    "total uncompressed bytes",
+                )));
             }
 
             let safe = entry_name::validate(&name)?;
@@ -731,9 +740,10 @@ impl Cbz {
                 }
                 taken = taken.saturating_add(n as u64);
                 if taken > cap {
-                    return Err(ArchiveError::CapExceeded(
+                    return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                        crate::SafetyCheck::EntrySize,
                         "entry exceeded max_entry_bytes during read",
-                    ));
+                    )));
                 }
                 out.extend_from_slice(&buf[..n]);
             }
@@ -784,7 +794,10 @@ impl Cbz {
     ) -> Result<Vec<u8>, ArchiveError> {
         let cap = self.limits.max_entry_bytes;
         if start.saturating_add(len) > cap {
-            return Err(ArchiveError::CapExceeded("range exceeds entry cap"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntrySize,
+                "range exceeds entry cap",
+            )));
         }
         let entry_name = entry.name.clone();
         self.with_entry(entry.index, |zf| {
@@ -839,9 +852,10 @@ impl Cbz {
                 }
                 taken = taken.saturating_add(n as u64);
                 if taken > cap {
-                    return Err(ArchiveError::CapExceeded(
+                    return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                        crate::SafetyCheck::EntrySize,
                         "entry exceeded max_entry_bytes during stream",
-                    ));
+                    )));
                 }
                 sink.write_all(&buf[..n])?;
             }
@@ -1733,7 +1747,13 @@ mod tests {
             ..ArchiveLimits::default()
         };
         let err = Cbz::open_path_unchecked(cbz.path(), limits).unwrap_err();
-        assert!(matches!(err, ArchiveError::CapExceeded("entry count")));
+        assert!(matches!(
+            err,
+            ArchiveError::CapExceeded(crate::Cap {
+                check: crate::SafetyCheck::EntryCount,
+                what: "entry count"
+            })
+        ));
     }
 
     #[test]
@@ -1833,6 +1853,65 @@ mod tests {
         let bad = build_cbz(&[("../escape.png", b"x")]);
         let err = Cbz::open_path_unchecked(bad.path(), ArchiveLimits::default()).unwrap_err();
         assert!(matches!(err, ArchiveError::UnsafeEntry(_)), "got: {err:?}");
+        assert_eq!(
+            err.safety_check(),
+            Some(crate::SafetyCheck::UnsafeEntryName)
+        );
+    }
+
+    /// Each hard limit refuses an intact archive with a typed safety check,
+    /// never as `Malformed`; a damaged file is not a safety refusal.
+    #[test]
+    fn hard_limits_report_their_safety_check() {
+        use crate::SafetyCheck;
+        let page = png_signed(std::iter::repeat_n(7u8, 200));
+        let pages: Vec<(String, Vec<u8>)> = (1..=5)
+            .map(|i| (format!("{i:02}.png"), page.clone()))
+            .collect();
+        let refs: Vec<(&str, &[u8])> = pages
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        let cbz = build_cbz_with(&refs, true);
+
+        let cases = [
+            (
+                ArchiveLimits {
+                    max_entries: 3,
+                    ..ArchiveLimits::default()
+                },
+                SafetyCheck::EntryCount,
+            ),
+            (
+                ArchiveLimits {
+                    max_entry_bytes: 100,
+                    ..ArchiveLimits::default()
+                },
+                SafetyCheck::EntrySize,
+            ),
+            (
+                ArchiveLimits {
+                    max_total_bytes: 500,
+                    ..ArchiveLimits::default()
+                },
+                SafetyCheck::TotalSize,
+            ),
+        ];
+        for (limits, want) in cases {
+            let err = Cbz::open_path_unchecked(cbz.path(), limits).unwrap_err();
+            assert!(matches!(err, ArchiveError::CapExceeded(_)), "got: {err:?}");
+            assert_eq!(err.safety_check(), Some(want), "{err:?}");
+        }
+
+        let mut junk = tempfile::Builder::new().suffix(".cbz").tempfile().unwrap();
+        junk.write_all(b"PK\x03\x04 truncated beyond repair")
+            .unwrap();
+        let err = Cbz::open_path_unchecked(junk.path(), ArchiveLimits::default()).unwrap_err();
+        assert_eq!(
+            err.safety_check(),
+            None,
+            "a damaged file is not a refusal: {err:?}"
+        );
     }
 
     #[test]

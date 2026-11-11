@@ -172,9 +172,10 @@ pub fn rebuild(
                     .uncompressed_bytes
                     .saturating_add(bytes.len() as u64);
                 if summary.uncompressed_bytes > limits.max_total_bytes {
-                    return Err(ArchiveError::CapExceeded(
+                    return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                        crate::SafetyCheck::TotalSize,
                         "rebuild output exceeded max_total_bytes",
-                    ));
+                    )));
                 }
                 if let Some(k) = matched_key {
                     consumed_override_keys.insert(k);
@@ -188,17 +189,19 @@ pub fn rebuild(
                     .uncompressed_bytes
                     .saturating_add(info.uncompressed_size);
                 if summary.uncompressed_bytes > limits.max_total_bytes {
-                    return Err(ArchiveError::CapExceeded(
+                    return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                        crate::SafetyCheck::TotalSize,
                         "rebuild output exceeded max_total_bytes",
-                    ));
+                    )));
                 }
             }
         }
 
         if summary.entries_written > limits.max_entries {
-            return Err(ArchiveError::CapExceeded(
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntryCount,
                 "rebuild output exceeded max_entries",
-            ));
+            )));
         }
     }
 
@@ -219,9 +222,10 @@ pub fn rebuild(
                 .uncompressed_bytes
                 .saturating_add(bytes.len() as u64);
             if summary.uncompressed_bytes > limits.max_total_bytes {
-                return Err(ArchiveError::CapExceeded(
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::TotalSize,
                     "rebuild output exceeded max_total_bytes",
-                ));
+                )));
             }
         }
     }
@@ -239,9 +243,10 @@ pub fn rebuild(
             .uncompressed_bytes
             .saturating_add(bytes.len() as u64);
         if summary.uncompressed_bytes > limits.max_total_bytes {
-            return Err(ArchiveError::CapExceeded(
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::TotalSize,
                 "rebuild output exceeded max_total_bytes",
-            ));
+            )));
         }
     }
 
@@ -322,14 +327,16 @@ pub fn rebuild_pages(
             }
         }
         if summary.uncompressed_bytes > limits.max_total_bytes {
-            return Err(ArchiveError::CapExceeded(
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::TotalSize,
                 "rebuild output exceeded max_total_bytes",
-            ));
+            )));
         }
         if summary.entries_written > limits.max_entries {
-            return Err(ArchiveError::CapExceeded(
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntryCount,
                 "rebuild output exceeded max_entries",
-            ));
+            )));
         }
     }
 
@@ -343,9 +350,10 @@ pub fn rebuild_pages(
             .uncompressed_bytes
             .saturating_add(bytes.len() as u64);
         if summary.uncompressed_bytes > limits.max_total_bytes {
-            return Err(ArchiveError::CapExceeded(
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::TotalSize,
                 "rebuild output exceeded max_total_bytes",
-            ));
+            )));
         }
     }
 
@@ -388,14 +396,16 @@ pub fn write_pages(
             .uncompressed_bytes
             .saturating_add(bytes.len() as u64);
         if summary.uncompressed_bytes > limits.max_total_bytes {
-            return Err(ArchiveError::CapExceeded(
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::TotalSize,
                 "rebuild output exceeded max_total_bytes",
-            ));
+            )));
         }
         if summary.entries_written > limits.max_entries {
-            return Err(ArchiveError::CapExceeded(
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntryCount,
                 "rebuild output exceeded max_entries",
-            ));
+            )));
         }
         Ok(())
     };
