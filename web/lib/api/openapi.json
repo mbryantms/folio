@@ -38003,7 +38003,7 @@
               "string",
               "null"
             ],
-            "description": "A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).\n`null` (or blank) clears the pin: the series returns to its\nderived rating."
+            "description": "A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).\n`null` (or blank) clears the pin: the series returns to its\nderived rating.\n`Unknown` / `Rating Pending` are refused here (422): clear instead."
           },
           "comicvine_id": {
             "type": [

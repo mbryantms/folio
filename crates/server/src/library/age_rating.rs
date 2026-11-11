@@ -109,6 +109,25 @@ pub fn is_recognised(rating: &str) -> bool {
 /// [`is_recognised`].
 pub const UNRECOGNISED_MESSAGE: &str = "not a recognised age rating";
 
+/// The field message for a series PATCH that sets `Unknown` or
+/// `Rating Pending`: pinning either would leave the series unrated for
+/// good and override its derived rating.
+pub const SERIES_UNRATED_MESSAGE: &str =
+    "clear the rating (null) instead of setting Unknown or Rating Pending";
+
+/// garde rule for the series PATCH `age_rating`: [`garde_recognised`],
+/// and not one of the "no rating" words (clear the rating instead, which
+/// returns the series to its derived rating). Issues keep accepting them.
+pub fn garde_series_rating(value: &Option<Option<String>>, ctx: &()) -> garde::Result {
+    garde_recognised(value, ctx)?;
+    match value {
+        Some(Some(v)) if UNRATED.contains(&v.trim_matches(RATING_TRIM).to_lowercase().as_str()) => {
+            Err(garde::Error::new(SERIES_UNRATED_MESSAGE))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// garde rule for a PATCH-style `age_rating` field (`None` = untouched,
 /// `Some(None)` = clear): a set value must be [`is_recognised`]. Stored
 /// values are never re-checked; only new edits are.
@@ -339,6 +358,12 @@ mod tests {
         assert!(!is_recognised("Sixteen and up"));
         assert!(is_valid_cap("teen"));
         assert!(!is_valid_cap("Mature"));
+        let set = |v: &str| Some(Some(v.to_owned()));
+        assert!(garde_series_rating(&set("Teen Plus"), &()).is_ok());
+        assert!(garde_series_rating(&Some(None), &()).is_ok());
+        assert!(garde_series_rating(&set(" unknown "), &()).is_err());
+        assert!(garde_series_rating(&set("Rating Pending"), &()).is_err());
+        assert!(garde_recognised(&set("Rating Pending"), &()).is_ok());
     }
 
     #[test]

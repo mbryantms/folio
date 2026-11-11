@@ -4347,6 +4347,13 @@ async fn the_upgrade_never_lowers_a_rating_and_still_raises_and_fills() {
             Some("Mature 17+"),
             Some("Mature"),
         ),
+        // Equal to the highest issue: the floor is recorded too.
+        (
+            Some("Teen"),
+            vec![Some("teen"), None],
+            Some("Teen"),
+            Some("Teen"),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -4611,7 +4618,25 @@ async fn age_rating_edits_must_be_recognised() {
         assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{path}");
         check(resp, field);
     }
-    // Recognised values (rung, alias, unrated word, blank) pass.
+    // The series PATCH refuses the "no rating" words: clear instead.
+    for v in ["Unknown", " rating pending "] {
+        let (st, resp) = raw(
+            &w.app,
+            Method::PATCH,
+            "/api/series/teen-tales",
+            &w.admin,
+            Some(serde_json::json!({ "age_rating": v })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+        let body: serde_json::Value = serde_json::from_slice(&resp).unwrap();
+        assert_eq!(
+            body["error"]["details"][0]["message"],
+            server::library::age_rating::SERIES_UNRATED_MESSAGE,
+            "{body}"
+        );
+    }
+    // Recognised values (rung, alias, unrated word, blank) pass on issues.
     for v in ["Teen", "teen plus", "Unknown", ""] {
         let (st, body) = raw(
             &w.app,
@@ -4652,4 +4677,94 @@ async fn an_issue_whose_series_rating_cannot_be_read_is_hidden() {
         access::filter_issues(&state, &open, vec![row]).await.len(),
         1
     );
+}
+
+#[tokio::test]
+async fn a_recompute_queued_behind_a_writer_derives_from_its_committed_issues() {
+    use sea_orm::{ConnectionTrait, Statement, TransactionTrait};
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    // A stale stored value, one Teen issue and one unrated issue.
+    let s = seed_series(&db, w.fx.lib_id, "Race Run", "race-run", Some("Everyone")).await;
+    seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        s,
+        1,
+        "race-1",
+        "Race One",
+        Some("Teen"),
+        None,
+    )
+    .await;
+    let two = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        s,
+        2,
+        "race-2",
+        "Race Two",
+        None,
+        None,
+    )
+    .await;
+
+    // A writer (a scan committing a Mature issue and its rollup) holds
+    // the series row lock with its work not yet committed.
+    let writer_conn = Database::connect(&w.app.db_url).await.unwrap();
+    let writer = writer_conn.begin().await.unwrap();
+    let backend = writer.get_database_backend();
+    writer
+        .execute_raw(Statement::from_sql_and_values(
+            backend,
+            "UPDATE issues SET age_rating = 'Mature 17+' WHERE id = $1",
+            [two.clone().into()],
+        ))
+        .await
+        .unwrap();
+    writer
+        .execute_raw(Statement::from_sql_and_values(
+            backend,
+            "UPDATE series SET age_rating = 'Mature 17+' WHERE id = $1",
+            [s.into()],
+        ))
+        .await
+        .unwrap();
+
+    // A recompute starts now (an issue edit elsewhere in the series) and
+    // queues behind the writer's row lock.
+    let url = w.app.db_url.clone();
+    let recompute = tokio::spawn(async move {
+        let c = Database::connect(&url).await.unwrap();
+        server::library::series_rating::recompute_series_age_rating(&c, s)
+            .await
+            .unwrap()
+    });
+    let mut waited = false;
+    for _ in 0..200 {
+        let row = db
+            .query_one_raw(Statement::from_string(
+                backend,
+                "SELECT count(*)::bigint AS n FROM pg_stat_activity \
+                  WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        if row.try_get::<i64>("", "n").unwrap() > 0 {
+            waited = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(waited, "the recompute never queued behind the writer");
+    writer.commit().await.unwrap();
+    recompute.await.unwrap();
+
+    // It derives from the writer's committed issue, never writing back the
+    // Teen it would have read before the lock.
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Mature 17+"));
 }

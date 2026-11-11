@@ -23,11 +23,13 @@
 //!    NULL or off-ladder rating is filled from its issues, and a series
 //!    where nothing ranks is left as it is.
 //!
-//!    A stored rating that ranks above every active issue can only have
-//!    come from `series.json` or from a file that was since removed or
-//!    re-rated; the migration cannot tell which. It records that rating
-//!    as a provisional `declared_age_rating`, so a recompute before the
-//!    folder is next scanned (an issue edit, a removal) keeps it too. The
+//!    Whether a stored rating came from `series.json`, from an issue, or
+//!    from a file since removed or re-rated, the migration cannot tell.
+//!    Every stored rating that ranks at least as high as the series'
+//!    highest active issue (equal included) is recorded, before the
+//!    raise, as a provisional `declared_age_rating`, so a recompute
+//!    before the folder is next scanned (an issue edit, a removal) keeps
+//!    it too. The provisional floor can only be too strict. The
 //!    next library scan that reads the folder, unchanged folders
 //!    included, replaces the provisional value with what `series.json`
 //!    actually declares, or clears it, and re-derives.
@@ -109,7 +111,7 @@ pub fn provisional_declared_sql() -> String {
         "WITH ladder(norm, rank, canon) AS {ladder} \
          UPDATE series s SET declared_age_rating = s.age_rating \
           WHERE {unprotected} \
-            AND (SELECT l.rank FROM ladder l WHERE l.norm = {stored}) > \
+            AND (SELECT l.rank FROM ladder l WHERE l.norm = {stored}) >= \
                 COALESCE((SELECT max(l.rank) FROM issues i \
                             JOIN ladder l ON l.norm = {issue} \
                            WHERE i.series_id = s.id AND i.state = 'active' \

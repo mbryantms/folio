@@ -275,7 +275,8 @@ pub struct UpdateSeriesReq {
     /// A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).
     /// `null` (or blank) clears the pin: the series returns to its
     /// derived rating.
-    #[garde(custom(crate::library::age_rating::garde_recognised))]
+    /// `Unknown` / `Rating Pending` are refused here (422): clear instead.
+    #[garde(custom(crate::library::age_rating::garde_series_rating))]
     pub age_rating: Option<Option<String>>,
     /// Number of issues in the run (0..=10000) or `null` when unknown.
     #[serde(default, deserialize_with = "deserialize_some_i32")]

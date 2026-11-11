@@ -228,7 +228,7 @@ pub struct IngestOutputs<'a> {
     pub events: &'a mut EventCollector,
 }
 
-pub async fn ingest_one<C: ConnectionTrait>(
+pub async fn ingest_one<C: ConnectionTrait + sea_orm::TransactionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
     path: &Path,
@@ -685,7 +685,7 @@ async fn dedupe_by_content_hash<C: ConnectionTrait>(
 /// on the same connection. The library scanner calls the two halves
 /// itself so a batch transaction opens only after every file in the
 /// batch is prepared (post-audit T1.2); narrow callers use this.
-pub async fn ingest_one_with_fingerprint<C: ConnectionTrait>(
+pub async fn ingest_one_with_fingerprint<C: ConnectionTrait + sea_orm::TransactionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
     path: &Path,
@@ -940,7 +940,7 @@ pub async fn prepare_ingest<C: ConnectionTrait>(
 /// [`prepare_ingest`] — so the caller can run it inside a batch
 /// transaction opened *after* the whole batch was prepared (post-audit
 /// T1.2).
-pub async fn persist_prepared<C: ConnectionTrait>(
+pub async fn persist_prepared<C: ConnectionTrait + sea_orm::TransactionTrait>(
     ctx: &IngestCtx<'_>,
     db: &C,
     prepared: PreparedIngest,

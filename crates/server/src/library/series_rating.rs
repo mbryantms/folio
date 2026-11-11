@@ -25,13 +25,31 @@
 //! practice the holder is a person (series PATCH); clearing the rating on
 //! a series PATCH removes that pin and re-derives.
 //!
-//! Two recomputes of one series racing each other can each read the
-//! issue set as of its own statement start; the last writer wins and the
-//! next rollup of the series corrects any stale result (no row lock: a
-//! lock taken inside the statement would not refresh its snapshot).
+//! **Concurrency.** Each series is recomputed in its own short
+//! transaction (a savepoint when the caller already holds one): first
+//! `SELECT … FOR NO KEY UPDATE` on that one series row, then the derivation
+//! `UPDATE` as a separate statement. Under READ COMMITTED that `UPDATE`
+//! takes its snapshot only after the row lock is held, so a recompute that
+//! queued behind another writer of the row (a rollup that has just
+//! committed a higher-rated issue) sees that writer's committed issues
+//! instead of writing back a value derived from an older snapshot. One
+//! derivation statement would not: Postgres re-checks only its own
+//! `WHERE` against the updated row, not the issue sub-select.
 //!
-//! [`recompute_series_age_ratings`] is one set-based statement per chunk
-//! of series ids. It runs as a step of
+//! The lock cannot take part in a deadlock that the derivation did not
+//! already risk: a recompute holds at most one series row lock at a time
+//! and asks for nothing else while holding it, so it can wait but never
+//! closes a cycle. `NO KEY UPDATE` is the mode a plain `UPDATE` of the
+//! non-key `age_rating` column takes anyway, and it does not conflict with
+//! the `KEY SHARE` locks that issue inserts and re-homes take on the parent
+//! series row, so a scan batch writing issues of the series is never
+//! blocked by it. Two callers run inside a transaction that already holds
+//! locks: the series PATCH (it holds only the row it is recomputing) and
+//! the scan batch transaction re-deriving the series a re-homed issue
+//! left (its locks and their order are the ones the derivation `UPDATE`
+//! already took before this lock existed).
+//!
+//! [`recompute_series_age_ratings`] runs as a step of
 //! `metadata_rollup::rollup_series_metadata` (every scan that ingests a
 //! file of the series, the single-issue scan, the post-rewrite rescan of a
 //! writeback library) and directly from every other path that changes an
@@ -45,12 +63,8 @@
 
 use crate::library::age_rating::{self, LADDER};
 use crate::metadata::writers::FILE_SOURCED_SET_BY;
-use sea_orm::{ConnectionTrait, DbErr, Statement, Value};
+use sea_orm::{ConnectionTrait, DbErr, Statement, TransactionSession, TransactionTrait, Value};
 use uuid::Uuid;
-
-/// Series ids per statement (well under Postgres' bind limits; the ids
-/// travel as one array parameter anyway).
-const CHUNK: usize = 1000;
 
 /// `(VALUES ('early childhood', 0, 'Early Childhood'), ...)` built from
 /// [`age_rating::spellings`]: normalised text, rank, canonical ladder
@@ -99,10 +113,13 @@ fn recompute_sql() -> String {
 }
 
 /// Store the rating a series folder's `series.json` declares
-/// (`declared` = `None` when the sidecar is gone or has no rating) and,
-/// when it changed, re-derive the series rating. Blank text is stored as
-/// NULL. Returns `true` when `series.age_rating` changed.
-pub async fn apply_declared_age_rating<C: ConnectionTrait>(
+/// (`declared` = `None` when the sidecar is gone or has no rating) and
+/// re-derive the series rating — every time, not only when the declared
+/// value changed, so a stale derived value (a lost race, a missed
+/// recompute) lasts at most until the next scan reads the folder. Blank
+/// text is stored as NULL. Returns `true` when `series.age_rating`
+/// changed.
+pub async fn apply_declared_age_rating<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     series_id: Uuid,
     declared: Option<&str>,
@@ -111,23 +128,19 @@ pub async fn apply_declared_age_rating<C: ConnectionTrait>(
         .map(|d| d.trim_matches(age_rating::RATING_TRIM))
         .filter(|d| !d.is_empty())
         .map(str::to_owned);
-    let res = db
-        .execute_raw(Statement::from_sql_and_values(
-            db.get_database_backend(),
-            "UPDATE series SET declared_age_rating = $2 \
-              WHERE id = $1 AND declared_age_rating IS DISTINCT FROM $2",
-            [Value::from(series_id), Value::from(declared)],
-        ))
-        .await?;
-    if res.rows_affected() == 0 {
-        return Ok(false);
-    }
+    db.execute_raw(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "UPDATE series SET declared_age_rating = $2 \
+          WHERE id = $1 AND declared_age_rating IS DISTINCT FROM $2",
+        [Value::from(series_id), Value::from(declared)],
+    ))
+    .await?;
     recompute_series_age_rating(db, series_id).await
 }
 
 /// Re-derive `series.age_rating` for one series. Returns `true` when the
 /// stored value changed.
-pub async fn recompute_series_age_rating<C: ConnectionTrait>(
+pub async fn recompute_series_age_rating<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     series_id: Uuid,
 ) -> Result<bool, DbErr> {
@@ -135,30 +148,43 @@ pub async fn recompute_series_age_rating<C: ConnectionTrait>(
 }
 
 /// Re-derive `series.age_rating` for each series in `series_ids` (a
-/// person- or provider-set rating is left alone). Returns how many rows
-/// changed, so a caller holding the `AppState` can drop the
-/// similar-series cache, which carries each neighbour's rating.
-pub async fn recompute_series_age_ratings<C: ConnectionTrait>(
+/// person- or provider-set rating is left alone), one series per short
+/// transaction in ascending id order: row lock first, then the derivation
+/// on a fresh snapshot (module docs). Returns how many rows changed, so a
+/// caller holding the `AppState` can drop the similar-series cache, which
+/// carries each neighbour's rating.
+pub async fn recompute_series_age_ratings<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     series_ids: &[Uuid],
 ) -> Result<u64, DbErr> {
     if series_ids.is_empty() {
         return Ok(0);
     }
+    let mut ids = series_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
     let sql = recompute_sql();
     let file_tier: Vec<String> = FILE_SOURCED_SET_BY
         .iter()
         .map(|s| (*s).to_owned())
         .collect();
     let mut changed = 0;
-    for chunk in series_ids.chunks(CHUNK) {
-        let res = db
+    for id in ids {
+        let txn = db.begin().await?;
+        txn.execute_raw(Statement::from_sql_and_values(
+            txn.get_database_backend(),
+            "SELECT 1 FROM series WHERE id = $1 FOR NO KEY UPDATE",
+            [Value::from(id)],
+        ))
+        .await?;
+        let res = txn
             .execute_raw(Statement::from_sql_and_values(
-                db.get_database_backend(),
+                txn.get_database_backend(),
                 sql.as_str(),
-                [Value::from(chunk.to_vec()), Value::from(file_tier.clone())],
+                [Value::from(vec![id]), Value::from(file_tier.clone())],
             ))
             .await?;
+        txn.commit().await?;
         changed += res.rows_affected();
     }
     Ok(changed)
@@ -168,7 +194,10 @@ pub async fn recompute_series_age_ratings<C: ConnectionTrait>(
 /// (scan reconcile, soft-removal and restore handlers): logs and swallows
 /// the error, returns the changed count (0 on error). The next rollup of
 /// the series retries.
-pub async fn recompute_best_effort<C: ConnectionTrait>(db: &C, series_ids: &[Uuid]) -> u64 {
+pub async fn recompute_best_effort<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
+    series_ids: &[Uuid],
+) -> u64 {
     match recompute_series_age_ratings(db, series_ids).await {
         Ok(n) => n,
         Err(e) => {

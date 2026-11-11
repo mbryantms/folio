@@ -430,9 +430,11 @@ without per-library configuration.
      resolution for a new series, and on every scan that reads the
      folder for a known one, fast-path-skipped folders included, plus the
      single-issue scan — by `series_rating::apply_declared_age_rating`,
-     which re-derives when it changes. A missing `series.json`, or one
-     without a rating, clears it; one that exists but cannot be read
-     leaves it unchanged. The
+     which re-derives every time. A `series.json` without a rating
+     clears it, and so does a missing one, but only when the lookup says
+     not-found and the folder still stats as a directory; a file that
+     exists but cannot be read, a vanished folder or any other lookup
+     error leaves it unchanged. The
      same derivation (`library::series_rating`) runs when reconcile
      soft-removes or restores issues, when a single-issue scan removes a
      missing file, and when a rescan re-homes an issue to another series

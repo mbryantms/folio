@@ -251,9 +251,12 @@ is free text and ranks only when it uses a ladder word or an alias. An
 alias is not a valid cap.
 
 Edits validate the value: the issue PATCH, the bulk-metadata PATCH and
-the series PATCH accept a ladder rung, an alias, `Unknown` /
-`Rating Pending`, or blank / `null` (clear), and answer 422 with the
-field error "not a recognised age rating" otherwise. Values already
+the series PATCH accept a ladder rung, an alias, or blank / `null`
+(clear), and answer 422 with the field error "not a recognised age
+rating" otherwise. The issue and bulk edits also accept `Unknown` /
+`Rating Pending`; the series PATCH refuses them with a 422 that says to
+clear the rating instead (a pinned "no rating" would leave the series
+unrated for good and override its derived rating). Values already
 stored are not re-checked.
 
 ### How a series is rated
@@ -267,11 +270,17 @@ folder, so a `series.json` that says `Mature 17+` keeps the series at
 least `Mature 17+` even when its issues are unrated or rated lower, and
 an issue rated above the declared value raises the series. A
 `series.json` that is removed, or loses its rating, clears the floor at
-the next scan; one that exists but cannot be read leaves it unchanged.
-Every library scan reads every folder's `series.json`, folders whose
-files are unchanged included. The upgrade migration never lowers a
-rating and holds a stored rating that ranks above every issue as a
-provisional floor until that first scan. A
+the next scan only when the file is really gone (its lookup says
+not-found while the folder is still a directory). One that exists but
+cannot be parsed, a vanished folder or a dropped share, and any other
+lookup error leave the floor unchanged. Every library scan reads every
+planned folder's `series.json`, folders whose files are unchanged
+included, and re-derives the series rating each time. The upgrade
+migration never lowers a rating and holds a stored rating that ranks at
+least as high as every issue as a provisional floor until that first
+scan. Each recompute locks the series row before it derives, so one that
+queued behind another writer derives from that writer's committed
+issues. A
 rating that ranks nowhere (off-ladder text) never raises the result; a
 series with nothing that ranks is unrated (`NULL`). The value is
 recomputed by the scanner's per-series rollup, when the declared rating

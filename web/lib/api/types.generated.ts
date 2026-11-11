@@ -16254,6 +16254,7 @@ export interface components {
              * @description A ladder rung or a recognised alias (`Mature`, `Teen Plus`, …).
              *     `null` (or blank) clears the pin: the series returns to its
              *     derived rating.
+             *     `Unknown` / `Rating Pending` are refused here (422): clear instead.
              */
             age_rating?: string | null;
             /** Format: int64 */
