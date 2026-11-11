@@ -4,9 +4,22 @@
 //! - First 16 bytes sniffed for content-type; allowlist enforced.
 //! - SVG entries rejected outright (script vector).
 //! - 200 with full body, 206 with `Content-Range` for ranges, 416 for invalid.
-//! - `If-Range` honored against ETag (`{issue_id}-{page_index}`).
+//! - `If-Range` honored against the ETag
+//!   (`{content_hash[..32]}-{file version}-{page_index}`; the file version
+//!   is a digest of the open file's device, inode, size and times, so the
+//!   ETag changes the moment the file does, before a rescan).
 //! - `Cache-Control: private, max-age=3600` (per-user — ACL) with
 //!   `Vary: Cookie, Authorization`, matching the thumbnail routes.
+//! - When the pages cannot be served the answer follows the one mapping in
+//!   [`super::page_source`]: 404 for an unknown / hidden issue or a refused
+//!   path, 410 `archive_missing` when the issue's file is gone, 410
+//!   `archive_unreadable` when the scanner marked it encrypted or it no
+//!   longer opens as an archive, 409 `archive_needs_conversion` for an
+//!   unconverted CBR / CB7, 503 with `Retry-After` for an offline library
+//!   or an I/O error. Never 500 for those, and never cacheable
+//!   (`no-store`), nor are the 404s and 416s.
+//! - Width variants (`?w=`) fold the file version into their ETag and
+//!   their disk-cache key (`library::page_variants`).
 //!
 //! The handler uses a synchronous `spawn_blocking` boundary because the
 //! archive readers use blocking file I/O.
@@ -33,8 +46,10 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::error;
+use super::page_source::{PageUnavailable, issue_not_found, no_store, version_tag};
 use crate::auth::CurrentUser;
 use crate::library::page_variants;
+use crate::library::zip_lru::lock_reader;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -65,51 +80,66 @@ pub async fn serve(
     headers: HeaderMap,
 ) -> Response {
     let Ok(Some(row)) = issue::Entity::find_by_id(id.clone()).one(&app.db).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+        return issue_not_found();
     };
     if !crate::library::access::issue_visible(&app, &user, &row).await {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+        return issue_not_found();
+    }
+    // An encrypted row has no readable pages (410 before any I/O).
+    if let Err(why) = PageUnavailable::check_row(&row) {
+        return why.response();
     }
     // The stored file must be a regular file below the library root with no
     // symbolic link on the way (`library::no_follow`); anything else is
     // not-found. Checked on every request, before any cached reader or
     // cached variant is used. The pread fast path below reads through this
     // handle, and the archive reader (`zip_lru`) is built from it (or reused
-    // only when it was built from the same file). A failed library lookup
-    // is a server error, never not-found.
+    // only when it was built from the same version of the same file). A
+    // missing file is 410, a failed library lookup a server error
+    // (`page_source`).
     let archive_file = match crate::library::no_follow::open_issue_archive(&app, &row).await {
         Ok(f) => f,
-        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        Err(refusal) => {
+            return PageUnavailable::for_refusal(&app, &row, &refusal)
+                .await
+                .response();
         }
-        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
     };
     let file = match archive_file.file().try_clone() {
         Ok(dup) => dup,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "page bytes: handle dup failed");
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "archive_unreadable",
-                "archive unreadable",
-            );
+            return PageUnavailable::Unavailable.response();
         }
     };
+    // The open file's version (from the open's own `fstat`), folded into
+    // the ETags below.
+    let version = archive_file
+        .stamp()
+        .map(|s| version_tag(&s))
+        .unwrap_or_default();
 
     // Width-negotiated variant (audit FEP-1). Handled by its own path —
     // it carries a per-variant ETag, immutable caching, and no Range
     // support. Everything below stays byte-identical for bare requests.
     if let Some(w) = q.w {
-        return serve_variant(&app, &row, n as usize, w, &headers, archive_file).await;
+        return serve_variant(&app, &row, n as usize, w, &headers, archive_file, &version).await;
     }
 
     let page_index = n as usize;
     // Content-derived ETag: `issue.id` is stable across archive rewrites by
     // design, so fold in `content_hash` (which changes when the bytes change) so
-    // a cached page is revalidated after an edit / sidecar rewrite (PERF-4).
+    // a cached page is revalidated after an edit / sidecar rewrite (PERF-4),
+    // and the open file's version, which changes the moment the file does,
+    // before a rescan updates `content_hash` (audit R-05).
     // `.min(len)` guards a short hash from a panicking slice.
     let hash = row.content_hash.as_str();
-    let etag_value = format!("\"{}-{}\"", &hash[..32.min(hash.len())], page_index);
+    let etag_value = format!(
+        "\"{}-{}-{}\"",
+        &hash[..32.min(hash.len())],
+        version,
+        page_index
+    );
 
     // Conditional GET: a matching If-None-Match revalidation returns 304 before
     // we even open the archive (PERF-4).
@@ -135,11 +165,7 @@ pub async fn serve(
         }
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "zip_lru open failed");
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "archive_unreadable",
-                "archive unreadable",
-            );
+            return PageUnavailable::from_archive_error(&e).response();
         }
     };
 
@@ -159,7 +185,7 @@ pub async fn serve(
 
     let arc_clone = arc.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<PageBytes, PageError> {
-        let mut cbz = arc_clone.lock().expect("cbz mutex");
+        let mut cbz = lock_reader(&arc_clone).map_err(PageError::Read)?;
         let pages = cbz.pages();
         let entry = pages
             .get(page_index)
@@ -174,7 +200,7 @@ pub async fn serve(
         let head_len = total.min(16) as usize;
         let head = if head_len > 0 {
             cbz.read_entry_range(&entry, 0, head_len as u64)
-                .map_err(|e| PageError::Read(e.to_string()))?
+                .map_err(PageError::Read)?
         } else {
             Vec::new()
         };
@@ -194,7 +220,7 @@ pub async fn serve(
     let info = match result {
         Ok(Ok(info)) => info,
         Ok(Err(PageError::NotFound)) => {
-            return error(StatusCode::NOT_FOUND, "not_found", "page not found");
+            return no_store(error(StatusCode::NOT_FOUND, "not_found", "page not found"));
         }
         Ok(Err(PageError::UnsupportedType)) => {
             return error(
@@ -205,11 +231,15 @@ pub async fn serve(
         }
         Ok(Err(PageError::Read(e))) => {
             tracing::warn!(error = %e, "page read failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return PageUnavailable::from_archive_error(&e).response();
+        }
+        Ok(Err(PageError::Render(e))) => {
+            tracing::error!(error = %e, "page read: unexpected render error");
+            return PageUnavailable::Internal.response();
         }
         Err(e) => {
             tracing::error!(error = %e, "page task failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return PageUnavailable::Internal.response();
         }
     };
 
@@ -298,7 +328,7 @@ pub async fn serve(
         let handle = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             let mut sink = SyncIoBridge::new_with_handle(writer, handle);
-            let mut cbz = match arc_for_read.lock() {
+            let mut cbz = match lock_reader(&arc_for_read) {
                 Ok(g) => g,
                 Err(_) => return,
             };
@@ -323,27 +353,30 @@ pub async fn serve(
     // Range path: read the (bounded) slice into memory and return it.
     let arc_for_read = info.cbz_arc.clone();
     let entry_idx = info.entry_index_in_pages;
-    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let mut cbz = arc_for_read.lock().expect("cbz mutex");
+    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, PageError> {
+        let mut cbz = lock_reader(&arc_for_read).map_err(PageError::Read)?;
         let pages = cbz.pages();
         let entry = pages
             .get(entry_idx)
             .copied()
             .cloned()
-            .ok_or_else(|| "page disappeared".to_string())?;
+            .ok_or(PageError::NotFound)?;
         cbz.read_entry_range(&entry, start, len)
-            .map_err(|e| e.to_string())
+            .map_err(PageError::Read)
     })
     .await;
     let body_bytes = match bytes {
         Ok(Ok(b)) => b,
-        Ok(Err(e)) => {
+        Ok(Err(PageError::Read(e))) => {
             tracing::warn!(error = %e, "page byte read failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return PageUnavailable::from_archive_error(&e).response();
+        }
+        Ok(Err(_)) => {
+            return no_store(error(StatusCode::NOT_FOUND, "not_found", "page not found"));
         }
         Err(e) => {
             tracing::error!(error = %e, "page byte task failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            return PageUnavailable::Internal.response();
         }
     };
     hdrs.insert(
@@ -384,12 +417,17 @@ async fn serve_variant(
     requested_w: u32,
     headers: &HeaderMap,
     archive_file: archive::ArchiveFile,
+    version: &str,
 ) -> Response {
     let tier = page_variants::clamp_to_tier(requested_w);
     let hash = row.content_hash.as_str();
+    // The file version is in both the ETag and the disk-cache key, so a
+    // file rewritten before its rescan never serves, or stores, a render
+    // of another version (audit R-05; `page_variants` module docs).
     let etag_value = format!(
-        "\"{}-{}-w{}\"",
+        "\"{}-{}-{}-w{}\"",
         &hash[..32.min(hash.len())],
+        version,
         page_index,
         tier
     );
@@ -427,7 +465,7 @@ async fn serve_variant(
 
     // Cache hit: stream the file; bump mtime so the LRU sweep keeps it.
     let data_path = app.cfg().data_path.clone();
-    let cpath = page_variants::cache_path(&data_path, hash, page_index, tier);
+    let cpath = page_variants::cache_path(&data_path, hash, version, page_index, tier);
     if let Ok(meta) = tokio::fs::metadata(&cpath).await
         && meta.is_file()
         && let Ok(file) = tokio::fs::File::open(&cpath).await
@@ -453,11 +491,7 @@ async fn serve_variant(
         }
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "zip_lru open failed");
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "archive_unreadable",
-                "archive unreadable",
-            );
+            return PageUnavailable::from_archive_error(&e).response();
         }
     };
     let budget = app.cfg().page_variant_cache_bytes;
@@ -468,16 +502,16 @@ async fn serve_variant(
     let _permit = match app.thumb_inline_semaphore.clone().acquire_owned().await {
         Ok(p) => p,
         Err(_) => {
-            return error(
+            return no_store(error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "unavailable",
                 "variant renderer is shutting down",
-            );
+            ));
         }
     };
     let result =
         tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, &'static str), PageError> {
-            let mut cbz = arc.lock().expect("cbz mutex");
+            let mut cbz = lock_reader(&arc).map_err(PageError::Read)?;
             let entry = {
                 let pages = cbz.pages();
                 pages
@@ -488,7 +522,7 @@ async fn serve_variant(
             };
             let bytes = cbz
                 .read_entry_range(&entry, 0, entry.uncompressed_size)
-                .map_err(|e| PageError::Read(e.to_string()))?;
+                .map_err(PageError::Read)?;
             drop(cbz);
             let (mime, _ext) =
                 sniff(&bytes[..bytes.len().min(16)]).ok_or(PageError::UnsupportedType)?;
@@ -504,7 +538,7 @@ async fn serve_variant(
                     Ok((webp_bytes, "image/webp"))
                 }
                 Ok(page_variants::Rendered::OriginalIsSmaller) => Ok((bytes, mime)),
-                Err(e) => Err(PageError::Read(format!("variant render: {e}"))),
+                Err(e) => Err(PageError::Render(e.to_string())),
             }
         })
         .await;
@@ -515,13 +549,19 @@ async fn serve_variant(
             let hdrs = variant_headers(mime, bytes.len() as u64);
             (StatusCode::OK, hdrs, Body::from(bytes)).into_response()
         }
-        Ok(Err(PageError::NotFound)) => error(StatusCode::NOT_FOUND, "not_found", "page not found"),
+        Ok(Err(PageError::NotFound)) => {
+            no_store(error(StatusCode::NOT_FOUND, "not_found", "page not found"))
+        }
         Ok(Err(PageError::UnsupportedType)) => error(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "unsupported_media_type",
             "page bytes are not a supported image type",
         ),
         Ok(Err(PageError::Read(e))) => {
+            tracing::warn!(error = %e, "variant page read failed");
+            PageUnavailable::from_archive_error(&e).response()
+        }
+        Ok(Err(PageError::Render(e))) => {
             tracing::warn!(error = %e, "variant render failed");
             error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
         }
@@ -559,9 +599,13 @@ struct PageBytes {
 
 #[derive(Debug)]
 enum PageError {
+    /// No page at that index (404).
     NotFound,
     UnsupportedType,
-    Read(String),
+    /// The archive read failed; mapped by [`PageUnavailable::from_archive_error`].
+    Read(archive::ArchiveError),
+    /// Decoding / re-encoding a width variant failed.
+    Render(String),
 }
 
 /// Sniff first ≤ 16 bytes against the §17.5 allowlist.
@@ -673,6 +717,10 @@ fn parse_range(header: &str, total: u64) -> ParsedRange {
 }
 
 fn unsatisfiable(total: u64) -> Response {
+    no_store(unsatisfiable_inner(total))
+}
+
+fn unsatisfiable_inner(total: u64) -> Response {
     let mut hdrs = HeaderMap::new();
     hdrs.insert(
         header::CONTENT_RANGE,

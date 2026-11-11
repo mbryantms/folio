@@ -4,7 +4,7 @@
  * cursor pages, account scoping, eviction, and the offline resume fold.
  */
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { IssueDetailView, PageInfo } from "@/lib/api/types";
 import {
@@ -280,6 +280,56 @@ describe("issue download", () => {
     // The next issue is not attempted while storage is full.
     expect(m.get("i2")?.status).toBe("queued");
     expect(fetched.some((u) => u.includes("/i2/"))).toBe(false);
+  });
+
+  describe("final and retryable server answers", () => {
+    // `onOnline` listens on `window`; this file runs in node, so stand in
+    // an event target for the reconnect.
+    let win: EventTarget;
+    beforeEach(() => {
+      win = new EventTarget();
+      vi.stubGlobal("window", win);
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function failWith(status: number) {
+      const m = manager({
+        fetch: async () => new Response("", { status }),
+      });
+      await m.setAccount("alice");
+      await m.downloadIssue(issue("i1"), 720);
+      const record = await settled(m, "i1");
+      expect(record.status).toBe("error");
+      const fetchesBefore = fetched.length;
+      win.dispatchEvent(new Event("online"));
+      // Let the reconnect handler's writes and any re-queued pump run.
+      await new Promise((r) => setTimeout(r, 50));
+      return { m, record, refetched: fetched.length > fetchesBefore };
+    }
+
+    it("409: the file needs converting; final, not re-queued on reconnect", async () => {
+      const { m, record, refetched } = await failWith(409);
+      expect(record.error).toBe("needs_conversion");
+      expect(record.errorMessage).toMatch(/converting to CBZ/);
+      expect(m.get("i1")?.status).toBe("error");
+      expect(refetched).toBe(false);
+    });
+
+    it("410: the file is gone; final, not re-queued on reconnect", async () => {
+      const { m, record, refetched } = await failWith(410);
+      expect(record.error).toBe("gone");
+      expect(record.errorMessage).toMatch(/no longer available/);
+      expect(m.get("i1")?.status).toBe("error");
+      expect(refetched).toBe(false);
+    });
+
+    it("503: retryable; the reconnect puts it back in the queue", async () => {
+      const { record, refetched } = await failWith(503);
+      expect(record.error).toBe("network");
+      expect(refetched).toBe(true);
+    });
   });
 
   it("asks for persistent storage on the first download", async () => {

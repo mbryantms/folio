@@ -262,6 +262,27 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     costs no database query. The OPDS download also refuses soft-removed
     issues, for every role (OPDS is a list surface); page bytes and the
     page stream go by `issue_visible` and do not.
+  - **When the pages cannot be served** every route that opens the
+    archive (page bytes and variants, thumbnails, the OPDS page stream,
+    OCR and text regions) answers by one mapping,
+    [`api::page_source`](../../crates/server/src/api/page_source.rs):
+    404 `not_found` for an unknown or hidden issue or a refused path; 410
+    `archive_missing` when the row exists but its file is gone (a
+    soft-removed row included; while its file is there it still serves);
+    410 `archive_unreadable` when the scanner marked the row `encrypted`
+    (refused right after the lookup, no I/O) or the file no longer opens
+    as an archive (a `malformed` row goes through the real open: the
+    scanner also uses that state for a bad ComicInfo.xml on an archive
+    whose pages are fine); 409 `archive_needs_conversion` for a CBR / CB7
+    the page reader cannot read until it is converted; 503
+    `library_offline` (`Retry-After: 30`) when the file is missing and the
+    library root itself cannot be opened or is empty (an unmounted share);
+    503 `service_unavailable` with `Retry-After` for an I/O error. These
+    answers, and the routes' 404s and 416s, are `no-store` and name no
+    path. The OPDS download uses the same missing-file answers. Page
+    ETags fold in a digest of the open file's stamp, so they change the
+    moment the file does, before a rescan updates `content_hash`; width
+    variants carry the same digest in their ETag and disk-cache key.
   - **Issue rescans** ("Scan issue", and the per-issue rescan writeback
     queues) check the stored path the same way before ingesting: a link
     is logged and nothing is ingested; the row is left for the next
@@ -278,8 +299,11 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     through the no-follow walk and read only through that handle: the
     page routes, thumbnails, OCR and page hashes hand it to the archive
     reader cache (`zip_lru`, which builds the reader from the handle and
-    reuses a cached reader only when it was built from the same file,
-    by device and inode); scanner ingest sniffs, hashes and parses one
+    reuses a cached reader only when it was built from the same version
+    of the same file: device, inode, size, modification and status-change
+    time, all from the open's one `fstat`, so a file rewritten in place
+    is reopened too; a failed open is remembered for 10 s per file
+    version, and a reader poisoned by a panic is rebuilt); scanner ingest sniffs, hashes and parses one
     handle (`process::prepare_ingest`, also after the issue rescan's own
     check), as do the identity peek, the hash backfill job, thumbnail
     generation (`jobs/post_scan.rs`), deep validation
