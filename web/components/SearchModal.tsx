@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, LibraryBig, Search } from "lucide-react";
 import { Kbd } from "@/components/folio/kbd";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -92,9 +92,10 @@ export function SearchModal({
   }, [raw]);
   const contentQuery = commandMode ? "" : debounced;
 
-  const { enabled, isLoading, groups, total } = useGlobalSearch(contentQuery, {
-    perCategory: MAX_PER_CATEGORY,
-  });
+  const { enabled, isLoading, groups, total, suggestions } = useGlobalSearch(
+    contentQuery,
+    { perCategory: MAX_PER_CATEGORY },
+  );
 
   // Role-gated actions, recomputed per keystroke. Non-admins never see
   // admin destinations even via direct keyword match.
@@ -121,8 +122,15 @@ export function SearchModal({
         hits: groups[def.key].slice(0, MAX_PER_CATEGORY),
       })).filter((s) => s.hits.length > 0);
 
+  // Every category came back empty (U-11): say so, offer the server's
+  // "Did you mean" series names as items, and a Browse link.
+  const noResults = !commandMode && enabled && !isLoading && total === 0;
+  const suggestionItems = noResults ? suggestions : [];
+
   const hasItems =
-    actions.length > 0 || contentSections.some((s) => s.hits.length > 0);
+    actions.length > 0 ||
+    suggestionItems.length > 0 ||
+    contentSections.some((s) => s.hits.length > 0);
   // Empty-input states: recents chips (if any) or a short hint, above the
   // suggested commands. Shown only when there's nothing to search yet
   // (not enabled, not command mode).
@@ -167,6 +175,13 @@ export function SearchModal({
     keepFocusOnClose.current = action.command === "show-shortcuts";
     handleOpenChange(false);
     runAction(action);
+  }
+  function runSuggestion(q: string) {
+    setRaw(q);
+    setDebounced(q);
+  }
+  function commitBrowse() {
+    handleOpenChange(false);
   }
   function commitFullSearch() {
     if (contentQuery) recents.add(contentQuery);
@@ -269,7 +284,39 @@ export function SearchModal({
             ) : null}
             {/* cmdk auto-hides Empty while any item is mounted. Nothing
                   to be empty about before the user has typed. */}
-            {showHint || showRecents || showVisits ? null : (
+            {noResults ? (
+              <div className="text-muted-foreground space-y-1 px-4 pt-5 pb-3 text-center text-xs">
+                <p>No matches for &ldquo;{contentQuery}&rdquo;.</p>
+                <Link
+                  href="/browse"
+                  onClick={commitBrowse}
+                  className="text-foreground focus-visible:ring-ring inline-flex items-center gap-1 rounded-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  <LibraryBig className="size-3.5" aria-hidden="true" />
+                  Browse the library
+                </Link>
+              </div>
+            ) : null}
+            {suggestionItems.length > 0 ? (
+              <CommandGroup heading="Did you mean">
+                {suggestionItems.map((name) => (
+                  <CommandItem
+                    key={name}
+                    value={`suggest:${name}`}
+                    onSelect={() => runSuggestion(name)}
+                    aria-label={`Search for ${name}`}
+                    className="gap-3 px-3 py-2"
+                  >
+                    <Search
+                      className="text-muted-foreground size-4 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ) : null}
+            {showHint || showRecents || showVisits || noResults ? null : (
               <CommandEmpty>
                 {commandMode
                   ? "No commands match."

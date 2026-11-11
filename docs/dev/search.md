@@ -91,6 +91,38 @@ the rest.
 - `/series/<slug>?q=…` — issues panel filtered by `q`; debounced
   `history.replaceState` keeps the URL in sync without RSC re-render.
 
+## "Did you mean" on a zero-hit search (U-11)
+
+The series match is `search_doc @@ websearch_to_tsquery(q)` OR
+`normalized_name % normalize(q)` (whole-string trigram similarity, 0.3).
+A one-letter typo of one word in a longer name (`sandmn` for "The
+Sandman Overture Deluxe Edition") matches no lexeme and shares too few
+trigrams with the whole name, so the page used to be a dead end.
+
+- When the **first page** of `GET /series?q=` finds nothing,
+  `SeriesListView.suggestions` carries up to 3 `{ name }` entries (field
+  absent otherwise, and absent when nothing is close enough).
+- Query: `series.normalized_name %> $1` (word similarity, answered by
+  `series_normalized_name_trgm`), grouped by name, ordered by
+  `word_similarity` then `similarity`, `LIMIT` bound. The threshold is
+  lowered to 0.4 with `SET LOCAL` inside a one-statement transaction
+  (default 0.6): a one-letter typo in a word of five or more letters
+  scores 0.43 to 0.7, a random string under 0.3. Typos in words of four
+  letters or fewer (~0.25) stay out of reach. Queries under 3
+  letters/digits get no suggestions.
+- It starts from the same select as the search (visibility via
+  `apply_series_visibility`: active series, library grant, age cap, plus
+  the request's facet filters), so a suggestion is always a series the
+  caller can open; same `SEARCH` rate-limit bucket (it rides the same
+  request). Guards: `crates/server/tests/search_suggestions.rs`,
+  including an EXPLAIN check at 2,600 rows.
+- Web: `useGlobalSearch().suggestions` is non-empty only when every
+  category came back empty. `/search` renders `SearchNoResults`
+  (suggestion buttons that run the search + a Browse link); the search
+  sheet (`SearchModal`) lists them as "Did you mean" items and links
+  Browse. Names render as text. The desktop inline dropdown sends Enter
+  to `/search`, which shows them.
+
 ## `>` command prefix
 
 Typing `>` as the first character of the modal or inline input

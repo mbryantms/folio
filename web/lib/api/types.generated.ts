@@ -14710,6 +14710,13 @@ export interface components {
             items: components["schemas"]["SeriesView"][];
             next_cursor?: string | null;
             /**
+             * @description "Did you mean …?" series names for a search (`?q=`) whose first
+             *     page found nothing: the closest names the caller can see, best
+             *     first, at most [`SUGGESTION_LIMIT`]. Absent on every other
+             *     response, including a zero-hit search with nothing close enough.
+             */
+            suggestions?: components["schemas"]["SeriesNameSuggestion"][] | null;
+            /**
              * Format: int64
              * @description Total matching rows across all pages — populated only on the
              *     first page (no cursor). `None` on subsequent pages where the
@@ -14781,6 +14788,11 @@ export interface components {
             series_provenance: components["schemas"]["ProvenanceRow"][];
             sync: components["schemas"]["SeriesSyncState"];
             tiers: components["schemas"]["SeriesTierCounts"];
+        };
+        /** @description One "Did you mean …?" entry on a zero-hit series search. */
+        SeriesNameSuggestion: {
+            /** @description The series' display name; searching for it finds the series. */
+            name: string;
         };
         /**
          * @description Per-user, server-computed read progress for the whole series. Sidesteps
