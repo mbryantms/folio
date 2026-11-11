@@ -52,8 +52,14 @@ pub fn routes() -> OpenApiRouter<AppState> {
 pub struct BackupStorageView {
     pub file_count: u64,
     pub total_bytes: u64,
-    /// RFC 3339; `None` when there are no backup files.
+    /// RFC 3339: when the oldest backup was made (its inode change time,
+    /// the clock the retention sweep ages by), not its modification time.
+    /// `None` when there are no backup files, or when no backup's age can
+    /// be told (a modification time in the future, or no change time);
+    /// such backups still count in `file_count` / `total_bytes`.
     pub oldest_modified_at: Option<String>,
+    /// RFC 3339: when the newest backup was made; `None` as for
+    /// `oldest_modified_at`.
     pub newest_modified_at: Option<String>,
     /// RFC 3339 — when the filesystem was last counted. The daily backup
     /// sweep and the first request for a library count; a scan that changed

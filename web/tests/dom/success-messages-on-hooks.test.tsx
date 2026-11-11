@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as Queries from "@/lib/api/queries";
+import type * as QueriesReader from "@/lib/api/queries-reader";
 
 const { toast } = vi.hoisted(() => ({
   toast: Object.assign(vi.fn(), {
@@ -23,6 +24,10 @@ vi.mock("sonner", () => ({ toast }));
 vi.mock("@/lib/api/auth-refresh", () => ({ apiFetch: vi.fn() }));
 vi.mock("@/lib/api/queries", async (orig) => ({
   ...(await orig<typeof Queries>()),
+  useIssueMarkers: () => ({ data: { items: [] } }),
+}));
+vi.mock("@/lib/api/queries-reader", async (orig) => ({
+  ...(await orig<typeof QueriesReader>()),
   useIssueMarkers: () => ({ data: { items: [] } }),
 }));
 

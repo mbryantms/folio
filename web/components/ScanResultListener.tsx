@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 
-import { useMe } from "@/lib/api/queries";
+import { useMe } from "@/lib/api/queries-me";
 
 // Code-split: the scan-events client is admin-only, but this listener sits
 // in the root layout, so a static import put it in every page's first-load

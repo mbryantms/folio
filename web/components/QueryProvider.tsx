@@ -8,7 +8,7 @@ import { AccountCacheBoundary } from "./AccountCacheBoundary";
 import { OutboxReplayer } from "./OutboxReplayer";
 import { OfflineBootstrap } from "./offline/OfflineBootstrap";
 
-import { HttpError } from "@/lib/api/queries";
+import { HttpError } from "@/lib/api/json-fetch";
 import { TOAST } from "@/lib/api/toast-strings";
 import { CONNECTIVITY_EVENT } from "@/lib/pwa/connectivity";
 

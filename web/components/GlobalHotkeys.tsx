@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
-import { useMe } from "@/lib/api/queries";
+import { useMe } from "@/lib/api/queries-me";
 import {
   KEYBIND_SCOPES,
   actionForKey,

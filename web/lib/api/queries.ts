@@ -15,14 +15,12 @@ import type {
   BookmarkCountsView,
   BookmarkSeriesListView,
 } from "@/lib/api/types";
-import type { IssueUrlOpts } from "@/lib/urls";
 import {
   useQuery,
   useQueries,
   useInfiniteQuery,
   keepPreviousData,
 } from "@tanstack/react-query";
-import { usePathname } from "next/navigation";
 
 import { apiFetch, getCsrfToken } from "./auth-refresh";
 import { apiPath } from "./path";
@@ -49,6 +47,22 @@ import {
 // long-standing `import { queryKeys } from "@/lib/api/queries"` is
 // unchanged for every consumer.
 import { queryKeys, type SeriesMetadataIssueFilters } from "./query-keys";
+// First-load shards (reader bundle budget): the fetch helper, `useMe` and
+// the reader's hooks live in their own modules so first-load code can
+// import them without shipping this whole file. Re-exported here so every
+// `from "@/lib/api/queries"` import keeps resolving.
+import { HttpError, httpErrorFrom, jsonFetch } from "./json-fetch";
+export { HttpError, jsonFetch } from "./json-fetch";
+export { isAuthSurface, useMe } from "./queries-me";
+export {
+  useCblList,
+  useIssueMarkers,
+  useIssuePageOverrides,
+  useNextUp,
+  usePrevUp,
+  useSavedView,
+  useSeries,
+} from "./queries-reader";
 import type {
   HashBackfillView,
   SidecarReemitStatusView,
@@ -57,8 +71,6 @@ import type {
   AppearancesView,
   CollectionEntriesView,
   CollectionNextUpView,
-  IssueMarkersView,
-  PageOverridesView,
   MarkerKind,
   MarkerCountView,
   MarkerListView,
@@ -79,7 +91,6 @@ import type {
   SettingsView,
   CatalogEntriesView,
   CatalogSourceListView,
-  CblDetailView,
   CblEntryListView,
   CblListListView,
   CblWindowView,
@@ -96,7 +107,6 @@ import type {
   HealthIssueView,
   HealthIssuesPage,
   MetadataOverviewView,
-  NextUpView,
   PageCountResponse,
   OnDeckView,
   ViewCoversView,
@@ -113,12 +123,12 @@ import type {
   EntityDetailView,
   EntityInsightsView,
   EntityListView,
+  LibraryAgeRatingsView,
   LibraryStatsView,
   LibraryView,
   FsListResp,
   LogLevel,
   LogsResp,
-  MeView,
   QueueDepthView,
   BackgroundWorkView,
   DeadLetterView,
@@ -133,7 +143,6 @@ import type {
   RemovedListView,
   DuplicateKindFilter,
   DuplicateListView,
-  SavedViewListView,
   SavedViewView,
   SidebarLayoutView,
   ScanPreviewView,
@@ -399,51 +408,6 @@ export type AdminActivityFilters = {
   cursor?: string;
 };
 
-/**
- * Typed error thrown by every client-side query in this module so callers can
- * inspect the HTTP status without parsing message strings. The server-side
- * `ApiError` in `lib/api/fetch.ts` cannot be reused here because that module
- * imports `next/headers` (server-only).
- */
-export class HttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-    /** `error.code` from the server's envelope, when it sent one (e.g.
-     *  `"filter_too_slow"`), so a caller can branch on the failure. */
-    public readonly code: string | null = null,
-    /** `error.details` field errors from a 422 (empty otherwise). */
-    public readonly fields: { field: string; message: string }[] = [],
-  ) {
-    super(message);
-    this.name = "HttpError";
-  }
-}
-
-/** Build an [`HttpError`] from a failed response's error envelope. */
-async function httpErrorFrom(res: Response, path: string): Promise<HttpError> {
-  let detail = `${path} → ${res.status}`;
-  let code: string | null = null;
-  let fields: { field: string; message: string }[] = [];
-  try {
-    const body = await res.json();
-    detail = body?.error?.message ?? detail;
-    code = typeof body?.error?.code === "string" ? body.error.code : null;
-    if (Array.isArray(body?.error?.details)) fields = body.error.details;
-  } catch {
-    /* ignore */
-  }
-  return new HttpError(res.status, detail, code, fields);
-}
-
-export async function jsonFetch<T>(path: string): Promise<T> {
-  const res = await apiFetch(path, {
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) throw await httpErrorFrom(res, path);
-  return (await res.json()) as T;
-}
-
 /** Cover-stack art for every reading list + collection the caller can
  *  see, keyed by view id (up to four covers each, front first). One call
  *  per page, not one per card. */
@@ -455,28 +419,6 @@ export function useViewCovers() {
       return new Map(page.items.map((i) => [i.view_id, i.cover_urls]));
     },
     placeholderData: keepPreviousData,
-  });
-}
-
-/** Routes that are anonymous by construction. */
-const AUTH_SURFACE = /^\/(?:sign-in|forgot-password|reset-password)(?:\/|$)/;
-
-export const isAuthSurface = (pathname: string | null) =>
-  AUTH_SURFACE.test(pathname ?? "");
-
-export function useMe({ enabled = true }: { enabled?: boolean } = {}) {
-  // Never probe from the sign-in pages: there `/auth/me` only 401s, and the
-  // 401 runs the refresh dance (`POST /auth/refresh`, a 403 without a
-  // session) on every visit. Checked here rather than at each caller
-  // because the root-layout listeners (GlobalHotkeys, GlobalShortcutsSheet,
-  // ScanResultListener) sit in the reader's first-load bundle budget.
-  // `enabled: false` still lets other callers skip the probe.
-  const pathname = usePathname();
-  return useQuery({
-    queryKey: queryKeys.me,
-    queryFn: () => jsonFetch<MeView>("/auth/me"),
-    staleTime: 60_000,
-    enabled: enabled && !isAuthSurface(pathname),
   });
 }
 
@@ -944,6 +886,20 @@ export function useLibraryStatsAll({
   });
 }
 
+/** Admin: how each library's series spread over the age-rating ladder
+ *  (`GET /admin/libraries/age-ratings`), for the age-cap control's "what
+ *  this hides" line. One row per library, like `/libraries`, so no cursor. */
+export function useLibraryAgeRatingsAll({
+  enabled = true,
+}: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.libraryAgeRatingsAll,
+    queryFn: () =>
+      jsonFetch<LibraryAgeRatingsView[]>("/admin/libraries/age-ratings"),
+    enabled,
+  });
+}
+
 /** Admin: the same figures for one library (overview tab). */
 export function useLibraryStats(libraryId: string) {
   return useQuery({
@@ -1042,23 +998,6 @@ export function useDuplicatesInfinite(
     },
     getNextPageParam: duplicatesNextPage,
     enabled: !!libraryId,
-  });
-}
-
-export function useSeries(
-  id: string,
-  opts: {
-    /** The server-rendered series, so a page that already has it reads
-     *  the same cache entry progress writes invalidate (series page
-     *  read-progress stats) without a second fetch on mount. */
-    initialData?: SeriesView;
-  } = {},
-) {
-  return useQuery({
-    queryKey: queryKeys.series(id),
-    queryFn: () => jsonFetch<SeriesView>(apiPath`/series/${id}`),
-    enabled: !!id,
-    initialData: opts.initialData,
   });
 }
 
@@ -1955,19 +1894,6 @@ export function useMePages() {
   });
 }
 
-export function useSavedView(id: string) {
-  return useQuery({
-    queryKey: queryKeys.savedView(id),
-    queryFn: async () => {
-      const list = await jsonFetch<SavedViewListView>("/me/saved-views");
-      const found = list.items.find((v) => v.id === id);
-      if (!found) throw new HttpError(404, `saved view ${id} not found`);
-      return found;
-    },
-    enabled: !!id,
-  });
-}
-
 /** Filter views always return a series list. CBL views currently stub
  *  to an empty series list; M6 will move CBL results to a dedicated
  *  endpoint. */
@@ -2059,14 +1985,6 @@ export function useCblLists() {
   return useQuery({
     queryKey: queryKeys.cblLists,
     queryFn: () => jsonFetch<CblListListView>("/me/cbl-lists"),
-  });
-}
-
-export function useCblList(id: string) {
-  return useQuery({
-    queryKey: queryKeys.cblList(id),
-    queryFn: () => jsonFetch<CblDetailView>(apiPath`/me/cbl-lists/${id}`),
-    enabled: !!id,
   });
 }
 
@@ -2316,46 +2234,6 @@ export function useMarkerTags() {
     queryKey: queryKeys.markerTags,
     queryFn: () => jsonFetch<MarkerTagsView>("/me/markers/tags"),
     staleTime: 60_000,
-  });
-}
-
-/** Reader overlay's one-shot fetch — every marker the caller has on
- *  this issue, across all pages, no pagination. */
-export function useIssueMarkers(issueId: string) {
-  return useQuery({
-    queryKey: queryKeys.issueMarkers(issueId),
-    queryFn: () =>
-      jsonFetch<IssueMarkersView>(apiPath`/me/issues/${issueId}/markers`),
-    enabled: !!issueId,
-  });
-}
-
-/** WP-4.3 — the caller's manual spread controls for one issue (force
- *  spread / force single / shift pairing). `initialData` is the SSR
- *  prefetch from the read page so the first paint already pairs with
- *  the overrides applied; `staleTime: Infinity` because only this user's
- *  own mutations change it, and those write the cache directly.
- *
- *  Offline (audit N-R11) the one request is still fired — the offline
- *  reader's stored copy answers when it fails — but never retried: the
- *  default `online` network mode would park the query and the default
- *  retry would back off three times before the fallback could apply. */
-export function useIssuePageOverrides(
-  issueId: string,
-  initialData?: PageOverridesView | null,
-) {
-  const offline =
-    typeof navigator !== "undefined" && navigator.onLine === false;
-  return useQuery({
-    queryKey: queryKeys.issuePageOverrides(issueId),
-    queryFn: () =>
-      jsonFetch<PageOverridesView>(
-        apiPath`/me/issues/${issueId}/page-overrides`,
-      ),
-    enabled: !!issueId,
-    initialData: initialData ?? undefined,
-    staleTime: Infinity,
-    ...(offline ? { retry: false, networkMode: "offlineFirst" as const } : {}),
   });
 }
 
@@ -2697,65 +2575,6 @@ export function useSimilarRailInfinite(opts?: { enabled?: boolean }) {
   return useInfiniteQuery({
     ...similarRailInfiniteOptions(jsonFetch),
     enabled: opts?.enabled ?? true,
-  });
-}
-
-/** Per-issue "what should I read next?" resolver — drives the reader's
- *  `Shift+N` keybind and the end-of-issue card (M4). Picks collection >
- *  CBL > series > none. Pass the list the user is reading through via
- *  `ctx` (`collection` = collection saved-view id, `cbl` = CBL saved-view
- *  id); omit it for series-only resolution.
- *
- *  Cached for 5 minutes — progress flips that move the resolved target
- *  show up via the existing progress-mutation invalidation chain on the
- *  *next* read; not worth a tighter loop since the reader is mostly
- *  read-only during a single session. */
-export function useNextUp(
-  issueId: string,
-  ctx?: IssueUrlOpts | null,
-  opts?: { enabled?: boolean },
-) {
-  const enabled = (opts?.enabled ?? true) && issueId.length > 0;
-  return useQuery({
-    queryKey: queryKeys.nextUp(issueId, ctx),
-    queryFn: () =>
-      jsonFetch<NextUpView>(
-        apiPath`/issues/${issueId}/next-up` + listContextQuery(ctx),
-      ),
-    enabled,
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-/** `?cbl=…&collection=…` for the next-up / prev-up resolvers; empty when
- *  the reader has no list context. */
-function listContextQuery(ctx?: IssueUrlOpts | null): string {
-  const qs = buildQuery({
-    cbl: ctx?.cbl ?? undefined,
-    collection: ctx?.collection ?? undefined,
-  });
-  return qs;
-}
-
-/** Per-issue "what came before?" resolver — sibling to `useNextUp` for
- *  the reader's `Shift+P` keybind. Picks CBL > series > none. Pure
- *  sequential navigation; doesn't filter by finished state (a user
- *  pressing `Shift+P` is asking to back up one step, not to find an
- *  unread issue). `fallback_suggestion` is never populated for prev. */
-export function usePrevUp(
-  issueId: string,
-  ctx?: IssueUrlOpts | null,
-  opts?: { enabled?: boolean },
-) {
-  const enabled = (opts?.enabled ?? true) && issueId.length > 0;
-  return useQuery({
-    queryKey: queryKeys.prevUp(issueId, ctx),
-    queryFn: () =>
-      jsonFetch<NextUpView>(
-        apiPath`/issues/${issueId}/prev-up` + listContextQuery(ctx),
-      ),
-    enabled,
-    staleTime: 5 * 60 * 1000,
   });
 }
 

@@ -436,7 +436,9 @@ pub async fn overview(
 }
 
 /// `(cvinfo present, .bak count)` for a series folder; a folder that can't
-/// be read reports `(false, None)` rather than failing the overview.
+/// be read reports `(false, None)` rather than failing the overview. Only
+/// Folio's backups count: regular files (a link or a directory never does)
+/// named as [`crate::archive_rewrite::is_backup_name`] accepts.
 async fn inspect_folder(folder: &str) -> (bool, Option<i64>) {
     let mut dir = match tokio::fs::read_dir(folder).await {
         Ok(d) => d,
@@ -449,7 +451,10 @@ async fn inspect_folder(folder: &str) -> (bool, Option<i64>) {
         let name = name.to_string_lossy();
         if name.eq_ignore_ascii_case("cvinfo") {
             cvinfo = true;
-        } else if name.contains(".bak") {
+        } else if crate::archive_rewrite::is_backup_name(&name)
+            // `DirEntry::file_type` does not follow a link.
+            && entry.file_type().await.is_ok_and(|t| t.is_file())
+        {
             backups += 1;
         }
     }

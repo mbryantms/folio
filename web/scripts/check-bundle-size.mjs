@@ -77,9 +77,14 @@ const ROUTE_LABEL = "/[locale]/read/[seriesSlug]/[issueSlug]";
  *  retry, which every signed-in page loads and which cannot be lazy
  *  because it runs when requests are failing, needed about 0.3 KB more.
  *  The headroom is gone on purpose: the next change to first-load code
- *  has to free room first. The measurement table and reasoning live in
+ *  has to free room first. Lowered to 143 KB on 2026-11-11: first-load
+ *  code stopped importing the `lib/api/queries.ts` barrel (shards
+ *  `json-fetch`, `queries-me`, `queries-reader`), the sheet drag-to-dismiss
+ *  loads after hydration and `isStandaloneDisplay` left the pull-to-refresh
+ *  hook, about 12.3 KB in all (139.57 KB in a local build, about 140 KB in
+ *  CI), so measured + ~3 KB. The measurement table and reasoning live in
  *  docs/dev/pwa-performance.md. */
-const BUDGET_KB = 153;
+const BUDGET_KB = 143;
 /** WP-4.4 target. Exceeding it (while still under the ceiling) prints a
  *  warning so creep stays visible in every build log. */
 const BUDGET_TARGET_KB = 120;

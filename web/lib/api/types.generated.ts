@@ -180,6 +180,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/libraries/age-ratings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["admin_library_age_ratings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/libraries/scan-all": {
         parameters: {
             query?: never;
@@ -6548,6 +6564,17 @@ export interface components {
             role: components["schemas"]["UserRole"];
             state: components["schemas"]["UserState"];
         };
+        /** @description Series at one ladder rung. */
+        AgeRatingRungCount: {
+            /** @description The rung's canonical ladder spelling (a valid cap value). */
+            rating: string;
+            /**
+             * Format: int64
+             * @description Active series whose rating ranks at this rung, aliases included
+             *     (`Mature` counts under `Mature 17+`).
+             */
+            series_count: number;
+        };
         /** @description Where this issue maps in one provider, plus its current match state. */
         AlternateProviderSeries: {
             /** Format: int32 */
@@ -6902,14 +6929,29 @@ export interface components {
             computed_at: string;
             /** Format: int64 */
             file_count: number;
+            /**
+             * @description RFC 3339: when the newest backup was made; `None` as for
+             *     `oldest_modified_at`.
+             */
             newest_modified_at?: string | null;
-            /** @description RFC 3339; `None` when there are no backup files. */
+            /**
+             * @description RFC 3339: when the oldest backup was made (its inode change time,
+             *     the clock the retention sweep ages by), not its modification time.
+             *     `None` when there are no backup files, or when no backup's age can
+             *     be told (a modification time in the future, or no change time);
+             *     such backups still count in `file_count` / `total_bytes`.
+             */
             oldest_modified_at?: string | null;
             /** Format: int64 */
             total_bytes: number;
         };
         BackupView: {
-            /** @description RFC3339 modification time, or null if unavailable. */
+            /**
+             * @description RFC3339 modification time of the backup file, or null if
+             *     unavailable. For a hard-linked backup (the usual kind) this is the
+             *     ORIGINAL archive's modification time, not when the backup was made;
+             *     the retention sweep ages backups by when they were made instead.
+             */
             modified_at?: string | null;
             path: string;
             /** Format: int64 */
@@ -11170,6 +11212,23 @@ export interface components {
              */
             library_ids: string[];
         };
+        /** @description One library's series, by age rating. */
+        LibraryAgeRatingsView: {
+            library_id: string;
+            /** @description Every ladder rung, youngest audience first, zeros included. */
+            rungs: components["schemas"]["AgeRatingRungCount"][];
+            /**
+             * Format: int64
+             * @description Every active series of the library: the rungs plus `unrated_count`.
+             */
+            series_count: number;
+            /**
+             * Format: int64
+             * @description Active series with no rating the ladder ranks (none, `Unknown`,
+             *     `Rating Pending` or a word the ladder does not know).
+             */
+            unrated_count: number;
+        };
         LibraryEventView: {
             action: string;
             batch_id?: string | null;
@@ -11271,14 +11330,19 @@ export interface components {
             allow_archive_writeback?: boolean;
             /**
              * Format: int32
-             * @description How many `.bak` siblings to keep per archive after a rewrite.
-             *     1..=5; default 1.
+             * @description How many `.bak` slots a rewrite keeps per archive (`.bak`, then
+             *     `.bak.1` …). 0..=5; default 1. `0` keeps no backup (the rewrite is
+             *     validated before the swap).
              */
             archive_backup_retain_count?: number;
             /**
              * Format: int32
-             * @description Auto-prune `.bak` files older than this many days. Default 30;
-             *     `0` = keep forever.
+             * @description Days a backup is kept before the daily sweep deletes it, counted
+             *     from when Folio made the backup (its inode change time), not from
+             *     the archive's own date; a backup whose age cannot be told is kept.
+             *     Only Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular
+             *     files) are deleted, and only in a library with archive writeback
+             *     on. `0` keeps backups forever. Default 30; non-negative.
              */
             archive_backup_retain_days?: number;
             /**
@@ -16154,8 +16218,12 @@ export interface components {
             archive_backup_retain_count?: number | null;
             /**
              * Format: int32
-             * @description Days a `.bak` file lives before the daily prune cron removes
-             *     it; `0` = keep forever. Non-negative.
+             * @description Days a backup is kept before the daily sweep deletes it, counted
+             *     from when Folio made the backup (its inode change time), not from
+             *     the archive's own date; a backup whose age cannot be told is kept.
+             *     Only Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular
+             *     files) are deleted, and only in a library with archive writeback
+             *     on. `0` keeps backups forever. Default 30; non-negative.
              */
             archive_backup_retain_days?: number | null;
             /**
@@ -17184,6 +17252,32 @@ export interface operations {
             };
             /** @description invalid filter value, including a scan_id or library_id that is not a UUID */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    admin_library_age_ratings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAgeRatingsView"][];
+                };
+            };
+            /** @description admin only */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

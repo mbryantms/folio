@@ -11,7 +11,7 @@ import {
 } from "react";
 
 import dynamic from "next/dynamic";
-import { useMe } from "@/lib/api/queries";
+import { useMe } from "@/lib/api/queries-me";
 import {
   readMeKeybinds,
   resolveKeybinds,

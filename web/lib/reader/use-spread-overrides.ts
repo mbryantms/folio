@@ -19,7 +19,7 @@
  */
 import { useMemo } from "react";
 
-import { useIssuePageOverrides } from "@/lib/api/queries";
+import { useIssuePageOverrides } from "@/lib/api/queries-reader";
 import type { PageOverridesView } from "@/lib/api/types";
 import type { SpreadOverrides } from "@/lib/reader/spreads";
 

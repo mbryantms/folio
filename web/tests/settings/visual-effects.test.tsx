@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const useMe = vi.fn();
 vi.mock("@/lib/api/queries", () => ({ useMe: () => useMe() }));
+vi.mock("@/lib/api/queries-me", () => ({ useMe: () => useMe() }));
 
 import { EFFECTS, effectSetting, useVisualEffect } from "@/lib/visual-effects";
 

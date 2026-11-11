@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { isStandaloneDisplay } from "@/lib/pwa/display-mode";
+
+export { isStandaloneDisplay };
+
 /**
  * iOS Safari's native pull-to-refresh is disabled whenever a page
  * is launched in standalone mode (PWA from the Home Screen). There
@@ -82,20 +86,6 @@ export function computePullDistance(
   // Asymptotic approach: distance = threshold + room * (1 - 1/(1 + overshoot/room))
   // At overshoot = room → adds room/2.  At overshoot = ∞ → adds room.
   return threshold + room * (1 - 1 / (1 + overshoot / room));
-}
-
-/**
- * Standalone-mode detection. Covers both the modern
- * `display-mode: standalone` media query (every platform that
- * honours the web app manifest's `display` field) and Safari's
- * legacy `navigator.standalone` boolean (still the most reliable
- * signal on iOS, where the manifest is partially honored).
- */
-export function isStandaloneDisplay(): boolean {
-  if (typeof window === "undefined") return false;
-  if (window.matchMedia("(display-mode: standalone)").matches) return true;
-  const nav = window.navigator as Navigator & { standalone?: boolean };
-  return nav.standalone === true;
 }
 
 /**

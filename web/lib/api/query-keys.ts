@@ -148,6 +148,9 @@ export const queryKeys = {
   libraryStatsAll: ["libraries", "*", "stats"] as const,
   libraryStats: (libraryId: string) =>
     ["libraries", libraryId, "stats"] as const,
+  /** Admin: series per age-rating rung for every library (the age-cap
+   *  control). Under `libraries` for the same reason as `libraryStatsAll`. */
+  libraryAgeRatingsAll: ["libraries", "*", "age-ratings"] as const,
   removed: (libraryId: string) => ["libraries", libraryId, "removed"] as const,
   /** First-page probe of the removed listing for the tab badge. Prefixed
    *  by `removed` so one invalidation refreshes both. */

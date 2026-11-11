@@ -52,9 +52,10 @@
 //! Per-library `archive_backup_retain_count` controls how many older
 //! slots (`.bak.1`, `.bak.2`, …) are also retained — capped at 5. The
 //! daily backup sweep ([`crate::jobs::backup_prune`], 04:45 UTC) walks
-//! each writeback-enabled library root for `.bak` / `.bak.N` files
-//! (see [`is_backup_name`]) whose mtime is older than
-//! `library.archive_backup_retain_days` and removes them; `0` keeps
+//! each writeback-enabled library root for Folio's backups (regular files
+//! named `<archive>.bak` / `<archive>.bak.N`, see [`is_backup_name`])
+//! made more than `library.archive_backup_retain_days` ago (by the inode
+//! change time, see [`backup_made_at`]) and removes them; `0` keeps
 //! backups forever.
 
 pub mod mutex;
@@ -372,6 +373,7 @@ where
         staging_path: &staging_path,
     })?;
     staging.sync_all()?;
+    let written_at = written_at(&staging);
     drop(staging);
     dir.sync()?;
     fault(RewriteStep::Staged)?;
@@ -382,7 +384,7 @@ where
             rotate_backups(&dir, &name, retain_count)?;
             fault(RewriteStep::Rotated)?;
             let slot0 = backup_slot_name(&name, 0);
-            link_or_copy(&dir, &name, &slot0, original)?;
+            link_or_copy(&dir, &name, &slot0, original, written_at)?;
             fault(RewriteStep::BackedUp)?;
             Some(dir.display(&slot0))
         }
@@ -487,6 +489,32 @@ fn file_identity(f: &fs::File) -> io::Result<(u64, u64)> {
     Ok((m.dev(), m.ino()))
 }
 
+/// When the staging file's bytes were last written, by the filesystem's
+/// own clock: the reference [`link_or_copy`] checks a fresh link's age
+/// against. `None` when the filesystem reports no mtime.
+fn written_at(staging: &fs::File) -> Option<SystemTime> {
+    staging.metadata().ok().and_then(|m| m.modified().ok())
+}
+
+/// How far a fresh hard link's [`backup_made_at`] may lie before the
+/// reference time and still count as "made now". Covers timestamp
+/// granularity (whole seconds on sshfs and some NAS filesystems, two on
+/// FAT), not clock skew: the reference is the staging file's mtime, read
+/// from the same filesystem clock as the link's ctime.
+const LINK_AGE_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Whether a hard link whose [`backup_made_at`] reads `made_at` will age
+/// from the moment it was made, given `reference`: a time no later than the
+/// link, by the same clock. A filesystem that does not set ctime on
+/// `link(2)` (sshfs: SFTP v3 has no ctime and reports the mtime, so the
+/// link reads as old as the original archive) or whose ctime cannot be
+/// read fails, and so does a link whose age is unknown (an original with an
+/// mtime in the future): the caller then copies, and a copy is a new file
+/// whose times are now.
+fn link_ages_from_now(made_at: Option<SystemTime>, reference: SystemTime) -> bool {
+    made_at.is_some_and(|m| m + LINK_AGE_SLACK >= reference)
+}
+
 /// Make `dst` a second name for the original at `src` (both in `dir`)
 /// without ever removing `src`: a hard link when the filesystem supports
 /// one (same inode, zero extra bytes, instant; `linkat` without
@@ -498,14 +526,38 @@ fn file_identity(f: &fs::File) -> io::Result<(u64, u64)> {
 /// Either way `src` is untouched, which is what keeps the target readable
 /// through the whole swap. `dst` must not exist (the rotation freed the
 /// slot). A copy that fails part-way is removed again.
+///
+/// **A link must age from now.** The retention sweep ages a backup by its
+/// ctime ([`backup_made_at`]). After a link is made, the new name is
+/// looked at once (no link followed): when it is still the original's
+/// file and [`link_ages_from_now`] fails against `written_at` (the staging
+/// file's mtime, the filesystem's own clock; our clock taken just before
+/// the link when that is unknown), the backup name alone is unlinked (the
+/// original keeps its own name, so it is never touched) and the copy path
+/// runs. A failure part-way leaves a valid backup (the link, when the
+/// unlink fails: the error stops the rewrite before the swap) or none
+/// (the copy failed and was removed), and the archive at `src` either way.
 fn link_or_copy(
     dir: &LibraryDir,
     src: &OsStr,
     dst: &OsStr,
     original: &ArchiveFile,
+    written_at: Option<SystemTime>,
 ) -> Result<(), RewriteError> {
+    let before = SystemTime::now();
     match dir.hard_link(src, dst) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            let reference = written_at.unwrap_or(before);
+            if linked_backup_ages_from_now(dir, dst, original, reference)? {
+                return Ok(());
+            }
+            warn_links_become_copies(dir, original);
+            tracing::debug!(
+                dst = %dir.display(dst).display(),
+                "archive_rewrite: the hard link does not read as made now; copying the backup instead",
+            );
+            dir.remove_file(dst)?;
+        }
         Err(e) => {
             tracing::debug!(
                 src = %dir.display(src).display(),
@@ -517,13 +569,63 @@ fn link_or_copy(
             // defensive: clear anything at `dst` before copying so a
             // stale slot never masquerades as the backup.
             let _ = dir.remove_file(dst);
-            let (out, mut guard) = Staged::create(dir, dst)?;
-            copy_from_handle(original.file(), &out)?;
-            out.set_permissions(original.file().metadata()?.permissions())?;
-            out.sync_all()?;
-            guard.disarm();
-            Ok(())
         }
+    }
+    let (out, mut guard) = Staged::create(dir, dst)?;
+    copy_from_handle(original.file(), &out)?;
+    out.set_permissions(original.file().metadata()?.permissions())?;
+    out.sync_all()?;
+    guard.disarm();
+    Ok(())
+}
+
+/// Look at the freshly made link `dst` (a no-follow `stat`, the file is
+/// not opened): an error unless it is still the original's file (a regular
+/// file with the original's device and inode), then [`link_ages_from_now`].
+fn linked_backup_ages_from_now(
+    dir: &LibraryDir,
+    dst: &OsStr,
+    original: &ArchiveFile,
+    reference: SystemTime,
+) -> Result<bool, RewriteError> {
+    let st = dir.stat(dst)?;
+    match st {
+        Some(st) if st.kind == EntryKind::Regular && st.identity == original.identity()? => {
+            Ok(link_ages_from_now(backup_made_at_stat(&st), reference))
+        }
+        _ => Err(RewriteError::Io(io::Error::other(
+            "the backup name changed while it was being made; nothing was replaced",
+        ))),
+    }
+}
+
+/// Say once per process per filesystem (device) that backups there are
+/// made by copy: a hard link was made and then replaced because its age
+/// did not read as "now" (the filesystem does not set ctime on a link, or
+/// the archive's mtime lies in the future). Per file it stays at debug.
+fn warn_links_become_copies(dir: &LibraryDir, original: &ArchiveFile) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static WARNED: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+    let Ok((dev, _)) = original.identity() else {
+        return;
+    };
+    let first = WARNED
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|mut seen| seen.insert(dev))
+        .unwrap_or(false);
+    if first {
+        tracing::warn!(
+            dir = %dir.path().display(),
+            device = dev,
+            "archive_rewrite: backups on this filesystem are made by copy, not hard link: \
+             a fresh hard link here does not read as made now (the filesystem does not \
+             set the change time on a link, as sshfs does not, or the archive's \
+             modification time lies in the future), and the retention sweep ages a \
+             backup by that time. Copies take disk space and time; said once per \
+             filesystem per process",
+        );
     }
 }
 
@@ -993,6 +1095,7 @@ where
         staging_path: &staging_path,
     })?;
     staging.sync_all()?;
+    let written_at = written_at(&staging);
     drop(staging);
     dir.sync()?;
     fault(RewriteStep::Staged)?;
@@ -1003,7 +1106,7 @@ where
     // with neither the older backup nor the new one.
     let backup = backup_slot_name(&orig_name, 0);
     let backup_tmp = staging_name(&orig_name);
-    link_or_copy(&dir, &orig_name, &backup_tmp, &source)?;
+    link_or_copy(&dir, &orig_name, &backup_tmp, &source, written_at)?;
     let mut backup_guard = Staged {
         dir: &dir,
         identity: dir.identity(&backup_tmp).ok(),
@@ -1104,19 +1207,104 @@ pub fn backup_slot(target: &Path, slot: i32) -> PathBuf {
     backup_slot_path(target, slot)
 }
 
-/// Whether `name` is a backup file this module produces: `<original>.bak`
-/// (slot 0) or `<original>.bak.<n>` (slots 1+, numeric suffix only). The
-/// inverse of [`backup_slot`] — shared by the backup-storage rollup card
-/// and the retention sweep so both agree on what counts as a backup.
+/// Highest backup slot any Folio version names: `retain_count` is capped at
+/// 5, so the rotation writes slots `0..=4`; the backups listing looks at
+/// `0..=5`, and so does [`is_backup_name`].
+pub const MAX_BACKUP_SLOT: i32 = 5;
+
+/// Whether `name` (a bare file name) is a backup this module produces:
+/// `<archive>.bak` (slot 0) or `<archive>.bak.<n>` with `n` in
+/// `1..=`[`MAX_BACKUP_SLOT`] written without leading zeros, where
+/// `<archive>` is a recognised comic-archive file name (`.cbz` / `.cbt` /
+/// `.cbr` / `.cb7`, any case, non-empty stem). Every archive Folio rewrites
+/// or converts has such a name, so this covers the pre-conversion backups
+/// too (`X.cbr.bak` beside the converted `X.cbz`). The exact inverse of
+/// [`backup_slot`] over an archive path.
+///
+/// Anything else is not a backup: a user's `notes.bak`, `photo.jpg.bak`,
+/// `X.cbz.bak.txt`, `X.cbz.bak.01`. The retention sweep, the backup-storage
+/// tally and the series folder's backup count all go through this, so a
+/// file that fails it is never deleted, counted or offered. Callers also
+/// require a regular file (no link, no directory); the name alone is not
+/// enough.
 pub fn is_backup_name(name: &str) -> bool {
-    if name.ends_with(".bak") {
-        return true;
+    let base = if let Some(base) = name.strip_suffix(".bak") {
+        base
+    } else if let Some((base, slot)) = name.rsplit_once(".bak.") {
+        let valid_slot = !slot.starts_with('0')
+            && slot.bytes().all(|b| b.is_ascii_digit())
+            && slot
+                .parse::<i32>()
+                .is_ok_and(|n| (1..=MAX_BACKUP_SLOT).contains(&n));
+        if !valid_slot {
+            return false;
+        }
+        base
+    } else {
+        return false;
+    };
+    let base = Path::new(base);
+    base.file_stem().is_some_and(|s| !s.is_empty())
+        && base
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(crate::library::ignore::is_recognized_archive_ext)
+}
+
+/// When Folio made the backup described by `meta` (the `lstat` of a file
+/// [`is_backup_name`] accepts), for the retention sweep and the
+/// backup-storage dates. `None` when that cannot be known: the sweep then
+/// keeps the file.
+///
+/// The inode change time (`ctime`), not the modification time. A backup is
+/// usually a hard link to the original archive, which keeps the
+/// original's (often years old) mtime, so by mtime a backup made a minute
+/// ago could already be "older than the retention". Making the link sets
+/// the inode's ctime to the moment of the link (POSIX `link(2)`: ext4,
+/// btrfs, XFS, ZFS, tmpfs, NFS servers), and the copy fallback creates a
+/// new file, so ctime is never earlier than the backup. Nothing in user
+/// space can set ctime back. Later changes (the rewrite unlinking the
+/// archive's old name, a slot rotation's rename, a `chmod` / `chown`)
+/// only move it forward, which keeps a backup longer, never shorter.
+/// A filesystem that does NOT set ctime on a link (sshfs reports the mtime
+/// as ctime) is caught when the backup is made, not here: a link that
+/// does not read as made now is replaced by a copy ([`link_or_copy`]).
+/// Such a filesystem reads ctime == mtime, which this function cannot tell
+/// from a file that simply was not changed since it was written (every
+/// file on FAT / exFAT), so equal times are trusted.
+///
+/// Unknown (`None`): no ctime (zero or before the epoch), or a ctime
+/// earlier than the mtime. A filesystem that keeps ctime produces that
+/// only for a file whose mtime was set into the future (every mtime change
+/// also sets ctime), for example an archive tagged by a machine whose
+/// clock ran ahead; such a backup's age cannot be told, so the sweep keeps
+/// it, counts it (`PruneStats::kept_unknown_age`) and warns once per
+/// library.
+pub fn backup_made_at(meta: &fs::Metadata) -> Option<SystemTime> {
+    use std::os::unix::fs::MetadataExt;
+    let ctime = u64::try_from(meta.ctime())
+        .ok()
+        .filter(|&s| s > 0)
+        .map(|s| {
+            let nanos = u32::try_from(meta.ctime_nsec()).unwrap_or(0);
+            SystemTime::UNIX_EPOCH + std::time::Duration::new(s, nanos)
+        });
+    made_at(ctime, meta.modified().ok())
+}
+
+/// [`backup_made_at`] from a no-follow `stat` taken without opening the
+/// file ([`crate::library::no_follow::LibraryDir::stat`]).
+pub fn backup_made_at_stat(st: &crate::library::no_follow::EntryStat) -> Option<SystemTime> {
+    made_at(st.ctime, st.mtime)
+}
+
+/// [`backup_made_at`]'s rule over the two timestamps.
+fn made_at(ctime: Option<SystemTime>, mtime: Option<SystemTime>) -> Option<SystemTime> {
+    let ctime = ctime?;
+    match mtime {
+        Some(m) if ctime < m => None,
+        _ => Some(ctime),
     }
-    if let Some(idx) = name.rfind(".bak.") {
-        let suffix = &name[idx + 5..];
-        return !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit());
-    }
-    false
 }
 
 /// Restore the most recent backup (`<target>.bak`) over `target` — the
@@ -1532,7 +1720,7 @@ mod tests {
         fs::write(&dst, b"stale").unwrap();
         let (folder, name) = root(&dir).open_parent(&src).unwrap();
         let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
-        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original).unwrap();
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original, None).unwrap();
         assert_eq!(fs::read(&src).unwrap(), b"payload", "source untouched");
         assert_eq!(fs::read(&dst).unwrap(), b"payload", "slot holds the copy");
     }
@@ -2284,7 +2472,7 @@ mod tests {
         fs::write(dir.path().join("issue.cbz.bak"), b"stale").unwrap();
         let (folder, name) = root(&dir).open_parent(&src).unwrap();
         let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
-        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original).unwrap();
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original, None).unwrap();
         let bak = dir.path().join("issue.cbz.bak");
         assert_eq!(fs::read(&bak).unwrap(), b"payload");
         assert_eq!(
@@ -2349,5 +2537,198 @@ mod tests {
             fs::symlink_metadata(f.series.join(&staged_name)).is_ok(),
             "the link is left for the operator"
         );
+    }
+
+    // ── what counts as a backup, and how old it is ──
+
+    #[test]
+    fn is_backup_name_accepts_every_backup_folio_writes() {
+        for ext in ["cbz", "cbt", "cbr", "cb7", "CBZ", "Cbr"] {
+            let archive = format!("Saga (2012) 001.{ext}");
+            for slot in 0..=MAX_BACKUP_SLOT {
+                let p = backup_slot(Path::new(&archive), slot);
+                let name = p.to_str().unwrap();
+                assert!(is_backup_name(name), "{name}");
+            }
+        }
+        // Pre-conversion names: the converted `.cbz` sits beside them.
+        for name in ["issue.cbr.bak", "issue.cb7.bak", "issue.cbz.bak"] {
+            assert!(is_backup_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn is_backup_name_rejects_what_folio_never_writes() {
+        for name in [
+            "notes.bak",
+            "photo.jpg.bak",
+            "X.cbz.bak.txt",
+            "X.cbz.bak.01",
+            "X.cbz.bak.0",
+            "X.cbz.bak.6",
+            "X.cbz.bak.",
+            "X.cbz.bak.1x",
+            ".cbz.bak",
+            "X.zip.bak",
+            "X.cbz.BAK",
+            "X.bak.1",
+            "bak",
+            ".bak",
+            "X.cbz",
+            "X.cbz.bak.bak",
+        ] {
+            assert!(!is_backup_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn made_at_is_the_ctime_unless_it_cannot_be_trusted() {
+        let t = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let earlier = t - std::time::Duration::from_secs(400 * 86_400);
+        // A hard link of an old file: old mtime, fresh ctime.
+        assert_eq!(made_at(Some(t), Some(earlier)), Some(t));
+        assert_eq!(made_at(Some(t), Some(t)), Some(t));
+        assert_eq!(made_at(Some(t), None), Some(t));
+        // No ctime, or a ctime before the mtime: unknown.
+        assert_eq!(made_at(None, Some(earlier)), None);
+        assert_eq!(made_at(Some(earlier), Some(t)), None);
+    }
+
+    /// The copy fallback (hard links refused) makes a new file: its age, too,
+    /// counts from when the backup was made, not from the original's old
+    /// mtime, and it is pruned once that is past the retention.
+    #[test]
+    fn copied_backup_ages_from_when_it_was_made() {
+        use std::os::unix::fs::MetadataExt;
+        let day = std::time::Duration::from_secs(86_400);
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        let old = filetime::FileTime::from_system_time(SystemTime::now() - 400 * day);
+        filetime::set_file_mtime(&src, old).unwrap();
+        // A stale slot makes `hard_link` fail with EEXIST → copy path.
+        let bak = dir.path().join("issue.cbz.bak");
+        fs::write(&bak, b"stale").unwrap();
+        let (folder, name) = root(&dir).open_parent(&src).unwrap();
+        let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
+        link_or_copy(&folder, &name, OsStr::new("issue.cbz.bak"), &original, None).unwrap();
+        assert_ne!(
+            fs::metadata(&bak).unwrap().ino(),
+            fs::metadata(&src).unwrap().ino(),
+            "the backup is a copy"
+        );
+        assert_eq!(fs::read(&bak).unwrap(), b"payload");
+
+        let (stats, _) =
+            crate::jobs::backup_prune::prune_library(dir.path(), 30, SystemTime::now() + day);
+        assert_eq!(stats.removed, 0, "{stats:?}");
+        assert!(
+            bak.exists(),
+            "a copy made today survives a 30-day retention"
+        );
+        let (stats, _) =
+            crate::jobs::backup_prune::prune_library(dir.path(), 30, SystemTime::now() + 31 * day);
+        assert_eq!(stats.removed, 1, "{stats:?}");
+        assert!(!bak.exists());
+        assert!(src.exists(), "the archive is never touched");
+    }
+
+    #[test]
+    fn a_link_must_read_as_made_now_against_the_reference() {
+        let r = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let secs = std::time::Duration::from_secs;
+        // A link on a filesystem that sets ctime: at or after the reference.
+        assert!(link_ages_from_now(Some(r), r));
+        assert!(link_ages_from_now(Some(r + secs(30)), r));
+        // Timestamp granularity: up to the slack before the reference.
+        assert!(link_ages_from_now(Some(r - secs(1)), r));
+        assert!(link_ages_from_now(Some(r - LINK_AGE_SLACK), r));
+        // sshfs-like: the link reads the original's (old) time.
+        assert!(!link_ages_from_now(Some(r - LINK_AGE_SLACK - secs(1)), r));
+        assert!(!link_ages_from_now(Some(r - secs(400 * 86_400)), r));
+        // Unknown age (no ctime, or a ctime before a future mtime).
+        assert!(!link_ages_from_now(None, r));
+    }
+
+    /// The fallback itself, driven by a reference the link cannot meet
+    /// (the real filesystem here sets ctime correctly, so a filesystem that
+    /// does not cannot be reproduced; this is the closest stand-in): the
+    /// backup name alone is unlinked, the copy path runs, and the original
+    /// keeps its name, bytes and link count.
+    #[test]
+    fn a_link_that_does_not_age_from_now_is_replaced_by_a_copy() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        let src_ino = fs::metadata(&src).unwrap().ino();
+        let (folder, name) = root(&dir).open_parent(&src).unwrap();
+        let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
+        let unreachable = SystemTime::now() + std::time::Duration::from_secs(86_400);
+        link_or_copy(
+            &folder,
+            &name,
+            OsStr::new("issue.cbz.bak"),
+            &original,
+            Some(unreachable),
+        )
+        .unwrap();
+        let bak = dir.path().join("issue.cbz.bak");
+        assert_ne!(fs::metadata(&bak).unwrap().ino(), src_ino, "a copy");
+        assert_eq!(fs::read(&bak).unwrap(), b"payload");
+        let src_meta = fs::metadata(&src).unwrap();
+        assert_eq!(src_meta.ino(), src_ino, "the original keeps its file");
+        assert_eq!(src_meta.nlink(), 1, "the link was removed");
+        assert_eq!(fs::read(&src).unwrap(), b"payload");
+
+        // Control: a reachable reference keeps the hard link.
+        fs::remove_file(&bak).unwrap();
+        link_or_copy(
+            &folder,
+            &name,
+            OsStr::new("issue.cbz.bak"),
+            &original,
+            Some(SystemTime::now()),
+        )
+        .unwrap();
+        assert_eq!(fs::metadata(&bak).unwrap().ino(), src_ino, "a hard link");
+    }
+
+    /// The "not the original's file" branch: a different file, or a link,
+    /// at the backup name when the fresh link is looked at is an error (the
+    /// rewrite stops before the swap); the real link is the control.
+    #[test]
+    fn a_backup_name_that_is_not_the_originals_file_is_an_error() {
+        let dir = TempDir::new().unwrap();
+        let src = dir.path().join("issue.cbz");
+        fs::write(&src, b"payload").unwrap();
+        let (folder, name) = root(&dir).open_parent(&src).unwrap();
+        let original = ArchiveFile::new(folder.open_regular(&name).unwrap(), &src);
+        let now = SystemTime::now();
+
+        // Control: the link itself.
+        folder.hard_link(&name, OsStr::new("a.cbz.bak")).unwrap();
+        assert!(
+            linked_backup_ages_from_now(&folder, OsStr::new("a.cbz.bak"), &original, now).unwrap()
+        );
+
+        // Another file at the name.
+        fs::write(dir.path().join("b.cbz.bak"), b"payload").unwrap();
+        assert!(matches!(
+            linked_backup_ages_from_now(&folder, OsStr::new("b.cbz.bak"), &original, now),
+            Err(RewriteError::Io(_))
+        ));
+        // A link to the original at the name: not followed, not the file.
+        std::os::unix::fs::symlink(&src, dir.path().join("c.cbz.bak")).unwrap();
+        assert!(matches!(
+            linked_backup_ages_from_now(&folder, OsStr::new("c.cbz.bak"), &original, now),
+            Err(RewriteError::Io(_))
+        ));
+        // Nothing at the name.
+        assert!(matches!(
+            linked_backup_ages_from_now(&folder, OsStr::new("d.cbz.bak"), &original, now),
+            Err(RewriteError::Io(_))
+        ));
+        assert_eq!(fs::read(&src).unwrap(), b"payload");
     }
 }
