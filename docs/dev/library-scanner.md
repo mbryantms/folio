@@ -969,7 +969,9 @@ opaque JSON so adding variants doesn't need a migration.
   it too (`HealthCollector::skip_auto_resolve`, called from
   `finalize_run`): it did not re-check the whole library, so a finding it
   did not re-emit stays open. It still records the findings it did emit
-  and resolves `UnreadableFolder` rows under the scopes it read.
+  and resolves `UnreadableFolder` rows under the scopes it read. Inside a
+  full scan that completes, a folder that fails is `touch_folder`-ed, so
+  its open findings stay open while the sweep runs everywhere else.
 - **Touch-on-skip** keeps issues alive when the scanner short-circuited
   past the file or folder that emitted them; see fast-path #7
   ([health.rs:373–410](../../crates/server/src/library/health.rs#L373-L410)).
