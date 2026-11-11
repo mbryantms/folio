@@ -1,6 +1,6 @@
 /**
  * Query options shared by the client hooks (`./queries`) and the server
- * prefetch (`lib/home/prefetch-page-rails.ts`).
+ * prefetch (`lib/saved-views/prefetch-page-rails.ts`).
  *
  * A server prefetch only saves the browser a request when the dehydrated
  * query lands under the exact key the client hook reads and holds data

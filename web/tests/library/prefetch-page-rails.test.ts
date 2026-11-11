@@ -69,7 +69,7 @@ describe("prefetchPageRails", () => {
       "/libraries": [{ id: "lib" }],
       "/me/continue-reading": { items: [{ issue: { id: "i1" } }] },
     });
-    const state = await prefetchPageRails(createServerQueryClient(), {
+    const { state } = await prefetchPageRails(createServerQueryClient(), {
       pageId: PAGE,
       isSystem: true,
       fetch,
@@ -97,7 +97,7 @@ describe("prefetchPageRails", () => {
       "/me/continue-reading": { items: [] },
       "/me/on-deck": { items: [{ kind: "series_next" }] },
     });
-    const state = await prefetchPageRails(createServerQueryClient(), {
+    const { state } = await prefetchPageRails(createServerQueryClient(), {
       pageId: PAGE,
       isSystem: false,
       fetch,
@@ -163,7 +163,7 @@ describe("prefetchPageRails", () => {
         [pinnedPath]: { items: [first] },
         [path]: body,
       });
-      const state = await prefetchPageRails(createServerQueryClient(), {
+      const { state } = await prefetchPageRails(createServerQueryClient(), {
         pageId: PAGE,
         isSystem: false,
         fetch,
@@ -181,7 +181,7 @@ describe("prefetchPageRails", () => {
         items: [{ position: 1 }],
       },
     });
-    const state = await prefetchPageRails(createServerQueryClient(), {
+    const { state } = await prefetchPageRails(createServerQueryClient(), {
       pageId: PAGE,
       isSystem: false,
       fetch,
@@ -216,7 +216,7 @@ describe("prefetchPageRails", () => {
       [pinnedPath]: new ApiError(401),
       "/libraries": new ApiError(401),
     });
-    const state = await prefetchPageRails(createServerQueryClient(), {
+    const { state } = await prefetchPageRails(createServerQueryClient(), {
       pageId: PAGE,
       isSystem: true,
       fetch,
@@ -231,7 +231,7 @@ describe("prefetchPageRails", () => {
       },
       "/me/continue-reading": new ApiError(500),
     });
-    const state = await prefetchPageRails(createServerQueryClient(), {
+    const { state } = await prefetchPageRails(createServerQueryClient(), {
       pageId: PAGE,
       isSystem: false,
       fetch,
@@ -244,7 +244,7 @@ describe("prefetchPageRails", () => {
   it("gives up after the budget and leaves the slow query to the client", async () => {
     const never = vi.fn(() => new Promise<never>(() => {}));
     const started = Date.now();
-    const state = await prefetchPageRails(createServerQueryClient(), {
+    const { state } = await prefetchPageRails(createServerQueryClient(), {
       pageId: PAGE,
       isSystem: false,
       fetch: never as <T>(path: string) => Promise<T>,
@@ -252,5 +252,90 @@ describe("prefetchPageRails", () => {
     });
     expect(Date.now() - started).toBeLessThan(1000);
     expect(state.queries).toEqual([]);
+  });
+
+  it("reports the rail it settled on: the first when it has cards, the next when a leading system rail is empty", async () => {
+    const views = [
+      view({ id: "s1", kind: "system", system_key: "continue_reading" }),
+      view({ id: "f1", kind: "filter_series" }),
+    ];
+    const withCards = fakeFetch({
+      [pinnedPath]: { items: views },
+      "/me/continue-reading": { items: [{ issue: { id: "i" } }] },
+    });
+    const a = await prefetchPageRails(createServerQueryClient(), {
+      pageId: PAGE,
+      isSystem: false,
+      fetch: withCards.fetch,
+    });
+    expect(a.priorityViewId).toBe("s1");
+
+    const empty = fakeFetch({
+      [pinnedPath]: { items: views },
+      "/me/continue-reading": { items: [] },
+      "/me/saved-views/f1/results": { items: [{ id: "s" }] },
+    });
+    const b = await prefetchPageRails(createServerQueryClient(), {
+      pageId: PAGE,
+      isSystem: false,
+      fetch: empty.fetch,
+    });
+    expect(b.priorityViewId).toBe("f1");
+    expect(b.snapshotId).not.toBe(a.snapshotId);
+  });
+
+  it("no settled rail when the first rail failed or is not prefetched (the page keeps its first-rail rule)", async () => {
+    const { fetch } = fakeFetch({
+      [pinnedPath]: {
+        items: [view({ kind: "system", system_key: "on_this_day" })],
+      },
+    });
+    const r = await prefetchPageRails(createServerQueryClient(), {
+      pageId: PAGE,
+      isSystem: false,
+      fetch,
+    });
+    expect(r.priorityViewId).toBeNull();
+  });
+
+  it("at the budget it aborts what is in flight and starts nothing more", async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    const signals: AbortSignal[] = [];
+    let releasePinned: () => void = () => {};
+    const fetch = <T>(path: string, init?: { signal?: AbortSignal }) => {
+      started.push(path);
+      if (init?.signal) signals.push(init.signal);
+      if (path === pinnedPath)
+        // Pinned views answer only after the budget.
+        return new Promise<T>((resolve) => {
+          releasePinned = () =>
+            resolve({
+              items: [view({ kind: "system", system_key: "continue_reading" })],
+            } as T);
+        });
+      return new Promise<T>(() => {}); // libraries: never answers
+    };
+    const done = prefetchPageRails(createServerQueryClient(), {
+      pageId: PAGE,
+      isSystem: true,
+      fetch,
+      budgetMs: 50,
+    });
+    await vi.advanceTimersByTimeAsync(60);
+    const r = await done;
+    expect(r.state.queries).toEqual([]);
+    expect(r.priorityViewId).toBeNull();
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((s) => s.aborted)).toBe(true);
+    // The late pinned answer must not set off the rail request.
+    releasePinned();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(started).not.toContain("/me/continue-reading");
+    vi.useRealTimers();
+  });
+
+  it("each request gets its own client (no data shared between users)", () => {
+    expect(createServerQueryClient()).not.toBe(createServerQueryClient());
   });
 });

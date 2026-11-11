@@ -594,17 +594,43 @@ How to prefetch for a page:
   app does not enable Cache Components, so nothing else caches it).
 - **Best effort, bounded.** `prefetchPageRails` never throws; a failed,
   401 or unfinished query is simply not dehydrated (`dehydrate` keeps
-  `success` only) and the client fetches it as before. The whole prefetch
-  stops after `PAGE_RAILS_PREFETCH_BUDGET_MS` (600 ms) so a slow rail
-  cannot become a slow page. On loopback the chain (pinned views, then the
-  first rail, the library list in parallel) costs about 20 ms.
+  `success` only) and the client fetches it as before. At
+  `PAGE_RAILS_PREFETCH_BUDGET_MS` (600 ms) the whole prefetch stops: the
+  requests still in flight are aborted (`apiGet` takes an `AbortSignal`)
+  and no further one starts, so a slow rail can neither slow the page nor
+  keep calling the API after the response has gone. On loopback the chain
+  (pinned views, then the first rail, the library list in parallel) costs
+  about 20 ms.
+- **The first rail that shows is the priority one.** A leading system
+  rail that loads empty hides itself, so the prefetch walks on to the next
+  rail and returns its id (`priorityViewId`); `PageRails` renders that
+  rail eagerly with priority covers and mounts the empty ones before it
+  (they render nothing). Without a prefetched rail the first rail is the
+  priority one, as before.
 - **Why `PrefetchBoundary`, not the bare boundary.** The topbar search
-  calls `useContinueReading` / `useMePages` (disabled until used), so those
-  cache entries exist, empty, before the page renders. The stock boundary
-  hydrates *existing* entries only in an effect, so the prefetched Continue
-  reading rail rendered its skeleton on the server and refetched on the
-  client. `PrefetchBoundary` hydrates an existing entry during render when
-  it has no data and no request in flight.
+  (`useSearchActions`, `lib/search/use-search-actions.ts`) calls
+  `useContinueReading({ enabled: active && !!me.data })`, so that cache
+  entry exists, empty, before the page renders. The stock boundary
+  hydrates *existing* entries only in an effect, so the prefetched
+  Continue reading rail rendered its skeleton on the server and refetched
+  on the client. `PrefetchBoundary` hydrates an existing entry during
+  render when it has no data and no request in flight. (The page list is
+  different: the topbar's `useSearch` calls `useMePages()` enabled, so on
+  every full page load the shell requests `/me/pages` itself before the
+  page renders; the prefetched copy only matters on client navigations.)
+- **Old snapshots are not hydrated.** Next replays a page's cached RSC
+  payload on back/forward (the reader exits with `router.back()`). Each
+  render carries a random `snapshotId`; the browser remembers when it
+  first saw each id (its own clock, a bounded module-level map) and a
+  snapshot first seen more than `SNAPSHOT_FRESH_MS` (30 s) ago hydrates
+  nothing, so the hooks fetch as they did before the prefetch existed
+  instead of painting the pre-reading Continue reading.
+- **One clock.** A fresh snapshot's queries are restamped to the moment
+  this browser first saw it, so staleness and TanStack's newer-than-cache
+  test never compare the server's clock with the browser's. An optimistic
+  update in flight when Home opens can be replaced by the snapshot (it was
+  fetched before the write landed); the mutation's `invalidateRails` on
+  settle refetches it.
 - **CSP.** The dehydrated state travels as a prop in the RSC payload; no
   inline script is added.
 

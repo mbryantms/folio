@@ -100,13 +100,13 @@ export default async function HomePage({
       />
     );
   }
-  const prefetched = await prefetchPageRails(qc, {
+  const { state, snapshotId, priorityViewId } = await prefetchPageRails(qc, {
     pageId: system.id,
     isSystem: true,
     fetch: apiGet,
   });
   return (
-    <PrefetchBoundary state={prefetched}>
+    <PrefetchBoundary state={state} snapshotId={snapshotId}>
       {/* Home shares the `/` pathname with the grid + search, so the App
           Router won't auto-reset scroll when arriving here from those
           views — reset it on mount. */}
@@ -120,6 +120,7 @@ export default async function HomePage({
           pageDescription={system.description ?? null}
           isSystem
           showInSidebar={system.show_in_sidebar}
+          priorityViewId={priorityViewId}
         />
       </div>
     </PrefetchBoundary>

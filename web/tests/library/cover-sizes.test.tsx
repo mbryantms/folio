@@ -45,11 +45,9 @@ describe("Cover sizes", () => {
     expect(coverSizes(undefined, true)).toBeUndefined();
   });
 
-  it("the static hint keeps a default desktop card on the 300w variant at 1x", () => {
-    // Desktop slot is a fixed px value ≤ 300, so at DPR 1 the browser's
-    // pick from `…300w, …600w` is the 300 one.
-    const desktop = /(\d+)px$/.exec(COVER_CARD_SIZES)?.[1];
-    expect(Number(desktop)).toBeLessThanOrEqual(300);
-    expect(Number(desktop)).toBeGreaterThanOrEqual(160);
+  it("the static hint is the largest card, so it never under-serves", () => {
+    // Desktop: the 300px stop is the widest card; at DPR 1 that still
+    // picks 300w, above it 600w. Phone: never fewer than two per row.
+    expect(COVER_CARD_SIZES).toBe("(max-width: 639px) 50vw, 300px");
   });
 });

@@ -142,6 +142,25 @@ function offenders(
   return found;
 }
 
+/** `*Options(` factories a hook in `queries.ts` calls that the guard
+ *  cannot read (not a top-level declaration of `query-options.ts`). Such a
+ *  hook's response type is invisible to `offenders`, so it must fail
+ *  instead of silently going unchecked. TanStack's own identity helpers
+ *  are exempt. */
+function unknownFactories(queries: string, sharedOptions: string): string[] {
+  const known = new Set(topLevelBlocks(sharedOptions).map((b) => b.name));
+  const out = new Set<string>();
+  for (const { name, body } of topLevelBlocks(queries)) {
+    if (!name.startsWith("use")) continue;
+    for (const m of stripComments(body).matchAll(/\b(\w+Options)\(/g)) {
+      const f = m[1]!;
+      if (f === "queryOptions" || f === "infiniteQueryOptions") continue;
+      if (!known.has(f)) out.add(`${name} → ${f}`);
+    }
+  }
+  return [...out];
+}
+
 describe("queries.ts: no useQuery over a next_cursor response", () => {
   const generated = read("lib/api/types.generated.ts");
   const typesTs = read("lib/api/types.ts");
@@ -200,6 +219,27 @@ describe("queries.ts: no useQuery over a next_cursor response", () => {
     expect(
       unexpected,
       "useQuery on a next_cursor response — make it useInfiniteQuery with a sentinel (CLAUDE.md 'List pagination'), or add it to ALLOWLIST with a reason",
+    ).toEqual([]);
+  });
+
+  it("every options factory a hook spreads is one the guard can read", () => {
+    expect(
+      unknownFactories(queries, sharedOptions),
+      "hook spreads an options factory outside lib/api/query-options.ts (or one the block parser cannot see) — move it there so this guard sees its response type",
+    ).toEqual([]);
+    // Self-check: a factory from elsewhere is reported.
+    expect(
+      unknownFactories(
+        "export function useZ() {\n  return useQuery({ ...otherOptions(jsonFetch) });\n}",
+        sharedOptions,
+      ),
+    ).toEqual(["useZ → otherOptions"]);
+    // And the shared module's arrow-const factories count as known.
+    expect(
+      unknownFactories(
+        "export function useY() {\n  return useQuery({ ...arrowOptions(jsonFetch) });\n}",
+        "export const arrowOptions = (f: F) =>\n  queryOptions({ queryKey: k, queryFn: () => f<AView>('/a') });",
+      ),
     ).toEqual([]);
   });
 

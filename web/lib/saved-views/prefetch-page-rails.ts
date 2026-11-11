@@ -46,10 +46,32 @@ export function createServerQueryClient(): QueryClient {
   });
 }
 
+/** A GET that can be cancelled: `apiGet` (`lib/api/fetch.ts`). */
+export type CancellableFetcher = <T>(
+  path: string,
+  init?: { signal?: AbortSignal },
+) => Promise<T>;
+
+/** What the page hands to `<PrefetchBoundary>` and `<PageRails>`. */
+export type PrefetchedPageRails = {
+  state: DehydratedState;
+  /** Random per render. The browser remembers when it first saw each id
+   *  and refuses to hydrate an old snapshot that Next replays from its
+   *  router cache on back/forward (`PrefetchBoundary`). */
+  snapshotId: string;
+  /** The rail the prefetch settled on (the first one that will show), so
+   *  the page renders *that* rail eagerly. `null` when no rail was
+   *  prefetched: the page then prioritizes its first rail, as before. */
+  priorityViewId: string | null;
+};
+
 /**
  * Prefetch the pinned views of `pageId` and the first visible rail into
  * `qc`, then dehydrate it (everything already in `qc`, such as the page
  * list, included). Only successful queries are dehydrated. Never throws.
+ *
+ * At the budget every request still in flight is aborted and no further
+ * one starts: nothing reads `qc` after the response has gone.
  */
 export async function prefetchPageRails(
   qc: QueryClient,
@@ -63,12 +85,19 @@ export async function prefetchPageRails(
     /** The system Home also shows the no-library card, which reads the
      *  library list; prefetched alongside. */
     isSystem: boolean;
-    fetch: JsonFetcher;
+    fetch: CancellableFetcher;
     budgetMs?: number;
   },
-): Promise<DehydratedState> {
+): Promise<PrefetchedPageRails> {
+  const budget = new AbortController();
+  const guarded: JsonFetcher = <T>(path: string) =>
+    budget.signal.aborted
+      ? Promise.reject<T>(new Error("prefetch budget spent"))
+      : fetch<T>(path, { signal: budget.signal });
+  let priorityViewId: string | null = null;
+
   const work = async () => {
-    const pinned = savedViewsOptions(fetch, { pinnedOn: pageId });
+    const pinned = savedViewsOptions(guarded, { pinnedOn: pageId });
     await Promise.all([
       (async () => {
         await qc.prefetchQuery(pinned);
@@ -77,18 +106,28 @@ export async function prefetchPageRails(
         // A system rail that loaded empty hides itself, so the next rail is
         // the one on screen; walk on in that case only.
         for (const view of views.slice(0, MAX_LEADING_RAILS)) {
-          const result = await prefetchRail(qc, view, fetch);
+          if (budget.signal.aborted) return;
+          const result = await prefetchRail(qc, view, guarded);
+          if (
+            result === "items" ||
+            (result === "empty" && view.kind !== "system")
+          ) {
+            priorityViewId = view.id;
+          }
           if (result !== "empty" || view.kind !== "system") break;
         }
       })(),
-      isSystem ? qc.prefetchQuery(libraryListOptions(fetch)) : undefined,
+      isSystem ? qc.prefetchQuery(libraryListOptions(guarded)) : undefined,
     ]);
   };
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
   try {
     await Promise.race([
-      work(),
+      work().then(() => {
+        finished = true;
+      }),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, budgetMs);
       }),
@@ -97,8 +136,15 @@ export async function prefetchPageRails(
     // prefetch* never rejects; this guards a throwing `fetch` wrapper.
   } finally {
     clearTimeout(timer);
+    budget.abort();
   }
   // Default filter: only `success` queries. Pending (over budget) and
   // failed ones are left for the client.
-  return dehydrate(qc);
+  return {
+    state: dehydrate(qc),
+    snapshotId: crypto.randomUUID(),
+    // Over budget the settled rail may not be the one that shows; fall
+    // back to the page's own first-rail rule.
+    priorityViewId: finished ? priorityViewId : null,
+  };
 }
