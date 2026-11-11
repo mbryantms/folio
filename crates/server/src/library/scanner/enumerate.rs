@@ -187,6 +187,65 @@ impl ArchiveWalk {
     }
 }
 
+/// The order a series folder's archives are ingested in: the order a
+/// person reads the folder, never the order the filesystem lists it
+/// (`read_dir` is newest-first on tmpfs, hash order on ext4, and
+/// different again on a network share, so a scan's result must not
+/// depend on it).
+///
+/// - The folder's own files come before those of its subfolders
+///   (`Specials/`, `Annuals/`, …), and subfolders follow one another in
+///   the same order as files: the parent folders are compared first, one
+///   path component at a time, a shorter parent (the series folder
+///   itself) first.
+/// - Names compare in natural order (`Issue 2` before `Issue 10`),
+///   ignoring case: [`natord::compare_ignore_case`], the comparator the
+///   CBZ reader sorts pages with.
+/// - Two paths that are still equal (`issue 1.cbz` and `Issue 1.cbz`,
+///   `01` and `1`) fall back to their raw bytes, so the order is total and
+///   no two listings of the same names can disagree.
+///
+/// Compares names already in memory: no file system call.
+pub fn archive_order(a: &Path, b: &Path) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    use std::os::unix::ffi::OsStrExt;
+    fn natural(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> Ordering {
+        natord::compare_ignore_case(&a.to_string_lossy(), &b.to_string_lossy())
+    }
+    let parents = match (a.parent(), b.parent()) {
+        (Some(pa), Some(pb)) if pa == pb => Ordering::Equal,
+        (pa, pb) => {
+            let mut ca = pa.into_iter().flat_map(Path::components);
+            let mut cb = pb.into_iter().flat_map(Path::components);
+            loop {
+                match (ca.next(), cb.next()) {
+                    (None, None) => break Ordering::Equal,
+                    (None, Some(_)) => break Ordering::Less,
+                    (Some(_), None) => break Ordering::Greater,
+                    (Some(x), Some(y)) => match natural(x.as_os_str(), y.as_os_str()) {
+                        Ordering::Equal => {}
+                        other => break other,
+                    },
+                }
+            }
+        }
+    };
+    parents
+        .then_with(|| match (a.file_name(), b.file_name()) {
+            (Some(x), Some(y)) => natural(x, y),
+            (x, y) => x.cmp(&y),
+        })
+        .then_with(|| a.as_os_str().as_bytes().cmp(b.as_os_str().as_bytes()))
+}
+
+/// Put a folder's archives in [`archive_order`]. Every walk that builds a
+/// scan's per-folder list calls it before returning, so the identity
+/// peek, the batches, the progress counters and the duplicate checks all
+/// see the same order on every filesystem.
+pub fn sort_archives(archives: &mut [PathBuf]) {
+    archives.sort_by(|a, b| archive_order(a, b));
+}
+
 /// Case-insensitive series-subfolder allowlist. A folder with one of
 /// these names inside a series folder is a "category bucket"
 /// (Specials/Annuals/etc.), not its own series. These names also
@@ -811,8 +870,7 @@ fn read_dir_filtered(root: &Path, ignore: &IgnoreRules) -> std::io::Result<Vec<P
 
 /// Recursively enumerate `.cbz` (and Milestone-12 friends) under a series
 /// folder. Sub-folders inside a series folder are allowed (spec §2.2,
-/// "Annuals" / "Specials"). Returns absolute paths in directory traversal
-/// order — caller may sort for stability.
+/// "Annuals" / "Specials"). Returns absolute paths in [`archive_order`].
 pub fn list_archives(folder: &Path) -> Vec<PathBuf> {
     list_archives_with(folder, &IgnoreRules::default())
 }
@@ -862,6 +920,7 @@ pub fn walk_archives_with(folder: &Path, ignore: &IgnoreRules) -> ArchiveWalk {
             out.archives.push(path.to_path_buf());
         }
     }
+    sort_archives(&mut out.archives);
     out
 }
 
@@ -1078,6 +1137,7 @@ pub fn list_archives_changed_since(
             out.archives.push(path.to_path_buf());
         }
     }
+    sort_archives(&mut out.archives);
     out
 }
 
@@ -1637,5 +1697,106 @@ mod subfolder_kind_tests {
             vec!["Annuals", "x"]
         );
         assert_eq!(groups, vec!["01-13", "1987-2000", "digital"]);
+    }
+}
+
+#[cfg(test)]
+mod archive_order_tests {
+    use super::*;
+    use std::fs;
+
+    fn names(paths: &[PathBuf], root: &Path) -> Vec<String> {
+        paths
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Natural order, case-insensitive, the folder's own files before its
+    /// subfolders', bytes as the last word: whatever order the names come
+    /// in, one answer.
+    #[test]
+    fn archive_order_is_natural_and_total() {
+        let root = Path::new("/lib/Series");
+        let expected = [
+            "Issue 1.cbz",
+            "issue 1.cbz",
+            "Issue 2.cbz",
+            "issue 9.cbz",
+            "Issue 10.cbz",
+            "ISSUE 11.cbz",
+            "Issue 100.cbz",
+            "Annuals/Annual 2.cbz",
+            "Annuals/annual 10.cbz",
+            "Specials/Special 1.cbz",
+            "Specials/Extra/Deep 1.cbz",
+        ];
+        let sorted: Vec<PathBuf> = expected.iter().map(|n| root.join(n)).collect();
+        // Every rotation and the reverse of the expected order sort back
+        // to it.
+        let mut inputs: Vec<Vec<PathBuf>> = (0..sorted.len())
+            .map(|k| {
+                let mut v = sorted.clone();
+                v.rotate_left(k);
+                v
+            })
+            .collect();
+        inputs.push(sorted.iter().rev().cloned().collect());
+        for mut v in inputs {
+            sort_archives(&mut v);
+            assert_eq!(names(&v, root), expected);
+        }
+        // `issue 1` and `Issue 1` are equal ignoring case; bytes decide
+        // (`I` 0x49 < `i` 0x69), the same way in both argument orders.
+        let (a, b) = (root.join("Issue 1.cbz"), root.join("issue 1.cbz"));
+        assert_eq!(archive_order(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(archive_order(&b, &a), std::cmp::Ordering::Greater);
+        assert_eq!(archive_order(&a, &a), std::cmp::Ordering::Equal);
+    }
+
+    /// The walks hand back the sorted list, so a folder whose files were
+    /// created in two different orders lists the same.
+    #[test]
+    fn walks_return_archives_in_archive_order() {
+        let mut lists = Vec::new();
+        for creation in [
+            [
+                "Issue 10.cbz",
+                "Specials/Special 1.cbz",
+                "issue 2.cbz",
+                "Issue 1.cbz",
+            ],
+            [
+                "Issue 1.cbz",
+                "issue 2.cbz",
+                "Specials/Special 1.cbz",
+                "Issue 10.cbz",
+            ],
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let folder = tmp.path().join("Series");
+            fs::create_dir_all(folder.join("Specials")).unwrap();
+            for n in creation {
+                fs::write(folder.join(n), b"").unwrap();
+            }
+            let walked = walk_archives_with(&folder, &IgnoreRules::default());
+            let changed = list_archives_changed_since(
+                &folder,
+                &IgnoreRules::default(),
+                chrono::DateTime::<chrono::Utc>::MIN_UTC,
+            );
+            assert_eq!(walked.archives, changed.archives);
+            lists.push(names(&walked.archives, &folder));
+        }
+        assert_eq!(
+            lists[0],
+            vec![
+                "Issue 1.cbz",
+                "issue 2.cbz",
+                "Issue 10.cbz",
+                "Specials/Special 1.cbz"
+            ]
+        );
+        assert_eq!(lists[0], lists[1]);
     }
 }

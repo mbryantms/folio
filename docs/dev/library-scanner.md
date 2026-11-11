@@ -443,9 +443,14 @@ without per-library configuration.
      Build a `SeriesIdentityHint` by merging, in precedence order
      (lowest-first):
      - `process::peek_identity_hint(&archives[0])` — first archive's
-       ComicInfo + filename inference. `archives[0]` is whatever
-       `read_dir` listed first, so its cover year is *that issue's*
-       year, not the run's.
+       ComicInfo + filename inference. The list is in ingest order (below),
+       so `archives[0]` is the folder's own first file by name — usually
+       issue #1, never a `Specials/` file while the folder has files of
+       its own — and the same file on every filesystem. Its cover year is
+       still *that issue's* year, which is why the folder year and
+       series.json outrank it. Only a series that does not exist yet is
+       peeked: a known folder, or one `resolve_or_create` finds by
+       `folder_path`, keeps its row, name and slug.
      - folder leaf: `V<N>` fills the volume when the peek had none;
        a bare `(YYYY)` group (`parsers::filename::folder_year_token`)
        **replaces** the peeked year — the folder is named for the
@@ -471,6 +476,25 @@ without per-library configuration.
      (≤10/sec/library throttle; see §Progress events).
   3. **Per-archive ingest loop**
      ([mod.rs:1535–1616](../../crates/server/src/library/scanner/mod.rs#L1535-L1616)).
+     **Ingest order.** A scan's result must not depend on the order the
+     filesystem lists a folder (`read_dir` is newest-first on tmpfs and
+     hash order on ext4). Both walks that build a folder's list
+     (`enumerate::walk_archives_with`, `list_archives_changed_since`) sort
+     it with `enumerate::archive_order` before returning: the folder's own
+     files first, then each subfolder's, names in natural order ignoring
+     case (`natord::compare_ignore_case`, the comparator the CBZ reader
+     sorts pages with: `Issue 2` before `Issue 10`), raw bytes as the
+     tie-break so the order is total. It compares names already in memory
+     (no extra stat). The candidates that miss the fast path are then
+     stably reordered so files that already have a row persist before new
+     files: a changed file carries its new content hash before any new
+     file is checked against it, so a byte-identical copy of the new
+     content appearing in the same scan is a `DuplicateContent` finding
+     (as it would be one scan later) and the original keeps its row,
+     markers and progress; a new file holding the changed file's *old*
+     bytes is its own issue. Two new identical files: the first in
+     `archive_order` gets the row. Folders still run concurrently, so a
+     copy in *another* folder can meet either side first.
      Build a path → row manifest, then for each archive:
      - `file_fingerprint` (size + mtime) →
      - if not `force` and the existing row's metadata is current →

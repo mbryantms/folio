@@ -767,15 +767,13 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
     bookmark(&app, &auth, &bad_id, 1).await; // PURPLE
 
     // The rescan batch: two reorders, a reorder whose new first page is
-    // unreadable, and a CBR to convert.
-    //
-    // No byte-identical copy of a file that changes in the same batch: a
-    // folder's files are ingested in the order the filesystem lists them,
-    // so whether such a copy meets a row that already carries its content
-    // hash (a duplicate) or not (its own issue) differs from one
-    // filesystem to the next. `page_hashes_are_read_only_when_an_anchor_can_use_them`
-    // covers a copy whose original is unchanged, which has one answer.
+    // unreadable, a CBR to convert, and a byte-identical copy of the CBZ's
+    // new bytes. Files with a row persist before new ones, so the copy
+    // always meets the CBZ's row carrying its content hash: a duplicate,
+    // whichever the filesystem lists first (`scanner_order.rs`).
     replace(&cbz, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
+    let copy = series.join("Mixed 000.cbz");
+    replace(&copy, &cbz_bytes(&[BLUE, YELLOW, RED, GREEN]), 60);
     replace(&cbt, &cbt_bytes(&[RED, PURPLE, GREEN, BLUE]), 60);
     replace(
         &bad,
@@ -791,7 +789,7 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
             stats.files_converted,
             stats.files_duplicate
         ),
-        (3, 1, 1, 0),
+        (3, 1, 1, 1),
         "{stats:?}"
     );
 
@@ -833,5 +831,6 @@ async fn mixed_batch_ends_with_the_same_rows_anchors_and_findings() {
         .map(|h| format!("{:?}", h.kind))
         .collect();
     open.sort();
-    assert!(open.is_empty(), "{open:?}");
+    assert_eq!(open, vec!["DuplicateContent".to_owned()], "{open:?}");
+    assert!(row_at(&app, &copy).await.is_none(), "the copy is no issue");
 }
