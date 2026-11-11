@@ -313,8 +313,10 @@ impl Pinner {
                 }
             }
         };
-        match rx.wait_for(Option::is_some).await {
-            Ok(done) => done.clone().unwrap_or(Ok(())),
+        // Copy the answer out so the borrow of `rx` ends before the match.
+        let waited = rx.wait_for(Option::is_some).await.map(|done| done.clone());
+        match waited {
+            Ok(done) => done.unwrap_or(Ok(())),
             Err(_) => {
                 // The task ended without an answer (it panicked): let
                 // the next request start a fresh one. Another waiter may
