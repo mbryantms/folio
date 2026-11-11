@@ -7,7 +7,6 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use entity::user::UserRole;
 use entity::{issue, series};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, FromQueryResult,
@@ -3585,7 +3584,7 @@ pub async fn collection_report(
         Err(resp) => return resp,
     };
     let acl = access::for_library(&app, &user, row.library_id).await;
-    if !acl.series_ok(row.library_id, row.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &row) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // No `.limit()` — the whole run must be visible for gap detection. The
@@ -3676,14 +3675,11 @@ pub async fn get_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    let acl = access::for_library(&app, &user, row.library_id).await;
-    if !acl.series_ok(row.library_id, row.age_rating.as_deref()) {
-        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
-    }
     // A soft-deleted series is gone for readers (its issues are hidden
     // everywhere already); only an admin can still open it, to restore or
     // confirm it from the Removed tab the page links to.
-    if row.removed_at.is_some() && user.role != UserRole::Admin {
+    let acl = access::for_library(&app, &user, row.library_id).await;
+    if !access::series_page_ok(&acl, &user, &row) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // `RemovedAt.is_null()` keeps soft-deleted and confirmed-removed issues
@@ -4614,7 +4610,7 @@ pub async fn list_issues(
         Err(resp) => return resp,
     };
     let acl = access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &s) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -4942,7 +4938,7 @@ pub async fn resume(
         Err(resp) => return resp,
     };
     let acl = access::for_library(&app, &user, srow.library_id).await;
-    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &srow) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     // Active, non-removed issues in canonical sort order. Empty series →

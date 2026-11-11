@@ -12295,9 +12295,10 @@ export interface components {
         };
         NotesExportMarker: components["schemas"]["ExportMarker"] & {
             /**
-             * @description `false` when the marker's issue was removed from the library or is
-             *     no longer visible to the caller (library grant / age cap). The
-             *     marker is still exported; only the link is withheld.
+             * @description `false` when the marker's issue was soft-removed (with or without
+             *     its series), or is no longer visible to the caller (library grant /
+             *     age cap; such markers sit in the anonymous group). The marker is
+             *     still exported; only the link is withheld.
              */
             available: boolean;
             /**
@@ -14100,8 +14101,8 @@ export interface components {
             /**
              * Format: int32
              * @description Snapshots not restored: the id already exists (a repeated Undo,
-             *     or another user's row), the issue is gone or no longer visible,
-             *     or the page no longer exists.
+             *     or another user's row), the issue is gone, soft-removed or no
+             *     longer visible, or the page no longer exists.
              */
             skipped: number;
         };
@@ -16385,8 +16386,10 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Always 0. Kept for response shape: an issue the caller can't see
-             *     is counted in `not_found`, indistinguishable from an unknown id.
+             * @description Always 0. Kept so the response schema does not change: an issue the
+             *     caller can't see (outside the grant, above the age cap, or
+             *     soft-removed) is counted in `not_found`, indistinguishable from an
+             *     unknown id.
              */
             forbidden: number;
             /**
@@ -16466,8 +16469,9 @@ export interface components {
             first_error?: string | null;
             /**
              * Format: int32
-             * @description Always 0. Kept for response shape: a series the caller can't see
-             *     is counted in `not_found_series`.
+             * @description Always 0. Kept so the response schema does not change: a series
+             *     the caller can't see (or a soft-removed one) is counted in
+             *     `not_found_series`.
              */
             forbidden_series: number;
             /**
@@ -23171,13 +23175,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description not your list */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description list not found */
             404: {
                 headers: {
@@ -23675,13 +23672,6 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAddMembersResp"];
                 };
             };
-            /** @description not owner */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description collection not found */
             404: {
                 headers: {
@@ -23721,13 +23711,6 @@ export interface operations {
                     "application/json": components["schemas"]["BulkRemoveMembersResp"];
                 };
             };
-            /** @description not owner */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description collection not found */
             404: {
                 headers: {
@@ -23763,13 +23746,6 @@ export interface operations {
                     "application/json": components["schemas"]["CollectionNextUpView"];
                 };
             };
-            /** @description not the caller's collection */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description collection not found */
             404: {
                 headers: {
@@ -23800,13 +23776,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CollectionWindowView"];
                 };
-            };
-            /** @description not the caller's collection */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description collection not found */
             404: {
@@ -24169,15 +24138,8 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description overrides cleared */
+            /** @description overrides cleared, or there were none */
             204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description issue not found or not visible */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25865,6 +25827,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description series not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     series_reader_prefs_put: {
@@ -26274,7 +26243,7 @@ export interface operations {
                     "application/json": components["schemas"]["BatchCreatedResp"];
                 };
             };
-            /** @description admin only / view not visible */
+            /** @description admin only */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -26308,13 +26277,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BatchStatusResp"];
                 };
-            };
-            /** @description batch not visible */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description batch not found */
             404: {
@@ -27574,13 +27536,6 @@ export interface operations {
                     "application/json": components["schemas"]["ExternalIdsListResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description series not found */
             404: {
                 headers: {
@@ -27845,13 +27800,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ExternalIdsListResp"];
                 };
-            };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description issue not found */
             404: {
@@ -28125,13 +28073,6 @@ export interface operations {
                     "application/json": components["schemas"]["CandidatesResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description issue / run not found */
             404: {
                 headers: {
@@ -28213,13 +28154,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description issue / run not found */
             404: {
                 headers: {
@@ -28252,13 +28186,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["LookupResp"];
                 };
-            };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description issue not found / provider has no such record */
             404: {
@@ -28322,13 +28249,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description issue / run / candidate not found */
             404: {
                 headers: {
@@ -28372,13 +28292,6 @@ export interface operations {
             };
             /** @description no providers configured */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description library access denied */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28562,13 +28475,6 @@ export interface operations {
                     "application/json": components["schemas"]["CandidatesResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description series not found / no run */
             404: {
                 headers: {
@@ -28648,13 +28554,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description series / run not found */
             404: {
                 headers: {
@@ -28691,13 +28590,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["CoverageHintsResp"];
                 };
-            };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description series / run / candidate not found */
             404: {
@@ -28829,13 +28721,6 @@ export interface operations {
                     "application/json": components["schemas"]["LookupResp"];
                 };
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description series not found / provider has no such record */
             404: {
                 headers: {
@@ -28960,13 +28845,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description series / run / candidate not found */
             404: {
                 headers: {
@@ -29084,13 +28962,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description series not found */
             404: {
                 headers: {
@@ -29132,13 +29003,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SyncStatusResp"];
                 };
-            };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description series not found */
             404: {
@@ -29231,13 +29095,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProviderCoverageResp"];
                 };
-            };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description series not found */
             404: {
@@ -29393,13 +29250,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProviderRangesListResp"];
                 };
-            };
-            /** @description library access denied */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description series not found */
             404: {

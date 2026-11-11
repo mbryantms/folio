@@ -614,9 +614,10 @@ async fn export_flags_markers_the_user_can_no_longer_see() {
         let resp = get(&app, "/api/me/markers/export?format=json", Some(&user)).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let doc: Value = serde_json::from_slice(&body_bytes(resp.into_body()).await).unwrap();
-        doc["series"][0]["issues"][0]["pages"][0]["markers"][0].clone()
+        doc
     };
-    assert_eq!(fetch().await["available"], true);
+    let marker_of = |doc: &Value| doc["series"][0]["issues"][0]["pages"][0]["markers"][0].clone();
+    assert_eq!(marker_of(&fetch().await)["available"], true);
 
     // Age cap below the issue's rating hides it.
     let row = entity::issue::Entity::find_by_id(issue_id.clone())
@@ -635,21 +636,36 @@ async fn export_flags_markers_the_user_can_no_longer_see() {
     let mut gam: library_user_access::ActiveModel = grant.into();
     gam.age_rating_max = Set(Some("Teen".into()));
     gam.update(&db).await.unwrap();
-    let m = fetch().await;
+    // Still exported (it is the user's data), flagged, and in the
+    // anonymous group: nothing names the content it sits on.
+    let doc = fetch().await;
+    let m = marker_of(&doc);
+    assert_eq!(m["id"], marker_id.to_string());
     assert_eq!(m["available"], false);
     assert!(m.get("jump_url").is_none());
+    assert_eq!(m["issue"]["issue_id"], "");
+    assert_eq!(
+        doc["series"][0]["series"]["series_name"],
+        "No longer available"
+    );
+    assert!(!doc.to_string().contains("Capped"), "{doc}");
+    assert!(!doc.to_string().contains(&issue_id), "{doc}");
 
-    // Revoked grant: still exported (it's the user's data), still flagged.
+    // Revoked grant: the same.
     library_user_access::Entity::delete_by_id((lib, user.user_id))
         .exec(&db)
         .await
         .unwrap();
-    let m = fetch().await;
+    let doc = fetch().await;
+    let m = marker_of(&doc);
     assert_eq!(m["id"], marker_id.to_string());
     assert_eq!(m["available"], false);
+    assert!(!doc.to_string().contains("Capped"), "{doc}");
 
     let resp = get(&app, "/api/me/markers/export?format=md", Some(&user)).await;
     let md = String::from_utf8(body_bytes(resp.into_body()).await).unwrap();
+    assert!(md.contains("## No longer available"), "{md}");
     assert!(md.contains("**Bookmark** · (no longer available)"), "{md}");
     assert!(!md.contains("/markers/"), "{md}");
+    assert!(!md.contains("Capped"), "{md}");
 }

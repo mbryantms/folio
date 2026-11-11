@@ -210,18 +210,14 @@ pub async fn upsert(
             "page must be >= 0",
         );
     }
-    // ACL: confirm the user can see the issue at all.
-    let issue_row = match issue::Entity::find_by_id(req.issue_id.clone())
-        .one(&app.db)
-        .await
-    {
+    // ACL: an issue the caller can't see (outside the grant, above the
+    // cap) or that was soft-removed answers exactly like an unknown id.
+    let acl = access::for_user(&app, &user).await;
+    let issue_row = match access::visible_issue(&app.db, &acl, &req.issue_id).await {
         Ok(Some(r)) => r,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    if !access::issue_visible(&app, &user, &issue_row).await {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
-    }
 
     let result = upsert_for_run(
         &app,
@@ -704,8 +700,11 @@ pub async fn upsert_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
+    // A series the caller can't see, or one soft-removed (no new writes
+    // on removed content, `access::visible_series_select`), answers like
+    // an unknown slug.
     let acl = access::for_library(&app, &user, srow.library_id).await;
-    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+    if srow.removed_at.is_some() || !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -848,8 +847,11 @@ pub async fn upsert_series_matching(
         Ok(r) => r,
         Err(resp) => return resp,
     };
+    // A series the caller can't see, or one soft-removed (no new writes
+    // on removed content, `access::visible_series_select`), answers like
+    // an unknown slug.
     let acl = access::for_library(&app, &user, srow.library_id).await;
-    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+    if srow.removed_at.is_some() || !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -993,8 +995,10 @@ pub struct UpsertBulkResp {
     pub updated: u32,
     /// Issues already in the target state (no DB write — cheap re-click).
     pub skipped: u32,
-    /// Always 0. Kept for response shape: an issue the caller can't see
-    /// is counted in `not_found`, indistinguishable from an unknown id.
+    /// Always 0. Kept so the response schema does not change: an issue the
+    /// caller can't see (outside the grant, above the age cap, or
+    /// soft-removed) is counted in `not_found`, indistinguishable from an
+    /// unknown id.
     pub forbidden: u32,
     /// Issues whose id didn't resolve to a row (removed / never
     /// existed / typo) or that the caller can't see — the caller
@@ -1061,11 +1065,17 @@ pub async fn upsert_bulk(
         .filter(|id| seen.insert(id.clone()))
         .collect();
 
-    // WP-3.6: id / page_count + the ACL columns are all that's read.
-    let rows = match issue::Entity::find()
+    // Pre-fetch the library-access set (membership + WP-2.7 age-rating
+    // caps) in one query; the issue lookup below applies it in SQL.
+    let acl = access::for_user(&app, &user).await;
+
+    // WP-3.6: id / page_count are all that's read. Only issues the caller
+    // can see (live, live parent series, inside the grant + cap:
+    // `access::visible_issues_select`) are found; the rest are counted as
+    // `not_found`, exactly like an unknown id.
+    let rows = match access::visible_issues_select(&acl)
         .filter(issue::Column::Id.is_in(ids.clone()))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
@@ -1078,30 +1088,21 @@ pub async fn upsert_bulk(
     };
 
     let found_ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-    let mut not_found = ids
+    let not_found = ids
         .iter()
         .filter(|id| !found_ids.contains(id.as_str()))
         .count() as u32;
-
-    // Pre-fetch the library-access set (membership + WP-2.7 age-rating
-    // caps) in one query, so the per-issue ACL check is a HashSet hit
-    // rather than a SELECT per row.
-    let acl = access::for_user(&app, &user).await;
 
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
-    // An issue the caller can't see (outside the grant, or rated above
-    // their cap) is counted exactly like an unknown id; `forbidden` stays
-    // in the response for shape and is always 0.
+    // An issue the caller can't see (outside the grant, rated above their
+    // cap, soft-removed) is counted exactly like an unknown id; `forbidden`
+    // stays in the response so its schema does not change, and is always 0.
     let forbidden: u32 = 0;
 
     for iss in rows {
-        if !access::issue_allowed(&app, &acl, &iss).await {
-            not_found += 1;
-            continue;
-        }
         let target_page = if req.finished {
             iss.page_count.unwrap_or(1).max(1) - 1
         } else {
@@ -1202,8 +1203,9 @@ pub struct UpsertSeriesBulkResp {
     pub updated: u32,
     /// Issues already in the target state.
     pub skipped: u32,
-    /// Always 0. Kept for response shape: a series the caller can't see
-    /// is counted in `not_found_series`.
+    /// Always 0. Kept so the response schema does not change: a series
+    /// the caller can't see (or a soft-removed one) is counted in
+    /// `not_found_series`.
     pub forbidden_series: u32,
     /// Series whose id didn't resolve, or that the caller can't see.
     pub not_found_series: u32,
@@ -1294,7 +1296,9 @@ pub async fn upsert_series_bulk(
     let forbidden_series: u32 = 0;
 
     for srow in series_rows {
-        if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+        // Hidden or soft-removed: counted like an unknown id.
+        if srow.removed_at.is_some() || !acl.series_ok(srow.library_id, srow.age_rating.as_deref())
+        {
             not_found_series += 1;
             continue;
         }

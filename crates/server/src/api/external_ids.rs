@@ -121,7 +121,6 @@ fn external_id_present(value: &str, _: &()) -> garde::Result {
     params(("slug" = String, Path)),
     responses(
         (status = 200, body = ExternalIdsListResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
     )
 )]
@@ -135,12 +134,8 @@ pub async fn list_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let rows = fetch_rows(&app, "series", &s.id.to_string()).await;
     Json(ExternalIdsListResp {
@@ -226,7 +221,6 @@ pub async fn delete_series(
     params(("slug" = String, Path), ("issue_slug" = String, Path)),
     responses(
         (status = 200, body = ExternalIdsListResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "issue not found"),
     )
 )]
@@ -239,17 +233,11 @@ pub async fn list_issue(
     let Some((s, issue_row)) = find_series_issue(&app, &slug, &issue_slug).await else {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     };
+    // A series or issue the caller can't see (outside the grant or above
+    // the cap), or a series soft-removed for a reader, answers like an
+    // unknown slug; a soft-removed issue in a live series still reads.
     let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
-    }
-    // WP-2.7: an issue rated above the caller's cap answers like an
-    // unknown slug, even inside a visible series.
-    if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
+    if !crate::library::access::issue_page_allowed(&app, &acl, &user, &s, &issue_row).await {
         return error(StatusCode::NOT_FOUND, "issue.not_found", "issue not found");
     }
     let issue_id = issue_row.id;

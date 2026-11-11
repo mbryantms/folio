@@ -735,7 +735,7 @@ async fn cross_user_isolation() {
 
     // Bob can't patch alice's marker by id either.
     let url = format!("/api/me/markers/{id}");
-    let (status, _) = http(
+    let (status, nf) = http(
         &app,
         Method::PATCH,
         &url,
@@ -743,11 +743,14 @@ async fn cross_user_isolation() {
         Some(serde_json::json!({ "color": "red" })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    // Another user's marker answers exactly like an unknown id.
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 
     // Or delete it.
-    let (status, _) = http(&app, Method::DELETE, &url, Some(&bob), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, nf) = http(&app, Method::DELETE, &url, Some(&bob), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
