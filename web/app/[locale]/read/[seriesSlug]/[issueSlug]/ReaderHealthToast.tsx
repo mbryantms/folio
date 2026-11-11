@@ -45,7 +45,9 @@ export function ReaderHealthToast({
       // Private mode / blocked storage — surface the toast anyway.
     }
 
-    const { message, severity } = describe(data);
+    const described = describeHealthToast(data);
+    if (!described) return;
+    const { message, severity } = described;
     fired.current = true;
     const handler = severity === "warning" ? toast.warning : toast.info;
     handler(message, {
@@ -66,10 +68,18 @@ export function ReaderHealthToast({
   return null;
 }
 
-function describe(rows: HealthIssueView[]): {
+/**
+ * Toast copy for a file's open findings, or `null` when nothing is worth
+ * telling a reader. Only warning rows (pages dropped) and info rows (a
+ * repaired archive) produce a toast. Error rows (a malformed, refused or
+ * encrypted archive) do not: such a file ingests with no pages, the issue
+ * page already shows its unreadable state, and the wording of the cause
+ * is for admins on the health page.
+ */
+export function describeHealthToast(rows: HealthIssueView[]): {
   message: string;
   severity: "warning" | "info";
-} {
+} | null {
   const warnings = rows.filter((r) => r.severity === "warning");
   if (warnings.length > 0) {
     const first = warnings[0]!;
@@ -87,7 +97,8 @@ function describe(rows: HealthIssueView[]): {
     return { message: parts.join(" "), severity: "warning" };
   }
   // Info-only — recovered archive(s).
-  const first = rows[0]!;
+  const first = rows.find((r) => r.severity === "info");
+  if (!first) return null;
   const d = payloadData(first.payload);
   const technique = stringFromPayload(d?.technique) ?? "unknown";
   return {

@@ -63,6 +63,11 @@ const KIND_COPY: Record<string, KindCopy> = {
     label: "Malformed or unrecognized archive",
     hint: "Folio could not open the file as a ZIP, TAR, RAR or 7z; the error says why. Replace a damaged file from a good copy.",
   },
+  ArchiveSafetyRefusal: {
+    // Not a damage report: the limits refuse intact files too.
+    label: "Archive refused by a safety limit",
+    hint: "Folio refused to open this archive because it trips a protective limit; the file may be intact. The limits keep one archive from using unbounded memory or disk while it is read.",
+  },
   EncryptedArchive: {
     label: "Password-protected archive",
     hint: "Folio can't read encrypted archives, so the issue has no pages or cover. Repack it without a password, or replace it from an unencrypted copy, then rescan.",
@@ -136,6 +141,47 @@ function sameIssueNumber(a: string, b: string): boolean {
   return norm(a) === norm(b);
 }
 
+/** Per-check copy for `ArchiveSafetyRefusal` (`data.check`, the archive
+ *  crate's `SafetyCheck` tag). `env` names the server setting when the
+ *  limit is configurable. */
+const SAFETY_CHECK_COPY: Record<string, { limit: string; env?: string }> = {
+  entry_count: {
+    limit: "it holds more files than the per-archive entry limit",
+    env: "COMIC_ARCHIVE_MAX_ENTRIES",
+  },
+  entry_size: {
+    limit: "one file inside it is larger than the per-entry size limit",
+    env: "COMIC_ARCHIVE_MAX_ENTRY_BYTES",
+  },
+  total_size: {
+    limit: "its contents add up to more than the total size limit",
+    env: "COMIC_ARCHIVE_MAX_TOTAL_BYTES",
+  },
+  compression_ratio: {
+    limit: "it expands further than the compression-ratio limit allows",
+    env: "COMIC_ARCHIVE_MAX_RATIO",
+  },
+  decoder_memory: {
+    limit: "its 7z compression needs more decoder memory than Folio allows",
+  },
+  unsafe_entry_name: {
+    limit: "a file inside it has a path that points outside the archive",
+  },
+};
+
+/** Fix hint for one `ArchiveSafetyRefusal` check, or `undefined` for a
+ *  check this build does not know. */
+export function safetyRefusalHint(check: string): string | undefined {
+  const copy = SAFETY_CHECK_COPY[check];
+  if (!copy) return undefined;
+  const why = `Folio refused to open this archive because ${copy.limit}. The file may be intact; the limit keeps one archive from using unbounded memory or disk while it is read.`;
+  if (copy.env)
+    return `${why} If you trust the file, raise ${copy.env} in the server environment and restart, then rescan; otherwise repack it.`;
+  if (check === "unsafe_entry_name")
+    return `${why} This check is fixed. Repack the archive with plain relative file names, then rescan.`;
+  return `${why} This limit is fixed. Repack the archive as CBZ, then rescan.`;
+}
+
 /**
  * Fix hint that reads the payload where the kind has more than one
  * situation. `DuplicateExternalId` carries both claimants' numbers: the
@@ -146,6 +192,11 @@ export function healthPayloadHint(
   kind: string,
   p: unknown,
 ): string | undefined {
+  if (kind === "ArchiveSafetyRefusal") {
+    const check = str(healthPayloadFields(p).check);
+    const hint = check ? safetyRefusalHint(check) : undefined;
+    if (hint) return hint;
+  }
   if (kind === "DuplicateExternalId") {
     const obj = healthPayloadFields(p);
     const mine = str(obj.number);

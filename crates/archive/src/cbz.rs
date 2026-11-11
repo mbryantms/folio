@@ -1814,6 +1814,65 @@ mod tests {
         let bad = build_cbz(&[("../escape.png", b"x")]);
         let err = Cbz::open(bad.path(), ArchiveLimits::default()).unwrap_err();
         assert!(matches!(err, ArchiveError::UnsafeEntry(_)), "got: {err:?}");
+        assert_eq!(
+            err.safety_check(),
+            Some(crate::SafetyCheck::UnsafeEntryName)
+        );
+    }
+
+    /// Each hard limit refuses an intact archive with a typed safety check,
+    /// never as `Malformed`; a damaged file is not a safety refusal.
+    #[test]
+    fn hard_limits_report_their_safety_check() {
+        use crate::SafetyCheck;
+        let page = png_signed(std::iter::repeat_n(7u8, 200));
+        let pages: Vec<(String, Vec<u8>)> = (1..=5)
+            .map(|i| (format!("{i:02}.png"), page.clone()))
+            .collect();
+        let refs: Vec<(&str, &[u8])> = pages
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        let cbz = build_cbz_with(&refs, true);
+
+        let cases = [
+            (
+                ArchiveLimits {
+                    max_entries: 3,
+                    ..ArchiveLimits::default()
+                },
+                SafetyCheck::EntryCount,
+            ),
+            (
+                ArchiveLimits {
+                    max_entry_bytes: 100,
+                    ..ArchiveLimits::default()
+                },
+                SafetyCheck::EntrySize,
+            ),
+            (
+                ArchiveLimits {
+                    max_total_bytes: 500,
+                    ..ArchiveLimits::default()
+                },
+                SafetyCheck::TotalSize,
+            ),
+        ];
+        for (limits, want) in cases {
+            let err = Cbz::open(cbz.path(), limits).unwrap_err();
+            assert!(matches!(err, ArchiveError::CapExceeded(_)), "got: {err:?}");
+            assert_eq!(err.safety_check(), Some(want), "{err:?}");
+        }
+
+        let mut junk = tempfile::Builder::new().suffix(".cbz").tempfile().unwrap();
+        junk.write_all(b"PK\x03\x04 truncated beyond repair")
+            .unwrap();
+        let err = Cbz::open(junk.path(), ArchiveLimits::default()).unwrap_err();
+        assert_eq!(
+            err.safety_check(),
+            None,
+            "a damaged file is not a refusal: {err:?}"
+        );
     }
 
     #[test]

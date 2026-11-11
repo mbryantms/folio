@@ -228,3 +228,54 @@ describe("SymlinkSkipped", () => {
     );
   });
 });
+
+describe("ArchiveSafetyRefusal", () => {
+  const payload = (check: string) => ({
+    kind: "archive_safety_refusal",
+    data: {
+      path: "/lib/Big (2020)/Big 001.cbz",
+      check,
+      error: "archive cap exceeded: entry count",
+    },
+  });
+
+  it("has its own label, which does not call the file damaged", () => {
+    const label = healthKindLabel("ArchiveSafetyRefusal");
+    expect(label).toMatch(/safety limit/i);
+    expect(label).not.toMatch(/corrupt|malformed|damaged/i);
+    expect(label).not.toBe(healthKindLabel("MalformedArchive"));
+  });
+
+  it.each([
+    ["entry_count", "COMIC_ARCHIVE_MAX_ENTRIES"],
+    ["entry_size", "COMIC_ARCHIVE_MAX_ENTRY_BYTES"],
+    ["total_size", "COMIC_ARCHIVE_MAX_TOTAL_BYTES"],
+    ["compression_ratio", "COMIC_ARCHIVE_MAX_RATIO"],
+  ])("names where the %s limit is configured", (check, env) => {
+    const hint = healthPayloadHint("ArchiveSafetyRefusal", payload(check));
+    expect(hint).toContain(env);
+    expect(hint).toMatch(/may be intact/);
+    expect(hint).not.toMatch(/good copy/);
+  });
+
+  it.each(["decoder_memory", "unsafe_entry_name"])(
+    "says the %s check is fixed",
+    (check) => {
+      const hint = healthPayloadHint("ArchiveSafetyRefusal", payload(check));
+      expect(hint).toMatch(/fixed/);
+      expect(hint).not.toMatch(/COMIC_ARCHIVE_MAX/);
+    },
+  );
+
+  it("falls back to the kind hint for an unknown check", () => {
+    expect(healthPayloadHint("ArchiveSafetyRefusal", payload("future"))).toBe(
+      healthKindHint("ArchiveSafetyRefusal"),
+    );
+  });
+
+  it("summarizes with the path and the error", () => {
+    expect(
+      healthPayloadSummary("ArchiveSafetyRefusal", payload("entry_count")),
+    ).toBe("/lib/Big (2020)/Big 001.cbz — archive cap exceeded: entry count");
+  });
+});

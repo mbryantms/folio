@@ -148,6 +148,14 @@ enum ArchiveOutcome {
     /// the operator's fix is different (replace / rename the file, not
     /// re-tag it).
     MalformedArchive(String),
+    /// The reader refused the file on a protective limit or an unsafe
+    /// entry name (`ArchiveError::safety_check`). Routed to
+    /// `ArchiveSafetyRefusal`, not `MalformedArchive`: the file may be
+    /// intact.
+    Refused {
+        check: archive::SafetyCheck,
+        error: String,
+    },
     Encrypted,
     Unreadable(String),
 }
@@ -440,6 +448,23 @@ async fn parse_archive_for_ingest(
             health.emit(IssueKind::MalformedArchive {
                 path: path.to_path_buf(),
                 error: e.clone(),
+            });
+            (ComicInfo::default(), None, 0, IssueState::Malformed)
+        }
+        ArchiveOutcome::Refused { check, error } => {
+            tracing::warn!(
+                path = %path.display(),
+                check = check.as_str(),
+                error = %error,
+                "archive refused by a safety limit",
+            );
+            // Same counter and parse state as a malformed archive: the
+            // file did not ingest as readable. The finding says why.
+            stats.files_malformed += 1;
+            health.emit(IssueKind::ArchiveSafetyRefusal {
+                path: path.to_path_buf(),
+                check: check.as_str().to_owned(),
+                error,
             });
             (ComicInfo::default(), None, 0, IssueState::Malformed)
         }
@@ -1888,11 +1913,14 @@ fn parse_archive_timed_with(
             );
         }
         Err(other) => {
-            return (
-                ArchiveOutcome::MalformedArchive(other.to_string()),
-                timing,
-                ArchiveDiagnostics::default(),
-            );
+            let outcome = match other.safety_check() {
+                Some(check) => ArchiveOutcome::Refused {
+                    check,
+                    error: other.to_string(),
+                },
+                None => ArchiveOutcome::MalformedArchive(other.to_string()),
+            };
+            return (outcome, timing, ArchiveDiagnostics::default());
         }
     };
 

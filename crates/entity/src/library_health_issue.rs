@@ -65,6 +65,11 @@ pub enum HealthIssueKind {
     /// An archive container that failed to parse.
     #[sea_orm(string_value = "MalformedArchive")]
     MalformedArchive,
+    /// An archive refused by a protective limit (entry count, entry or
+    /// total size, compression ratio, decoder memory) or an unsafe entry
+    /// name. Says nothing about damage: the file may be intact.
+    #[sea_orm(string_value = "ArchiveSafetyRefusal")]
+    ArchiveSafetyRefusal,
     /// A password-protected archive.
     #[sea_orm(string_value = "EncryptedArchive")]
     EncryptedArchive,
@@ -123,6 +128,7 @@ impl HealthIssueKind {
             Self::MissingComicInfo => "MissingComicInfo",
             Self::MalformedComicInfo => "MalformedComicInfo",
             Self::MalformedArchive => "MalformedArchive",
+            Self::ArchiveSafetyRefusal => "ArchiveSafetyRefusal",
             Self::EncryptedArchive => "EncryptedArchive",
             Self::FolderNameMismatch => "FolderNameMismatch",
             Self::MixedSeriesInFolder => "MixedSeriesInFolder",
@@ -218,6 +224,10 @@ mod tests {
                 (HealthIssueKind::MissingComicInfo, "MissingComicInfo"),
                 (HealthIssueKind::MalformedComicInfo, "MalformedComicInfo"),
                 (HealthIssueKind::MalformedArchive, "MalformedArchive"),
+                (
+                    HealthIssueKind::ArchiveSafetyRefusal,
+                    "ArchiveSafetyRefusal",
+                ),
                 (HealthIssueKind::EncryptedArchive, "EncryptedArchive"),
                 (HealthIssueKind::FolderNameMismatch, "FolderNameMismatch"),
                 (HealthIssueKind::MixedSeriesInFolder, "MixedSeriesInFolder"),

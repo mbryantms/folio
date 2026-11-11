@@ -155,6 +155,75 @@ impl From<std::io::Error> for ArchiveError {
     }
 }
 
+/// The protective check that refused an archive. A refusal says nothing
+/// about whether the file is damaged: an intact archive that is larger,
+/// or holds more entries, than the configured limits is refused the same
+/// way. Callers report it apart from [`ArchiveError::Malformed`] so an
+/// operator is not sent to replace a file that may be fine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SafetyCheck {
+    /// More entries than [`ArchiveLimits::max_entries`].
+    EntryCount,
+    /// One entry larger than [`ArchiveLimits::max_entry_bytes`].
+    EntrySize,
+    /// Entries larger in total than [`ArchiveLimits::max_total_bytes`].
+    TotalSize,
+    /// Expansion beyond [`ArchiveLimits::max_compression_ratio`] (a hard
+    /// refusal only where the format cannot skip a single entry: 7z).
+    CompressionRatio,
+    /// A 7z decoder that would need more memory than the fixed cap.
+    DecoderMemory,
+    /// An entry name that is absolute, contains `..` past the root, a
+    /// backslash or a NUL byte.
+    UnsafeEntryName,
+}
+
+impl SafetyCheck {
+    /// Stable tag stored in health payloads (`check`). Treat as a wire
+    /// format.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EntryCount => "entry_count",
+            Self::EntrySize => "entry_size",
+            Self::TotalSize => "total_size",
+            Self::CompressionRatio => "compression_ratio",
+            Self::DecoderMemory => "decoder_memory",
+            Self::UnsafeEntryName => "unsafe_entry_name",
+        }
+    }
+
+    /// Classify a [`ArchiveError::CapExceeded`] label. Every label the
+    /// readers and writers use is covered by a unit test below; an
+    /// unknown label falls back to the per-entry size check, the most
+    /// common cap.
+    fn from_cap(label: &str) -> Self {
+        let l = label.to_ascii_lowercase();
+        if l.contains("entry count") || l.contains("max_entries") {
+            Self::EntryCount
+        } else if l.contains("decoder memory") {
+            Self::DecoderMemory
+        } else if l.contains("ratio") {
+            Self::CompressionRatio
+        } else if l.contains("total") {
+            Self::TotalSize
+        } else {
+            Self::EntrySize
+        }
+    }
+}
+
+impl ArchiveError {
+    /// `Some` when the archive was refused by a protective limit or an
+    /// unsafe entry name rather than because it could not be parsed.
+    pub fn safety_check(&self) -> Option<SafetyCheck> {
+        match self {
+            Self::UnsafeEntry(_) => Some(SafetyCheck::UnsafeEntryName),
+            Self::CapExceeded(label) => Some(SafetyCheck::from_cap(label)),
+            Self::Encrypted | Self::Io(_) | Self::Malformed(_) => None,
+        }
+    }
+}
+
 /// One entry inside an archive, surfaced for both metadata and page reads.
 #[derive(Debug, Clone)]
 pub struct ArchiveEntry {
@@ -209,4 +278,85 @@ pub mod recovery {
     /// entry's actual LFH by filename, and rewrote the CD with
     /// corrected offsets.
     pub const CDFH_OFFSET_REBUILD: &str = "cdfh-offset-rebuild";
+}
+
+#[cfg(test)]
+mod safety_check_tests {
+    use super::{ArchiveError, SafetyCheck};
+
+    /// Every `CapExceeded` label the readers and writers raise maps onto
+    /// the limit it names.
+    #[test]
+    fn every_cap_label_classifies() {
+        let cases = [
+            ("entry count", SafetyCheck::EntryCount),
+            (
+                "rebuild output exceeded max_entries",
+                SafetyCheck::EntryCount,
+            ),
+            ("entry size", SafetyCheck::EntrySize),
+            ("single entry uncompressed bytes", SafetyCheck::EntrySize),
+            ("range exceeds entry cap", SafetyCheck::EntrySize),
+            (
+                "entry exceeded max_entry_bytes during read",
+                SafetyCheck::EntrySize,
+            ),
+            (
+                "entry exceeded max_entry_bytes during stream",
+                SafetyCheck::EntrySize,
+            ),
+            ("total bytes", SafetyCheck::TotalSize),
+            ("total uncompressed bytes", SafetyCheck::TotalSize),
+            (
+                "rebuild output exceeded max_total_bytes",
+                SafetyCheck::TotalSize,
+            ),
+            ("compression ratio", SafetyCheck::CompressionRatio),
+            ("7z decoder memory", SafetyCheck::DecoderMemory),
+        ];
+        for (label, want) in cases {
+            assert_eq!(
+                ArchiveError::CapExceeded(label).safety_check(),
+                Some(want),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_limits_and_unsafe_names_are_refusals() {
+        assert_eq!(
+            ArchiveError::UnsafeEntry("../x".into()).safety_check(),
+            Some(SafetyCheck::UnsafeEntryName)
+        );
+        assert_eq!(ArchiveError::Malformed("bad".into()).safety_check(), None);
+        assert_eq!(ArchiveError::Io("eof".into()).safety_check(), None);
+        assert_eq!(ArchiveError::Encrypted.safety_check(), None);
+    }
+
+    #[test]
+    fn tags_are_stable() {
+        let tags: Vec<&str> = [
+            SafetyCheck::EntryCount,
+            SafetyCheck::EntrySize,
+            SafetyCheck::TotalSize,
+            SafetyCheck::CompressionRatio,
+            SafetyCheck::DecoderMemory,
+            SafetyCheck::UnsafeEntryName,
+        ]
+        .into_iter()
+        .map(SafetyCheck::as_str)
+        .collect();
+        assert_eq!(
+            tags,
+            [
+                "entry_count",
+                "entry_size",
+                "total_size",
+                "compression_ratio",
+                "decoder_memory",
+                "unsafe_entry_name"
+            ]
+        );
+    }
 }

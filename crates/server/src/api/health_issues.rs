@@ -538,6 +538,11 @@ pub struct AdminListQuery {
     pub include_resolved: Option<bool>,
     #[serde(default)]
     pub include_dismissed: Option<bool>,
+    /// Restrict to the findings whose latest sighting was this scan run
+    /// (the rows a scan-run row's `health_issue_count` counts). Typed: a
+    /// value that is not a UUID is rejected before the handler runs.
+    #[serde(default)]
+    pub scan_id: Option<Uuid>,
     #[serde(default)]
     pub limit: Option<u64>,
     #[serde(default)]
@@ -553,11 +558,13 @@ pub struct AdminListQuery {
         ("severity" = Option<String>, Query,),
         ("include_resolved" = Option<bool>, Query,),
         ("include_dismissed" = Option<bool>, Query,),
+        ("scan_id" = Option<Uuid>, Query, description = "Only findings last recorded by this scan run"),
         ("limit" = Option<u64>, Query,),
         ("cursor" = Option<String>, Query,),
     ),
     responses(
         (status = 200, body = shared::pagination::CursorPage<CrossLibHealthIssueView>),
+        (status = 400, description = "malformed scan_id or cursor"),
         (status = 403, description = "admin only"),
         (status = 422, description = "invalid filter value"),
     )
@@ -612,22 +619,46 @@ pub async fn admin_list(
         },
     };
 
-    let mut select = library_health_issue::Entity::find();
+    // The row predicate shared by the page and its first-page total.
+    let mut cond = Condition::all();
     if let Some(lib_id) = library_filter {
-        select = select.filter(library_health_issue::Column::LibraryId.eq(lib_id));
+        cond = cond.add(library_health_issue::Column::LibraryId.eq(lib_id));
     }
     if let Some(kind) = kind_filter {
-        select = select.filter(library_health_issue::Column::Kind.eq(kind));
+        cond = cond.add(library_health_issue::Column::Kind.eq(kind));
     }
     if let Some(sev) = severity_filter.as_deref() {
-        select = select.filter(library_health_issue::Column::Severity.eq(sev));
+        cond = cond.add(library_health_issue::Column::Severity.eq(sev));
     }
     if !q.include_resolved.unwrap_or(false) {
-        select = select.filter(library_health_issue::Column::ResolvedAt.is_null());
+        cond = cond.add(library_health_issue::Column::ResolvedAt.is_null());
     }
     if !q.include_dismissed.unwrap_or(false) {
-        select = select.filter(library_health_issue::Column::DismissedAt.is_null());
+        cond = cond.add(library_health_issue::Column::DismissedAt.is_null());
     }
+    if let Some(scan_id) = q.scan_id {
+        cond = cond.add(library_health_issue::Column::ScanId.eq(scan_id));
+    }
+
+    // First page only, like every other cursor list: later pages stay a
+    // single keyset query.
+    let total = if cursor.is_none() {
+        match library_health_issue::Entity::find()
+            .filter(cond.clone())
+            .count(&app.db)
+            .await
+        {
+            Ok(n) => Some(n),
+            Err(e) => {
+                tracing::error!(error = %e, "admin health issues total failed");
+                return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut select = library_health_issue::Entity::find().filter(cond);
     if let Some((c_at, c_id)) = cursor {
         // Strictly-after-cursor in DESC order on (last_seen_at, id).
         select = select.filter(
@@ -700,7 +731,7 @@ pub async fn admin_list(
     Json(CursorPage::<CrossLibHealthIssueView>::paginated(
         items,
         next_cursor,
-        None,
+        total,
     ))
     .into_response()
 }

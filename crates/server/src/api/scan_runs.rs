@@ -12,7 +12,7 @@ use axum::{
 };
 use chrono::{DateTime, FixedOffset};
 use entity::scan_run::{self, ScanRunKind, ScanRunState};
-use entity::{library, series};
+use entity::{library, library_health_issue, series};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
     DatabaseConnection, DbBackend, EntityTrait, FromQueryResult, QueryFilter, QueryOrder,
@@ -64,6 +64,12 @@ pub struct ScanRunView {
     /// {title}` when there's no number). `null` when the issue row was
     /// since deleted, or when this scan isn't issue-kinded.
     pub issue_label: Option<String>,
+    /// Open health findings (neither resolved nor dismissed) whose latest
+    /// sighting was this run: the rows `GET /admin/health-issues?scan_id=`
+    /// returns by default. A finding a later scan sees again moves to that
+    /// later run, so an older run's count can drop; findings are written
+    /// when a run finishes, so a running scan reads 0.
+    pub health_issue_count: u64,
 }
 
 impl ScanRunView {
@@ -71,11 +77,13 @@ impl ScanRunView {
         m: scan_run::Model,
         series_names: &HashMap<Uuid, String>,
         issue_labels: &HashMap<String, String>,
+        finding_counts: &HashMap<Uuid, u64>,
     ) -> Self {
         let issue_label = m
             .issue_id
             .as_deref()
             .and_then(|id| issue_labels.get(id).cloned());
+        let health_issue_count = finding_counts.get(&m.id).copied().unwrap_or(0);
         Self {
             id: m.id.to_string(),
             state: m.state,
@@ -88,6 +96,48 @@ impl ScanRunView {
             series_name: m.series_id.and_then(|id| series_names.get(&id).cloned()),
             issue_id: m.issue_id,
             issue_label,
+            health_issue_count,
+        }
+    }
+}
+
+#[derive(FromQueryResult)]
+struct FindingCountRow {
+    scan_id: Uuid,
+    count: i64,
+}
+
+/// Open health findings per run for one page of runs, in one grouped query
+/// (never one per row). Runs without open findings are absent from the map.
+/// A failed count degrades to an empty map (every run reads 0) rather than
+/// failing the history page.
+pub(crate) async fn finding_counts(
+    db: &DatabaseConnection,
+    rows: &[scan_run::Model],
+) -> HashMap<Uuid, u64> {
+    if rows.is_empty() {
+        return HashMap::new();
+    }
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let res = library_health_issue::Entity::find()
+        .select_only()
+        .column(library_health_issue::Column::ScanId)
+        .column_as(library_health_issue::Column::Id.count(), "count")
+        .filter(library_health_issue::Column::ScanId.is_in(ids))
+        .filter(library_health_issue::Column::ResolvedAt.is_null())
+        .filter(library_health_issue::Column::DismissedAt.is_null())
+        .group_by(library_health_issue::Column::ScanId)
+        .into_model::<FindingCountRow>()
+        .all(db)
+        .await;
+    match res {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| (r.scan_id, u64::try_from(r.count).unwrap_or(0)))
+            .collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "scan run finding counts failed");
+            HashMap::new()
         }
     }
 }
@@ -245,9 +295,10 @@ pub async fn list(
         issue_labels.insert(id, label);
     }
 
+    let counts = finding_counts(&app.db, &rows).await;
     let items: Vec<ScanRunView> = rows
         .into_iter()
-        .map(|m| ScanRunView::from_model(m, &series_names, &issue_labels))
+        .map(|m| ScanRunView::from_model(m, &series_names, &issue_labels, &counts))
         .collect();
     Json(CursorPage::paginated(items, next_cursor, None)).into_response()
 }
@@ -430,6 +481,7 @@ pub async fn admin_list(
     let page: Vec<scan_run::Model> = rows.into_iter().take(limit as usize).collect();
 
     let (series_names, issue_labels, library_meta) = resolve_joins(&app, &page).await;
+    let counts = finding_counts(&app.db, &page).await;
 
     let items: Vec<CrossLibScanRunView> = page
         .into_iter()
@@ -443,7 +495,7 @@ pub async fn admin_list(
                 library_id: lib_id.to_string(),
                 library_name: lname,
                 library_slug: lslug,
-                base: ScanRunView::from_model(m, &series_names, &issue_labels),
+                base: ScanRunView::from_model(m, &series_names, &issue_labels, &counts),
             }
         })
         .collect();
@@ -500,6 +552,7 @@ pub async fn admin_latest_per_library(
     };
 
     let (series_names, issue_labels, library_meta) = resolve_joins(&app, &rows).await;
+    let counts = finding_counts(&app.db, &rows).await;
 
     let items: Vec<CrossLibScanRunView> = rows
         .into_iter()
@@ -513,7 +566,7 @@ pub async fn admin_latest_per_library(
                 library_id: lib_id.to_string(),
                 library_name: lname,
                 library_slug: lslug,
-                base: ScanRunView::from_model(m, &series_names, &issue_labels),
+                base: ScanRunView::from_model(m, &series_names, &issue_labels, &counts),
             }
         })
         .collect();

@@ -401,6 +401,7 @@ pub async fn scan_batch_detail(
     }
 
     let (series_names, issue_labels, library_meta) = resolve_joins(&app, &runs).await;
+    let counts = super::scan_runs::finding_counts(&app.db, &runs).await;
     let member_runs: Vec<CrossLibScanRunView> = runs
         .into_iter()
         .map(|m| {
@@ -413,7 +414,7 @@ pub async fn scan_batch_detail(
                 library_id: lib_id.to_string(),
                 library_name: lname,
                 library_slug: lslug,
-                base: ScanRunView::from_model(m, &series_names, &issue_labels),
+                base: ScanRunView::from_model(m, &series_names, &issue_labels, &counts),
             }
         })
         .collect();

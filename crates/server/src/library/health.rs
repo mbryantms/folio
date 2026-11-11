@@ -70,6 +70,20 @@ pub enum IssueKind {
         path: PathBuf,
         error: String,
     },
+    /// The archive was refused by a protective limit or an unsafe entry
+    /// name before anything was decoded (`archive::SafetyCheck`): more
+    /// entries, a larger entry or a larger total than the configured
+    /// `COMIC_ARCHIVE_MAX_*` limits, a 7z expansion past the ratio cap or
+    /// past the fixed decoder-memory cap, or an entry path that is
+    /// absolute or climbs out of the archive. Distinct from
+    /// [`Self::MalformedArchive`] because the file may be intact: the fix
+    /// is to raise the limit for a file you trust, or repack it, not to
+    /// replace it. `check` is `SafetyCheck::as_str`.
+    ArchiveSafetyRefusal {
+        path: PathBuf,
+        check: String,
+        error: String,
+    },
     /// The archive is a password-protected ZIP (ZipCrypto or AES; the
     /// reader refuses it as `ArchiveError::Encrypted`). Folio holds no
     /// passwords, so the file ingests as a page-less `encrypted`-state
@@ -252,6 +266,7 @@ impl IssueKind {
             Self::MissingComicInfo { .. } => HealthIssueKind::MissingComicInfo,
             Self::MalformedComicInfo { .. } => HealthIssueKind::MalformedComicInfo,
             Self::MalformedArchive { .. } => HealthIssueKind::MalformedArchive,
+            Self::ArchiveSafetyRefusal { .. } => HealthIssueKind::ArchiveSafetyRefusal,
             Self::EncryptedArchive { .. } => HealthIssueKind::EncryptedArchive,
             Self::FolderNameMismatch { .. } => HealthIssueKind::FolderNameMismatch,
             Self::MixedSeriesInFolder { .. } => HealthIssueKind::MixedSeriesInFolder,
@@ -275,6 +290,7 @@ impl IssueKind {
             | Self::UnreadableArchive { .. }
             | Self::MalformedComicInfo { .. }
             | Self::MalformedArchive { .. }
+            | Self::ArchiveSafetyRefusal { .. }
             | Self::EncryptedArchive { .. } => Severity::Error,
 
             Self::FileAtRoot { .. }
@@ -311,6 +327,11 @@ impl IssueKind {
             }
             Self::MalformedArchive { path, .. } => {
                 format!("MalformedArchive:{}", path.display())
+            }
+            Self::ArchiveSafetyRefusal { path, .. } => {
+                // One row per file: a re-scan that trips a different limit
+                // (the operator raised one) updates the row.
+                format!("ArchiveSafetyRefusal:{}", path.display())
             }
             Self::EncryptedArchive { path } => format!("EncryptedArchive:{}", path.display()),
             Self::FolderNameMismatch { folder, .. } => format!("FolderNameMismatch:{folder}"),
@@ -400,6 +421,7 @@ impl IssueKind {
             | Self::MissingComicInfo { path }
             | Self::MalformedComicInfo { path, .. }
             | Self::MalformedArchive { path, .. }
+            | Self::ArchiveSafetyRefusal { path, .. }
             | Self::EncryptedArchive { path }
             | Self::UnsupportedArchiveFormat { path, .. }
             | Self::RecoveredArchive { path, .. }
