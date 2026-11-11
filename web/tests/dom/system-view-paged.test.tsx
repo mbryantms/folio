@@ -77,15 +77,8 @@ vi.mock("@/components/library/OnDeckCard", () => ({
   ),
   OnDeckCardSkeleton: () => null,
 }));
-vi.mock("@/components/library/CardSizeOptions", () => ({
-  CardSizeOptions: () => null,
-  CardSizeFields: () => null,
-}));
 vi.mock("@/components/library/PhoneControlsBar", () => ({
   PhoneControlsBar: () => null,
-}));
-vi.mock("@/components/library/use-card-size", () => ({
-  useCardSize: () => [180, () => {}],
 }));
 
 import { SystemViewDetail } from "@/components/saved-views/SystemViewDetail";

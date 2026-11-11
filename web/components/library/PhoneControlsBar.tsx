@@ -85,7 +85,7 @@ export function PhoneControlsBar({
   menu?: (close: () => void) => React.ReactNode;
   menuTitle?: string;
   /** Icon for the menu trigger. Defaults to the four-squares
-   *  `LayoutGrid` glyph — the same icon `CardSizeOptions` uses on
+   *  `LayoutGrid` glyph — the same icon `CoverSizeOptions` uses on
    *  desktop — so "View options" looks the same at every width and
    *  never reads as a second `⋯` beside a header's More-actions menu
    *  (`⋯` is reserved for action lists, which are dropdowns). */

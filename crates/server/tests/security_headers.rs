@@ -249,3 +249,37 @@ async fn healthz_returns_required_headers() {
         assert!(resp.headers().get(*h).is_some(), "missing on /healthz: {h}");
     }
 }
+
+/// The auth pages send `Referrer-Policy: same-origin`: no referrer to any
+/// other site, while their own form posts keep a real `Origin` (under
+/// `no-referrer` a same-origin form post carries `Origin: null`). Other
+/// responses keep `strict-origin-when-cross-origin`.
+#[tokio::test]
+async fn auth_pages_use_same_origin_referrer_policy() {
+    let app = TestApp::spawn().await;
+    let policy = |uri: &'static str| {
+        let router = app.router.clone();
+        async move {
+            let resp = router
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            resp.headers()
+                .get("referrer-policy")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned)
+        }
+    };
+    for uri in [
+        "/sign-in",
+        "/forgot-password",
+        "/reset-password?token=x",
+        "/en/sign-in",
+    ] {
+        assert_eq!(policy(uri).await.as_deref(), Some("same-origin"), "{uri}");
+    }
+    assert_eq!(
+        policy("/healthz").await.as_deref(),
+        Some("strict-origin-when-cross-origin")
+    );
+}

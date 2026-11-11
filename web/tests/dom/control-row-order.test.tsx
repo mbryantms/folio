@@ -4,6 +4,8 @@
  * Right cluster: primary · Select · ▦ View options · ⋯ More actions,
  * with ⋯ always last. The phone bar owns that order itself; the desktop
  * rows are checked by source order in the surfaces that compose them.
+ * ▦ is `CoverSizeOptions` (the app-wide cover size) on every cover
+ * surface; bookmarks alone keep their own `CardSizeOptions` slider.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -74,6 +76,7 @@ describe("control row order (rule 11)", () => {
   });
 
   it("desktop rows: query controls left, then Select · ▦ · ⋯ on the right", () => {
+    // Bookmarks: the one surface with its own card size.
     const bookmarks = read("components/markers/MarkersList.tsx");
     const row = bookmarks.slice(
       bookmarks.indexOf("const actionControls"),
@@ -105,7 +108,7 @@ describe("control row order (rule 11)", () => {
           'className="ml-auto',
           "Scroll to Up Next entry",
           "<SelectModeButton",
-          "<CardSizeOptions",
+          "<CoverSizeOptions",
           "<ViewActionsMenu",
         ]),
       ),
@@ -117,7 +120,7 @@ describe("control row order (rule 11)", () => {
       filter.indexOf("phoneControlsPlacement"),
     );
     expect(
-      ascending(orderOf(fx, ["<SelectModeButton", "<CardSizeOptions"])),
+      ascending(orderOf(fx, ["<SelectModeButton", "<CoverSizeOptions"])),
     ).toBe(true);
 
     const issueFilter = read(
@@ -128,7 +131,7 @@ describe("control row order (rule 11)", () => {
       issueFilter.indexOf("phoneControlsPlacement"),
     );
     expect(
-      ascending(orderOf(ix, ["<SelectModeButton", "<CardSizeOptions"])),
+      ascending(orderOf(ix, ["<SelectModeButton", "<CoverSizeOptions"])),
     ).toBe(true);
 
     const coll = read("components/saved-views/CollectionViewDetail.tsx");
@@ -142,7 +145,7 @@ describe("control row order (rule 11)", () => {
           "<Badge",
           "<CollectionContinueButton",
           "<SelectModeButton",
-          "<CardSizeOptions",
+          "<CoverSizeOptions",
         ]),
       ),
     ).toBe(true);
@@ -153,7 +156,7 @@ describe("control row order (rule 11)", () => {
       rails.indexOf("</StickyToolbarRow>"),
     );
     expect(rx).toMatch(/justify-end/);
-    expect(ascending(orderOf(rx, ["<CardSizeOptions", "{pageActions}"]))).toBe(
+    expect(ascending(orderOf(rx, ["<CoverSizeOptions", "{pageActions}"]))).toBe(
       true,
     );
 
@@ -163,7 +166,7 @@ describe("control row order (rule 11)", () => {
       lib.indexOf("</StickyToolbarRow>"),
     );
     expect(
-      ascending(orderOf(lx, ["<SelectModeButton", "<CardSizeOptions"])),
+      ascending(orderOf(lx, ["<SelectModeButton", "<CoverSizeOptions"])),
     ).toBe(true);
   });
 });

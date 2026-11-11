@@ -1046,7 +1046,10 @@ pub async fn callback(
     let raw_rt = new_refresh_token_raw();
     let hash = sha256_hex(&raw_rt);
     let session_now = chrono::Utc::now();
-    let expires = session_now + chrono::Duration::seconds(refresh_ttl.as_secs() as i64);
+    let lifetime = refresh_ttl.min(app.cfg().session_max_age());
+    let expires = session_now
+        .checked_add_signed(cookies::chrono_delta(lifetime))
+        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
 
     // Persist the raw id_token for RP-initiated logout. openidconnect's
     // `IdToken` implements Display, which emits the compact JWS form.
@@ -1073,7 +1076,7 @@ pub async fn callback(
         user_row.id,
         user_row.role.as_str(),
         user_row.token_version,
-        chrono::Duration::seconds(access_ttl.as_secs() as i64),
+        cookies::chrono_delta(access_ttl),
     ) {
         Ok(t) => t,
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
@@ -1089,8 +1092,19 @@ pub async fn callback(
         ))
         .remove(cookies::clear(LEGACY_OIDC_STATE_COOKIE, "/"))
         .add(session_cookie(access, access_ttl))
-        .add(refresh_cookie(raw_rt, refresh_ttl))
-        .add(csrf_cookie(csrf_token, access_ttl));
+        .add(cookies::access_exp_cookie(
+            session_now
+                .timestamp()
+                .saturating_add(cookies::secs_i64(access_ttl)),
+            access_ttl,
+        ))
+        .add(refresh_cookie(raw_rt, lifetime))
+        // At least as long as the access cookie, as long as the refresh
+        // cookie otherwise: `/auth/refresh` needs it.
+        .add(csrf_cookie(
+            csrf_token,
+            cookies::csrf_max_age(access_ttl, refresh_ttl, Some(app.cfg().session_max_age())),
+        ));
 
     // Redirect to the requested location, defaulting to /.
     let target = state.redirect_after.unwrap_or_else(|| "/".to_string());

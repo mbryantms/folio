@@ -57,14 +57,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import {
   PhoneControlsBar,
   PhoneMenuAction,
 } from "@/components/library/PhoneControlsBar";
-import { useCardSize } from "@/components/library/use-card-size";
 import {
   jsonFetch,
   useCollectionEntriesInfinite,
@@ -91,6 +90,7 @@ import {
   type CollectionMember,
 } from "@/lib/collections/recreate";
 import { useCollectionDeleteUndo } from "@/lib/collections/use-collection-undo";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import { useSelection } from "@/lib/selection/use-selection";
 import { TOAST } from "@/lib/api/toast-strings";
@@ -111,7 +111,6 @@ import {
 } from "@/lib/ui/springy-drag";
 
 import { ViewHeader } from "./ViewHeader";
-import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
 
 // Heavy archive-edit dialog (+dnd) — lazy so it stays out of the collection
 // view's initial bundle; the chunk loads on first open (G6).
@@ -132,11 +131,6 @@ const BulkArchiveEditDialog = dynamic(
   { ssr: false },
 );
 
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.savedView;
 const WANT_TO_READ_KEY = "want_to_read";
 
 /** Detail page for a user collection. Mirrors `CblViewDetail` minus the
@@ -200,12 +194,6 @@ export function CollectionViewDetail({
   const [optimisticOrder, setOptimisticOrder] = React.useState<string[] | null>(
     null,
   );
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -420,10 +408,6 @@ export function CollectionViewDetail({
     );
   }
 
-  const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
-  };
-
   return (
     <div className="space-y-6">
       {offlineMounted && (
@@ -485,20 +469,13 @@ export function CollectionViewDetail({
                 onExit={() => selection.exit()}
               />
             )}
-            <CardSizeOptions
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-            />
+            <CoverSizeOptions />
           </>
         }
         // Phone (< sm): the cluster above is hidden. Continue / Start
         // reading — the collection's primary action — stays one tap
         // away as the bar's icon button; the item count takes the
-        // bar's leading slot; card size + Select move into View options.
+        // bar's leading slot; cover size + Select move into View options.
         phoneControlsPlacement="inline"
         phoneControls={
           <PhoneControlsBar
@@ -514,15 +491,7 @@ export function CollectionViewDetail({
             }
             menu={(close) => (
               <>
-                <CardSizeFields
-                  cardSize={cardSize}
-                  onCardSize={setCardSize}
-                  min={CARD_SIZE_MIN}
-                  max={CARD_SIZE_MAX}
-                  step={CARD_SIZE_STEP}
-                  defaultSize={CARD_SIZE_DEFAULT}
-                  fieldId="phone-card-size"
-                />
+                <CoverSizeFields fieldId="phone-card-size" />
                 {orderedEntries.length > 0 || selection.selectMode ? (
                   <PhoneMenuAction
                     icon={<ListChecks className="size-4" />}
@@ -592,11 +561,7 @@ export function CollectionViewDetail({
       />
 
       {entriesQ.isLoading ? (
-        <CoverGridSkeleton
-          className="gap-3"
-          style={gridStyle}
-          label="Loading collection…"
-        />
+        <CoverGridSkeleton label="Loading collection…" />
       ) : entriesQ.isError && !entriesQ.data ? (
         <RailError
           message="Couldn't load this collection."
@@ -621,7 +586,7 @@ export function CollectionViewDetail({
             onDragEnd={dndDisabled ? undefined : handleDragEnd}
           >
             <SortableContext items={renderIds} strategy={rectSortingStrategy}>
-              <ul role="list" className="grid gap-3" style={gridStyle}>
+              <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
                 {orderedEntries.map((entry) => (
                   <SortableEntry
                     key={entry.id}
@@ -779,7 +744,7 @@ export function CollectionContinueButton({
     );
   }
   return (
-    // Toolbar-row convention: `size="toolbar"` beside CardSizeOptions + Select.
+    // Toolbar-row convention: `size="toolbar"` beside CoverSizeOptions + Select.
     <Button asChild>
       <Link href={href} aria-label={ariaLabel}>
         <Play className="mr-1 size-4" aria-hidden="true" />

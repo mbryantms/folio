@@ -760,7 +760,9 @@ pub async fn serve(mut cfg: Config, handles: ObservabilityHandles) -> anyhow::Re
     let cleanup_db = state.db.clone();
     let app = router(state);
 
-    let listener = tokio::net::TcpListener::bind(bind).await?;
+    // The only listener the server opens; metrics and health are routes on
+    // it. Accepted connections disable Nagle's algorithm (`tuned_listener`).
+    let listener = tuned_listener(tokio::net::TcpListener::bind(bind).await?);
     tracing::info!(addr = %bind, "listening");
 
     // Archive-rewrite staging sweep: remove Folio's own orphan
@@ -831,7 +833,10 @@ pub fn router_with_timeouts(state: AppState, timeouts: RouteTimeouts) -> Router 
         // panic escapes to stderr and drops the connection — invisible to the
         // JSON log stream, the /admin/logs ring buffer, and the client.
         .layer(tower_http::catch_panic::CatchPanicLayer::custom(handle_panic))
-        .layer(axum::middleware::from_fn(auth::csrf::require_csrf))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::csrf::require_csrf,
+        ))
         // M-1 (security audit) / WP-6.3: explicit deny-by-default CORS.
         // Rust is the single public origin — the web app, its JSON API,
         // OPDS, and the Komga/KOReader shims are all served from it — so no
@@ -942,6 +947,29 @@ fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> axum::response:
         .into_response()
 }
 
+/// Accepted-socket setup for the public listener: disable Nagle's algorithm.
+///
+/// Responses that end in a small final write (a cached page variant, a short
+/// JSON body, the tail of a proxied page) otherwise sit in the kernel until
+/// the client's delayed ACK arrives, which adds tens of milliseconds per
+/// response. A failure is logged and the connection is served anyway.
+pub fn configure_accepted_socket(stream: &mut tokio::net::TcpStream) {
+    if let Err(e) = stream.set_nodelay(true) {
+        tracing::debug!(error = %e, "failed to set TCP_NODELAY on accepted connection");
+    }
+}
+
+/// The public listener as `serve` runs it: every accepted connection goes
+/// through [`configure_accepted_socket`]. `TapIo` keeps the listener's
+/// `SocketAddr` as the connection address, so `ConnectInfo<SocketAddr>`
+/// is unchanged.
+pub fn tuned_listener(
+    listener: tokio::net::TcpListener,
+) -> axum::serve::TapIo<tokio::net::TcpListener, fn(&mut tokio::net::TcpStream)> {
+    use axum::serve::ListenerExt;
+    listener.tap_io(configure_accepted_socket as fn(&mut tokio::net::TcpStream))
+}
+
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
@@ -1021,5 +1049,37 @@ mod tests {
         );
         let fast_resp = router.oneshot(req("/fast")).await.unwrap();
         assert_eq!(fast_resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// P-03: the listener `serve` runs hands out accepted sockets with
+    /// `TCP_NODELAY` set, and keeps the peer `SocketAddr` that
+    /// `ConnectInfo` is built from. Driven through `Listener::accept` on
+    /// the exact wrapper `serve` uses, so nothing races.
+    #[tokio::test]
+    async fn tuned_listener_sets_nodelay_on_accepted_sockets() {
+        use axum::serve::Listener;
+
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = raw.local_addr().unwrap();
+        let mut listener = tuned_listener(raw);
+        let client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (accepted, peer) = listener.accept().await;
+        assert!(
+            accepted.nodelay().unwrap(),
+            "accepted socket must have TCP_NODELAY"
+        );
+        assert_eq!(peer, client.local_addr().unwrap());
+    }
+
+    /// The setup function itself on a socket that starts with Nagle on.
+    #[tokio::test]
+    async fn configure_accepted_socket_enables_nodelay() {
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = raw.local_addr().unwrap();
+        let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (mut accepted, _) = raw.accept().await.unwrap();
+        accepted.set_nodelay(false).unwrap();
+        configure_accepted_socket(&mut accepted);
+        assert!(accepted.nodelay().unwrap());
     }
 }

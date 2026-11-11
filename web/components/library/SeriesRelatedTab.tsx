@@ -5,8 +5,7 @@ import * as React from "react";
 import { SameUniverseSection } from "@/components/library/SameUniverseSection";
 import { SeriesRelatedSection } from "@/components/library/SeriesRelatedSection";
 import { SimilarSeriesRail } from "@/components/library/SimilarSeriesRail";
-import { useCardSize } from "@/components/library/use-card-size";
-import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
+import { useCoverTarget } from "@/components/library/use-cover-size";
 import { useGridColumnWidth } from "@/lib/library/use-grid-column-width";
 
 /**
@@ -18,11 +17,10 @@ import { useGridColumnWidth } from "@/lib/library/use-grid-column-width";
  * (`StackedTabsPanel`, no `forceMount`), so none of the relationships /
  * same-universe / similar queries fire until the tab opens.
  *
- * Cover sizing: reads the Issues panel's card-size slider through the
- * shared `folio.series.cardSize` key (`useCardSize` syncs instances), and
+ * Cover sizing: reads the app-wide cover size (`useCoverTarget`) and
  * measures this panel — the same width as the issue grid — to derive the
  * grid's effective column width, so every cover here matches the grid
- * exactly and follows the slider live.
+ * exactly and follows the size control live.
  */
 export function SeriesRelatedTab({
   seriesSlug,
@@ -33,8 +31,8 @@ export function SeriesRelatedTab({
   seriesId: string;
   seriesName?: string;
 }) {
-  const [cardSize] = useCardSize(SERIES_CARD_SIZE);
-  const [ref, coverWidth] = useGridColumnWidth<HTMLDivElement>(cardSize);
+  const target = useCoverTarget();
+  const [ref, coverWidth] = useGridColumnWidth<HTMLDivElement>(target);
   return (
     <div
       ref={ref}

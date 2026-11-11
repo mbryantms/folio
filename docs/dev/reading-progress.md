@@ -65,6 +65,20 @@ read through the same `zip_lru` reader the page server streams from, so
 it hashes the image the user was actually shown. Entry names, compression
 and container format are not part of the hash. An implicit write that
 keeps the stored page reuses the stored hash rather than re-reading it.
+The page is read only when its hash will be stored (audit 2026-11 P-08):
+a repeated write of the same hashed page, an implicit write behind the
+furthest page and a write ignored as an older run read nothing.
+`upsert_for_run` predicts which case a write is from what the previous
+write for that user and issue left in the row (an in-memory LRU,
+`reading::page_hash::ProgressHashHints`, 8,192 rows). The prediction
+can be stale, since bulk marks, page remaps, the lazy backfill and
+deletions also change rows; so when a write ran without a hash and the
+returned row shows one was due (not ignored, resulting page is the
+written page, no hash), the page is read then and stored with a guarded
+`UPDATE … WHERE run, last_page, updated_at match AND page_hash IS NULL`.
+The stored row is the same as when every write read the page; a wrong
+prediction costs one page read or one extra statement. Forward page
+turns still read the page, before the upsert, in the one statement.
 Capture is soft: a page that can't be read (CBR/CB7 without conversion,
 unreadable archive) stores NULL. Bulk mark read/unread (series, matching,
 CBL, multi-select) stores NULL by design: those rows anchor "first page"

@@ -79,7 +79,59 @@ pub async fn scan_library_with_run_id(
     force: bool,
     requested_scan_id: Option<Uuid>,
 ) -> anyhow::Result<ScanStats> {
-    scan_library_inner(state, library_id, force, requested_scan_id, None).await
+    scan_library_inner(state, library_id, force, requested_scan_id, None, None).await
+}
+
+/// [`scan_library_with_run_id`] for the scan job, which holds the library's
+/// coalescing key as a lease (`jobs::scan_lease`). When `lease_lost` is set
+/// (another run took the key) the scan stops through the cooperative-cancel
+/// path and the run closes as `cancelled` with the superseded reason.
+#[tracing::instrument(
+    skip_all,
+    name = "scan_library",
+    fields(library_id = %library_id, force = force, scan_id = tracing::field::Empty),
+)]
+pub async fn scan_library_leased(
+    state: &AppState,
+    library_id: Uuid,
+    force: bool,
+    requested_scan_id: Option<Uuid>,
+    lease_lost: Option<Arc<AtomicBool>>,
+) -> anyhow::Result<ScanStats> {
+    scan_library_inner(
+        state,
+        library_id,
+        force,
+        requested_scan_id,
+        None,
+        lease_lost,
+    )
+    .await
+}
+
+/// [`scan_library_scoped`] with the scan job's lease flag; see
+/// [`scan_library_leased`].
+#[tracing::instrument(
+    skip_all,
+    name = "scan_library_scoped",
+    fields(library_id = %library_id, scope_dirs = scope.len(), scan_id = tracing::field::Empty),
+)]
+pub async fn scan_library_scoped_leased(
+    state: &AppState,
+    library_id: Uuid,
+    scope: &[PathBuf],
+    requested_scan_id: Option<Uuid>,
+    lease_lost: Option<Arc<AtomicBool>>,
+) -> anyhow::Result<ScanStats> {
+    scan_library_inner(
+        state,
+        library_id,
+        false,
+        requested_scan_id,
+        Some(scope),
+        lease_lost,
+    )
+    .await
 }
 
 /// Watcher-scoped library scan (WP-3.1). Runs the same pipeline as a
@@ -101,7 +153,15 @@ pub async fn scan_library_scoped(
     scope: &[PathBuf],
     requested_scan_id: Option<Uuid>,
 ) -> anyhow::Result<ScanStats> {
-    scan_library_inner(state, library_id, false, requested_scan_id, Some(scope)).await
+    scan_library_inner(
+        state,
+        library_id,
+        false,
+        requested_scan_id,
+        Some(scope),
+        None,
+    )
+    .await
 }
 
 async fn scan_library_inner(
@@ -110,6 +170,7 @@ async fn scan_library_inner(
     force: bool,
     requested_scan_id: Option<Uuid>,
     scope: Option<&[PathBuf]>,
+    lease_lost: Option<Arc<AtomicBool>>,
 ) -> anyhow::Result<ScanStats> {
     let lib = library::Entity::find_by_id(library_id)
         .one(&state.db)
@@ -174,7 +235,12 @@ async fn scan_library_inner(
     // its heartbeat and sets this flag, which short-circuits not-yet-started
     // folders and skips the reconcile pass (reconciling a partial scan would
     // soft-delete every series the cancelled run never reached).
+    //
+    // The same flag stops a run whose coalescing-key lease was lost
+    // (`lease_lost`, R-03): another run of this library holds the key, so
+    // this one must not keep writing alongside it.
     let cancel = Arc::new(AtomicBool::new(false));
+    let lease_lost = lease_lost.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
     let result = run_phases(
         state,
         &lib,
@@ -185,13 +251,21 @@ async fn scan_library_inner(
         &mut health,
         &mut events,
         cancel.clone(),
+        &lease_lost,
         scope,
     )
     .await;
     let cancelled = cancel.load(Ordering::Relaxed);
+    let cause = if !cancelled {
+        CancelCause::NotCancelled
+    } else if lease_lost.load(Ordering::Relaxed) {
+        CancelCause::Superseded
+    } else {
+        CancelCause::Admin
+    };
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result, cancelled,
+        state, &lib, scan_id, started, &mut stats, health, events, &result, cause,
     )
     .await?;
 
@@ -548,7 +622,15 @@ pub async fn scan_series_folder(
     .await;
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result, false,
+        state,
+        &lib,
+        scan_id,
+        started,
+        &mut stats,
+        health,
+        events,
+        &result,
+        CancelCause::NotCancelled,
     )
     .await?;
 
@@ -624,7 +706,15 @@ pub async fn scan_issue_file(
     .await;
 
     finalize_run(
-        state, &lib, scan_id, started, &mut stats, health, events, &result, false,
+        state,
+        &lib,
+        scan_id,
+        started,
+        &mut stats,
+        health,
+        events,
+        &result,
+        CancelCause::NotCancelled,
     )
     .await?;
     result.map(|()| stats)
@@ -648,11 +738,26 @@ async fn open_scan_run(
         // it so every event/emission under the scan can carry the link.
         let batch_id = existing.batch_id;
         if existing.state == ScanRunState::Queued {
-            let mut am: ScanRunAM = existing.into();
-            am.state = Set(ScanRunState::Running);
-            am.started_at = Set(now);
-            am.error = Set(None);
-            am.update(&state.db).await?;
+            // Conditional on still being `queued`: a cancel that landed
+            // after the read above keeps the row `cancelled`, and the scan
+            // then stops at its cancel check.
+            ScanRunEntity::update_many()
+                .col_expr(
+                    entity::scan_run::Column::State,
+                    sea_orm::sea_query::Expr::value(ScanRunState::Running),
+                )
+                .col_expr(
+                    entity::scan_run::Column::StartedAt,
+                    sea_orm::sea_query::Expr::value(now),
+                )
+                .col_expr(
+                    entity::scan_run::Column::Error,
+                    sea_orm::sea_query::Expr::value(Option::<String>::None),
+                )
+                .filter(entity::scan_run::Column::Id.eq(scan_id))
+                .filter(entity::scan_run::Column::State.eq(ScanRunState::Queued))
+                .exec(&state.db)
+                .await?;
         }
         state.scan_progress.register(scan_id, batch_id);
         return Ok((scan_id, batch_id));
@@ -677,6 +782,89 @@ async fn open_scan_run(
     Ok((scan_id, None))
 }
 
+/// Test seam: hold a library's phase-3 folders before they start, so a test
+/// can act while a scan is certainly mid-way. Inert unless a test installed
+/// a gate (one relaxed atomic load per folder).
+#[doc(hidden)]
+pub mod folder_gate {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use uuid::Uuid;
+
+    static ANY: AtomicBool = AtomicBool::new(false);
+    static GATES: OnceLock<Mutex<HashMap<Uuid, Arc<FolderGate>>>> = OnceLock::new();
+
+    pub struct FolderGate {
+        entered: AtomicU64,
+        open: tokio::sync::watch::Sender<bool>,
+    }
+
+    impl FolderGate {
+        /// Folders that have reached the gate.
+        pub fn entered(&self) -> u64 {
+            self.entered.load(Ordering::Relaxed)
+        }
+        /// Let every held and later folder through.
+        pub fn open(&self) {
+            self.open.send_replace(true);
+        }
+    }
+
+    fn gates() -> &'static Mutex<HashMap<Uuid, Arc<FolderGate>>> {
+        GATES.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Hold `library_id`'s phase-3 folders until the gate is opened.
+    pub fn install(library_id: Uuid) -> Arc<FolderGate> {
+        let gate = Arc::new(FolderGate {
+            entered: AtomicU64::new(0),
+            open: tokio::sync::watch::channel(false).0,
+        });
+        gates()
+            .lock()
+            .expect("folder gate mutex")
+            .insert(library_id, gate.clone());
+        ANY.store(true, Ordering::Relaxed);
+        gate
+    }
+
+    /// Drop `library_id`'s gate.
+    pub fn remove(library_id: Uuid) {
+        gates()
+            .lock()
+            .expect("folder gate mutex")
+            .remove(&library_id);
+    }
+
+    pub(super) async fn pass(library_id: Uuid) {
+        if !ANY.load(Ordering::Relaxed) {
+            return;
+        }
+        let gate = gates()
+            .lock()
+            .expect("folder gate mutex")
+            .get(&library_id)
+            .cloned();
+        let Some(gate) = gate else {
+            return;
+        };
+        gate.entered.fetch_add(1, Ordering::Relaxed);
+        let mut rx = gate.open.subscribe();
+        let _ = rx.wait_for(|open| *open).await;
+    }
+}
+
+/// Why a run stopped early, for [`finalize_run`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CancelCause {
+    NotCancelled,
+    /// The cancel endpoint flipped the run to `cancelled` (D8).
+    Admin,
+    /// The run's coalescing-key lease was lost to another run (R-03).
+    Superseded,
+}
+
 /// Persist health issues, close the `scan_runs` row, emit the final WS event
 /// (Completed | Failed), and record Prometheus metrics. Shared by full and
 /// per-series scans so both paths produce identical observability output.
@@ -690,8 +878,9 @@ async fn finalize_run(
     health: HealthCollector,
     mut events: EventCollector,
     result: &anyhow::Result<()>,
-    cancelled: bool,
+    cause: CancelCause,
 ) -> anyhow::Result<()> {
+    let cancelled = cause != CancelCause::NotCancelled;
     // WP-7.4: a scan that changed the catalogue (or failed part-way,
     // possibly after writing) can move any series' neighbours — drop the
     // similar-series cache. Every scan kind funnels through here.
@@ -732,7 +921,20 @@ async fn finalize_run(
     // partial `result` — the endpoint already flipped the row + emitted the
     // terminal WS event, so here we just persist the partial stats and skip
     // re-emitting (see the event block below).
-    let (final_state, error) = if cancelled {
+    let run_row = ScanRunEntity::find_by_id(scan_id)
+        .one(&state.db)
+        .await?
+        .expect("scan run row");
+    // A superseded run (its coalescing-key lease was lost) also closes as
+    // `cancelled`, unless an admin cancel landed first; nobody emitted its
+    // terminal event yet, so it is emitted below.
+    let superseded = cause == CancelCause::Superseded && run_row.state != ScanRunState::Cancelled;
+    let (final_state, error) = if superseded {
+        (
+            ScanRunState::Cancelled,
+            Some(crate::jobs::scan::SUPERSEDED_REASON.to_string()),
+        )
+    } else if cancelled {
         (
             ScanRunState::Cancelled,
             Some("Cancelled by admin".to_string()),
@@ -744,10 +946,6 @@ async fn finalize_run(
         }
     };
 
-    let run_row = ScanRunEntity::find_by_id(scan_id)
-        .one(&state.db)
-        .await?
-        .expect("scan run row");
     let run_batch_id = run_row.batch_id;
     // Narrow-scan scope for the completion event (post-audit T1.6).
     let run_series_id = run_row.series_id;
@@ -766,8 +964,15 @@ async fn finalize_run(
     }
 
     // On cancel the endpoint already emitted the terminal `ScanEvent::Failed`,
-    // so don't double-emit here.
-    if !cancelled {
+    // so don't double-emit here. A superseded run had no endpoint.
+    if superseded {
+        state.events.emit(ScanEvent::Failed {
+            library_id,
+            scan_id,
+            error: crate::jobs::scan::SUPERSEDED_REASON.to_owned(),
+            batch_id: run_batch_id,
+        });
+    } else if !cancelled {
         match result {
             Ok(()) => state.events.emit(ScanEvent::Completed {
                 library_id,
@@ -799,8 +1004,15 @@ async fn finalize_run(
             Action::Cancelled,
             Severity::Warning,
             format!(
-                "Scan cancelled — partial: {} added, {} updated, {} removed",
-                stats.files_added, stats.files_updated, stats.issues_removed
+                "{} — partial: {} added, {} updated, {} removed",
+                if superseded {
+                    "Scan stopped: another scan of this library took over"
+                } else {
+                    "Scan cancelled"
+                },
+                stats.files_added,
+                stats.files_updated,
+                stats.issues_removed
             ),
         );
     } else {
@@ -963,8 +1175,57 @@ pub(crate) async fn fail_unstarted_run(
     let Some(scan_id) = requested_scan_id else {
         return;
     };
+    close_unstarted_run(
+        state,
+        library_id,
+        scan_id,
+        ScanRunState::Failed,
+        error,
+        false,
+    )
+    .await;
+}
+
+/// Close a run as `cancelled` without scanning: the scan job found that
+/// another run of the library holds the coalescing key (R-03). Closes a
+/// `queued` row, and also a `running` one: a job re-delivered after a crash
+/// finds its row still `running`, and since this run's id does not hold the
+/// key, any live copy of it sees the same and stops. Recorded like a run
+/// cancelled from the queue ([`cancel_queued_runs`]): `state='cancelled'`
+/// with `reason`, a terminal `ScanEvent::Failed`, and its scan-all batch
+/// finalized. No-op on a terminal row. Best-effort: failures are logged.
+pub(crate) async fn cancel_superseded_run(
+    state: &AppState,
+    library_id: Uuid,
+    scan_id: Uuid,
+    reason: &str,
+) {
+    close_unstarted_run(
+        state,
+        library_id,
+        scan_id,
+        ScanRunState::Cancelled,
+        reason,
+        true,
+    )
+    .await;
+}
+
+async fn close_unstarted_run(
+    state: &AppState,
+    library_id: Uuid,
+    scan_id: Uuid,
+    final_state: ScanRunState,
+    error: &str,
+    include_running: bool,
+) {
     let run = match ScanRunEntity::find_by_id(scan_id).one(&state.db).await {
-        Ok(Some(r)) if r.state == ScanRunState::Queued => r,
+        Ok(Some(r))
+            if r.state == ScanRunState::Queued
+                || (include_running && r.state == ScanRunState::Running) =>
+        {
+            r
+        }
         Ok(_) => return,
         Err(e) => {
             tracing::error!(error = %e, %scan_id, "scan: load unstarted run failed");
@@ -973,7 +1234,7 @@ pub(crate) async fn fail_unstarted_run(
     };
     let batch_id = run.batch_id;
     let mut am: ScanRunAM = run.into();
-    am.state = Set(ScanRunState::Failed);
+    am.state = Set(final_state);
     am.ended_at = Set(Some(Utc::now().fixed_offset()));
     am.error = Set(Some(error.to_owned()));
     if let Err(e) = am.update(&state.db).await {
@@ -1989,10 +2250,22 @@ async fn run_phases(
     health: &mut HealthCollector,
     events: &mut EventCollector,
     cancel: Arc<AtomicBool>,
+    lease_lost: &AtomicBool,
     scope: Option<&[PathBuf]>,
 ) -> anyhow::Result<()> {
     use crate::library::health::IssueKind;
     let root = PathBuf::from(&lib.root_path);
+    // Lease check (R-03) at each phase boundary and on the phase-3
+    // heartbeat: a lost lease raises the cooperative-cancel flag.
+    let lease_check = || {
+        if lease_lost.load(Ordering::Relaxed) && !cancel.swap(true, Ordering::Relaxed) {
+            tracing::warn!(scan_id = %scan_id, "scan: coalescing key lost to another run — stopping");
+        }
+    };
+    lease_check();
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(());
+    }
 
     // Compile ignore rules once per scan.
     let ignore = crate::library::ignore::IgnoreRules::for_library(lib)
@@ -2052,6 +2325,7 @@ async fn run_phases(
         (layout, present, None)
     };
     stats.record_phase("enumerate", enumerate_started.elapsed());
+    lease_check();
     // Narrow scans never run the library-wide auto-resolve; tell the
     // collector which tops were read so a cleared `UnreadableFolder`
     // under them resolves (post-audit T1.1).
@@ -2106,6 +2380,7 @@ async fn run_phases(
     let plan_started = Instant::now();
     let plan = build_library_scan_plan(state, lib, &layout, force, &ignore).await?;
     stats.record_phase("plan", plan_started.elapsed());
+    lease_check();
     progress = ProgressState::new(
         ScanKind::Library,
         plan.total_work(),
@@ -2195,6 +2470,7 @@ async fn run_phases(
                 // `process_planned_folder`.
                 let folder_path_str = planned.path.to_string_lossy().into_owned();
                 let work_units = 1 + planned.archives.len() as u64;
+                folder_gate::pass(lib.id).await;
                 // Cooperative cancel (D8): folders already in flight finish
                 // normally; folders not yet started no-op the moment the
                 // cancel flag is set, so the buffered stream drains fast
@@ -2340,6 +2616,7 @@ async fn run_phases(
         }
             }
             _ = heartbeat.tick() => {
+                lease_check();
                 // Cooperative cancel poll (D8): the cancel endpoint flips the
                 // run to `state='cancelled'`; pick that up here and raise the
                 // shared flag so not-yet-started folders stop. A single-column
@@ -2397,6 +2674,7 @@ async fn run_phases(
     // walked part of the library, so `seen_paths` is incomplete — running
     // `reconcile_library_seen` here would soft-delete every series the scan
     // never reached. The caller finalizes the run as `cancelled`.
+    lease_check();
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
     }
@@ -2415,7 +2693,11 @@ async fn run_phases(
         stats,
     )
     .await;
-    match crate::library::reconcile::reconcile_library_seen(
+    // The reconcile checks the lease at entry, between series of its
+    // folder-missing sweep and before its final series restore (R-03); the
+    // work for the series this run scanned always completes once started.
+    let lease_stop = || lease_lost.load(Ordering::Relaxed);
+    match crate::library::reconcile::reconcile_library_seen_until(
         &state.db,
         lib.id,
         &scanned_series,
@@ -2426,13 +2708,23 @@ async fn run_phases(
         &unreadable_folders,
         stats,
         events,
+        Some(&lease_stop),
     )
     .await
     {
         Ok(series_restored) => invalidate_after_series_restore(state, lib.id, series_restored),
+        Err(e) if lease_lost.load(Ordering::Relaxed) => {
+            // Superseded: the reconcile stopped on purpose; the next
+            // holder's reconcile completes the library-wide work.
+            tracing::info!(library_id = %lib.id, reason = %e, "scanner: reconcile stopped, scan superseded");
+        }
         Err(e) => {
             tracing::error!(library_id = %lib.id, error = %e, "scanner: reconcile failed");
         }
+    }
+    lease_check();
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(());
     }
     if let Err(e) =
         reconcile_status::reconcile_series_status_many(&state.db, &status_reconcile_entries).await

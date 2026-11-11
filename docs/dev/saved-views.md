@@ -308,6 +308,7 @@ the pin picker.
 | …0010 / …0011 / …0012 | system | Continue reading / On deck / New issues | ✓ |
 | …0013 | system | Similar series | — |
 | …0014 / …0015 / …0016 | system | Random picks (`/me/random-picks`) / On this day (`/me/on-this-day`) / Recently read (`/me/recent-history`) | — |
+| …0017 | system | New in series you're reading (`/me/new-in-series`, `m20271110_000001`) | — |
 | …0020 | filter_issues | Recently finished issues (was "Recently finished" in v0.60.0; renamed by `m20271020_000002`) | ✓ |
 | …0021 – …0027 | filter_issues | Finished this week, Rate what you read, Top rated issues, Annuals & specials, Short unread reads, Favorite issues, Annotated issues | — |
 | …0028 – …0034 | filter_series | Jump back in, Almost done, Complete runs to start, Ended but unfinished, Top rated series, Incomplete collections, Favorite series | — |
@@ -317,6 +318,32 @@ runs every filter template for a fresh user, so a DSL / sort that drifts
 from the registry fails CI rather than the home page. Adding a template:
 append to `TEMPLATES` in `m20271020_000001_builtin_views_wave2` (or a new
 migration), bump that test's expected count.
+
+### New in series you're reading
+
+`GET /me/new-in-series` (`rails::new_in_series`): issues whose
+`issues.created_at` (the scanner's ingest stamp, as for New issues) falls
+in the last `NEW_IN_SERIES_WINDOW_DAYS` (30) days to a series the caller
+was already reading at the time, that the caller has not finished. "Already
+reading" means `created_at` is after the series' start, taken per series as
+`MIN(COALESCE(p.finished_at, p.updated_at))` over the caller's reading rows
+(finished, or read past page 0); no start time is stored. `finished_at` is
+stamped once when a row flips to finished and kept while it stays finished,
+so a whole series added at once and then started never counts as new.
+Known limits: a reader whose only progress in the series is one unfinished
+issue has a start that moves with every read (its `updated_at`), so an
+issue added while they are still on it can be missed; and restarting a
+finished issue clears its `finished_at`, so when that was their only
+finished issue the start moves to the re-read. Newest addition first, tie-break on id; cursor-paginated on
+`(created_at, id)` (`limit` default 24, max 100, `total` on the first
+page). Removed issues and series, issues outside the caller's libraries
+or over the age cap, and series the caller hid from the rails (On Deck's
+auto-restore: newer progress in the series un-hides it) are left out.
+One query: the started-series CTE over the caller's `progress_records`,
+the issue side on `issues_active_created_idx` inside the window, the
+finished check on the `progress_records` primary key. Opt-in like the
+other recent rails; the home rail shows the first page, the "see all"
+page walks the cursor.
 
 ## Save-as-view from the library grid
 
@@ -473,7 +500,7 @@ feed. Another user's view is a 404 on both protocols.
 Both filter-view detail pages carry the shared `useSelection` +
 `SelectionToolbar` wiring (`web/components/saved-views/FilterViewDetail.tsx`,
 `IssueFilterViewDetail.tsx`; the latter since the 2026-11 audit, N-O4).
-Select sits before the card-size icon in the title row and in the phone
+Select sits before the cover-size icon in the title row and in the phone
 bar's View options sheet (phone-layout rule 11); the bar yields to the
 sticky toolbar while selecting. The series view's actions are
 series-shaped (every selected series expands to its issues server-side:
@@ -494,8 +521,8 @@ hydrated for display (name, subtitle, slug / series slug / saved-view id,
 cover) and `hidden_from`, the rails that kind is filtered out of — the
 row does not record which rail the click came from, so this is the fixed
 set per kind (issue: Continue reading, Recently read and the OPDS
-Continue reading feeds; series: On Deck, Random picks, Similar series;
-cbl: On Deck). A row the rails already ignore — the caller has progress
+Continue reading feeds; series: On Deck, Random picks, Similar series,
+New in series; cbl: On Deck). A row the rails already ignore — the caller has progress
 newer than `dismissed_at` on the issue, or on any issue of the series —
 is not listed or counted (`still_hiding_condition`); CBL rows stay,
 since On Deck's restore rule for them reads the list's reading frontier.

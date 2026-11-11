@@ -116,10 +116,7 @@ describe("sortSpecials", () => {
 describe("<SpecialsExtrasSection>", () => {
   function render(items: IssueSummaryView[]): string {
     return renderToStaticMarkup(
-      createElement(SpecialsExtrasSection, {
-        items,
-        gridStyle: { gridTemplateColumns: "1fr" },
-      }),
+      createElement(SpecialsExtrasSection, { items }),
     );
   }
 

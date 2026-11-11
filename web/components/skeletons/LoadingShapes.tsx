@@ -6,11 +6,7 @@ import { ProgressIssueCardSkeleton } from "@/components/library/ProgressIssueCar
 import { SeriesCardSkeleton } from "@/components/library/SeriesCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import {
-  cardGridColumns,
-  cardWidth,
-  DEFAULT_CARD_SIZE_PX,
-} from "@/lib/library/card-size";
+import { COVER_GRID_STYLE, COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 
 /**
  * Shaped loading stand-ins shared by the in-page loading branches and the
@@ -66,34 +62,23 @@ export function LoadingRegion({
   );
 }
 
-/** A grid of issue-card skeletons (cover + two caption lines). */
+/** A grid of issue-card skeletons (cover + two caption lines), on the
+ *  app-wide cover grid (`COVER_GRID_STYLE`) like the content it stands in
+ *  for. */
 export function CoverGridSkeleton({
   count = 24,
-  cardSizeKey,
-  style,
   className,
   label = "Loading…",
 }: {
   /** Enough to fill a wide screen at the smallest size; rows past the
    *  fold cost nothing. */
   count?: number;
-  /** The surface's card-size key, so the grid is the reader's size. */
-  cardSizeKey?: string;
-  /** Grid template, usually the page's own `gridStyle` so columns match. */
-  style?: React.CSSProperties;
   className?: string;
   label?: string;
 }) {
   return (
     <LoadingRegion label={label}>
-      <ul
-        className={cn("grid gap-4", className)}
-        style={
-          style ?? {
-            gridTemplateColumns: cardGridColumns(cardSizeKey),
-          }
-        }
-      >
+      <ul className={cn("grid gap-4", className)} style={COVER_GRID_STYLE}>
         {Array.from({ length: count }, (_, i) => (
           <li key={i}>
             <IssueCardSkeleton />
@@ -105,27 +90,19 @@ export function CoverGridSkeleton({
 }
 
 /** Horizontal cover rails shaped like `SavedViewRail`: an icon + `text-lg`
- *  title header, then a `HorizontalScrollRail` track of `cardSize`-wide
- *  cards ending on the "View all" tail. `card` picks the card skeleton:
+ *  title header, then a `HorizontalScrollRail` track of cover-sized cards
+ *  (`COVER_ITEM_STYLE`) ending on the "View all" tail. `card` picks the card skeleton:
  *  `"progress"` (Continue reading's three-line caption) for the first
  *  rail then issue cards, or series cards throughout. */
 export function RailsSkeleton({
   rails = 2,
   card = "issue",
-  cardSize = DEFAULT_CARD_SIZE_PX,
-  cardSizeKey,
   label = "Loading…",
 }: {
   rails?: number;
   card?: "issue" | "series";
-  /** Card width in px (the page's card-size preference; 160 default). */
-  cardSize?: number;
-  /** The page's card-size key: the stored size wins over `cardSize`
-   *  from the first frame (lib/library/card-size.ts). */
-  cardSizeKey?: string;
   label?: string;
 }) {
-  const width = { width: cardWidth(cardSizeKey, cardSize) };
   return (
     <LoadingRegion
       label={label}
@@ -149,7 +126,7 @@ export function RailsSkeleton({
             {/* Enough to cross a wide screen at the smallest size; the
                 track clips the rest. */}
             {Array.from({ length: 16 }, (_, i) => (
-              <div key={i} style={width} className="shrink-0">
+              <div key={i} style={COVER_ITEM_STYLE} className="shrink-0">
                 {card === "series" ? (
                   <SeriesCardSkeleton />
                 ) : rail === 0 ? (
@@ -159,7 +136,10 @@ export function RailsSkeleton({
                 )}
               </div>
             ))}
-            <div style={width} className="flex shrink-0 items-center">
+            <div
+              style={COVER_ITEM_STYLE}
+              className="flex shrink-0 items-center"
+            >
               <Skeleton className="h-8 w-28 rounded-md" />
             </div>
           </RailTrackSkeleton>
@@ -178,13 +158,10 @@ export function PageRailsSkeleton({
   rails = 3,
   card = "issue",
   phoneDescription = false,
-  cardSizeKey,
   label = "Loading…",
 }: {
   rails?: number;
   card?: "issue" | "series";
-  /** The page's card-size key (see `RailsSkeleton`). */
-  cardSizeKey?: string;
   /** Custom pages with a description repeat it under the phone bar. */
   phoneDescription?: boolean;
   label?: string;
@@ -225,12 +202,7 @@ export function PageRailsSkeleton({
           className="h-3 w-3/4"
         />
       ) : null}
-      <RailsSkeleton
-        rails={rails}
-        card={card}
-        cardSizeKey={cardSizeKey}
-        label=""
-      />
+      <RailsSkeleton rails={rails} card={card} label="" />
     </LoadingRegion>
   );
 }
@@ -543,7 +515,9 @@ export function EntityInsightsSkeleton() {
         <TextLineSkeleton className="h-3.5 w-48" />
         <div className="flex gap-3 overflow-hidden pb-1">
           {Array.from({ length: 10 }, (_, i) => (
-            <IssueCardSkeleton key={i} className="w-[120px] shrink-0" />
+            <div key={i} className="shrink-0" style={COVER_ITEM_STYLE}>
+              <IssueCardSkeleton />
+            </div>
           ))}
         </div>
       </div>
@@ -613,12 +587,7 @@ export function PublisherDetailSkeleton({
   return (
     <LoadingRegion label={label} className="space-y-6">
       <EntityHeaderSkeleton facts="w-20" />
-      <ul
-        className="grid gap-4"
-        style={{
-          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-        }}
-      >
+      <ul className="grid gap-4" style={COVER_GRID_STYLE}>
         {Array.from({ length: 12 }, (_, i) => (
           <li key={i}>
             <SeriesCardSkeleton />

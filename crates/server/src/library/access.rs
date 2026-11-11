@@ -72,6 +72,24 @@ impl VisibleLibraries {
         !self.caps.is_empty()
     }
 
+    /// True iff some cap actually hides a rating rung (a cap on the top
+    /// rung hides nothing). The switch between the two shapes of an
+    /// entity query: the `series_*` rollup junctions are the union of
+    /// every issue in the series, so a caller this returns `true` for
+    /// reads the `issue_*` twin over the issues it can see instead; every
+    /// other caller keeps the rollup (and its query plan).
+    pub fn hides_any(&self) -> bool {
+        self.caps
+            .values()
+            .any(|cap| !age_rating::hidden_ratings(cap).is_empty())
+    }
+
+    /// [`Self::hides_any`] for one library.
+    pub fn hides_in(&self, library_id: Uuid) -> bool {
+        self.cap_for(library_id)
+            .is_some_and(|cap| !age_rating::hidden_ratings(cap).is_empty())
+    }
+
     /// Membership + cap check for a series row.
     pub fn series_ok(&self, library_id: Uuid, rating: Option<&str>) -> bool {
         self.contains(library_id) && age_rating::passes(rating, self.cap_for(library_id))
@@ -196,6 +214,34 @@ impl VisibleLibraries {
             ),
             params,
         )
+    }
+
+    /// The cap half of the **entity-surface** issue predicate, for an
+    /// `issues` row aliased `issue` joined to its series aliased `series`:
+    /// the issue's effective rating (own rating, series as fallback) AND
+    /// the series' own rating. Entity surfaces (creator / character / …
+    /// lists, pages, counts, pickers) count an issue only when its series
+    /// is one the caller can open, so they never name a hidden series.
+    /// Same ` AND ` / `params` convention as [`Self::raw_cap_clause`];
+    /// empty when nothing is capped, so uncapped SQL is unchanged. Issue
+    /// routes keep [`visible_issues_sql`] (issue rating only).
+    pub fn entity_issue_cap_sql(
+        &self,
+        issue: &str,
+        series: &str,
+        params: &mut Vec<Value>,
+    ) -> String {
+        let mut sql = self.raw_cap_clause(
+            &format!("{series}.library_id"),
+            &format!("COALESCE({issue}.age_rating, {series}.age_rating)"),
+            params,
+        );
+        sql.push_str(&self.raw_cap_clause(
+            &format!("{series}.library_id"),
+            &format!("{series}.age_rating"),
+            params,
+        ));
+        sql
     }
 
     /// Cap-only predicate for a `series` query (membership handled by
@@ -730,9 +776,36 @@ mod tests {
     }
 
     #[test]
+    fn entity_issue_cap_checks_issue_and_series() {
+        let lib = Uuid::now_v7();
+        let mut params = Vec::new();
+        assert_eq!(
+            VisibleLibraries::unrestricted().entity_issue_cap_sql("i", "s", &mut params),
+            ""
+        );
+        let sql = capped(lib, "Teen").entity_issue_cap_sql("i", "s", &mut params);
+        assert!(
+            sql.contains("COALESCE(i.age_rating, s.age_rating)"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("lower(btrim(s.age_rating)) <> ALL($4)"),
+            "{sql}"
+        );
+        assert_eq!(params.len(), 4);
+    }
+
+    #[test]
     fn top_rung_cap_hides_nothing() {
         let lib = Uuid::now_v7();
         let v = capped(lib, "X18+");
+        assert!(v.has_caps());
+        assert!(!v.hides_any());
+        assert!(capped(lib, "Teen").hides_any());
+        assert!(capped(lib, "Teen").hides_in(lib));
+        assert!(!capped(lib, "Teen").hides_in(Uuid::now_v7()));
+        assert!(!v.hides_in(lib));
+        assert!(!VisibleLibraries::unrestricted().hides_any());
         assert!(v.series_cap_condition().is_none());
         let mut params = Vec::new();
         assert_eq!(v.raw_cap_clause("l", "r", &mut params), "");

@@ -441,7 +441,7 @@ async fn series_list(
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
-    let facets = fetch_series_facets(&app.db, &series_ids).await;
+    let facets = fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
     for s in &rows {
@@ -671,7 +671,7 @@ async fn browse(
     };
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
-    let series_facets = fetch_series_facets(&app.db, &series_ids).await;
+    let series_facets = fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let mut entries = String::new();
     for s in &rows {
         let cover = covers.get(&s.id).map(String::as_str);
@@ -782,7 +782,7 @@ async fn series_one(
     // series-detail screen, so without this banner the screen
     // shows just the title and the issue grid. M5 follow-up to
     // close that gap (observed in Panels on 2026-05-16).
-    let series_facets = fetch_series_facets(&app.db, &[s.id]).await;
+    let series_facets = fetch_series_facets(&app.db, &[s.id], &acl).await;
     let cover_map = crate::api::series::series_cover_issue_ids(&app.db, &[s.id], &acl).await;
     let cover = cover_map.get(&s.id).map(String::as_str);
     let key = app.secrets.url_signing_key.as_ref();
@@ -1306,16 +1306,10 @@ async fn by_creator(
     // then the series rows in name order. Doing it as one SQL
     // JOIN would force the ORM into raw mode for the
     // count-then-paginate dance we already do in series_list.
-    let credit_rows = match series_credit::Entity::find()
-        .filter(series_credit::Column::Role.eq("writer"))
-        .filter(series_credit::Column::Person.eq(writer.clone()))
-        .all(&app.db)
-        .await
-    {
-        Ok(r) => r,
+    let series_ids = match writer_series_ids(&app.db, &writer, &allowed).await {
+        Ok(ids) => ids,
         Err(e) => return server_error(e.to_string()),
     };
-    let series_ids: Vec<Uuid> = credit_rows.iter().map(|c| c.series_id).collect();
     if series_ids.is_empty() {
         // Still emit a coherent empty feed rather than 404 — the M2
         // author drill-in link should always render *something* so
@@ -1363,7 +1357,7 @@ async fn by_creator(
 
     let result_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &result_ids, &allowed).await;
-    let facets = fetch_series_facets(&app.db, &result_ids).await;
+    let facets = fetch_series_facets(&app.db, &result_ids, &allowed).await;
     let mut entries = String::new();
     for s in &rows {
         let cover = covers.get(&s.id).map(String::as_str);
@@ -1476,7 +1470,7 @@ async fn search(
 
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &allowed).await;
-    let facets = fetch_series_facets(&app.db, &series_ids).await;
+    let facets = fetch_series_facets(&app.db, &series_ids, &allowed).await;
     let now = chrono::Utc::now().to_rfc3339();
     let mut entries = String::new();
     for s in &rows {
@@ -2532,6 +2526,50 @@ pub(crate) async fn compute_cbl_progress_summary(
 
 /// Per-series metadata that OPDS clients display alongside the
 /// cover art: writers (Atom `<author>`) and genres (Atom `<category>`).
+/// Series carrying a `writer` credit for `writer` (the by-creator feeds,
+/// v1 and v2). Series visibility is the caller's to apply. Uncapped
+/// callers read the `series_credits` rollup; a caller whose cap hides
+/// anything reads the credits of the issues it can see, because the
+/// rollup also carries the credits of issues above the cap.
+pub(crate) async fn writer_series_ids(
+    db: &sea_orm::DatabaseConnection,
+    writer: &str,
+    acl: &access::VisibleLibraries,
+) -> Result<Vec<Uuid>, sea_orm::DbErr> {
+    if !acl.hides_any() {
+        let rows = series_credit::Entity::find()
+            .filter(series_credit::Column::Role.eq("writer"))
+            .filter(series_credit::Column::Person.eq(writer.to_owned()))
+            .all(db)
+            .await?;
+        return Ok(rows.into_iter().map(|c| c.series_id).collect());
+    }
+    #[derive(FromQueryResult)]
+    struct IdRow {
+        series_id: Uuid,
+    }
+    let mut params: Vec<sea_orm::Value> = vec![writer.to_owned().into()];
+    let cap = acl.issue_cap_sql("i", &mut params);
+    let sql = format!(
+        "SELECT DISTINCT i.series_id \
+           FROM issue_credits ic JOIN issues i ON i.id = ic.issue_id \
+          WHERE ic.role = 'writer' AND ic.person = $1 \
+            AND i.state = 'active' AND i.removed_at IS NULL{cap}"
+    );
+    Ok(
+        IdRow::find_by_statement(sea_orm::Statement::from_sql_and_values(
+            db.get_database_backend(),
+            sql,
+            params,
+        ))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|r| r.series_id)
+        .collect(),
+    )
+}
+
 /// Populated by [`fetch_series_facets`]; consumed by
 /// [`entry_metadata_series`] when rendering series entries.
 ///
@@ -2553,9 +2591,16 @@ pub(crate) struct SeriesFacets {
 /// Empty inputs short-circuit. Lookup failures degrade gracefully —
 /// return an empty map and let the renderer omit the metadata
 /// rather than 500ing the feed.
+///
+/// `acl` is the caller's visibility. The rollups are the union of every
+/// issue in the series, so for a caller whose cap hides anything the
+/// writers and genres are read from the issue junctions over the issues
+/// that caller can see ([`capped_series_facets`]); everyone else keeps
+/// the two rollup lookups.
 pub(crate) async fn fetch_series_facets(
     db: &sea_orm::DatabaseConnection,
     series_ids: &[Uuid],
+    acl: &access::VisibleLibraries,
 ) -> HashMap<Uuid, SeriesFacets> {
     if series_ids.is_empty() {
         return HashMap::new();
@@ -2563,6 +2608,9 @@ pub(crate) async fn fetch_series_facets(
     let mut ids: Vec<Uuid> = series_ids.to_vec();
     ids.sort();
     ids.dedup();
+    if acl.hides_any() {
+        return capped_series_facets(db, ids, acl).await;
+    }
     let mut out: HashMap<Uuid, SeriesFacets> = HashMap::new();
 
     let writer_rows = match series_credit::Entity::find()
@@ -2599,6 +2647,64 @@ pub(crate) async fn fetch_series_facets(
     // Stable output across renders. Junction rows have no inherent
     // order, so without this we'd churn the XML on every request and
     // burn through any CDN cache that fronts the feed.
+    for f in out.values_mut() {
+        f.writers.sort();
+        f.writers.dedup();
+        f.genres.sort();
+        f.genres.dedup();
+    }
+    out
+}
+
+/// [`fetch_series_facets`] for a caller whose cap hides anything: the
+/// writer credits and genres of the issues it can see, per series.
+async fn capped_series_facets(
+    db: &sea_orm::DatabaseConnection,
+    ids: Vec<Uuid>,
+    acl: &access::VisibleLibraries,
+) -> HashMap<Uuid, SeriesFacets> {
+    #[derive(sea_orm::FromQueryResult)]
+    struct FacetRow {
+        series_id: Uuid,
+        kind: String,
+        value: String,
+    }
+    let mut params: Vec<sea_orm::Value> = vec![ids.into()];
+    let cap = acl.issue_cap_sql("i", &mut params);
+    let sql = format!(
+        "SELECT DISTINCT i.series_id, 'writer' AS kind, ic.person AS value \
+           FROM issue_credits ic JOIN issues i ON i.id = ic.issue_id \
+          WHERE i.series_id = ANY($1) AND ic.role = 'writer' \
+            AND i.state = 'active' AND i.removed_at IS NULL{cap} \
+         UNION \
+         SELECT DISTINCT i.series_id, 'genre', ig.genre \
+           FROM issue_genres ig JOIN issues i ON i.id = ig.issue_id \
+          WHERE i.series_id = ANY($1) \
+            AND i.state = 'active' AND i.removed_at IS NULL{cap}"
+    );
+    let rows = match FacetRow::find_by_statement(sea_orm::Statement::from_sql_and_values(
+        db.get_database_backend(),
+        sql,
+        params,
+    ))
+    .all(db)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "opds: capped facet lookup failed");
+            Vec::new()
+        }
+    };
+    let mut out: HashMap<Uuid, SeriesFacets> = HashMap::new();
+    for r in rows {
+        let f = out.entry(r.series_id).or_default();
+        if r.kind == "writer" {
+            f.writers.push(r.value);
+        } else {
+            f.genres.push(r.value);
+        }
+    }
     for f in out.values_mut() {
         f.writers.sort();
         f.writers.dedup();
@@ -3169,7 +3275,7 @@ async fn view_acq(
     }
     let series_ids: Vec<Uuid> = rows.iter().map(|s| s.id).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &series_ids, &visible).await;
-    let facets = fetch_series_facets(&app.db, &series_ids).await;
+    let facets = fetch_series_facets(&app.db, &series_ids, &visible).await;
     let entries: String = rows
         .iter()
         .map(|s| {
@@ -3470,7 +3576,7 @@ async fn render_collection_acq(
     let collection_series_ids: Vec<Uuid> = series_by_id.keys().copied().collect();
     let series_covers =
         crate::api::series::series_cover_issue_ids(&app.db, &collection_series_ids, &visible).await;
-    let series_facets = fetch_series_facets(&app.db, &collection_series_ids).await;
+    let series_facets = fetch_series_facets(&app.db, &collection_series_ids, &visible).await;
     let issue_id_list: Vec<String> = issue_by_id.keys().cloned().collect();
     let progress = fetch_user_progress(&app.db, user.id, &issue_id_list).await;
     let glyphs = user_progress_glyphs_flag(&app.db, user.id).await;

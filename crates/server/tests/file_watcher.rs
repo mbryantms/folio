@@ -506,7 +506,7 @@ async fn watch_triggers_coalesce_into_one_scoped_follow_up() {
     assert_eq!(scan_runs_for(&app, lib).await.len(), 1);
 
     // Finishing the first scan enqueues ONE follow-up scoped to the union.
-    jobs.release_scan(lib).await.unwrap();
+    jobs.release_scan(lib, first.scan_id()).await.unwrap();
     assert_eq!(scan_runs_for(&app, lib).await.len(), 2);
     let payloads = queued_scan_payloads(&app).await;
     let mut scopes: Vec<Option<Vec<String>>> = payloads.iter().map(scope_of).collect();
@@ -528,7 +528,14 @@ async fn watch_triggers_coalesce_into_one_scoped_follow_up() {
     jobs.coalesce_watch_scan(lib, vec!["/lib/E".into()])
         .await
         .unwrap();
-    jobs.release_scan(lib).await.unwrap();
+    // The key was handed to the first follow-up's run id; only it releases.
+    let holder = jobs
+        .scan_in_flight(lib)
+        .await
+        .unwrap()
+        .expect("follow-up holds the key");
+    assert_ne!(holder, first.scan_id());
+    jobs.release_scan(lib, holder).await.unwrap();
     let payloads = queued_scan_payloads(&app).await;
     assert_eq!(payloads.len(), 3);
     assert!(

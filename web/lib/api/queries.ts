@@ -90,6 +90,7 @@ import type {
   RecentHistoryView,
   RandomPicksView,
   OnThisDayView,
+  NewInSeriesView,
   SimilarSeriesListView,
   SimilarSeriesRailView,
   RefreshLogListView,
@@ -2718,6 +2719,25 @@ export function useOnThisDay(opts?: { enabled?: boolean }) {
       jsonFetch<OnThisDayView>(`/me/on-this-day${buildQuery({ month, day })}`),
     enabled: opts?.enabled ?? true,
     staleTime: 60 * 60_000,
+  });
+}
+
+/** Issues added in the last 30 days to series the user was already
+ *  reading, not finished (`/me/new-in-series`), newest addition first. Cursor-
+ *  paginated: the home rail renders the first page (one request), the
+ *  "see all" page walks the rest through the sentinel. Same cache entry
+ *  for both. */
+export function useNewInSeriesInfinite(opts?: { enabled?: boolean }) {
+  return useInfiniteQuery({
+    queryKey: queryKeys.newInSeries,
+    enabled: opts?.enabled ?? true,
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      jsonFetch<NewInSeriesView>(
+        `/me/new-in-series${buildQuery({ limit: 24, cursor: pageParam })}`,
+      ),
+    getNextPageParam: cursorNextPage,
+    staleTime: 60_000,
   });
 }
 

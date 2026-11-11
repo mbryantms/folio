@@ -234,7 +234,7 @@ async fn publisher_series_feed(
     };
     let rows: Vec<series::Model> = ids.iter().filter_map(|id| by_id.remove(id)).collect();
     let covers = crate::api::series::series_cover_issue_ids(&app.db, &ids, &visible).await;
-    let facets = opds::fetch_series_facets(&app.db, &ids).await;
+    let facets = opds::fetch_series_facets(&app.db, &ids, &visible).await;
     let navigation: Vec<Value> = rows
         .iter()
         .map(|s| series_nav_entry(s, covers.get(&s.id).map(String::as_str), facets.get(&s.id)))

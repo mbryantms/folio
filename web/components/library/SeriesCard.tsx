@@ -375,7 +375,7 @@ export function SeriesCardSkeleton({ size = "md" }: { size?: Size }) {
  *  check badge — same idiom, different axis (ownership vs. read state).
  *
  *  Suppressed entirely when the user has disabled
- *  `useCoverCollectionDot` from the CardSizeOptions popover — gives
+ *  `useCoverCollectionDot` from the View options popover — gives
  *  readers who want pristine covers an opt-out. */
 function CollectionDot({ series }: { series: SeriesView }) {
   const dotPref = useCoverCollectionDot();

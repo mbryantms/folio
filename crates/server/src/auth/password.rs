@@ -28,6 +28,11 @@ pub enum PasswordError {
     Argon2(String),
     #[error("invalid stored hash")]
     InvalidHash,
+    /// The blocking task that ran the hash or verify failed (it panicked or
+    /// was cancelled). Says nothing about the password: callers answer 500,
+    /// never "wrong password" and never "correct".
+    #[error("password task failed: {0}")]
+    Task(String),
 }
 
 /// argon2id cost parameters for newly written hashes.
@@ -175,6 +180,120 @@ pub fn dummy_hash(pepper: &[u8], cost: HashCost) -> &'static str {
     })
 }
 
+// ─────────────── async call sites: the blocking pool ───────────────
+//
+// One argon2 hash or verify is tens of milliseconds of CPU and tens of MiB
+// of memory. Run on an async worker thread it stalls every other request
+// scheduled there, so async handlers go through these wrappers, which move
+// the work onto tokio's blocking pool. The pepper and the plaintext are
+// copied into zeroizing buffers because the task must own its inputs.
+//
+// The blocking pool itself is large (hundreds of threads) and shared with
+// page, thumbnail and OPDS streaming work, so a process-wide semaphore
+// caps how many hashes run at once. With `hash_permits()` permits this
+// restores the bound inline hashing had: at most one hash per core.
+// Waiting callers queue; there is no timeout.
+
+/// How many argon2 hashes or verifies may run at once: the available
+/// parallelism (one per core, as when hashing ran inline on the async
+/// workers), at least 2.
+pub fn hash_permits() -> usize {
+    std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(2)
+        .max(2)
+}
+
+/// The process-wide gate in front of every blocking hash or verify.
+fn hash_gate() -> &'static std::sync::Arc<tokio::sync::Semaphore> {
+    static GATE: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(hash_permits())))
+}
+
+/// Owned copy of a [`Peppers`] set for a blocking task.
+struct OwnedPeppers {
+    current: zeroize::Zeroizing<Vec<u8>>,
+    previous: Option<zeroize::Zeroizing<Vec<u8>>>,
+}
+
+impl OwnedPeppers {
+    fn from(p: Peppers<'_>) -> Self {
+        Self {
+            current: zeroize::Zeroizing::new(p.current.to_vec()),
+            previous: p.previous.map(|v| zeroize::Zeroizing::new(v.to_vec())),
+        }
+    }
+    fn borrow(&self) -> Peppers<'_> {
+        Peppers {
+            current: &self.current,
+            previous: self.previous.as_deref().map(|v| v.as_slice()),
+        }
+    }
+}
+
+/// Run `f` on the blocking pool once a [`hash_gate`] permit is free. The
+/// permit moves into the task, so it is released when the work ends, also
+/// on a panic and when the awaiting request has gone away meanwhile.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, PasswordError> + Send + 'static,
+) -> Result<T, PasswordError> {
+    let permit = hash_gate()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| PasswordError::Task(e.to_string()))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        f()
+    })
+    .await
+    .map_err(|e| PasswordError::Task(e.to_string()))?
+}
+
+/// [`hash`] on the blocking pool.
+pub async fn hash_blocking(
+    plain: &str,
+    pepper: &[u8],
+    cost: HashCost,
+) -> Result<String, PasswordError> {
+    let plain = zeroize::Zeroizing::new(plain.to_owned());
+    let pepper = zeroize::Zeroizing::new(pepper.to_vec());
+    blocking(move || hash(&plain, &pepper, cost)).await
+}
+
+/// [`verify_rotating`] on the blocking pool.
+pub async fn verify_rotating_blocking(
+    stored_hash: &str,
+    plain: &str,
+    peppers: Peppers<'_>,
+) -> Result<Verified, PasswordError> {
+    let stored = stored_hash.to_owned();
+    let plain = zeroize::Zeroizing::new(plain.to_owned());
+    let peppers = OwnedPeppers::from(peppers);
+    blocking(move || verify_rotating(&stored, &plain, peppers.borrow())).await
+}
+
+/// The timing equalizer for a sign-in that has no hash to check (unknown
+/// address, or an account without a local password): the same
+/// one-or-two argon2 verifies a wrong password costs, against
+/// [`dummy_hash`], on the blocking pool. Never verifies; `Err` only when
+/// the task itself failed ([`PasswordError::Task`]).
+pub async fn dummy_verify_blocking(
+    plain: &str,
+    peppers: Peppers<'_>,
+    cost: HashCost,
+) -> Result<(), PasswordError> {
+    let plain = zeroize::Zeroizing::new(plain.to_owned());
+    let peppers = OwnedPeppers::from(peppers);
+    blocking(move || {
+        let dummy = dummy_hash(&peppers.current, cost);
+        let _ = verify_rotating(dummy, &plain, peppers.borrow());
+        Ok(())
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +383,70 @@ mod tests {
         .unwrap();
         // Same password, different pepper → must not verify (peppered hash).
         assert!(!verify(&h, "hunter2", b"pepper-B-32bytes-XXXXXXXXXXXXXXX").unwrap());
+    }
+
+    /// The blocking-pool wrappers give the same answers as the sync calls.
+    #[tokio::test]
+    async fn blocking_wrappers_match_the_sync_calls() {
+        let old = b"pepper-A-32bytes-XXXXXXXXXXXXXXX";
+        let new = b"pepper-B-32bytes-XXXXXXXXXXXXXXX";
+        let h = hash_blocking("hunter2", new, HashCost::TEST).await.unwrap();
+        assert!(verify(&h, "hunter2", new).unwrap());
+        let under_old = hash("hunter2", old, HashCost::TEST).unwrap();
+        let rotating = Peppers {
+            current: new,
+            previous: Some(old),
+        };
+        assert_eq!(
+            verify_rotating_blocking(&h, "hunter2", rotating)
+                .await
+                .unwrap(),
+            Verified::Current
+        );
+        assert_eq!(
+            verify_rotating_blocking(&under_old, "hunter2", rotating)
+                .await
+                .unwrap(),
+            Verified::Previous
+        );
+        assert_eq!(
+            verify_rotating_blocking(&h, "wrong", rotating)
+                .await
+                .unwrap(),
+            Verified::No
+        );
+        dummy_verify_blocking("anything", rotating, HashCost::TEST)
+            .await
+            .unwrap();
+    }
+
+    /// The gate bounds concurrency: with every permit held a hash waits,
+    /// and it proceeds once they are released.
+    #[tokio::test]
+    async fn hash_gate_bounds_concurrent_hashes() {
+        assert!(hash_permits() >= 2);
+        let held = hash_gate()
+            .clone()
+            .acquire_many_owned(u32::try_from(hash_permits()).unwrap())
+            .await
+            .unwrap();
+        let pepper = b"test-pepper-32-bytes-long-XXXXXX";
+        let mut waiting = tokio::spawn(hash_blocking("hunter2", pepper, HashCost::TEST));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
+                .await
+                .is_err(),
+            "a hash ran while every permit was held"
+        );
+        drop(held);
+        let h = waiting.await.unwrap().unwrap();
+        assert!(verify(&h, "hunter2", pepper).unwrap());
+    }
+
+    /// A failed task is an error of its own, never a verdict on the password.
+    #[tokio::test]
+    async fn a_failed_task_is_not_a_verdict() {
+        let r = blocking::<Verified>(|| panic!("boom")).await;
+        assert!(matches!(r, Err(PasswordError::Task(_))), "{r:?}");
     }
 }

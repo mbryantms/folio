@@ -13,12 +13,18 @@ import {
   CoverGridSkeleton,
   EntityDetailSkeleton,
   LoadingRegion,
+  PageRailsSkeleton,
   PublisherDetailSkeleton,
   RailsSkeleton,
   RowsSkeleton,
   TableRowsSkeleton,
   TilesSkeleton,
 } from "@/components/skeletons/LoadingShapes";
+import { COVER_GRID_COLUMNS, COVER_WIDTH } from "@/lib/library/cover-size";
+
+/** The app-wide cover grid / rail-card width, as serialized inline. */
+const COVER_GRID_CSS = `grid-template-columns:${COVER_GRID_COLUMNS}`;
+const COVER_WIDTH_CSS = `width:${COVER_WIDTH}`;
 
 const count = (html: string, needle: string) => html.split(needle).length - 1;
 
@@ -33,13 +39,13 @@ describe("loading shapes", () => {
     expect(html).toContain("Loading entries…");
   });
 
-  it("uses the caller's grid template so columns match the content", () => {
-    const html = renderToStaticMarkup(
-      createElement(CoverGridSkeleton, {
-        style: { gridTemplateColumns: "repeat(auto-fill, minmax(123px, 1fr))" },
-      }),
-    );
-    expect(html).toContain("minmax(123px, 1fr)");
+  it("cover grid uses the app-wide cover template with no size prop", () => {
+    // The columns come from `--cover-min` on <html>, which the pre-paint
+    // bootstrap sets — so the skeleton already has the reader's column
+    // count, and no surface passes a size or a storage key.
+    const html = renderToStaticMarkup(createElement(CoverGridSkeleton));
+    expect(count(html, COVER_GRID_CSS)).toBe(1);
+    expect(html).toContain("var(--cover-min, 160px)");
   });
 
   it("rails render one header per rail", () => {
@@ -47,9 +53,29 @@ describe("loading shapes", () => {
       createElement(RailsSkeleton, { rails: 3, label: "Loading views…" }),
     );
     // 16 cards per rail: enough to cross a wide screen at the smallest
-    // card size.
+    // cover size.
     expect(count(html, "cover-skeleton__masthead")).toBe(48);
     expect(html).toContain("Loading views…");
+  });
+
+  it("rail cards take the library grid's cover width", () => {
+    const html = renderToStaticMarkup(
+      createElement(RailsSkeleton, { rails: 2, card: "series" }),
+    );
+    // Every card plus the "View all" tail, per rail — the same
+    // `--cover-w` width the loaded rail's cards use, so nothing resizes
+    // when the content lands.
+    expect(count(html, COVER_WIDTH_CSS)).toBe(2 * (16 + 1));
+    expect(html).not.toMatch(/width:\d+px/);
+  });
+
+  it("the rails page skeleton nests the same cover-width rails under one label", () => {
+    const html = renderToStaticMarkup(
+      createElement(PageRailsSkeleton, { rails: 3, label: "Loading home…" }),
+    );
+    expect(count(html, COVER_WIDTH_CSS)).toBe(3 * (16 + 1));
+    expect(count(html, 'role="status"')).toBe(1);
+    expect(html).toContain("Loading home…");
   });
 
   it("an empty label renders no status node (nested shapes)", () => {
@@ -82,9 +108,11 @@ describe("loading shapes", () => {
     // Profile card: the 176x256 image beside the fact grid.
     expect(html).toContain("h-64 w-44");
     expect(html).toContain("lg:grid-cols-3");
-    // Four stat tiles, then the earliest-appearances rail of 120px cards.
+    // Four stat tiles, then the earliest-appearances strip: ten cards at
+    // the app-wide cover width, like the loaded strip.
     expect(html).toContain("grid-cols-2 gap-3 lg:grid-cols-4");
-    expect(count(html, "w-[120px]")).toBe(10);
+    expect(html).not.toContain("w-[120px]");
+    expect(count(html, COVER_WIDTH_CSS)).toBe(10);
   });
 
   it("region layout classes space the boxes themselves", () => {
@@ -118,7 +146,9 @@ describe("route skeletons", () => {
   it("publishers' detail skeleton is a header over a series grid", () => {
     const html = renderToStaticMarkup(createElement(PublisherDetailSkeleton));
     expect(html).not.toContain("h-64 w-44");
-    expect(html).toContain("minmax(160px, 1fr)");
+    // The series grid is the app-wide cover grid, not a fixed 160px one.
+    expect(count(html, COVER_GRID_CSS)).toBe(1);
+    expect(html).not.toContain("minmax(160px, 1fr)");
     expect(count(html, "cover-skeleton__masthead")).toBe(12);
   });
 
