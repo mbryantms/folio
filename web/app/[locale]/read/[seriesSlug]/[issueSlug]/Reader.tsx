@@ -71,7 +71,7 @@ import {
   usePrevUp,
   useSavedView,
   useSeries,
-} from "@/lib/api/queries";
+} from "@/lib/api/queries-reader";
 import {
   type AccountReaderPrefs,
   flushAccountPrefs,

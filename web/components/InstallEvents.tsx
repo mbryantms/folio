@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
 import { setInstallState, type InstallPrompt } from "@/lib/pwa/install";
-import { isStandaloneDisplay } from "@/lib/use-pull-to-refresh";
+import { isStandaloneDisplay } from "@/lib/pwa/display-mode";
 export function InstallEvents() {
   useEffect(() => {
     const media = window.matchMedia("(display-mode: standalone)");

@@ -7,7 +7,7 @@ import {
   useDeleteMarkerById,
   useRestoreMarkers,
 } from "@/lib/api/mutations/markers";
-import { useIssueMarkers } from "@/lib/api/queries";
+import { useIssueMarkers } from "@/lib/api/queries-reader";
 import { showUndoToast } from "@/lib/ui/undo-toast";
 import type { MarkerKind, MarkerView } from "@/lib/api/types";
 

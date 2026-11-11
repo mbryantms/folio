@@ -6,7 +6,7 @@
  */
 import type { useQueryClient } from "@tanstack/react-query";
 
-import { queryKeys } from "../queries";
+import { queryKeys } from "../query-keys";
 import { queryKeyPrefixes } from "../query-key-prefixes";
 
 /** Invalidate every cached surface that derives from per-user reading

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
 
 const standalone = vi.hoisted(() => ({ value: true }));
-vi.mock("@/lib/use-pull-to-refresh", () => ({
+vi.mock("@/lib/pwa/display-mode", () => ({
   isStandaloneDisplay: () => standalone.value,
 }));
 
