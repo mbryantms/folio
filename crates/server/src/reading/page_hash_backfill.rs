@@ -147,7 +147,7 @@ pub async fn backfill_issue(
         // One page per blocking task so the page server can take the
         // reader lock between pages.
         let hashed = tokio::task::spawn_blocking(move || {
-            let mut r = reader.lock().expect("zip_lru reader mutex");
+            let mut r = crate::library::zip_lru::lock_reader(&reader)?;
             crate::reading::page_hash::hash_page(&mut r, index)
         })
         .await;

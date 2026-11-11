@@ -493,16 +493,38 @@ async fn reader_without_library_access_returns_404() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn archive_unreadable_returns_500() {
-    // Issue row points at a path that doesn't exist on disk.
-    // `zip_lru.get_or_open` errors, and the handler maps that to
-    // 500 archive_unreadable.
+async fn missing_archive_returns_410() {
+    // Issue row points at a file that doesn't exist under a library root
+    // that does: the shared `api::page_source` mapping answers 410
+    // archive_missing (it was a 500 before audit R-06a). A root that is
+    // itself absent is `library_offline` instead.
     let app = TestApp::spawn().await;
     let admin = register(&app, "ocr-archive-bad@example.com").await;
-    let (_lib, issue_id) = seed_issue(&app, "/nonexistent/path/missing.cbz").await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("other.txt"), b"x").unwrap();
+    let missing = dir.path().join("missing.cbz");
+    let (_lib, issue_id) = seed_issue(&app, missing.to_str().unwrap()).await;
 
     let (status, body) = post_ocr(&app, &issue_id, Some(&admin), VALID_BODY()).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"]["code"], "archive_missing");
+
+    let (status, body) = get_text_regions(&app, &issue_id, 0, Some(&admin)).await;
+    assert_eq!(status, StatusCode::GONE);
+    assert_eq!(body["error"]["code"], "archive_missing");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn not_an_archive_returns_410_unreadable() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "ocr-not-archive@example.com").await;
+    let dir = tempfile::tempdir().unwrap();
+    let junk = dir.path().join("junk.cbz");
+    std::fs::write(&junk, b"this is not a zip file at all").unwrap();
+    let (_lib, issue_id) = seed_issue(&app, junk.to_str().unwrap()).await;
+
+    let (status, body) = post_ocr(&app, &issue_id, Some(&admin), VALID_BODY()).await;
+    assert_eq!(status, StatusCode::GONE);
     assert_eq!(body["error"]["code"], "archive_unreadable");
 }
 
@@ -653,8 +675,7 @@ async fn cache_hit_short_circuits_pipeline() {
     // Pre-populate Redis with a sentinel payload for the exact key
     // the handler will compute. The issue's `file_path` points at
     // nowhere — if the cache short-circuit failed, the request
-    // would reach `zip_lru.get_or_open` and 500 with
-    // `archive_unreadable`. A 200 with our sentinel text proves the
+    // would reach the archive open and answer 503 `library_offline` (no such root). A 200 with our sentinel text proves the
     // hit path bypasses both archive load and the OCR pipeline.
     use redis::AsyncCommands;
     let app = TestApp::spawn().await;
@@ -764,7 +785,8 @@ async fn cache_lookup_keyed_by_lang() {
     let mut redis = app.state().jobs.redis.clone();
     let _: () = redis.set_ex(&western_key, payload, 60).await.unwrap();
 
-    // Manga lookup → different key → miss → archive load → 500.
+    // Manga lookup → different key → miss → archive load → 503 (the
+    // library root `/nonexistent` is not there: offline).
     let (status, body) = post_ocr(
         &app,
         &issue_id,
@@ -778,10 +800,10 @@ async fn cache_lookup_keyed_by_lang() {
     .await;
     assert_eq!(
         status,
-        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::SERVICE_UNAVAILABLE,
         "manga request must miss the western-only cache and fall through; got {body}"
     );
-    assert_eq!(body["error"]["code"], "archive_unreadable");
+    assert_eq!(body["error"]["code"], "library_offline");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -995,8 +1017,8 @@ async fn text_regions_treats_v1_payload_as_miss() {
     let _: () = redis.set_ex(&detect_key, v1, 60).await.unwrap();
 
     let (status, body) = get_text_regions(&app, &issue_id, 0, Some(&admin)).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-    assert_eq!(body["error"]["code"], "archive_unreadable");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], "library_offline");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

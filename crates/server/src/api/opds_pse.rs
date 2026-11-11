@@ -17,6 +17,12 @@
 //!      (a hidden issue answers like an unknown id)
 //!   5. serve the page bytes (sniffed allowlist, ETag, Range-able)
 //!
+//! An issue whose pages cannot be served answers by the shared mapping in
+//! [`super::page_source`]: 410 `archive_missing` / `archive_unreadable`
+//! for a missing file or one that is not (or no longer) a readable
+//! archive, 409 for an unconverted CBR / CB7, 404 for a refused path, 503 +
+//! `Retry-After` for an offline library or an I/O error; never cacheable.
+//!
 //! Audit: on the *first* page of an issue (`n == 0`) we record one
 //! `opds.pse.access` row. That single row stands in for "this user
 //! started streaming this issue at this time" — recording on every page
@@ -38,8 +44,10 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 use uuid::Uuid;
 
+use super::page_source::{PageUnavailable, no_store, version_tag};
 use crate::audit::{self, AuditEntry};
 use crate::auth::url_signing::{self, PseUrlError};
+use crate::library::zip_lru::lock_reader;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -98,7 +106,7 @@ pub async fn stream(
         .await
     {
         Ok(Some(r)) => r,
-        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found"),
+        Ok(None) => return no_store(error(StatusCode::NOT_FOUND, "not_found")),
         Err(e) => {
             tracing::warn!(error = %e, "pse: issue lookup failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
@@ -111,25 +119,42 @@ pub async fn stream(
     if user_row.role != UserRole::Admin {
         let acl = crate::library::access::for_library_by_id(&app, u, issue_row.library_id).await;
         if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
-            return error(StatusCode::NOT_FOUND, "not_found");
+            return no_store(error(StatusCode::NOT_FOUND, "not_found"));
         }
     }
+    // An encrypted row has no readable pages.
+    if let Err(why) = PageUnavailable::check_row(&issue_row) {
+        return why.response();
+    }
     // Regular file below the library root, no symbolic link on the way
-    // (`library::no_follow`), or not-found (a failed library lookup is a
-    // server error). The pread fast path reads through this handle.
+    // (`library::no_follow`); otherwise the `page_source` answer (410 for a
+    // missing file, 503 for an offline library, 404 for a refused path, 500
+    // for a failed library lookup). The pread fast path reads through this handle.
     let archive_file = match crate::library::no_follow::open_issue_archive(&app, &issue_row).await {
         Ok(f) => f,
-        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+        Err(refusal) => {
+            return PageUnavailable::for_refusal(&app, &issue_row, &refusal)
+                .await
+                .response();
         }
-        Err(_) => return error(StatusCode::NOT_FOUND, "not_found"),
     };
+    let version = archive_file
+        .stamp()
+        .map(|s| version_tag(&s))
+        .unwrap_or_default();
 
     let page_index = n as usize;
     // Content-derived ETag (PERF-4): fold in `content_hash` so a cached page is
-    // revalidated after an archive rewrite (`issue.id` is stable across them).
+    // revalidated after an archive rewrite (`issue.id` is stable across them),
+    // and the open file's version so it changes with the file even before a
+    // rescan (audit R-05).
     let hash = issue_row.content_hash.as_str();
-    let etag_value = format!("\"pse-{}-{}\"", &hash[..32.min(hash.len())], page_index);
+    let etag_value = format!(
+        "\"pse-{}-{}-{}\"",
+        &hash[..32.min(hash.len())],
+        version,
+        page_index
+    );
     // Conditional GET → 304 before opening the archive (PERF-4).
     if headers
         .get(header::IF_NONE_MATCH)
@@ -149,7 +174,7 @@ pub async fn stream(
         Ok(dup) => dup,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %issue_row.id, "pse: handle dup failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");
+            return PageUnavailable::Unavailable.response();
         }
     };
     let (arc, pread) = match app
@@ -166,7 +191,7 @@ pub async fn stream(
         }
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %issue_row.id, "pse: zip_lru open failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");
+            return PageUnavailable::from_archive_error(&e).response();
         }
     };
 
@@ -177,7 +202,7 @@ pub async fn stream(
 
     let arc_clone = arc.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<PageMeta, PageError> {
-        let mut cbz = arc_clone.lock().expect("cbz mutex");
+        let mut cbz = lock_reader(&arc_clone).map_err(PageError::Read)?;
         let pages = cbz.pages();
         let entry = pages
             .get(page_index)
@@ -188,7 +213,7 @@ pub async fn stream(
         let head_len = total.min(16) as usize;
         let head = if head_len > 0 {
             cbz.read_entry_range(&entry, 0, head_len as u64)
-                .map_err(|e| PageError::Read(e.to_string()))?
+                .map_err(PageError::Read)?
         } else {
             Vec::new()
         };
@@ -205,17 +230,19 @@ pub async fn stream(
 
     let meta = match result {
         Ok(Ok(m)) => m,
-        Ok(Err(PageError::NotFound)) => return error(StatusCode::NOT_FOUND, "page_not_found"),
+        Ok(Err(PageError::NotFound)) => {
+            return no_store(error(StatusCode::NOT_FOUND, "page_not_found"));
+        }
         Ok(Err(PageError::UnsupportedType)) => {
             return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type");
         }
         Ok(Err(PageError::Read(e))) => {
             tracing::warn!(error = %e, "pse: page read failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+            return PageUnavailable::from_archive_error(&e).response();
         }
         Err(e) => {
             tracing::error!(error = %e, "pse: page task failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+            return PageUnavailable::Internal.response();
         }
     };
 
@@ -329,7 +356,7 @@ pub async fn stream(
         let handle = tokio::runtime::Handle::current();
         tokio::task::spawn_blocking(move || {
             let mut sink = SyncIoBridge::new_with_handle(writer, handle);
-            let mut cbz = match arc_for_read.lock() {
+            let mut cbz = match lock_reader(&arc_for_read) {
                 Ok(g) => g,
                 Err(_) => return,
             };
@@ -351,27 +378,28 @@ pub async fn stream(
 
     let arc_for_read = arc.clone();
     let entry_idx = meta.entry_index;
-    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let mut cbz = arc_for_read.lock().expect("cbz mutex");
+    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, PageError> {
+        let mut cbz = lock_reader(&arc_for_read).map_err(PageError::Read)?;
         let pages = cbz.pages();
         let entry = pages
             .get(entry_idx)
             .copied()
             .cloned()
-            .ok_or_else(|| "page disappeared".to_string())?;
+            .ok_or(PageError::NotFound)?;
         cbz.read_entry_range(&entry, start, len)
-            .map_err(|e| e.to_string())
+            .map_err(PageError::Read)
     })
     .await;
     let body_bytes = match bytes {
         Ok(Ok(b)) => b,
-        Ok(Err(e)) => {
+        Ok(Err(PageError::Read(e))) => {
             tracing::warn!(error = %e, "pse: byte read failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+            return PageUnavailable::from_archive_error(&e).response();
         }
+        Ok(Err(_)) => return no_store(error(StatusCode::NOT_FOUND, "page_not_found")),
         Err(e) => {
             tracing::error!(error = %e, "pse: byte task failed");
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+            return PageUnavailable::Internal.response();
         }
     };
     hdrs.insert(
@@ -421,7 +449,8 @@ struct PageMeta {
 enum PageError {
     NotFound,
     UnsupportedType,
-    Read(String),
+    /// Mapped by [`PageUnavailable::from_archive_error`].
+    Read(archive::ArchiveError),
 }
 
 /// Same magic-byte allowlist as `api::page_bytes::sniff`. SVG is
@@ -530,7 +559,7 @@ fn unsatisfiable(total: u64) -> Response {
         HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
-    (StatusCode::RANGE_NOT_SATISFIABLE, hdrs, Body::empty()).into_response()
+    no_store((StatusCode::RANGE_NOT_SATISFIABLE, hdrs, Body::empty()).into_response())
 }
 
 /// 2-arg shim for the call sites in this file that reuse the code string

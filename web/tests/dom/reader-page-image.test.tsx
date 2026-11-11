@@ -99,6 +99,68 @@ describe("PageImage load failure", () => {
   });
 });
 
+describe("PageImage for a page that is gone", () => {
+  const gone = () => screen.queryByText(/no longer available/);
+
+  it("a 410 shows a final message instead of the retry", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 410 }));
+    const { img, container } = page();
+    fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
+    fireEvent.error(img());
+    await waitFor(() => expect(gone()).not.toBeNull());
+    expect(retry()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${SRC}?r=1`,
+      expect.objectContaining({ method: "HEAD" }),
+    );
+    // The cover handoff still sees a settled (failed) first page.
+    expect(container.querySelector("[data-page-load-error]")).toBe(
+      gone()!.closest("[data-page-load-error]"),
+    );
+  });
+
+  it("a 409 says the file must be converted, without a retry", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 409 }),
+    );
+    const { img } = page();
+    fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
+    fireEvent.error(img());
+    await waitFor(() =>
+      expect(screen.queryByText(/converted to CBZ/)).not.toBeNull(),
+    );
+    expect(retry()).toBeNull();
+    expect(gone()).toBeNull();
+  });
+
+  it("any other failure keeps Tap to retry", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 503 }),
+    );
+    const { img } = page();
+    fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
+    fireEvent.error(img());
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    expect(retry()).not.toBeNull();
+    expect(gone()).toBeNull();
+  });
+
+  it("a probe that cannot reach the server keeps Tap to retry", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
+    const { img } = page();
+    fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
+    fireEvent.error(img());
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+    expect(retry()).not.toBeNull();
+  });
+});
+
 describe("PageImage retry stays in view", () => {
   it("sits in the middle of the part of the page on screen", () => {
     // A 3000 px page scrolled 2000 px down in an 800 px window: the

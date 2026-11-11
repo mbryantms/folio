@@ -26,6 +26,18 @@
 //! are held by `&'static` reference, which is `Send + Sync` thanks to
 //! the [`Recognizer: Send + Sync`][crate::ocr::recognizer::Recognizer]
 //! bound.
+//!
+//! ## Models first, then the permit, held by the work
+//!
+//! The handler (`api::issue_ocr`) waits for the models
+//! ([`prepare_models`] / [`prepare_detector`]: the first call waits on
+//! the verified download and builds the sessions) *before* it takes an OCR
+//! permit, so a first-use download never holds the permits. The permit is
+//! then handed to the blocking work itself ([`blocking_with_permit`],
+//! [`run_ocr`], [`detect_and_cache_regions`]): it is released when that
+//! work finishes, not when the request future is dropped. A client that
+//! fires and aborts requests cannot start more concurrent decodes or
+//! inferences than there are permits.
 
 use image::DynamicImage;
 use redis::aio::ConnectionManager;
@@ -110,12 +122,61 @@ const DETECTOR_CONF: f32 = 0.5;
 /// Non-max-suppression IoU threshold.
 const DETECTOR_NMS: f32 = 0.5;
 
+/// The initialised singletons one OCR run uses.
+pub struct OcrModels {
+    detector: Option<&'static Detector>,
+    recognizer: &'static dyn Recognizer,
+}
+
+/// Wait for the models a run needs: the recognizer for `language`, and the
+/// detector when `detect` is set. The first call per model waits on its
+/// verified download (`ocr::models`) and builds the session; later calls
+/// return at once. Call this before taking an OCR permit.
+pub async fn prepare_models(language: Language, detect: bool) -> anyhow::Result<OcrModels> {
+    // Only initialize the detector singleton when we're actually
+    // going to use it. The first-call cost includes a HF download +
+    // ort session build — skipping that on the no-detect path means
+    // operators with detection disabled never pay it.
+    let detector = if detect {
+        Some(Detector::shared().await?)
+    } else {
+        None
+    };
+    let recognizer: &'static dyn Recognizer = match language {
+        Language::Western => WesternOcr::shared().await?,
+        Language::Manga => MangaOcr::shared().await?,
+    };
+    Ok(OcrModels {
+        detector,
+        recognizer,
+    })
+}
+
+/// [`prepare_models`] for the detector alone (the text-regions route).
+pub async fn prepare_detector() -> anyhow::Result<&'static Detector> {
+    Detector::shared().await
+}
+
+/// Run `f` on the blocking pool with `permit` moved into the task: the
+/// permit is released when `f` has finished, even when the caller's future
+/// was dropped first. Returns `f`'s result and the permit, so a caller can
+/// carry the permit on to the next stage.
+pub async fn blocking_with_permit<P, T, F>(permit: P, f: F) -> anyhow::Result<(T, P)>
+where
+    P: Send + 'static,
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || (f(), permit))
+        .await
+        .map_err(|e| anyhow::anyhow!("blocking task failed: {e}"))
+}
+
 /// Driver: returns the recognized text + a refined bubble outline.
 ///
-/// Looks up both singletons before entering the blocking task: the
-/// `OnceCell`s wrap the async HF download, which we can't run inside
-/// `spawn_blocking`. The heavy CPU work then runs once both are
-/// warm.
+/// `models` come from [`prepare_models`] (the async download and session
+/// build cannot run inside `spawn_blocking`). `permit` is held by the
+/// blocking task until it finishes (see the module docs).
 ///
 /// Records two Prometheus histograms (units: seconds, matching
 /// `folio_reader_next_up_latency_seconds` and friends):
@@ -127,7 +188,11 @@ const DETECTOR_NMS: f32 = 0.5;
 ///
 /// Use the gap between them to spot detector-bound vs recognizer-
 /// bound deployments.
-pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
+pub async fn run_ocr<P: Send + 'static>(
+    input: OcrInput,
+    models: OcrModels,
+    permit: P,
+) -> anyhow::Result<OcrOutput> {
     // Cancellation (OCR-1 / PERF-9): a `spawn_blocking` task keeps running
     // detached if this future is dropped (client disconnected / aborted). The
     // drop guard flips this flag, and the blocking body checks it after the
@@ -142,19 +207,15 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
         Language::Manga => "manga",
     };
     let start = std::time::Instant::now();
-    // Only initialize the detector singleton when we're actually
-    // going to use it. The first-call cost includes a HF download +
-    // ort session build — skipping that on the no-detect path means
-    // operators with detection disabled never pay it.
-    let detector = if input.detect {
-        Some(Detector::shared().await?)
-    } else {
-        None
-    };
-    let recognizer: &'static dyn Recognizer = match input.language {
-        Language::Western => WesternOcr::shared().await?,
-        Language::Manga => MangaOcr::shared().await?,
-    };
+    let OcrModels {
+        detector,
+        recognizer,
+    } = models;
+    // A model the caller did not prepare for this request is not used.
+    let detector = if input.detect { detector } else { None };
+    if input.detect && detector.is_none() {
+        return Err(anyhow::anyhow!("detector requested but not prepared"));
+    }
 
     // ─── Detect (with per-page cache) ────────────────────────────
     // When `detect` is off we skip the cache lookup + detector run
@@ -171,7 +232,7 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
     let redis_for_put = input.redis.clone();
     let detect_key_for_put = detect_key.clone();
     let cancel_for_task = cancel.clone();
-    let (output, detection_to_cache) = tokio::task::spawn_blocking(move || {
+    let ((output, detection_to_cache), _permit) = blocking_with_permit(permit, move || {
         run_blocking(
             detector,
             recognizer,
@@ -182,7 +243,8 @@ pub async fn run_ocr(input: OcrInput) -> anyhow::Result<OcrOutput> {
         )
     })
     .await
-    .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))??;
+    .map_err(|e| anyhow::anyhow!("ocr task panicked: {e}"))
+    .and_then(|(r, p)| r.map(|v| (v, p)))?;
 
     if let (Some(key), Some(detection)) = (detect_key_for_put, detection_to_cache) {
         cache::put_detect(&redis_for_put, &key, &detection).await;
@@ -334,18 +396,20 @@ fn run_detector_blocking(
 /// Callers are expected to have checked [`cache::get_detect`] first;
 /// the lookup happening before this call is what lets the hit path
 /// skip the archive load + page decode entirely.
-pub async fn detect_and_cache_regions(
+pub async fn detect_and_cache_regions<P: Send + 'static>(
     redis: ConnectionManager,
     content_hash: &str,
     page: u32,
     page_image: DynamicImage,
+    detector: &'static Detector,
+    permit: P,
 ) -> anyhow::Result<CachedDetection> {
-    let detector = Detector::shared().await?;
     let start = std::time::Instant::now();
-    let detection =
-        tokio::task::spawn_blocking(move || run_detector_blocking(detector, &page_image))
+    let (detection, _permit) =
+        blocking_with_permit(permit, move || run_detector_blocking(detector, &page_image))
             .await
-            .map_err(|e| anyhow::anyhow!("detect task panicked: {e}"))??;
+            .map_err(|e| anyhow::anyhow!("detect task panicked: {e}"))?;
+    let detection = detection?;
     metrics::histogram!("folio_ocr_detect_seconds").record(start.elapsed().as_secs_f64());
     let key = cache::detect_cache_key(content_hash, page);
     cache::put_detect(&redis, &key, &detection).await;
@@ -493,5 +557,36 @@ mod tests {
     fn bbox_to_rect_rejects_collapsed_rect() {
         let b = bbox(100.0, 100.0, 50.0, 50.0, 0.9); // xmax < xmin
         assert!(bbox_to_rect(&b, 200, 200).is_none());
+    }
+
+    /// Dropping the caller's future does not release the permit while the
+    /// blocking work is still running; it is released when the work ends.
+    #[tokio::test]
+    async fn the_permit_lives_as_long_as_the_blocking_work() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        let sem = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let work = blocking_with_permit(permit, move || {
+            started_tx.send(()).unwrap();
+            rx.recv().unwrap();
+        });
+        // Poll until the work has started, then abandon the future.
+        let abandoned = tokio::time::timeout(Duration::from_millis(50), work).await;
+        assert!(abandoned.is_err(), "still running");
+        started_rx.recv().unwrap();
+        assert_eq!(sem.available_permits(), 0, "held by the running work");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(sem.available_permits(), 0, "still held after the drop");
+        tx.send(()).unwrap();
+        for _ in 0..200 {
+            if sem.available_permits() == 1 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("permit not released when the work finished");
     }
 }

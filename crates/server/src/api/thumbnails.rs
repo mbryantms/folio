@@ -16,6 +16,12 @@
 //!     the encoder pool. Beyond the cap, requests wait briefly; a wait
 //!     longer than 2s yields 503 with `Retry-After: 1` so the browser's
 //!     lazy-load doesn't pile up.
+//!   - Unservable issues follow [`super::page_source`]: a row the scanner
+//!     marked encrypted, a missing file or one that no longer opens as an
+//!     archive answers 410 (`archive_unreadable` / `archive_missing`), an
+//!     unconverted CBR / CB7 409, a refused path 404, an offline library or
+//!     an I/O error 503; never cacheable. Thumbnails already on disk are served first, so only the
+//!     inline-generation path meets these.
 //!   - Caching (audit OP-7). `Cache-Control: private, max-age=300` plus a
 //!     strong `ETag` that is the blake3 digest of the served bytes;
 //!     `If-None-Match` answers 304 with no body. See [`THUMB_CACHE_CONTROL`]
@@ -37,8 +43,10 @@ use std::time::Duration;
 use tokio_util::io::ReaderStream;
 
 use super::error;
+use super::page_source::{PageUnavailable, issue_not_found, no_store};
 use crate::auth::CurrentUser;
 use crate::library::thumbnails::{self, ThumbFormat, ThumbnailQuality, Variant};
+use crate::library::zip_lru::lock_reader;
 use crate::state::AppState;
 use server_macros::handler;
 
@@ -122,10 +130,10 @@ pub async fn thumb(
     };
 
     let Ok(Some(row)) = issue::Entity::find_by_id(id.clone()).one(&app.db).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+        return issue_not_found();
     };
     if !crate::library::access::issue_visible(&app, &user, &row).await {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+        return issue_not_found();
     }
 
     // G9: a small-cover (`@sm`) request degrades to the full cover when the
@@ -170,6 +178,11 @@ pub async fn thumb(
         return serve_file(&existing, &headers).await;
     }
 
+    // An encrypted row has no readable pages to render.
+    if let Err(why) = PageUnavailable::check_row(&row) {
+        return why.response();
+    }
+
     // Cold path: generate inline under a global semaphore. Strip misses enqueue
     // a deduped issue-level catchup below.
     let permit = tokio::time::timeout(
@@ -181,11 +194,11 @@ pub async fn thumb(
         Ok(Ok(p)) => p,
         Ok(Err(_)) => {
             // Semaphore closed — server is shutting down.
-            return error(
+            return no_store(error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "shutting_down",
                 "service shutting down",
-            );
+            ));
         }
         Err(_) => {
             // Wait timeout — back the caller off so the lazy-loader doesn't
@@ -258,16 +271,17 @@ pub async fn thumb(
     // built from this handle (or reused only for the same file).
     let archive_file = match crate::library::no_follow::open_issue_archive(&app, &row).await {
         Ok(f) => f,
-        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        Err(refusal) => {
+            return PageUnavailable::for_refusal(&app, &row, &refusal)
+                .await
+                .response();
         }
-        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable"),
     };
     let arc = match app.zip_lru.get_or_open(&row.id, archive_file).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e, "zip_lru open failed for thumb");
-            return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable");
+            return PageUnavailable::from_archive_error(&e).response();
         }
     };
     let data_dir = app.cfg().data_path.clone();
@@ -281,20 +295,38 @@ pub async fn thumb(
         thumbnails::FrontCoverSide::default()
     };
     let r = tokio::task::spawn_blocking(move || {
-        let mut cbz = arc.lock().expect("cbz mutex");
+        let mut cbz = match lock_reader(&arc) {
+            Ok(g) => g,
+            Err(e) => return Err(Err(e)),
+        };
         thumbnails::generate_with_quality(
             &data_dir, &mut *cbz, &id_clone, variant, page_index, format, quality, front_side,
         )
+        .map_err(Ok)
     })
     .await;
     let path = match r {
         Ok(Ok(p)) => p,
-        Ok(Err(thumbnails::ThumbError::PageOutOfRange)) => {
-            return error(StatusCode::NOT_FOUND, "not_found", "page not found");
+        Ok(Err(Err(e))) => return PageUnavailable::from_archive_error(&e).response(),
+        Ok(Err(Ok(thumbnails::ThumbError::PageOutOfRange))) => {
+            return no_store(error(StatusCode::NOT_FOUND, "not_found", "page not found"));
         }
-        Ok(Err(e)) => {
+        Ok(Err(Ok(thumbnails::ThumbError::Archive(e)))) => {
+            tracing::warn!(error = %e, "lazy thumb gen: archive read failed");
+            return PageUnavailable::from_archive_error(&e).response();
+        }
+        Ok(Err(Ok(thumbnails::ThumbError::Io(e)))) => {
+            tracing::warn!(error = %e, "lazy thumb gen: i/o failed");
+            return PageUnavailable::Unavailable.response();
+        }
+        Ok(Err(Ok(e))) => {
+            // The page is there but would not decode or encode.
             tracing::warn!(error = %e, "lazy thumb gen failed");
-            return error(StatusCode::NOT_FOUND, "not_found", "thumbnail unavailable");
+            return no_store(error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "thumbnail unavailable",
+            ));
         }
         Err(e) => {
             tracing::error!(error = %e, "thumb gen task failed");
