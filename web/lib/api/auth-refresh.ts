@@ -187,10 +187,13 @@ function expireReadableAuthCookies() {
  * reached, failed, or did not answer within `REFRESH_TIMEOUT_MS`; nothing
  * is known and nothing is signed out.
  *
- * Refresh-token rotation is single-use on the server: of two tabs that
- * present the same refresh cookie at once, exactly one wins and the other
- * gets 401. Cookies are shared by every tab, so the loser is not signed
- * out: the winner's Set-Cookie already gave it the new tokens. Whether
+ * Refresh-token rotation is single-use on the server, except that the
+ * token a rotation replaced is accepted once more within a minute (a lost
+ * response can be retried; that retry retires the token the lost response
+ * carried). Of two tabs that present the same refresh cookie at once, the
+ * second usually gets a pair too, and a third gets 401. Cookies are shared
+ * by every tab, so a tab that gets 401 is not signed out: the winner's
+ * Set-Cookie already gave it the new tokens. Whether
  * another tab refreshed is read from the access-expiry cookie: it counts
  * only when the cookie is present, later than the value this tab saw
  * before it tried, and still in the future. A missing cookie never counts

@@ -210,6 +210,17 @@ docker compose -f compose.prod.yml up -d --no-deps app
     a denial. On SELinux hosts a bind mount still needs its usual `:z` /
     `:Z` suffix.
 
+### Unreleased — a lost token refresh can be retried for a minute
+
+- Migration `m20271113_000001_auth_session_refresh_grace` adds two
+  nullable columns to `auth_sessions` (the previous refresh token's hash
+  and the time of the last rotation) and a partial index. Nothing to do.
+- A token refresh whose response never arrived (a phone changing
+  networks, a dropped connection) no longer signs the user out when the
+  browser retries within 60 seconds: the token the refresh replaced is
+  accepted once more in that time. See
+  [auth-model.md](../architecture/auth-model.md#refresh).
+
 ### Unreleased — 1 h access tokens by default; sessions end after 90 days
 
 - **The built-in access-token lifetime is now 1 hour** (was 24 hours).

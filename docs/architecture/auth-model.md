@@ -58,12 +58,13 @@ Algorithm: `EdDSA` (Ed25519). Server holds the keypair under `/data/secrets/jwt-
 
 - 32 bytes, base64url. Never inspectable.
 - SHA-256 hash stored in `auth_sessions.refresh_token_hash`.
-- Rotated on every use by one conditional `UPDATE` (see [Refresh](#refresh)); single-use.
+- Rotated on every use by one conditional `UPDATE` (see [Refresh](#refresh)). The rotation remembers the hash of the token it replaced (`auth_sessions.previous_refresh_token_hash`) and when it happened (`refresh_rotated_at`).
+- Single-use, with one exception: for 60 s after a rotation (`REFRESH_GRACE`, a constant, not a setting) the token it replaced is accepted **once more**, so a refresh whose response was lost can be retried. Taking that grace retires the token the lost response carried; at most one token per session is ever valid after a refresh (see [Refresh](#refresh)).
 - `auth_sessions.ip` + `.user_agent` recorded on issue and refresh (M1) — used by `/me/sessions` (M5) and the audit log. Not enforced as a binding (proxy IPs change).
 - Sliding expiry: `auth.jwt.refresh_ttl` (default `30d`, `COMIC_JWT_REFRESH_TTL` seeds it) sets the cookie lifetime and moves `expires_at` forward on every refresh; validated to be `>= access TTL`.
 - Absolute age: `auth.session.max_age` (default `90d`, floor `1d`, `>=` access TTL, at most `3650d` like the access and refresh TTLs; **Admin → Auth → Tokens**). A session cannot be refreshed past `created_at + max age` however often it is used; `expires_at`, and the Max-Age of the refresh and CSRF cookies, are clamped to that bound at sign-in and on every refresh. `/me/sessions` does not list a session past it. Change it in the admin UI. `COMIC_SESSION_MAX_AGE` is also read, through the generic `COMIC_` env prefix, as the baseline while no row is saved; a saved row wins (see [runtime-configuration.md](../dev/runtime-configuration.md)).
 
-Verified against the code at `5a1d2f64` on 2026-11-10.
+Verified against the code at `e4660e9e` on 2026-11-11.
 
 ## Cookie shape (web)
 
@@ -153,23 +154,50 @@ POST /auth/refresh  (with __Host-comic_refresh cookie; CSRF-checked)
    ↓
 one transaction:
   UPDATE auth_sessions
-     SET refresh_token_hash = sha256(new rt), last_used_at = now(),
+     SET previous_refresh_token_hash =
+           sha256(rt) when it was the current token, else NULL,
+         refresh_rotated_at = now(),
+         refresh_token_hash = sha256(new rt), last_used_at = now(),
          expires_at = LEAST(now() + refresh TTL, created_at + max age),
          ip, user_agent (kept when the request has none)
-   WHERE refresh_token_hash = sha256(rt) AND revoked_at IS NULL
+   WHERE (refresh_token_hash = sha256(rt)                       -- normal
+          OR (previous_refresh_token_hash = sha256(rt)          -- grace
+              AND refresh_rotated_at > now() - 60 s))
+     AND revoked_at IS NULL
      AND expires_at > now() AND created_at + max age > now()
-  RETURNING id, user_id, created_at
+  RETURNING id, user_id, created_at, which path matched
   exactly one row, else 401 auth.invalid
   user must be active, else roll back (401)
    ↓
+grace path only: log at INFO with the session id
 mint new access; set new cookies
   (refresh Max-Age = max(1 s, min(refresh TTL, created_at + max age - now));
    CSRF Max-Age = max(access TTL, that clamp))
 ```
 
-The `WHERE` is evaluated under the row lock, so the rotation is atomic: of two concurrent refreshes carrying the same token, one updates the row and the other then finds the rotated hash, matches nothing and gets 401 `auth.invalid`. If nothing matches (an already-rotated token replayed, the loser of such a race, an expired, revoked or unknown token) the request gets 401 `auth.invalid` and only one more thing can happen: when the row exists, is not revoked and is past its maximum age, it is marked revoked (so `/me/sessions` stops listing it). The server cannot tell which user an unknown hash belonged to, so no other session is revoked. Refresh-token reuse detection is not implemented.
+The `WHERE` is evaluated under the row lock, so the rotation is atomic: a request queued behind another re-checks the whole condition against the row the first one left, so two requests carrying the same token cannot both take the same path. If nothing matches (a token older than the previous one, the previous token after the window or after its one grace use, an expired, revoked or unknown token) the request gets 401 `auth.invalid` and only one more thing can happen: when the row (found by its current or previous hash) exists, is not revoked and is past its maximum age, it is marked revoked (so `/me/sessions` stops listing it). The server cannot tell which user an unknown hash belonged to, so no other session is revoked. Refresh-token reuse detection is not implemented: a refused token never revokes the session.
 
-The rotation commits before the response leaves the server. If that response is lost (the connection drops, the tab is closed mid-request), the browser keeps the old refresh cookie, which is now dead, and the next refresh is refused: that session is over and the user signs in again. A short grace window accepting the previous token is a possible later change; it is not implemented. To cut off every device, revoke all sessions (`POST /me/sessions/revoke-all`, which also bumps `token_version`); a password change revokes every session except the current one.
+**Grace window.** The rotation commits before the response leaves the server. If that response is lost (the connection drops, the phone changes networks), the browser keeps the previous refresh cookie. For `REFRESH_GRACE` (60 s) after the rotation, presenting that previous token is accepted once:
+
+- It issues a new pair, exactly like a normal refresh: the same `WHERE` conditions (not revoked, not expired, inside the absolute age), the same account-state check with rollback, the same sliding expiry, IP and user-agent recording, cookies, CSRF check and route middleware.
+- It clears the remembered previous token, so a second presentation is refused; and it replaces the current token, so the token whose response was lost stops working. After any refresh exactly one token per session is valid.
+- Only the token the **last** rotation replaced qualifies, and only within 60 s of that rotation. Anything older, or the same token after 60 s, is refused as before. A refusal changes nothing on the row.
+- It is logged at INFO with the session and user id (never a token or a hash). The refresh path has no metric, so none was added.
+
+What this means in practice:
+
+| Sequence | Outcome |
+|---|---|
+| Response lost; the client retries with the previous token within 60 s | Accepted; the client holds the only valid token. One INFO line. |
+| The same retry after 60 s | 401; the user signs in again (as before this change). |
+| Two tabs refresh at once with the same token | Both get a pair (one rotates, the other takes the grace); the second pair's token is the valid one. The browser keeps whichever `Set-Cookie` it applied last, normally the second response's; if they arrive out of order the browser holds the retired token and the next refresh is refused. The web client serializes refreshes across tabs with Web Locks, so this needs a browser without them. A third simultaneous request gets 401. |
+| Someone else presents a stolen previous token within 60 s, before the real client | They get a session. The real client's next refresh (with the token it holds, old or new) is refused and it signs in again; the other party keeps the session until it expires, reaches its maximum age or is revoked (**Settings → Sessions**, "sign out everywhere", password change). |
+| The same, after the real client already used the grace or refreshed again | 401; nothing changes. |
+| A stolen previous token after 60 s | 401; nothing changes. |
+
+So a stolen previous token is worth as much as the current one for at most 60 s after a rotation, and only if it is used before the real client's retry; it is never worth anything after that. A stolen current token was, and remains, worth the whole session.
+
+Signing out with the previous token within the window revokes the session too (`/auth/logout` matches the current token, or the previous one inside the window). To cut off every device, revoke all sessions (`POST /me/sessions/revoke-all`, which also bumps `token_version`); a password change revokes every session except the current one.
 
 **Proactive refresh.** Signed-in pages mount a scheduler ([`web/lib/api/session-refresh.ts`](../../web/lib/api/session-refresh.ts), mounted once by the root layout for a signed-in request, inert on the auth pages). It reads `__Host-comic_access_exp` and refreshes at about 80 % of the remaining lifetime, never later than 30 s before expiry (with the 1 h default: about 48 min after each renewal). It re-arms after every refresh, its own or another tab's, when the page becomes visible again and when the browser comes back online; a page that becomes visible with the token near or past expiry refreshes at once. Without the CSRF cookie (signed out) it arms nothing. The expiry is on the server's clock, so every comparison uses the client clock plus an offset learned from the `Date` header of the refresh response and of any response through `apiFetch` (zero until one arrives). Whatever the clocks say, a proactive refresh (the scheduler's or `ensureFreshSession()`'s) never starts within max(60 s, 10 % of the token lifetime from the cookie) of the previous one in that tab; a refresh with no answer is retried after 30 s, doubling to 10 min, reset when the page becomes visible or the browser comes back online. Requests the 401 retry cannot cover call `ensureFreshSession()` first, which resolves at once when the token is fresh and otherwise waits for a refresh (promptly when offline or on a network failure): the reader's page-image retry and Tap to retry, a prefetch batch near expiry, and one retry of an offline-download asset that got 401.
 
@@ -177,9 +205,9 @@ The rotation commits before the response leaves the server. If that response is 
 
 **Full page loads.** Server-rendered pages cannot refresh. A page load whose access cookie expired is redirected to `/sign-in?next=…`; when a CSRF cookie is present (a session may exist) and the URL does not carry `signed_out=1`, the sign-in page first shows "Signing you in…" (rendered on the server, so the form does not flash; the card carries a `<noscript>` link and a "Sign in instead" link that CSS reveals after 4 s, or at once with reduced motion, both to `/sign-in?resume=0`, which renders the form without resuming and without a banner), calls the same refresh and, on success, returns to `next`. Loop guard: every attempt, successful or not, is stamped in sessionStorage and the page does not try again within 30 s; without sessionStorage it tries at most once per page load. A refused refresh also expires the CSRF cookie, so the next visit does not try at all.
 
-**What can still sign a user out:** sign-out or "sign out everywhere"; a session past its maximum age, expired (unused for the refresh TTL) or revoked; an account disabled; a password change on another session; a lost refresh response (above); two separate clients sharing one refresh token; and a browser that stays asleep or offline past the refresh lifetime.
+**What can still sign a user out:** sign-out or "sign out everywhere"; a session past its maximum age, expired (unused for the refresh TTL) or revoked; an account disabled; a password change on another session; a lost refresh response that is not retried within 60 s (a tab closed mid-refresh, a network outage longer than that; the web client retries a refresh with no answer after 30 s, inside the window); two separate clients sharing one refresh token; and a browser that stays asleep or offline past the refresh lifetime.
 
-Verified against the code at `5a1d2f64` on 2026-11-10.
+Verified against the code at `e4660e9e` on 2026-11-11.
 
 ### CSRF (double-submit)
 
