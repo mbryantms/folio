@@ -477,12 +477,51 @@ without per-library configuration.
        `files_unchanged++`, `health.touch_file`, skip;
      - else add to `candidates`.
 
-     Each batch runs in two phases (post-audit T1.2): `prepare_ingest`
-     for every file first — fingerprint, CBR/CB7 conversion, full-file
-     hash, archive parse and page probes, under `archive_work_semaphore`
-     and with at most one short read against the pool — and only then
-     `BEGIN` + `persist_prepared` per file, so no connection is pinned
-     while archives are read. Folders in flight per scan are
+     Each batch runs in two phases (post-audit T1.2, B10):
+     - **prepare** (`prepare_ingest`, no transaction open, under
+       `archive_work_semaphore`, only short reads against the pool) does
+       every archive read for every file of the batch: the no-follow
+       open, fingerprint, container sniff, CBR/CB7 conversion, full-file
+       hash, archive parse, page probes, and — when the file's bytes
+       changed under a row whose markers or progress carry a page hash
+       (or a new file's content hash matches such a row: the moved-file
+       case) — the per-page hashes the anchor re-resolve needs. All of
+       it reads the one handle the row's size, mtime and content hash
+       come from, so the page hashes always describe the file version
+       the row records. A file replaced after prepare is seen as changed
+       by the next scan only when its size or mtime differs from the
+       recorded ones (the scanner's general fast-path limit). The anchor
+       checks are made per file (no library-wide answer is cached); the
+       moved-file case mirrors `dedupe_by_content_hash` — the lowest-id
+       row with that content hash, at a path that no longer exists, with
+       a different size+mtime (a plain rename keeps both and re-anchors
+       nothing). A database error while deciding is logged and the pages
+       are read anyway. What prepare hands over is metadata and hashes
+       (about 90 bytes per hashed page), never a handle or page bytes.
+     - **persist** (`BEGIN` + `persist_prepared` per file + `COMMIT`)
+       runs database statements, apart from two small filesystem calls
+       left inside on purpose and one rare read. The calls: the thumbnail wipe for a content change (it
+       deletes files under the app data dir, not library storage). It runs
+       right after the issue's cached reader (`zip_lru`) is dropped and
+       right before the row update that clears the thumbnail stamps, so
+       a cover or page request in between opens the new file. Done in
+       prepare, or before the cache drop, a request in between could
+       regenerate the thumbnails from the old bytes through the cached
+       reader, and because every generator skips existing files that
+       old art would stay. The other is one `exists()` stat
+       on the prior path when a new file's content hash matches a row
+       (move vs. duplicate). The rare read: when
+       a hashed anchor was written between the two phases (prepare saw
+       none and read no hashes), persist reopens the file through the
+       no-follow walk and hashes it, but only if its size and mtime are
+       still the recorded ones; otherwise, or when a page cannot be read,
+       the anchors take the ordinal map, as for an unreadable page (a
+       later scan that sees the file change places them by hash).
+
+     So no connection is pinned while archives are read. The single-issue
+     rescan (`scan_issue_file` → `run_issue_phase`: the "Scan issue"
+     button and every post-rewrite / post-edit rescan) takes the same two
+     phases: it prepares before it opens its transaction. Folders in flight per scan are
      `scan_folder_concurrency` (default 2, `/admin/server` → Workers),
      separate from the `scan_worker_count` queue concurrency; the pool
      size itself is `COMIC_DB_MAX_CONNECTIONS` (default 30).
@@ -801,7 +840,9 @@ the DB:
   ordinal, or are pulled onto the last page with a `page-removed` tag when
   the page count shrank. A marker whose image vanished while its ordinal
   survived gets the `page-drift` tag. The new archive is hashed only when
-  some anchor on the issue has a hash to match. See
+  some anchor on the issue has a hash to match, and in the prepare phase
+  on the ingest handle (see the two-phase batch above), so the re-anchor
+  itself inside the transaction is database work only. See
   [reading-progress.md](reading-progress.md#page-anchoring-when-the-archive-changes).
 - **Soft-delete + return lifecycle** — files missing on disk are
   `removed_at = now()`. The row stays so user progress, bookmarks, and

@@ -36,6 +36,12 @@ pub struct ScanStats {
     /// WP-3.2). They also count toward `files_added`.
     #[serde(default)]
     pub files_hash_deferred: u64,
+    /// Files whose per-page hashes the prepare phase read to re-anchor
+    /// hashed markers / progress (B10). In-process only, for tests and
+    /// logs — not persisted to `scan_runs.stats` nor part of the API shape.
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub files_page_hashed: u64,
     pub series_created: u64,
     /// Ids of the series this scan created (identity resolution returned
     /// `Created`; re-homed or renamed series are not in it), in creation
@@ -180,6 +186,7 @@ impl ScanStats {
         self.files_duplicate += other.files_duplicate;
         self.files_converted += other.files_converted;
         self.files_hash_deferred += other.files_hash_deferred;
+        self.files_page_hashed += other.files_page_hashed;
         self.series_created += other.series_created;
         self.created_series_ids.extend(other.created_series_ids);
         self.series_skipped_unchanged += other.series_skipped_unchanged;
