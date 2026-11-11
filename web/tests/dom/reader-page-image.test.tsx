@@ -169,61 +169,77 @@ describe("PageImage for a page that is gone", () => {
   });
 });
 
-describe("PageImage when the server asks to slow down", () => {
+describe("PageImage after a transient failure", () => {
   const limited = () =>
     new Response(null, { status: 429, headers: { "retry-after": "2" } });
+  const fine = () => new Response(null, { status: 200 });
+  const probes = () => vi.mocked(globalThis.fetch).mock.calls.length;
 
-  it("a 429 waits for Retry-After and loads again, keeping the silent retry", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => limited());
-    const { img } = page();
+  /** Fail the first load and its silent retry: the probe runs once. */
+  async function failTwice(img: () => HTMLImageElement) {
     fireEvent.error(img());
     await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
     fireEvent.error(img());
+  }
+
+  it("a 429 waits for Retry-After and loads again; the silent retry is not re-armed", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => limited());
+    const { img } = page();
+    await failTwice(img);
     // The probe saw the 429: back to loading, then a re-request.
     await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=2`));
     expect(retryAfterMs).toHaveBeenCalledWith("2");
     expect(retry()).toBeNull();
-    // The immediate silent retry was handed back: the next failure uses
-    // it without a probe.
-    const probes = vi.mocked(globalThis.fetch).mock.calls.length;
+    expect(probes()).toBe(1);
+    // The next failure probes at once (one GET and one HEAD per cycle).
     fireEvent.error(img());
     await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=3`));
-    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(probes);
+    expect(probes()).toBe(2);
     expect(retry()).toBeNull();
   });
 
-  it("stops waiting after a bounded number of 429s and offers the retry", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => limited());
-    const { img } = page();
-    let r = 0;
-    for (let wait = 0; wait < MAX_PAGE_RATE_LIMIT_WAITS; wait++) {
-      fireEvent.error(img());
-      r += 1;
-      await waitFor(() =>
-        expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`),
-      );
-      fireEvent.error(img());
-      r += 1;
-      await waitFor(() =>
-        expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`),
-      );
-    }
-    fireEvent.error(img());
-    r += 1;
-    await waitFor(() =>
-      expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`),
-    );
-    fireEvent.error(img());
-    await waitFor(() =>
-      expect(globalThis.fetch).toHaveBeenCalledTimes(
-        MAX_PAGE_RATE_LIMIT_WAITS + 1,
-      ),
-    );
-    // Past the bound the failure stays shown, nothing re-requests.
-    await new Promise((res) => setTimeout(res, 30));
-    expect(retry()).not.toBeNull();
-    expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`);
+  it("a GET that failed while the page now answers 200 waits and loads again", async () => {
+    // The bucket refilled between the refused GET and the probe.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => fine());
+    const { img, container } = page();
+    await failTwice(img);
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=2`));
+    // The minimum wait: no Retry-After to read.
+    expect(retryAfterMs).toHaveBeenCalledWith(null);
+    expect(retry()).toBeNull();
+    fireEvent.load(img());
+    expect(retry()).toBeNull();
+    expect(container.querySelector("[data-page-load-error]")).toBeNull();
   });
+
+  for (const [label, answer] of [
+    ["429", limited],
+    ["200", fine],
+  ] as const) {
+    it(`stops waiting after a bounded number of tries with a ${label} probe and offers the retry`, async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => answer());
+      const { img } = page();
+      await failTwice(img);
+      let r = 1;
+      for (let wait = 0; wait < MAX_PAGE_RATE_LIMIT_WAITS; wait++) {
+        r += 1;
+        await waitFor(() =>
+          expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`),
+        );
+        fireEvent.error(img());
+      }
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledTimes(
+          MAX_PAGE_RATE_LIMIT_WAITS + 1,
+        ),
+      );
+      // Past the bound the failure stays shown (an undecodable page ends
+      // here too), and nothing re-requests.
+      await new Promise((res) => setTimeout(res, 30));
+      expect(retry()).not.toBeNull();
+      expect(img().getAttribute("src")).toBe(`${SRC}?r=${r}`);
+    });
+  }
 });
 
 describe("PageImage retry stays in view", () => {

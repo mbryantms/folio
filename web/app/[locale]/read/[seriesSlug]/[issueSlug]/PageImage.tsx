@@ -37,14 +37,16 @@ export function retryTopPx(
 /** A page failure no retry can fix (see `finalPageFailure`). */
 export type FinalPageFailure = "gone" | "needs_conversion";
 
-/** How many times one page waits out a 429 (the server's page bucket)
- *  before the failure is shown as a plain one with Tap to retry. */
+/** How many times one page waits and loads again after a transient
+ *  failure (see `probePageFailure`) before the failure is shown as a
+ *  plain one with Tap to retry. */
 export const MAX_PAGE_RATE_LIMIT_WAITS = 3;
 
-/** What the HEAD probe of a failed page found: a final failure, a 429
- *  with the wait it asked for, or nothing actionable. */
+/** What the HEAD probe of a failed page found: a final failure, a
+ *  transient one with the wait before the next try, or nothing
+ *  actionable. */
 export type PageProbe =
-  { kind: FinalPageFailure } | { kind: "rate_limited"; waitMs: number } | null;
+  { kind: FinalPageFailure } | { kind: "transient"; waitMs: number } | null;
 
 /**
  * Whether a page that failed to load failed for good
@@ -60,14 +62,21 @@ export async function finalPageFailure(
   url: string,
 ): Promise<FinalPageFailure | null> {
   const probe = await probePageFailure(url);
-  return probe && probe.kind !== "rate_limited" ? probe.kind : null;
+  return probe && probe.kind !== "transient" ? probe.kind : null;
 }
 
 /**
- * [`finalPageFailure`] plus the transient case: a 429 from the page bucket
- * (`docs/architecture/rate-limits.md`) comes back as `rate_limited` with
- * its `Retry-After` wait (1–30 s), so the page can wait and load again
- * instead of showing a failure.
+ * [`finalPageFailure`] plus the transient cases, so the page can wait and
+ * load again instead of showing a failure:
+ *
+ * - a 429 from the page bucket (`docs/architecture/rate-limits.md`) waits
+ *   for its `Retry-After` (1–30 s);
+ * - a 2xx: the page answers now although the GET failed. The probe runs
+ *   after the failure, and the page bucket refills a token every 4 ms, so
+ *   a GET refused with 429 usually probes as 200. Waits the minimum (1 s).
+ *
+ * The caller bounds both, so a page whose bytes are served but never
+ * decode still ends in the error state.
  */
 export async function probePageFailure(url: string): Promise<PageProbe> {
   try {
@@ -80,9 +89,10 @@ export async function probePageFailure(url: string): Promise<PageProbe> {
     if (res.status === 409) return { kind: "needs_conversion" };
     if (res.status === 429)
       return {
-        kind: "rate_limited",
+        kind: "transient",
         waitMs: retryAfterMs(res.headers.get("retry-after")),
       };
+    if (res.ok) return { kind: "transient", waitMs: retryAfterMs(null) };
     return null;
   } catch {
     return null;
@@ -173,8 +183,8 @@ export function PageImage({
   // when the scanner didn't record dimensions.
   const [naturalAspect, setNaturalAspect] = useState<number | null>(null);
   const autoRetried = useRef(false);
-  // 429 waits taken (bounded by MAX_PAGE_RATE_LIMIT_WAITS) and the pending
-  // wait's timer, cleared on unmount.
+  // Transient-failure waits taken (bounded by MAX_PAGE_RATE_LIMIT_WAITS)
+  // and the pending wait's timer, cleared on unmount.
   const rateLimitWaits = useRef(0);
   const rateLimitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -204,18 +214,18 @@ export function PageImage({
     setStatus("error");
     void probePageFailure(effectiveSrc).then((probe) => {
       if (!probe) return;
-      if (probe.kind !== "rate_limited") {
+      if (probe.kind !== "transient") {
         const final = probe.kind;
         setStatus((s) => (s === "error" ? final : s));
         return;
       }
-      // The server's page bucket is empty: not a failure. Go back to
-      // loading, wait for `Retry-After` and load again. The silent
-      // immediate retry is handed back, so a later real failure still
-      // gets it. Bounded; past the bound the retry button stays.
+      // A 429, or a page that answers now: not a failure yet. Go back to
+      // loading, wait and load again. The silent immediate retry is not
+      // handed back, so each wait cycle costs one GET and one HEAD while
+      // the bucket is empty. Bounded; past the bound the retry button
+      // stays (a page whose bytes never decode lands there too).
       if (rateLimitWaits.current >= MAX_PAGE_RATE_LIMIT_WAITS) return;
       rateLimitWaits.current += 1;
-      autoRetried.current = false;
       setStatus((s) => (s === "error" ? "loading" : s));
       rateLimitTimer.current = setTimeout(() => {
         rateLimitTimer.current = null;

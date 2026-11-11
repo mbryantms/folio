@@ -559,7 +559,10 @@ export function createDownloadManager(
         res.status === 429 && tries < MAX_RATE_LIMIT_RETRIES;
         tries++
       ) {
-        await sleep(retryAfterMs(res.headers.get("retry-after")), signal);
+        const wait = retryAfterMs(res.headers.get("retry-after"));
+        // Release the refused response's connection before waiting.
+        await res.body?.cancel().catch(() => undefined);
+        await sleep(wait, signal);
         res = await doFetch(url, init);
       }
       return res;

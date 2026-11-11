@@ -166,6 +166,7 @@ describe("issue download", () => {
   it("waits out a 429 and retries the same asset", async () => {
     const waits: number[] = [];
     const attempts = new Map<string, number>();
+    const cancels: ReturnType<typeof vi.fn>[] = [];
     const m = manager({
       concurrency: 3,
       sleep: async (ms) => {
@@ -175,12 +176,17 @@ describe("issue download", () => {
         const n = (attempts.get(url) ?? 0) + 1;
         attempts.set(url, n);
         // The page bucket is empty for the first two tries of page 1.
-        return url === "/issues/t1/pages/1?w=1080" && n <= 2
-          ? new Response("", {
-              status: 429,
-              headers: { "retry-after": n === 1 ? "3" : "120" },
-            })
-          : image();
+        if (url === "/issues/t1/pages/1?w=1080" && n <= 2) {
+          const refused = new Response("slow down", {
+            status: 429,
+            headers: { "retry-after": n === 1 ? "3" : "120" },
+          });
+          const cancel = vi.fn(async () => {});
+          Object.defineProperty(refused, "body", { value: { cancel } });
+          cancels.push(cancel);
+          return refused;
+        }
+        return image();
       },
     });
     await m.setAccount("alice");
@@ -191,6 +197,9 @@ describe("issue download", () => {
     expect(attempts.get("/issues/t1/pages/1?w=1080")).toBe(3);
     // Retry-After in seconds, capped at 30 s.
     expect(waits).toEqual([3000, 30_000]);
+    // Each refused response's body was released before the refetch.
+    expect(cancels).toHaveLength(2);
+    for (const cancel of cancels) expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("gives up after a bounded run of 429s without stopping the queue", async () => {

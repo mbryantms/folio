@@ -259,22 +259,19 @@ async fn thumbnails_and_stored_covers_share_one_store() {
     let (allowed, headers, body) = drain(&app, None, &thumbs).await;
     assert_rate_limited(&THUMBNAILS, allowed, &headers, &body);
 
-    // A stored cover draws on the same store: limited too. The bucket
-    // refills at 500/s, so a token may appear between requests; one of a
-    // few immediate tries must still be the 429.
+    // A stored cover draws on the same store. Drain it with cover
+    // requests alone: had covers a store of their own, a full burst (4,000)
+    // would get through first; sharing the drained store, only what refilled
+    // meanwhile does. The bound does not depend on request latency, only on
+    // a drain wave finishing well inside the two seconds half a burst takes
+    // to refill at 500/s.
     let cover = format!("/issues/{id}/covers/no-such-cover");
-    let mut limited = None;
-    for _ in 0..32 {
-        let (status, headers, body) = get(&app, None, &cover).await;
-        if status == StatusCode::TOO_MANY_REQUESTS {
-            limited = Some((headers, body));
-            break;
-        }
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-    }
-    let (headers, body) = limited.expect("stored covers share the thumbnail store");
+    let (allowed, headers, body) = drain(&app, None, std::slice::from_ref(&cover)).await;
+    assert!(
+        allowed < THUMBNAILS.burst as usize / 2,
+        "{allowed} cover requests got through a drained thumbnail store"
+    );
     assert!(headers.contains_key(header::RETRY_AFTER));
-    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(body["error"]["code"], "rate_limited");
 
     // Page bytes are a separate store; the signed-in user is unaffected.

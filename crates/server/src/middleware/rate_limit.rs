@@ -136,7 +136,7 @@ impl Bucket {
         K::Key: Send + Sync + 'static,
     {
         let config = self.config(key);
-        LIMITERS.register(config.limiter().clone());
+        LIMITERS.register(self.name, config.limiter().clone());
         let name = self.name;
         GovernorLayer::new(Arc::new(config))
             .error_handler(move |err| handle_governor_error(name, err))
@@ -195,7 +195,8 @@ where
 /// forgets the dead handle on its next touch.
 #[derive(Default)]
 pub struct LimiterRegistry {
-    limiters: Mutex<Vec<Weak<dyn Prunable>>>,
+    /// Each store with the name of the bucket it was built from.
+    limiters: Mutex<Vec<(&'static str, Weak<dyn Prunable>)>>,
 }
 
 /// The process-wide registry [`Bucket::build`] registers into.
@@ -211,14 +212,14 @@ pub struct PruneReport {
 }
 
 impl LimiterRegistry {
-    fn register<L: Prunable + 'static>(&self, limiter: Arc<L>) {
+    fn register<L: Prunable + 'static>(&self, name: &'static str, limiter: Arc<L>) {
         let limiter: Arc<dyn Prunable> = limiter;
         let mut list = self.limiters.lock().unwrap_or_else(PoisonError::into_inner);
         // Forget dropped routers here as well, so a process that builds
         // routers but never runs the sweep (the test harness) keeps a
         // registry the size of its live routers.
-        list.retain(|w| w.strong_count() > 0);
-        list.push(Arc::downgrade(&limiter));
+        list.retain(|(_, w)| w.strong_count() > 0);
+        list.push((name, Arc::downgrade(&limiter)));
     }
 
     /// Prune every live limiter and forget the dropped ones. The lock is
@@ -226,8 +227,8 @@ impl LimiterRegistry {
     pub fn prune(&self) -> PruneReport {
         let live: Vec<Arc<dyn Prunable>> = {
             let mut list = self.limiters.lock().unwrap_or_else(PoisonError::into_inner);
-            list.retain(|w| w.strong_count() > 0);
-            list.iter().filter_map(Weak::upgrade).collect()
+            list.retain(|(_, w)| w.strong_count() > 0);
+            list.iter().filter_map(|(_, w)| w.upgrade()).collect()
         };
         let mut keys = 0;
         for limiter in &live {
@@ -238,6 +239,17 @@ impl LimiterRegistry {
             limiters: live.len(),
             keys,
         }
+    }
+
+    /// Key counts of the live stores built from the bucket named `name`.
+    #[cfg(test)]
+    fn key_counts(&self, name: &str) -> Vec<usize> {
+        let list = self.limiters.lock().unwrap_or_else(PoisonError::into_inner);
+        list.iter()
+            .filter(|(n, _)| *n == name)
+            .filter_map(|(_, w)| w.upgrade())
+            .map(|l| l.key_count())
+            .collect()
     }
 }
 
@@ -697,7 +709,7 @@ mod tests {
     fn prune_drops_stale_keys_and_keeps_live_ones() {
         let registry = LimiterRegistry::default();
         let lim = limiter(Duration::from_millis(100));
-        registry.register(lim.clone());
+        registry.register("test", lim.clone());
 
         assert!(lim.check_key(&1).is_ok());
         // Key 1's bucket refills after one period; wait well past it.
@@ -758,14 +770,54 @@ mod tests {
         }
     }
 
+    /// A bucket built through the public `Bucket::build` lands in the
+    /// process-wide registry the sweep walks: the keys its route sees are
+    /// counted and pruned there, and dropping the router drops the store.
+    #[tokio::test]
+    async fn built_buckets_are_swept_by_the_pruner() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        const PROBE: Bucket = Bucket {
+            name: "registry-probe",
+            period: Duration::from_millis(100),
+            burst: 1,
+        };
+        let router = axum::Router::new()
+            .route("/", get(|| async { "ok" }))
+            .route_layer(PROBE.build());
+        assert_eq!(LIMITERS.key_counts(PROBE.name), vec![0]);
+
+        let request = Request::builder()
+            .uri("/")
+            .extension(RequestContext {
+                client_ip: Some(IpAddr::from([192, 0, 2, 9])),
+                peer_trusted: false,
+                user_agent: None,
+            })
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(LIMITERS.key_counts(PROBE.name), vec![1]);
+
+        // The key's bucket refills after one period; the sweep drops it.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        LIMITERS.prune();
+        assert_eq!(LIMITERS.key_counts(PROBE.name), vec![0]);
+
+        drop(router);
+        assert!(LIMITERS.key_counts(PROBE.name).is_empty());
+    }
+
     #[test]
     fn a_dropped_limiter_is_forgotten_not_kept_alive() {
         let registry = LimiterRegistry::default();
         let kept = limiter(Duration::from_secs(1));
         let dropped = limiter(Duration::from_secs(1));
         let weak = Arc::downgrade(&dropped);
-        registry.register(kept.clone());
-        registry.register(dropped);
+        registry.register("kept", kept.clone());
+        registry.register("dropped", dropped);
 
         // The registry holds no strong reference: the store is freed as soon
         // as its owner (the router, here the test) lets go.
