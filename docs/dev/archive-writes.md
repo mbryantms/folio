@@ -19,7 +19,7 @@ the scanner and is documented in
 |---|---|---|---|
 | Page editor (single issue) | `POST /issues/{id}/archive/edit` → `api::archive_edit::preflight` | 422 `validation.archive_writeback_disabled` when the library flag is off; the job re-checks (`jobs::archive_edit::edit_one_issue` → `EditError::WritebackDisabled`) | `archive_edit_api.rs::edit_rejected_when_writeback_disabled` |
 | Page editor (bulk selection) | `POST /archive/bulk-edit` | Each issue whose library has the flag off is skipped with reason "archive writeback disabled for this library"; nothing is enqueued for it | `archive_edit_api.rs::bulk_edit_fans_out_and_reports_skips` |
-| Restore from `.bak` | `POST /issues/{id}/archive/restore` → `preflight` | Same 422 as the editor | `archive_edit_api.rs::restore_rejected_when_writeback_disabled` |
+| Restore from `.bak` | `POST /issues/{id}/archive/restore` → `preflight` → `archive_rewrite::restore_latest_backup` (a swap: the replaced archive becomes the newest `.bak`, see [Restore](#restore-keeps-the-file-it-replaces)) | Same 422 as the editor | `archive_edit_api.rs::restore_rejected_when_writeback_disabled`, `archive_restore.rs::restore_keeps_the_replaced_archive_as_the_newest_backup` |
 | Provider metadata → ComicInfo/MetronInfo rewrite | `metadata::apply::{apply_issue,apply_series}` dispatch | Takes the XML-first path only when `metadata_writeback_enabled && allow_archive_writeback`; otherwise the DB-direct path (`apply.rs` dispatch). The job re-checks (`jobs::rewrite_sidecars` → `WritebackError::WritebackDisabled`). The settings API refuses to enable `metadata_writeback_enabled` while the master flag is off (`api/libraries.rs`, 422) | `metadata_apply_sidecar.rs::apply_issue_writeback_disabled_takes_legacy_path`, `::apply_series_writeback_disabled_takes_legacy_path` |
 | CBR → CBZ conversion at scan | `library::scanner::process::conversion_eligible(lib, Cbr)` | Requires `auto_convert_cbr_on_scan && allow_archive_writeback` on a writable mount (the settings API refuses the former without the latter); otherwise the file is flagged `UnsupportedArchiveFormat` and left untouched | `scanner_cbr_convert.rs::scan_skips_cbr_when_disabled` |
 | CB7 → CBZ conversion at scan (WP-6.5) | `library::scanner::process::conversion_eligible(lib, Cb7)` → `scanner::cbr_convert::convert_cb7_to_cbz` | Requires its **own** flag, `auto_convert_cb7_on_scan && allow_archive_writeback`, on a writable mount (settings API refuses the flag without the master toggle, 422). Opting into CBR conversion does not extend to CB7. Otherwise — or when the 7z is encrypted / over a cap / malformed — the file is flagged `UnsupportedArchiveFormat` and left byte-for-byte untouched. On success the original is kept as `<name>.cb7.bak` | `scanner_cb7_convert.rs::scan_skips_cb7_when_only_cbr_conversion_enabled`, `::scan_leaves_encrypted_cb7_untouched`, `archive_edit_settings.rs::enable_cb7_conversion_requires_writeback` |
@@ -49,9 +49,16 @@ Three surfaces read those files back: the daily retention prune
   `notes.bak`, `photo.jpg.bak`, `X.cbz.bak.txt`, `X.cbz.bak.01`, a
   directory or a symbolic link with a backup's name is never deleted,
   counted or listed. The walk follows no link.
-- The per-issue backups listing and restore never search: they name the
-  issue's own `<file>.bak[.n]` (`archive_rewrite::backup_slot`) and accept
-  only a regular file there.
+- Restore never searches: it names the issue's own `<file>.bak`
+  (`archive_rewrite::backup_slot`) and accepts only a regular file there.
+  The per-issue backups listing (`GET /issues/{id}/archive/backups`)
+  names the issue's own `<file>.bak[.n]` first, then reads the archive's
+  folder for the backups of the archive it was converted from
+  (`X.cbr.bak[.n]` / `X.cb7.bak[.n]`, extension in any case, beside the
+  issue's `X.cbz`: `archive_rewrite::pre_conversion_backup_slot`), marked
+  `pre_conversion: true`, sorted by slot and name (never the directory's
+  listing order). Restore does not use those yet (see
+  [Restore](#restore-keeps-the-file-it-replaces)).
 - Not distinguished: a file the user named exactly like a Folio backup
   (`cp X.cbz X.cbz.bak`). Only a record of the backups Folio made would
   tell those apart; the name rule cannot. Requiring the sibling archive
@@ -116,6 +123,14 @@ really behaves like sshfs is not available to the tests. On a filesystem
 whose links fail this check every backup is a full copy; the first time
 that happens on a filesystem (device) the process logs one WARN saying
 backups there are made by copy and why, and each file stays at debug.
+
+**The backups listing reports the same date.** Each `BackupView` carries
+`made_at` (RFC 3339, `backup_made_at`, null when the age is unknown) next
+to `modified_at`, which keeps its old meaning (the file's mtime: for a
+hard-linked backup, the original archive's old date). Show `made_at` as
+"backed up on". Test: `archive_restore.rs::listing_reports_when_each_backup_was_made`
+(a hard-linked backup of a 400-day-old archive, and a copy that carries
+an old mtime).
 
 **Unknown age is kept, counted and reported.** A backup whose ctime is
 missing (zero) or earlier than its mtime has an unknown age and is
@@ -189,9 +204,10 @@ all relative to the folder handle:
    (`renameat`): the target is never missing.
 7. fsync the folder. A failure of this one fsync is logged at ERROR and
    **not** returned: the new file is already in place and the original is
-   in `.bak`, and an error would make the sidecar job retry, whose
-   rotation would delete `.bak` (with one slot, the only copy of the
-   original) and link the rewritten file in its place.
+   in `.bak`, and an error would make the sidecar job retry. (A retry
+   would now find the archive already holding its sidecars and skip the
+   swap, see [Retries after the swap](#retries-after-the-swap); the fsync
+   rule predates that and still saves the retry.)
 
 **Staging files never outlive a failure.** The staging file (and a
 backup copy being filled) is held by a guard that removes it when the
@@ -229,10 +245,25 @@ on the server although the client saw an error, so it reads the row's
 the row names the new file, `finish`; if it still names the original,
 `abandon` (the new file is removed and a retry starts from the same
 state); if the re-read fails or the row names neither, both files are
-kept and both paths are logged at ERROR. A `Converted` dropped without
+kept and both paths are logged at ERROR. The page editor reports a
+`Finish` as a **completed** edit with a `warning` (its row update is the
+one transaction that also moves the anchors, so a row naming the new file
+means all of it committed); reporting it failed invited the admin to
+repeat a remove or reorder on the already-edited archive (test:
+`archive_edit.rs::a_cbr_edit_whose_commit_landed_despite_an_error_is_reported_done`,
+control `::a_cbr_edit_whose_commit_failed_is_undone_and_reported_failed`).
+A `Converted` dropped without
 either logs both paths at WARN and deletes nothing. The page editor
 hashes the new archive's pages from the staged file before the rename,
-so the time between the rename and the row update is short.
+so the time between the rename and the row update is short. It does so
+only when the issue had anchors (markers, reading progress) when the edit
+started; the bookkeeping transaction looks again before it moves them and,
+when an anchor arrived while the rewrite ran, hashes the rewritten archive
+then, so that anchor is re-stamped like the others (test:
+`markers_archive_edit.rs::an_anchor_added_during_the_rewrite_follows_its_page_with_its_hash`).
+The window left is between that look and the transaction's own reads of
+the marker and progress rows (consecutive statements); an anchor
+committed after those reads is not moved at all, as before.
 
 One window remains in which the row names a file that is not there:
 where the filesystem refuses hard links, `rename_into_place` renames
@@ -249,6 +280,69 @@ its `.bak` hold the original bytes) and retry. Do not remove the
 original: its row carries the reading progress, markers and metadata,
 and the duplicate row would be the one that survives. The refusal's
 message, which reaches the failed run and the audit row, says the same.
+
+### Retries after the swap
+
+A writer that is run again after its swap must not rewrite the same
+archive a second time: the second rotation would move the rewritten file
+into `.bak` and, with one slot, delete the only copy of the original.
+Every writer that rewrites, per path that can run it again:
+
+| Path | Can run again after the swap? | Verdict |
+|---|---|---|
+| Sidecar job (`rewrite_sidecars::handle`): the issue-row update after the swap fails, `Err` to apalis, retried under `JOB_MAX_ATTEMPTS`; also an operator's Retry of a dead-lettered job (a fresh copy of the same payload) | yes | **Fixed (ARC-2).** Before rewriting, `rewrite_sidecars::archive_already_holds` opens the archive (no-follow, read-only) and compares: its Folio sidecars must be exactly a root `ComicInfo.xml` and a root `MetronInfo.xml` (no nested or other-case duplicate) holding byte-for-byte the XML the job carries. Then the swap is skipped (no staging file, no rotation, no new backup) and the job goes straight to the bookkeeping, the rescan and the deferred writes; the audit row and library event say `already_written: true`. The comparison is on bytes, not on who wrote them, so a different earlier rewrite cannot pass for this one: its XML differs (the composer's "Tagged with Folio on …" note carries the compose time, so even a re-apply of the same provider data differs), and the rewrite runs. Junk entries the rewrite would drop (`Thumbs.db`, dotfiles) do not block the skip: no reader or the scanner sees them. Test: `writeback_job_retry.rs::a_retry_after_a_post_swap_failure_keeps_the_original_backup` (1 and 3 slots), control `::a_rewrite_with_different_sidecars_still_rewrites_and_rotates` |
+| Sidecar job, CBR / CB7 conversion first | yes | Safe before the fix: the row is repointed at the `.cbz` before the sidecar rewrite, so a retry starts from the `.cbz` (then the row above); a retry after an unsettled conversion is refused (`DestinationExists`). The original sits at `X.cbr.bak`, a name the `.cbz`'s rotation never touches |
+| Series-scope apply, inline `rewrite_one_issue` per issue (`metadata::apply::apply_series_via_sidecar`) | not by apalis: `metadata_apply::handle_series` returns `Ok` whatever the apply outcome (only a Redis failure before any rewrite returns `Err`); an operator re-apply composes new XML (new timestamp) and is a new rewrite | not affected; `rewrite_one_issue` carries the same check anyway |
+| Page editor (`jobs::archive_edit::handle`) | no: the handler always returns `Ok` (only a Redis failure before the claim returns `Err`), so apalis never re-runs an edit after its swap. The danger was the operator repeating an edit reported as failed | see item 4 / [Refusals](#refusals-and-what-the-user-sees): a CBR edit whose commit landed is reported done; an in-place edit whose bookkeeping failed says the archive was edited and must not be edited again (`EditError::NotRecorded`) |
+| Busy-lock requeue (`jobs::busy_requeue`, sidecar job, page editor, metadata apply) | the requeue happens when the per-issue lock is busy, before anything is read or written | not affected |
+| Scan conversion (`scanner::cbr_convert`) | a later scan sees the converted `.cbz` (a ZIP, not converted again) or, for an unsettled conversion, a `.cbz` twin (`SkipDuplicate`) | not affected |
+| `.bak` prune, startup cleanup | do not rewrite | not affected |
+
+### Restore keeps the file it replaces
+
+`archive_rewrite::restore_latest_backup` swaps the archive and its `.bak`:
+the backup takes the archive's name and the file it replaced becomes the
+newest backup (`.bak`). Restoring again swaps them back, so a wrong click
+is undone the same way. The response's `kept_as` names where the
+replaced file went; the audit row carries it too.
+
+- **Slots.** The restored backup leaves slot 0 and the replaced file
+  takes it: the number of backups and every older slot stay as they
+  were, nothing is rotated or deleted, and no slot is written that was
+  not already there, whatever `archive_backup_retain_count` says. The next
+  rewrite's rotation applies the slot count as usual.
+- **Zero slots.** The swap still happens. The `.bak` being restored
+  exists anyway (left from a higher setting, or a conversion's backup,
+  which always keeps one), the swap leaves one file in its place, and
+  throwing the replaced archive away would make the click unrecoverable,
+  which is what restore is for. The retention days prune it later.
+- **Age.** The kept file's change time is stamped at the restore (a
+  `chmod` to its own mode), so the retention sweep ages it from the
+  restore, not from the rewrite that made it.
+- **Never missing.** On Linux the swap is one
+  `renameat2(RENAME_EXCHANGE)` in the folder handle
+  (`LibraryDir::exchange`). Where that is refused (`EINVAL` / `ENOSYS` /
+  `EOPNOTSUPP`, some network filesystems) it is three steps: the archive
+  gets a second name `<file>.bak.<32 hex>.tmp` (hard link, or a copy where
+  links are refused), the backup is renamed over the archive (atomic
+  replace), and the second name is renamed to `.bak`. A failure before the
+  middle step removes the second name and changes nothing; a failure after
+  it leaves the restored file at the name and the replaced one under the
+  second name, which the error (and an ERROR log line) names. That name is
+  neither a staging name (`is_staging_name`: the base `<file>.bak` is not
+  an archive name) nor a backup name, so the startup cleanup never
+  removes it and the prune never counts it. Tests:
+  `archive_restore.rs::a_restore_that_fails_half_way_leaves_the_archive_in_place`,
+  `::three_step_restore_ends_like_the_exchange`.
+- **Pre-conversion backups are listed, not restored.** Restore takes only
+  the issue's own `<file>.bak`. Restoring `X.cbr.bak` for the issue now at
+  `X.cbz` is an open product decision (ARC-2 item 3): restoring the RAR
+  under `X.cbr` leaves a file the scanner either converts again into a
+  *new* issue row (auto-convert on: the current row, with its progress
+  and markers, is reconciled as missing) or does not ingest at all
+  (`UnsupportedArchiveFormat`, auto-convert off). Until that is decided
+  the backups are listed (`pre_conversion: true`) and can be restored by
+  hand.
 
 ### Never over another file
 
@@ -267,7 +361,7 @@ the two.
 
 | Writer | Refusal (link, not a regular file, outside the root, name taken, multi-part RAR) |
 |---|---|
-| Page editor | the edit fails with the reason in the audit row; nothing is written |
+| Page editor | the edit fails with the reason in the audit row; nothing is written. (Not a refusal, for contrast: when the bookkeeping after an in-place swap fails, the edit fails with `EditError::NotRecorded`, whose message says the archive *was* edited and must not be edited again; a CBR edit whose row update reported an error but whose row names the new `.cbz` is reported **done** with a `warning`, as a `warning`-severity `archive.updated` event.) |
 | Sidecar rewrite | not retried; the triggering run is marked failed (`sidecar rewrite refused: …`), and an error library event says "refused". The older refusals (format gate, writeback off, issue gone) complete without failing the run, as before. |
 | Restore from `.bak` | 422 `archive.restore_refused`; a missing `.bak` stays 404 `archive.no_backup` |
 | Scan conversion | a `.cbz` twin skips the file quietly; a multi-part RAR is a malformed-archive finding with that reason |
@@ -286,7 +380,9 @@ Per writer:
   (`EditError::Rewrite(Refused)`), and so does a `.cbz` that already
   exists (`DestinationExists`).
 - **Restore from `.bak`** (`archive_rewrite::restore_latest_backup`):
-  `renameat(.bak → archive)` in the folder handle; a `.bak` or archive
+  a swap of the archive and `.bak` in the folder handle
+  (`renameat2(RENAME_EXCHANGE)`, else link + rename + rename, see
+  [Restore](#restore-keeps-the-file-it-replaces)); a `.bak` or archive
   that is a link is refused.
 - **Sidecar rewrite** (`jobs::rewrite_sidecars`, also behind manual
   edits, drift flush and re-emit): `rewrite_atomic`, with CBR / CB7
