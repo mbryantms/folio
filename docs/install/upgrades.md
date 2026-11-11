@@ -218,8 +218,11 @@ docker compose -f compose.prod.yml up -d --no-deps app
 - A token refresh whose response never arrived (a phone changing
   networks, a dropped connection) no longer signs the user out when the
   browser retries within 60 seconds: the token the refresh replaced is
-  accepted once more in that time. See
-  [auth-model.md](../architecture/auth-model.md#refresh).
+  accepted once more in that time (once only; the retry retires the token
+  the lost response carried). The web app retries an unanswered refresh at
+  once and once more a few seconds later, inside that minute. A password
+  or email change clears the remembered token of the session it keeps.
+  See [auth-model.md](../architecture/auth-model.md#refresh).
 
 ### Unreleased — 1 h access tokens by default; sessions end after 90 days
 
