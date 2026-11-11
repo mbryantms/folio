@@ -1,12 +1,18 @@
 import { redirect } from "next/navigation";
 
+import { PrefetchBoundary } from "@/components/PrefetchBoundary";
 import { LibraryGridView } from "@/components/library/LibraryGridView";
 import { parseLibraryGridFilters } from "@/components/library/library-grid-filters";
 import { ScrollToTopOnMount } from "@/components/ScrollToTopOnMount";
 import { PageRails } from "@/components/saved-views/PageRails";
 import { RailError } from "@/components/saved-views/RailError";
 import { apiGet } from "@/lib/api/fetch";
-import type { LibraryView, PageListView } from "@/lib/api/types";
+import { mePagesOptions } from "@/lib/api/query-options";
+import type { LibraryView, PageView } from "@/lib/api/types";
+import {
+  createServerQueryClient,
+  prefetchPageRails,
+} from "@/lib/saved-views/prefetch-page-rails";
 
 /** App-Router resolves `searchParams` to this shape; the library grid
  *  funnels every filter dimension through the URL (chip deep-links,
@@ -73,13 +79,18 @@ export default async function HomePage({
   // old client-only path produced. `/me/pages` lazy-creates the system
   // row on first access, so we're guaranteed to find one — the fallback
   // is defensive for failed/unauthed fetches where middleware will be
-  // redirecting anyway. Audit-remediation M4 wrapped the endpoint in
-  // `CursorPage<PageView>`; pages are bounded per-user so we just read
-  // `.items`.
-  const pages = await apiGet<PageListView>("/me/pages").catch(
-    () => ({ items: [], total: 0, next_cursor: null }) as PageListView,
-  );
-  const system = pages.items.find((p) => p.is_system);
+  // redirecting anyway.
+  //
+  // The page list, the Home's pinned views and its first rail are
+  // fetched here into a per-request QueryClient and handed to the client
+  // hooks through a HydrationBoundary (`PrefetchBoundary`, D18), so the first rail renders
+  // in the server HTML instead of after a pinned-views → rail-data
+  // request chain. Best effort: see `prefetchPageRails`.
+  const qc = createServerQueryClient();
+  const pages = await qc
+    .fetchQuery(mePagesOptions(apiGet))
+    .catch(() => [] as PageView[]);
+  const system = pages.find((p) => p.is_system);
   if (!system) {
     return (
       <RailError
@@ -89,8 +100,13 @@ export default async function HomePage({
       />
     );
   }
+  const prefetched = await prefetchPageRails(qc, {
+    pageId: system.id,
+    isSystem: true,
+    fetch: apiGet,
+  });
   return (
-    <>
+    <PrefetchBoundary state={prefetched}>
       {/* Home shares the `/` pathname with the grid + search, so the App
           Router won't auto-reset scroll when arriving here from those
           views — reset it on mount. */}
@@ -106,6 +122,6 @@ export default async function HomePage({
           showInSidebar={system.show_in_sidebar}
         />
       </div>
-    </>
+    </PrefetchBoundary>
   );
 }

@@ -119,12 +119,22 @@ function topLevelBlocks(src: string): { name: string; body: string }[] {
 function offenders(
   queries: string,
   cursorTypes: Set<string>,
+  sharedOptions = "",
 ): Map<string, string> {
   const found = new Map<string, string>();
   const typeRe = new RegExp(`\\b(${[...cursorTypes].join("|")})\\b`);
+  // Hooks whose key + queryFn live in `query-options.ts` (shared with the
+  // server prefetch) spread `xOptions(...)`; read that factory's body as
+  // part of the hook so the response type stays visible to the guard.
+  const factories = new Map(
+    topLevelBlocks(sharedOptions).map((b) => [b.name, stripComments(b.body)]),
+  );
   for (const { name, body } of topLevelBlocks(queries)) {
     if (!name.startsWith("use")) continue;
-    const code = stripComments(body);
+    let code = stripComments(body);
+    for (const m of code.matchAll(/\b(\w+Options)\(/g)) {
+      code += factories.get(m[1]!) ?? "";
+    }
     if (!/\buseQuer(?:y|ies)\s*[<(]/.test(code)) continue;
     const hit = /\bnext_cursor\b/.exec(code)?.[0] ?? typeRe.exec(code)?.[1];
     if (hit) found.set(name, hit);
@@ -136,6 +146,7 @@ describe("queries.ts: no useQuery over a next_cursor response", () => {
   const generated = read("lib/api/types.generated.ts");
   const typesTs = read("lib/api/types.ts");
   const queries = read("lib/api/queries.ts");
+  const sharedOptions = read("lib/api/query-options.ts");
 
   const schemas = cursorSchemas(generated);
   const cursorTypes = new Set([...schemas, ...cursorAliases(typesTs, schemas)]);
@@ -184,7 +195,7 @@ describe("queries.ts: no useQuery over a next_cursor response", () => {
   });
 
   it("every useQuery over a cursor type is allowlisted with a reason", () => {
-    const found = offenders(queries, cursorTypes);
+    const found = offenders(queries, cursorTypes, sharedOptions);
     const unexpected = [...found].filter(([name]) => !(name in ALLOWLIST));
     expect(
       unexpected,
@@ -193,7 +204,7 @@ describe("queries.ts: no useQuery over a next_cursor response", () => {
   });
 
   it("the allowlist carries no stale entries", () => {
-    const found = offenders(queries, cursorTypes);
+    const found = offenders(queries, cursorTypes, sharedOptions);
     const stale = Object.keys(ALLOWLIST).filter((name) => !found.has(name));
     expect(stale, "no longer a useQuery over a cursor type; drop it").toEqual(
       [],

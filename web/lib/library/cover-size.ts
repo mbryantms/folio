@@ -51,6 +51,20 @@ export const COVER_WIDTH = `var(${COVER_WIDTH_VAR}, var(${COVER_MIN_VAR}, ${DEFA
  *  `computeColumnWidth` mirror it for the virtualized grid. */
 export const COVER_GRID_COLUMNS = `repeat(auto-fill, minmax(min(var(${COVER_MIN_VAR}, ${DEFAULT_COVER_SIZE_PX}px), calc(50% - 0.5rem)), 1fr))`;
 
+/**
+ * `sizes` for a cover image at card size where `sizes="auto"` cannot apply
+ * (eager / priority covers). `sizes` cannot read `--cover-w`, so this is a
+ * static stand-in for the default size: two (sometimes three) per row on a
+ * phone (< `sm`, about 44vw at the default), and at most ~190px from `sm` up
+ * (the default target is 160px; the grid stretches columns up to the next
+ * break). Against the 300w / 600w candidates (`coverThumbSrcSet`) that means
+ * a default card loads the 300 variant at 1x and the 600 one only at a DPR
+ * high enough to need it. A reader on a larger size (up to the 300px stop)
+ * still gets 300 at 1x — exactly enough — but between 1x and ~1.6x a card
+ * wider than 190px is told 300 is enough when it would show 600 sharper.
+ */
+export const COVER_CARD_SIZES = "(max-width: 639px) 45vw, 190px";
+
 export const COVER_GRID_STYLE = {
   gridTemplateColumns: COVER_GRID_COLUMNS,
 } as const;

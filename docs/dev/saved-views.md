@@ -565,6 +565,58 @@ query path and no `total` (On deck also returns no cursor there). The
   source hit the bound, and the page says so. The preview, the OPDS On
   Deck feeds and the next-up fallback keep the rail's 40 candidates.
 
+## Server prefetch + HydrationBoundary (the Home page)
+
+The system Home is the app's one server-prefetched TanStack page (D18).
+Without it the browser ran a request chain after hydration — pinned views,
+then each rail's data — before the first rail could paint. Now
+`app/[locale]/(library)/page.tsx` fetches, in the same render that already
+read `/me/pages`, the page's pinned views (plus the library list for the
+no-library card) and then the **first rail** only, and hands them to the
+client through `<PrefetchBoundary>` (`components/PrefetchBoundary.tsx`, a
+`<HydrationBoundary>`). The rail renders in the server HTML and its covers
+start loading before any `/api` request.
+
+How to prefetch for a page:
+
+- **Same keys, same shape.** Key, path and response transform live once in
+  `lib/api/query-options.ts` (`xOptions(fetch, …)`); the client hook spreads
+  them with `jsonFetch`, the server calls them with `apiGet`. A prefetch
+  that builds its own key or skips the hook's transform (e.g. `useMePages`
+  unwraps `.items`) is just a wasted server request. Infinite hooks
+  prefetch with `prefetchInfiniteQuery` and the same `initialPageParam`
+  (they share the options object, so they cannot differ). Rail parameters
+  (`RAIL_PREVIEW_LIMIT`, `CBL_RAIL_WINDOW`) live in
+  `lib/saved-views/rail-queries.ts` for the same reason.
+- **One `QueryClient` per request** (`createServerQueryClient()`), never at
+  module level: the data is the signed-in user's. `apiGet` sends that
+  request's cookies with `cache: "no-store"` (no cross-user caching; the
+  app does not enable Cache Components, so nothing else caches it).
+- **Best effort, bounded.** `prefetchPageRails` never throws; a failed,
+  401 or unfinished query is simply not dehydrated (`dehydrate` keeps
+  `success` only) and the client fetches it as before. The whole prefetch
+  stops after `PAGE_RAILS_PREFETCH_BUDGET_MS` (600 ms) so a slow rail
+  cannot become a slow page. On loopback the chain (pinned views, then the
+  first rail, the library list in parallel) costs about 20 ms.
+- **Why `PrefetchBoundary`, not the bare boundary.** The topbar search
+  calls `useContinueReading` / `useMePages` (disabled until used), so those
+  cache entries exist, empty, before the page renders. The stock boundary
+  hydrates *existing* entries only in an effect, so the prefetched Continue
+  reading rail rendered its skeleton on the server and refetched on the
+  client. `PrefetchBoundary` hydrates an existing entry during render when
+  it has no data and no request in flight.
+- **CSP.** The dehydrated state travels as a prop in the RSC payload; no
+  inline script is added.
+
+When not to: below-the-fold rails stay client-fetched on purpose
+(`LazyRail`), and so does On this day (keyed by the browser's local date)
+and the per-card `/progress` map (unbounded per user, and only the
+`IssueCard` badge reads it, not the cover). A prefetch only pays where the
+first paint waits on a client request chain; data the shell already
+fetches, or that is cheap and below the fold, is better left to the client.
+A page that is reached mostly by client navigation with a warm cache pays
+the server fetch for little gain.
+
 ## Visibility on the other personal surfaces
 
 - **Collections**: `POST /me/collections/{id}/entries` and
