@@ -656,10 +656,39 @@ pub struct BackupView {
     pub path: String,
     /// RFC3339 modification time of the backup file, or null if
     /// unavailable. For a hard-linked backup (the usual kind) this is the
-    /// ORIGINAL archive's modification time, not when the backup was made;
-    /// the retention sweep ages backups by when they were made instead.
+    /// ORIGINAL archive's modification time, not when the backup was made:
+    /// show `made_at` as the backup's date.
     pub modified_at: Option<String>,
+    /// RFC3339 time the backup was made (the file's inode change time,
+    /// `archive_rewrite::backup_made_at`, the clock the retention sweep
+    /// ages backups by), or null when that cannot be known (no change time,
+    /// or one earlier than the modification time); the sweep keeps such a
+    /// backup. A later rotation, restore or permission change moves it
+    /// forward, never back.
+    pub made_at: Option<String>,
     pub size_bytes: u64,
+    /// The backup of the archive this issue's file was converted from
+    /// (`X.cbr.bak` / `X.cb7.bak[.n]` beside the issue's `X.cbz`), not of
+    /// the current file. Listed so it can be found; restore does not use
+    /// it (restore takes the issue's own `<file>.bak`).
+    pub pre_conversion: bool,
+}
+
+fn backup_view(
+    slot: i32,
+    path: &std::path::Path,
+    meta: &std::fs::Metadata,
+    pre_conversion: bool,
+) -> BackupView {
+    let rfc3339 = |t: std::time::SystemTime| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339();
+    BackupView {
+        slot,
+        path: path.to_string_lossy().into_owned(),
+        modified_at: meta.modified().ok().map(rfc3339),
+        made_at: archive_rewrite::backup_made_at(meta).map(rfc3339),
+        size_bytes: meta.len(),
+        pre_conversion,
+    }
 }
 
 #[utoipa::path(
@@ -667,7 +696,7 @@ pub struct BackupView {
     path = "/issues/{id}/archive/backups",
     params(("id" = String, Path,)),
     responses(
-        (status = 200, body = [BackupView]),
+        (status = 200, body = [BackupView], description = "the issue file's own backups by slot, then the pre-conversion backups"),
         (status = 403, description = "admin only"),
         (status = 404, description = "issue not found"),
     )
@@ -698,16 +727,36 @@ pub async fn backups(
         if !meta.is_file() {
             continue;
         }
-        let modified_at = meta
-            .modified()
-            .ok()
-            .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        out.push(BackupView {
-            slot,
-            path: p.to_string_lossy().into_owned(),
-            modified_at,
-            size_bytes: meta.len(),
-        });
+        out.push(backup_view(slot, &p, &meta, false));
+    }
+
+    // A converted archive's original kept its old name (`X.cbr.bak` beside
+    // `X.cbz`): look for those in the folder too. Read-only; sorted, so the
+    // answer never depends on the directory's listing order.
+    if let (Some(dir), Some(own)) = (target.parent(), target.file_name().and_then(|n| n.to_str()))
+        && let Ok(mut entries) = tokio::fs::read_dir(dir).await
+    {
+        let mut found = Vec::new();
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(slot) = archive_rewrite::pre_conversion_backup_slot(own, name) else {
+                continue;
+            };
+            let p = entry.path();
+            let Ok(meta) = tokio::fs::symlink_metadata(&p).await else {
+                continue;
+            };
+            if meta.is_file() {
+                found.push((name.to_owned(), slot, p, meta));
+            }
+        }
+        found.sort_by(|a, b| (a.1, &a.0).cmp(&(b.1, &b.0)));
+        out.extend(
+            found
+                .iter()
+                .map(|(_, slot, p, meta)| backup_view(*slot, p, meta, true)),
+        );
     }
 
     Json(out).into_response()

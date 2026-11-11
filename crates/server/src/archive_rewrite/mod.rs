@@ -1251,6 +1251,38 @@ pub fn is_backup_name(name: &str) -> bool {
             .is_some_and(crate::library::ignore::is_recognized_archive_ext)
 }
 
+/// The backup slot of `candidate` (a bare file name in the same folder) when
+/// it is a backup of the archive `archive` (a bare file name, the issue's
+/// current file) was converted from: `X.cbr.bak[.n]` or `X.cb7.bak[.n]`
+/// (extension in any case) beside `X.cbz`. A CBR / CB7 converted to CBZ
+/// (scan, page editor, sidecar writeback) keeps its original under its old
+/// name, so the backups built from the current name ([`backup_slot`]) never
+/// include it. `None` for anything else, including the archive's own
+/// backups and a candidate that fails [`is_backup_name`].
+pub fn pre_conversion_backup_slot(archive: &str, candidate: &str) -> Option<i32> {
+    if !is_backup_name(candidate) {
+        return None;
+    }
+    let (base, slot) = match candidate.strip_suffix(".bak") {
+        Some(base) => (base, 0),
+        None => {
+            let (base, n) = candidate.rsplit_once(".bak.")?;
+            (base, n.parse::<i32>().ok()?)
+        }
+    };
+    let base = Path::new(base);
+    let ext = base.extension()?.to_str()?;
+    if !(ext.eq_ignore_ascii_case("cbr") || ext.eq_ignore_ascii_case("cb7")) {
+        return None;
+    }
+    let archive = Path::new(archive);
+    let converted_to_cbz = archive
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cbz"));
+    (converted_to_cbz && base.file_stem() == archive.file_stem()).then_some(slot)
+}
+
 /// When Folio made the backup described by `meta` (the `lstat` of a file
 /// [`is_backup_name`] accepts), for the retention sweep and the
 /// backup-storage dates. `None` when that cannot be known: the sweep then
