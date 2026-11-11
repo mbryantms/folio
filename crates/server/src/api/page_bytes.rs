@@ -74,16 +74,33 @@ pub async fn serve(
     // symbolic link on the way (`library::no_follow`); anything else is
     // not-found. Checked on every request, before any cached reader or
     // cached variant is used. The pread fast path below reads through this
-    // handle; the archive reader (`zip_lru`) still opens the path itself.
-    let Some(file) = crate::library::no_follow::open_issue(&app, &row).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    // handle, and the archive reader (`zip_lru`) is built from it (or reused
+    // only when it was built from the same file). A failed library lookup
+    // is a server error, never not-found.
+    let archive_file = match crate::library::no_follow::open_issue_archive(&app, &row).await {
+        Ok(f) => f,
+        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
+        }
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
+    };
+    let file = match archive_file.file().try_clone() {
+        Ok(dup) => dup,
+        Err(e) => {
+            tracing::warn!(error = %e, issue_id = %row.id, "page bytes: handle dup failed");
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "archive_unreadable",
+                "archive unreadable",
+            );
+        }
     };
 
     // Width-negotiated variant (audit FEP-1). Handled by its own path —
     // it carries a per-variant ETag, immutable caching, and no Range
     // support. Everything below stays byte-identical for bare requests.
     if let Some(w) = q.w {
-        return serve_variant(&app, &row, n as usize, w, &headers).await;
+        return serve_variant(&app, &row, n as usize, w, &headers, archive_file).await;
     }
 
     let page_index = n as usize;
@@ -106,7 +123,7 @@ pub async fn serve(
 
     let (arc, pread) = match app
         .zip_lru
-        .get_or_open_indexed_tracked(&row.id, std::path::Path::new(&row.file_path))
+        .get_or_open_indexed_tracked(&row.id, archive_file)
         .await
     {
         Ok((pair, opened)) => {
@@ -366,6 +383,7 @@ async fn serve_variant(
     page_index: usize,
     requested_w: u32,
     headers: &HeaderMap,
+    archive_file: archive::ArchiveFile,
 ) -> Response {
     let tier = page_variants::clamp_to_tier(requested_w);
     let hash = row.content_hash.as_str();
@@ -424,7 +442,7 @@ async fn serve_variant(
     // Miss: extract the full page, render off-thread.
     let (arc, _pread) = match app
         .zip_lru
-        .get_or_open_indexed_tracked(&row.id, std::path::Path::new(&row.file_path))
+        .get_or_open_indexed_tracked(&row.id, archive_file)
         .await
     {
         Ok((pair, opened)) => {

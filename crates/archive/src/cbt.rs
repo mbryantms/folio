@@ -3,10 +3,11 @@
 //! Library Scanner v1, Milestone 12.
 //!
 //! Tar is a sequential format with no central directory — to enumerate we
-//! walk the file once at `open` time, recording entry metadata and byte
-//! offsets. `read_entry_bytes` then opens a fresh file handle and seeks to
-//! the recorded offset (tar entries' header is 512 bytes; data follows
-//! immediately).
+//! walk the file once at open time, recording entry metadata and byte
+//! offsets. `read_entry_bytes` then reads the recorded extent with a
+//! positioned read on the handle the archive was opened from (tar entries'
+//! header is 512 bytes; data follows immediately). The path is never
+//! opened again ([`crate::source`]).
 //!
 //! Same security limits as `cbz.rs` (entry count, total bytes, per-entry
 //! size). Tar has no compression — ratio guard reduces to total-bytes
@@ -24,20 +25,21 @@
 //! [`ComicArchive::entries_skipped`].
 
 use crate::cbz::{PreadIndex, StoredExtent};
+use crate::source::ArchiveFile;
 use crate::{
     ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, comic_archive::ComicArchive,
     entry_name::validate as sanitize_entry_name, image_sniff,
 };
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::Path;
 
 const IGNORED_NAMES: &[&str] = &["Thumbs.db", "desktop.ini"];
 
 #[derive(Debug)]
 pub struct Cbt {
-    path: PathBuf,
+    /// The open file every read goes through (never reopened by name).
+    source: ArchiveFile,
     entries: Vec<ArchiveEntry>,
     /// `entries[i].name -> data offset in the file`. Built once at open;
     /// used by `read_entry_bytes` to seek without re-walking the tar.
@@ -48,10 +50,19 @@ pub struct Cbt {
 }
 
 impl Cbt {
-    pub fn open(path: impl AsRef<Path>, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
-        let path_buf = path.as_ref().to_path_buf();
-        let f = File::open(&path_buf)?;
-        let mut archive = tar::Archive::new(f);
+    /// Open a file outside any library root by name (links followed).
+    /// Tests and temp files only; see [`crate::source`].
+    pub fn open_path_unchecked(
+        path: impl AsRef<Path>,
+        limits: ArchiveLimits,
+    ) -> Result<Self, ArchiveError> {
+        Self::open_file(ArchiveFile::open_path_unchecked(path)?, limits)
+    }
+
+    /// Open from a file the caller already opened. Every later read goes
+    /// through this handle.
+    pub fn open_file(source: ArchiveFile, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
+        let mut archive = tar::Archive::new(source.reader());
 
         let mut entries: Vec<ArchiveEntry> = Vec::new();
         let mut offsets: HashMap<String, u64> = HashMap::new();
@@ -107,7 +118,7 @@ impl Cbt {
         }
 
         let mut me = Self {
-            path: path_buf,
+            source,
             entries,
             offsets,
             limits,
@@ -132,9 +143,6 @@ impl Cbt {
         if candidates.is_empty() {
             return;
         }
-        let Ok(mut f) = File::open(&self.path) else {
-            return;
-        };
         let mut dropped: HashSet<String> = HashSet::new();
         for entry in candidates {
             let Some(&offset) = self.offsets.get(&entry.name) else {
@@ -142,13 +150,10 @@ impl Cbt {
             };
             let len = entry.uncompressed_size.min(image_sniff::SNIFF_LEN as u64) as usize;
             let mut head = vec![0u8; len];
-            let read_ok = f
-                .seek(SeekFrom::Start(offset))
-                .and_then(|_| f.read_exact(&mut head))
-                .is_ok();
+            let read_ok = self.source.read_exact_at(&mut head, offset).is_ok();
             if !read_ok {
                 tracing::debug!(
-                    path = %self.path.display(),
+                    path = %self.source.display_path().display(),
                     entry = %entry.name,
                     "cbt: page prefix unreadable during sniff; keeping entry",
                 );
@@ -158,7 +163,7 @@ impl Cbt {
                 continue;
             }
             tracing::warn!(
-                path = %self.path.display(),
+                path = %self.source.display_path().display(),
                 entry = %entry.name,
                 size = entry.uncompressed_size,
                 "cbt: dropping image-named entry whose bytes aren't an image",
@@ -204,10 +209,8 @@ impl Cbt {
             return Ok(Vec::new());
         }
         let take = len.min(size - start);
-        let mut f = File::open(&self.path)?;
-        f.seek(SeekFrom::Start(offset + start))?;
         let mut buf = vec![0u8; take as usize];
-        f.read_exact(&mut buf)?;
+        self.source.read_exact_at(&mut buf, offset + start)?;
         Ok(buf)
     }
 
@@ -222,8 +225,8 @@ impl Cbt {
             return Err(ArchiveError::CapExceeded("entry size"));
         }
         let offset = self.data_offset(entry)?;
-        let mut f = File::open(&self.path)?;
-        f.seek(SeekFrom::Start(offset))?;
+        let mut f = self.source.reader();
+        std::io::Seek::seek(&mut f, std::io::SeekFrom::Start(offset))?;
         let mut src = f.take(entry.uncompressed_size);
         Ok(std::io::copy(&mut src, sink)?)
     }
@@ -235,7 +238,7 @@ impl Cbt {
     /// omitted so the caller falls back to the locked read path (which
     /// then reports the short read instead of streaming garbage).
     pub fn build_pread_index(&self) -> PreadIndex {
-        let file_len = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+        let file_len = self.source.len().unwrap_or(0);
         let mut extents: HashMap<usize, StoredExtent> = HashMap::new();
         for e in &self.entries {
             let Some(&data_start) = self.offsets.get(&e.name) else {
@@ -294,10 +297,8 @@ impl ComicArchive for Cbt {
         if entry.uncompressed_size > self.limits.max_entry_bytes {
             return Err(ArchiveError::CapExceeded("entry size"));
         }
-        let mut f = File::open(&self.path)?;
-        f.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; entry.uncompressed_size as usize];
-        f.read_exact(&mut buf)?;
+        self.source.read_exact_at(&mut buf, offset)?;
         Ok(buf)
     }
     fn read_entry_prefix(&mut self, name: &str, max_bytes: usize) -> Result<Vec<u8>, ArchiveError> {
@@ -313,20 +314,20 @@ impl ComicArchive for Cbt {
             .get(&entry.name)
             .ok_or_else(|| ArchiveError::Malformed("entry offset missing".into()))?;
         let len = entry.uncompressed_size.min(max_bytes as u64);
-        let mut f = File::open(&self.path)?;
-        f.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; len as usize];
-        f.read_exact(&mut buf)?;
+        self.source.read_exact_at(&mut buf, offset)?;
         Ok(buf)
     }
     fn path(&self) -> &Path {
-        &self.path
+        self.source.display_path()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use std::io::{Seek, SeekFrom};
 
     const PNG_SIG: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
@@ -359,7 +360,7 @@ mod tests {
             ("Issue/x-0002.jpg", &png),
             ("ComicInfo.xml", b"<ComicInfo/>"),
         ]);
-        let a = Cbt::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let a = Cbt::open_path_unchecked(tmp.path(), ArchiveLimits::default()).expect("open");
         let pages: Vec<String> = a.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(pages, vec!["Issue/x-0002.jpg"]);
         assert!(
@@ -378,7 +379,7 @@ mod tests {
         let mut png = PNG_SIG.to_vec();
         png.extend_from_slice(&[0, 0, 0, 13]);
         let tmp = build_cbt(&[("01.png", &png), ("02.png", &png)]);
-        let a = Cbt::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let a = Cbt::open_path_unchecked(tmp.path(), ArchiveLimits::default()).expect("open");
         assert_eq!(a.pages().len(), 2);
         assert!(a.entries_skipped().is_empty());
     }
@@ -396,7 +397,7 @@ mod tests {
             ("ComicInfo.xml", b"<ComicInfo/>"),
             ("01.png", &png_a),
         ]);
-        let mut a = Cbt::open(tmp.path(), ArchiveLimits::default()).expect("open");
+        let mut a = Cbt::open_path_unchecked(tmp.path(), ArchiveLimits::default()).expect("open");
         let index = a.build_pread_index();
         let pages: Vec<ArchiveEntry> = a.pages().into_iter().cloned().collect();
         assert_eq!(pages[0].name, "01.png", "natural sort, not tar order");

@@ -61,3 +61,20 @@ backup-storage-warm     | /api/libraries/{library_slug}/backup-storage
 # aggregate reads the issue rows once (file_size is not in any index).
 library-stats-all       | /api/admin/libraries/stats
 library-stats-one       | /api/admin/libraries/{library_slug}/stats
+
+# ── entity indexes (audit 2026-11, P-06) ────────────────────────────────
+# The A–Z browse pages for characters, teams, locations and creators, the
+# jump-rail bucket, the name filter, and a keyset page. The stress fixture
+# carries 1,500 characters (150,000 issue rows) and 1,000 creator names;
+# it has no teams or locations, so those two only prove the SQL runs.
+# Story arcs are seeded in phase 2 and listed in endpoints-m7.txt.
+characters-list         | /api/characters?limit=60
+characters-page2        | /api/characters?limit=60&cursor={cursor:characters-list}
+characters-letter       | /api/characters?starts_with=C&limit=60
+characters-search       | /api/characters?q=0042&limit=60
+teams-list              | /api/teams?limit=60
+locations-list          | /api/locations?limit=60
+creators-list           | /api/creators?limit=60
+creators-page2          | /api/creators?limit=60&cursor={cursor:creators-list}
+creators-letter         | /api/creators?starts_with=W&limit=60
+people-search           | /api/people?q=writer%20042&limit=20

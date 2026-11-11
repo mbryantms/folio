@@ -5,15 +5,16 @@
 //! so on (packers and renamers don't check). Every mainstream reader
 //! (YACreader, ComicRack, Komga, ComicTagger) therefore sniffs the leading
 //! bytes and picks the decoder from what the file *is*. Folio does the
-//! same: [`crate::open`] dispatches on [`detect_container`] first and only
+//! same: [`crate::open_file`] dispatches on [`detect_container`] first and only
 //! falls back to the extension when the bytes carry no recognizable magic.
 //!
 //! The scanner's CBR/CB7 → CBZ converter
 //! (`server::library::scanner::cbr_convert`) and the page-server reader
 //! cache (`server::library::zip_lru`) share this module so the three sites
-//! can never disagree about what a file is.
+//! can never disagree about what a file is. Detection reads the caller's
+//! open handle ([`ArchiveFile`]), never the path.
 
-use std::io::Read;
+use crate::source::ArchiveFile;
 use std::path::Path;
 
 /// What an archive file actually is, independent of its extension.
@@ -77,22 +78,21 @@ pub fn sniff_container(head: &[u8]) -> Container {
     }
 }
 
-/// Read the leading bytes of `path` and classify them. Only I/O failures
-/// are errors; an unrecognized file is `Ok(Container::Unknown)`.
-pub fn detect_container(path: &Path) -> std::io::Result<Container> {
+/// Read the leading bytes of an open archive file and classify them.
+/// Reads through the handle (a positioned read at offset 0). Only I/O
+/// failures are errors; an unrecognized file is `Ok(Container::Unknown)`.
+pub fn detect_container(file: &ArchiveFile) -> std::io::Result<Container> {
     let mut head = [0u8; SNIFF_LEN];
-    let mut f = std::fs::File::open(path)?;
-    let mut filled = 0;
-    // `read` may return short; loop until EOF or the buffer is full so a
-    // slow pipe/network mount can't truncate the tar-magic window.
-    while filled < SNIFF_LEN {
-        let n = f.read(&mut head[filled..])?;
-        if n == 0 {
-            break;
-        }
-        filled += n;
-    }
+    // Loops until EOF or the buffer is full, so a slow mount can't
+    // truncate the tar-magic window.
+    let filled = file.read_up_to_at(&mut head, 0)?;
     Ok(sniff_container(&head[..filled]))
+}
+
+/// [`detect_container`] for a file outside any library root, opened by
+/// name with an ordinary open (links followed). Tests and temp files only.
+pub fn detect_container_path_unchecked(path: &Path) -> std::io::Result<Container> {
+    detect_container(&ArchiveFile::open_path_unchecked(path)?)
 }
 
 #[cfg(test)]
@@ -123,11 +123,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path().join("x.cbz");
         std::fs::write(&p, b"Rar!\x1a\x07\x00").unwrap();
-        assert_eq!(detect_container(&p).unwrap(), Container::Rar);
+        assert_eq!(detect_container_path_unchecked(&p).unwrap(), Container::Rar);
         let empty = tmp.path().join("e.cbz");
         std::fs::write(&empty, b"").unwrap();
-        assert_eq!(detect_container(&empty).unwrap(), Container::Unknown);
-        assert!(detect_container(&tmp.path().join("missing")).is_err());
+        assert_eq!(
+            detect_container_path_unchecked(&empty).unwrap(),
+            Container::Unknown
+        );
+        assert!(detect_container_path_unchecked(&tmp.path().join("missing")).is_err());
     }
 
     #[test]
