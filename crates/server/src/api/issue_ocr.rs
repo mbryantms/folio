@@ -356,11 +356,7 @@ pub async fn serve(
         }
         Err(e) => {
             tracing::error!(error = %e, "ocr: pipeline failure");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ocr_failed",
-                "ocr pipeline failed",
-            )
+            ocr_failure(&e, "ocr pipeline failed")
         }
     }
 }
@@ -410,12 +406,28 @@ pub async fn text_regions(
         Ok(detection) => Json(TextRegionsView::from(detection)).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "ocr: text-region detection failed");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ocr_failed",
-                "text-region detection failed",
-            )
+            ocr_failure(&e, "text-region detection failed")
         }
+    }
+}
+
+/// 500 for a failed OCR run. A model file that could not be fetched or
+/// failed its digest check (`ocr::models`) gets its own code so the
+/// client can say so; the file, repository and digests are in the server
+/// log, not the response.
+fn ocr_failure(e: &anyhow::Error, generic: &str) -> axum::response::Response {
+    let unverified = e.chain().any(|c| {
+        c.downcast_ref::<crate::ocr::models::ModelVerifyError>()
+            .is_some()
+    });
+    if unverified {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ocr_model_unverified",
+            "an OCR model could not be downloaded or failed its integrity check; see the server log",
+        )
+    } else {
+        error(StatusCode::INTERNAL_SERVER_ERROR, "ocr_failed", generic)
     }
 }
 
@@ -428,19 +440,42 @@ async fn load_page_image(
     row: &issue::Model,
     page: u32,
 ) -> Result<image::DynamicImage, Box<Response>> {
-    // Same rules as the page routes (`library::no_follow`).
-    if !crate::library::no_follow::issue_path_ok(app, row).await {
-        return Err(Box::new(error(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "issue not found",
-        )));
-    }
-    let arc = match app
-        .zip_lru
-        .get_or_open(&row.id, std::path::Path::new(&row.file_path))
-        .await
-    {
+    // Same rules as the page routes (`library::no_follow`). What OCR
+    // answers for each refusal:
+    //   - a link, a non-regular file, a path outside the root, or an I/O
+    //     error opening it: 404 not_found (as before handles were used);
+    //   - a missing file: 500 archive_unreadable, the answer it always gave
+    //     when the reader could not open the archive;
+    //   - a failed library lookup: 500 (a server fault, never not-found).
+    // The reader is built from this handle (or reused only for the same
+    // file).
+    use crate::library::no_follow::Refusal;
+    let archive_file = match crate::library::no_follow::open_issue_archive(app, row).await {
+        Ok(f) => Ok(f),
+        Err(Refusal::Missing | Refusal::Lookup(_)) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(Refusal::Symlink | Refusal::NotRegular | Refusal::OutsideRoot | Refusal::Io(_)) => {
+            Err(StatusCode::NOT_FOUND)
+        }
+    };
+    let archive_file = match archive_file {
+        Ok(f) => f,
+        Err(StatusCode::NOT_FOUND) => {
+            return Err(Box::new(error(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "issue not found",
+            )));
+        }
+        Err(_) => {
+            tracing::warn!(issue_id = %row.id, "ocr: archive missing or unreadable");
+            return Err(Box::new(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "archive_unreadable",
+                "archive unreadable",
+            )));
+        }
+    };
+    let arc = match app.zip_lru.get_or_open(&row.id, archive_file).await {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e, issue_id = %row.id, "ocr: zip_lru open failed");

@@ -13,6 +13,102 @@ Versioning note: the crate/package manifests stay at `0.0.0` on purpose —
 Releases before v0.7.2 are recorded only as Git tags + GitHub Releases;
 this file starts at the first release that ships with a curated changelog.
 
+## [0.79.0](https://github.com/mbryantms/folio/compare/v0.78.0...v0.79.0) (2026-11-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **library:** multi-part RAR comics are no longer read. Repack them as a single archive.
+
+### Added
+
+* **web:** series cards show read state, and the collection badge says what it means ([#1577](https://github.com/mbryantms/folio/issues/1577)) ([807558b](https://github.com/mbryantms/folio/commit/807558b74d32efa12eba41c29db1a1a8f57efc84))
+
+
+### Fixed
+
+* **library:** archives are read and written through checked handles, never by name ([#1576](https://github.com/mbryantms/folio/issues/1576)) ([cd76e7e](https://github.com/mbryantms/folio/commit/cd76e7e22a49885fa5ae266bd0949e586af5025b))
+
+
+### Changed
+
+* **web:** the home page's first rail arrives with the page ([#1580](https://github.com/mbryantms/folio/issues/1580)) ([cb49c13](https://github.com/mbryantms/folio/commit/cb49c137dbd81776cba689e4378edb299765f2f9))
+
+
+### Build & CI
+
+* **perf:** weekly query-plan gate ([#1578](https://github.com/mbryantms/folio/issues/1578)) ([d00c504](https://github.com/mbryantms/folio/commit/d00c5041c5298e91a1458d1e2576318356acbc2e))
+
+## [0.78.0](https://github.com/mbryantms/folio/compare/v0.77.3...v0.78.0) (2026-11-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **library:** a library organised with symlinked folders stops indexing what is behind them. Those series are reported as health findings and soft-removed; place the real folder or a bind mount at the same path to restore them.
+* **oidc:** with auth.oidc.link_local_by_verified_email on, a linked account can no longer sign in with its old local password. Keep a separate local admin account as a fallback for when the provider is unavailable.
+* **auth:** app passwords are refused with 403 outside the reader routes. Scripts that called /api or /auth with an app password must sign in with a session instead.
+
+### Added
+
+* **rails:** new in series you are reading ([#1570](https://github.com/mbryantms/folio/issues/1570)) ([e17cbb1](https://github.com/mbryantms/folio/commit/e17cbb153c23599ea068ffdc22f056587faf307c))
+* **web:** first-run setup card when no library exists ([#1524](https://github.com/mbryantms/folio/issues/1524)) ([857fe0c](https://github.com/mbryantms/folio/commit/857fe0cef821643f299460fec2f87b2382ccad85))
+* **web:** one cover size for every grid and rail ([#1575](https://github.com/mbryantms/folio/issues/1575)) ([ce8fa44](https://github.com/mbryantms/folio/commit/ce8fa44285938ff958e2f7dd71ecadbc7ec09e79))
+* **web:** reading lists in the sidebar ([#1554](https://github.com/mbryantms/folio/issues/1554)) ([0cd289f](https://github.com/mbryantms/folio/commit/0cd289fa44fe1091d14a5ad1a9d6f786c3edc457))
+
+
+### Fixed
+
+* **account:** email changes need the current password and confirmation ([#1544](https://github.com/mbryantms/folio/issues/1544)) ([5a1d2f6](https://github.com/mbryantms/folio/commit/5a1d2f641d0fa4402b07707ebfc2dbed09eae727))
+* **acl:** entity pages and counts follow the issue-level age cap ([#1569](https://github.com/mbryantms/folio/issues/1569)) ([f64a324](https://github.com/mbryantms/folio/commit/f64a3247fda462a5e3ce5df25f9ffcdca6ada267))
+* **acl:** the issue-level age cap applies inside a visible series ([#1556](https://github.com/mbryantms/folio/issues/1556)) ([b0523b2](https://github.com/mbryantms/folio/commit/b0523b2dabb4b225cdbe256d4b51e2118b43b178))
+* **admin:** tablet layout, neutral status tones and findings on scan rows ([#1545](https://github.com/mbryantms/folio/issues/1545)) ([66ba21c](https://github.com/mbryantms/folio/commit/66ba21c2a8cc64d3ac8e24500fb9d199231d92b2))
+* **api:** bound CSP report size and log only selected fields ([#1515](https://github.com/mbryantms/folio/issues/1515)) ([63352f7](https://github.com/mbryantms/folio/commit/63352f70f017e71a8eda57448ec5203b06936866))
+* **api:** spreadsheet-safe exports, safe download names and bounded list bodies ([#1565](https://github.com/mbryantms/folio/issues/1565)) ([9492ac1](https://github.com/mbryantms/folio/commit/9492ac1bbb25da9c6787ad60e10947218d073724))
+* **archive-rewrite:** boot cleanup removes only its own staging files ([#1537](https://github.com/mbryantms/folio/issues/1537)) ([b9d8a1f](https://github.com/mbryantms/folio/commit/b9d8a1f129252f3ea6f966a4a2614cd347314b38))
+* **audit:** library creation and admin edits to shared lists are audited ([#1553](https://github.com/mbryantms/folio/issues/1553)) ([aac984f](https://github.com/mbryantms/folio/commit/aac984f0a92dd014b2546fe67597eced9285e3cf))
+* **auth:** app passwords are looked up by digest, with lockout and bounded hashing ([#1564](https://github.com/mbryantms/folio/issues/1564)) ([abe747b](https://github.com/mbryantms/folio/commit/abe747bad8b0696c25b18264280c1f7e98a44c70))
+* **auth:** atomic refresh rotation, a session age limit, 1-hour access tokens and proactive refresh ([#1571](https://github.com/mbryantms/folio/issues/1571)) ([266c92a](https://github.com/mbryantms/folio/commit/266c92a2847128be4087792004f6f73a16436433))
+* **auth:** scope app passwords to reader clients ([#1516](https://github.com/mbryantms/folio/issues/1516)) ([1c51a48](https://github.com/mbryantms/folio/commit/1c51a4860c341a53e1483a7798cfebdf658c4048))
+* **auth:** sign-in checks the password first, refuses cross-site posts and bounds hashing ([#1568](https://github.com/mbryantms/folio/issues/1568)) ([dfc1542](https://github.com/mbryantms/folio/commit/dfc1542716bcc71d7380a913131e7c0fe8a9f64f))
+* **cbl:** list entries respect the reader's library access ([#1536](https://github.com/mbryantms/folio/issues/1536)) ([26e5094](https://github.com/mbryantms/folio/commit/26e50949e9ea708acc68bd6281273597c158fcb4))
+* **cbl:** refreshes use the vetted client, with deadlines, atomic writes and the entry cap ([#1567](https://github.com/mbryantms/folio/issues/1567)) ([873d145](https://github.com/mbryantms/folio/commit/873d145d320c7f7962d8e989b2169ab4921748b6))
+* **config:** local sign-in is the default when no single sign-on is configured ([#1549](https://github.com/mbryantms/folio/issues/1549)) ([fa700f4](https://github.com/mbryantms/folio/commit/fa700f4744bf3c4b633bb5a70247785dd0d048ec))
+* **csrf:** app-password exemption applies only on reader routes ([#1538](https://github.com/mbryantms/folio/issues/1538)) ([ed5d901](https://github.com/mbryantms/folio/commit/ed5d9019919b77bcf8702d02035bac7212b11f7b))
+* **email:** a skipped mail is logged without its body ([#1542](https://github.com/mbryantms/folio/issues/1542)) ([041667e](https://github.com/mbryantms/folio/commit/041667edcd2cf183083e9af12386a2445e6c2621))
+* **http:** access-checked covers are cached privately ([#1530](https://github.com/mbryantms/folio/issues/1530)) ([5392229](https://github.com/mbryantms/folio/commit/5392229ccae9a0f34bb5238cc0efbff66ad7d6c7))
+* **jobs:** orphan sweep queries live issues in batches ([#1529](https://github.com/mbryantms/folio/issues/1529)) ([48d85dd](https://github.com/mbryantms/folio/commit/48d85dd19c6ea7721b008bc4c7268eb5d1c60c2b))
+* **jobs:** the scan coalescing key is claimed atomically, kept alive and released only by its holder ([#1574](https://github.com/mbryantms/folio/issues/1574)) ([639b809](https://github.com/mbryantms/folio/commit/639b8094b7a43a7911b42503177d43f6a02bc449))
+* **library:** symlinks are never followed, by the scanner or when serving ([#1560](https://github.com/mbryantms/folio/issues/1560)) ([55292b4](https://github.com/mbryantms/folio/commit/55292b450c35926476f7e84bb0be6659cc9286ad))
+* **metadata:** locations from files get entity rows ([#1540](https://github.com/mbryantms/folio/issues/1540)) ([e2967ca](https://github.com/mbryantms/folio/commit/e2967ca2ea84167e308103977c8ba88d2415b776))
+* **oidc:** an auto-linked account becomes single-sign-on only ([#1557](https://github.com/mbryantms/folio/issues/1557)) ([573b1b0](https://github.com/mbryantms/folio/commit/573b1b0d6163172aac245f8914a47543785204b4))
+* **opds:** per-series feeds omit removed issues and removed series ([#1539](https://github.com/mbryantms/folio/issues/1539)) ([6d4103a](https://github.com/mbryantms/folio/commit/6d4103abd99ceab50ede5bbde33ed63a4e373eae))
+* **proxy:** forwarded headers come from the server, not the client ([#1543](https://github.com/mbryantms/folio/issues/1543)) ([a62da15](https://github.com/mbryantms/folio/commit/a62da159a06547eb18b3a725851e200f4e9fdee3))
+* **rails:** the see-all pages paginate instead of stopping at 24 ([#1566](https://github.com/mbryantms/folio/issues/1566)) ([63bc9d3](https://github.com/mbryantms/folio/commit/63bc9d37de8a90bc4ed796f31aabd96ab2e658b1))
+* **reader:** exit returns to where reading started ([#1546](https://github.com/mbryantms/folio/issues/1546)) ([371817d](https://github.com/mbryantms/folio/commit/371817d986c4128e2b012c1d4726997901d91556))
+* **reader:** Screen fit by default on wide windows ([#1547](https://github.com/mbryantms/folio/issues/1547)) ([99d3f7e](https://github.com/mbryantms/folio/commit/99d3f7e7870f230450dc17cf4d75a77f2f69f296))
+* **reconcile:** confirm and purge only what is really gone ([#1550](https://github.com/mbryantms/folio/issues/1550)) ([ad423a2](https://github.com/mbryantms/folio/commit/ad423a2ff1dea1235c398fdb6b529757e81b25d9))
+* **scanner:** a returning folder restores its issues and its series ([#1534](https://github.com/mbryantms/folio/issues/1534)) ([e8cb3ed](https://github.com/mbryantms/folio/commit/e8cb3edb537660c18f1a17a4f7c34c174ef69510))
+* **views:** bounded filters and time-boxed filter queries ([#1548](https://github.com/mbryantms/folio/issues/1548)) ([be0913d](https://github.com/mbryantms/folio/commit/be0913de3e1d94e72a546363d35f8e2a6ad1daa1))
+* **web:** capped see-all pages say they show the most recent items ([#1533](https://github.com/mbryantms/folio/issues/1533)) ([f855288](https://github.com/mbryantms/folio/commit/f8552884fcc143ff030de2c7081785cd0ea90155))
+* **web:** confirmation dialogs replace window.confirm, and the milestone dialog traps focus ([#1551](https://github.com/mbryantms/folio/issues/1551)) ([44a6e1f](https://github.com/mbryantms/folio/commit/44a6e1f491b1d76c9c203e581cf6877c09e5e6e7))
+* **web:** failed page fetches stop looping and failed panels offer a retry ([#1527](https://github.com/mbryantms/folio/issues/1527)) ([3a55fda](https://github.com/mbryantms/folio/commit/3a55fda3da81b51568c473c678ac906e3e18e3c5))
+* **web:** header search popover closes when focus leaves it ([#1523](https://github.com/mbryantms/folio/issues/1523)) ([e8d9e09](https://github.com/mbryantms/folio/commit/e8d9e0970053f105466d7f24e719333bf25cd749))
+* **web:** issue list shows an error with retry instead of an empty state ([#1518](https://github.com/mbryantms/folio/issues/1518)) ([1e2a941](https://github.com/mbryantms/folio/commit/1e2a941b3cb014981e43cc90e93e258aacfd5cbf))
+* **web:** long-press sheet ignores the gesture that opened it ([#1519](https://github.com/mbryantms/folio/issues/1519)) ([f444c2b](https://github.com/mbryantms/folio/commit/f444c2b0ffb67a1ad55b243c49c93bbf3b727469))
+* **web:** one issue-label helper so untitled issues are not numbered twice ([#1531](https://github.com/mbryantms/folio/issues/1531)) ([02bffd6](https://github.com/mbryantms/folio/commit/02bffd6243cc9cb36c6202aa2f25c26b187de8db))
+* **web:** progress sync retries while online and says what it is doing ([#1526](https://github.com/mbryantms/folio/issues/1526)) ([bf2b98c](https://github.com/mbryantms/folio/commit/bf2b98c92e1284ab12907cc7826a5347778482eb))
+* **web:** provider hints and profile fetches are for admins only ([#1555](https://github.com/mbryantms/folio/issues/1555)) ([74a1c64](https://github.com/mbryantms/folio/commit/74a1c6475dc6b68ab17948b5f40600a90005216e))
+* **web:** reader header, card action and rating stars get the standard touch target ([#1562](https://github.com/mbryantms/folio/issues/1562)) ([120f609](https://github.com/mbryantms/folio/commit/120f609c1e185fca3700907e498b4a950e5eccdf))
+* **web:** series statistics refresh after a progress change ([#1532](https://github.com/mbryantms/folio/issues/1532)) ([7608354](https://github.com/mbryantms/folio/commit/760835415b6e09fc5a06c17a2d44e27d3c44442b))
+* **ws:** cookie-authenticated upgrades must come from the app's own origin ([#1541](https://github.com/mbryantms/folio/issues/1541)) ([149d7b4](https://github.com/mbryantms/folio/commit/149d7b4d35885a4043ea9680e901ed7716aac5b3))
+
+
+### Changed
+
+* **reader:** drag-turn and other deferred code load after the first page ([#1563](https://github.com/mbryantms/folio/issues/1563)) ([57f2895](https://github.com/mbryantms/folio/commit/57f289577857f0f07df1024ef2cd65b1ea64fb56))
+* **reading:** a progress write hashes the page only when the hash is stored ([#1573](https://github.com/mbryantms/folio/issues/1573)) ([2be994f](https://github.com/mbryantms/folio/commit/2be994f48d1cbd936d219ddbbd3d6162a279675f))
+* **server:** accepted and upstream connections disable Nagle's algorithm ([#1572](https://github.com/mbryantms/folio/issues/1572)) ([9e27960](https://github.com/mbryantms/folio/commit/9e27960aeb7dabb9a04112bf0025dcdec04524ec))
+
 ## [0.77.3](https://github.com/mbryantms/folio/compare/v0.77.2...v0.77.3) (2026-11-09)
 
 

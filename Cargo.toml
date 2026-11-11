@@ -175,14 +175,21 @@ sevenz-rust2 = { version = "0.25", default-features = false, features = ["ppmd",
 
 # OCR / text detection (text-detection-1.0 plan, Phase 1).
 # License: GPL-3.0-only on the koharu crates — compatible with
-# Folio's AGPL-3.0-or-later. `hf-hub` lands with M5's
-# `/admin/ocr/models` surface.
+# Folio's AGPL-3.0-or-later.
 #
 # Pinned ort versions: `comic-text-detector` + `manga-ocr` both
 # resolve to `ort = 2.0.0-rc.10` (verified via lockfile probe
 # 2026-05-17); any bump that crosses crates needs a re-probe.
 comic-text-detector = "0.5.1"
 manga-ocr = "0.5.1"
+# Only for `Cache` (the cache path the two crates above read): Folio
+# fetches and verifies the pinned model files itself (`ocr::models`).
+# No features: the download client stays the crates' own, unused once
+# the verified files are in place. It must resolve to the SAME version
+# those two crates use (one `hf-hub` in Cargo.lock; a test in
+# `ocr::models` checks it), so Renovate does not bump it on its own:
+# move it together with them.
+hf-hub = { version = "0.4", default-features = false }
 # Native Tesseract bindings. The `build-tesseract` feature compiles
 # Leptonica 1.84.1 + Tesseract 5.3.4 from source via cmake on the
 # build host and caches them at `~/.tesseract-rs/` across rebuilds.

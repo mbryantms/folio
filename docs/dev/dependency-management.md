@@ -207,6 +207,8 @@ What is still unproven, in priority order:
 | MSRV                                                 | `Cargo.toml` `rust-version` = the `dtolnay/rust-toolchain@…` refs in `ci.yml` (bump together)                   |
 | Dev toolchain                                        | `rust-toolchain.toml` + Dockerfile `rust:` tag (Renovate group `rust-toolchain`)                                |
 | Node                                                 | `engines.node >=24` (floor), `.nvmrc`, `node-version: 26` in workflows, `node:26-…` + distroless `nodejs<major>` in `web/Dockerfile` (bump together) |
+| OCR model files (not Renovate-managed)               | `crates/server/src/ocr/models.rs` (Hugging Face commit + SHA-256 per file, checked at runtime) and the tessdata `sha256sum -c` line in `Dockerfile`; update steps in [ocr.md](ocr.md#pinned-model-files) |
+| `hf-hub` (Renovate updates disabled)                 | A direct dependency only so `ocr::models` uses the same cache path as `comic-text-detector` and `manga-ocr`, which holds while Cargo resolves one `hf-hub` for all three. Bump it by hand, together with those crates; a test in `ocr::models` fails if `Cargo.lock` holds two copies |
 
 ## Accepted advisories
 

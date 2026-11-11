@@ -699,39 +699,50 @@ pub(crate) async fn hydrate_views(
         .collect())
 }
 
-/// Verify the calling user can see `issue_id`. Returns the issue row
-/// (we need its `series_id` and `page_count` to populate the marker)
-/// or a [`MarkerError`] on miss / forbidden / DB failure. Caller
-/// converts to `Response` via `IntoResponse` at the HTTP boundary.
-async fn fetch_visible_issue(
+/// Verify the calling user can read `issue_id` (the reader's overlay):
+/// outside the grant or rated above the cap answers exactly like an
+/// unknown id; a soft-removed issue is history and still answers.
+async fn fetch_readable_issue(
     app: &AppState,
     user: &CurrentUser,
     issue_id: &str,
 ) -> Result<issue::Model, MarkerError> {
+    let not_found = || MarkerError::new(StatusCode::NOT_FOUND, "not_found", "issue not found");
     let row = issue::Entity::find_by_id(issue_id.to_owned())
         .one(&app.db)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "markers: issue fetch failed");
             MarkerError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
-        })?;
-    let Some(row) = row else {
-        return Err(MarkerError::new(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "issue not found",
-        ));
-    };
-    // An issue the caller can't see (outside the grant, or rated above
-    // their cap) answers exactly like an unknown id.
+        })?
+        .ok_or_else(not_found)?;
     if !access::issue_visible(app, user, &row).await {
-        return Err(MarkerError::new(
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "issue not found",
-        ));
+        return Err(not_found());
     }
     Ok(row)
+}
+
+/// Verify the calling user can write markers on `issue_id`. Returns the
+/// issue row (we need its `series_id` and `page_count` to populate the
+/// marker) or a [`MarkerError`] on miss / DB failure. Caller converts to
+/// `Response` via `IntoResponse` at the HTTP boundary.
+///
+/// An issue the caller can't see (outside the grant, rated above their
+/// cap) answers exactly like an unknown id, and so does a soft-removed
+/// issue or series: no new writes on removed content, for any role.
+async fn fetch_visible_issue(
+    app: &AppState,
+    user: &CurrentUser,
+    issue_id: &str,
+) -> Result<issue::Model, MarkerError> {
+    let acl = access::for_user(app, user).await;
+    access::visible_issue(&app.db, &acl, issue_id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "markers: issue fetch failed");
+            MarkerError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal")
+        })?
+        .ok_or_else(|| MarkerError::new(StatusCode::NOT_FOUND, "not_found", "issue not found"))
 }
 
 /// The request body's `kind` string as a [`MarkerKind`]; 422 when it is
@@ -1323,10 +1334,10 @@ pub async fn list_for_issue(
     user: CurrentUser,
     AxPath(issue_id): AxPath<String>,
 ) -> impl IntoResponse {
-    // ACL: fetch_visible_issue returns 404 if the caller can't
+    // ACL: fetch_readable_issue returns 404 if the caller can't
     // reach this issue, before we leak whether they have markers on
     // it.
-    let issue_row = match fetch_visible_issue(&app, &user, &issue_id).await {
+    let issue_row = match fetch_readable_issue(&app, &user, &issue_id).await {
         Ok(r) => r,
         Err(resp) => return resp.into_response(),
     };
@@ -1506,8 +1517,17 @@ pub async fn update(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    // Another user's marker answers exactly like an unknown id, and so
+    // does the caller's own marker on an issue they can no longer see
+    // (the list and the permalink leave it out too).
     if row.user_id != user.id {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your marker");
+        return error(StatusCode::NOT_FOUND, "not_found", "marker not found");
+    }
+    if let Err(e) = fetch_visible_issue(&app, &user, &row.issue_id).await {
+        if e.status == StatusCode::NOT_FOUND {
+            return error(StatusCode::NOT_FOUND, "not_found", "marker not found");
+        }
+        return e.into_response();
     }
 
     // Apply diffs while preserving the per-kind invariants.
@@ -1591,8 +1611,11 @@ pub async fn delete_one(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
+    // Another user's marker answers exactly like an unknown id. The
+    // caller's own marker can always be deleted, even when its issue is
+    // no longer visible to them.
     if row.user_id != user.id {
-        return error(StatusCode::FORBIDDEN, "forbidden", "not your marker");
+        return error(StatusCode::NOT_FOUND, "not_found", "marker not found");
     }
     if let Err(e) = row.delete(&app.db).await {
         tracing::error!(error = %e, "markers: delete failed");
@@ -1767,8 +1790,8 @@ pub struct RestoreMarkersResp {
     /// The markers re-inserted, in request order.
     pub restored: Vec<MarkerView>,
     /// Snapshots not restored: the id already exists (a repeated Undo,
-    /// or another user's row), the issue is gone or no longer visible,
-    /// or the page no longer exists.
+    /// or another user's row), the issue is gone, soft-removed or no
+    /// longer visible, or the page no longer exists.
     pub skipped: u32,
 }
 
@@ -1857,7 +1880,10 @@ pub async fn restore(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let issues = match issue::Entity::find()
+    // Only issues the caller can see and that are still live
+    // (`access::visible_issues_select`), like a new marker.
+    let visible = access::for_user(&app, &user).await;
+    let issues = match access::visible_issues_select(&visible)
         .filter(issue::Column::Id.is_in(issue_ids))
         .all(&app.db)
         .await
@@ -1868,11 +1894,10 @@ pub async fn restore(
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal");
         }
     };
-    let visible = access::for_user(&app, &user).await;
-    let mut allowed: HashMap<String, issue::Model> = HashMap::with_capacity(issues.len());
-    for row in access::filter_issues(&app, &visible, issues).await {
-        allowed.insert(row.id.clone(), row);
-    }
+    let allowed: HashMap<String, issue::Model> = issues
+        .into_iter()
+        .map(|row| (row.id.clone(), row))
+        .collect();
 
     // Ids that already exist (a repeated Undo, or — vanishingly — another
     // user's row) are skipped, never overwritten.

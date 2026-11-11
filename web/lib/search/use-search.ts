@@ -231,7 +231,14 @@ interface GlobalSearchResult {
   payloads: GlobalSearchPayloads;
   categoryTotals: GlobalSearchTotals;
   total: number;
+  /** "Did you mean …?" series names. Non-empty only once every backend
+   *  has answered with nothing: the series search sends the closest names
+   *  the caller can see on a zero-hit first page (U-11). Plain strings,
+   *  rendered as text. */
+  suggestions: string[];
 }
+
+const NO_SUGGESTIONS: string[] = [];
 
 const EMPTY_PAYLOADS: GlobalSearchPayloads = {
   series: [],
@@ -555,6 +562,15 @@ export function useGlobalSearch(
 
   const total = Object.values(categoryTotals).reduce((sum, n) => sum + n, 0);
 
+  const suggestionRows = series.data?.suggestions;
+  const suggestions = useMemo<string[]>(
+    () =>
+      enabled && !isLoading && total === 0
+        ? (suggestionRows ?? []).map((s) => s.name)
+        : NO_SUGGESTIONS,
+    [enabled, isLoading, total, suggestionRows],
+  );
+
   return {
     enabled,
     isLoading,
@@ -562,5 +578,6 @@ export function useGlobalSearch(
     payloads,
     categoryTotals,
     total,
+    suggestions,
   };
 }

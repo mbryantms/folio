@@ -6,14 +6,14 @@
 //! why the page editor *converts* CBR → CBZ rather than rewriting in
 //! place). RAR is a stream-only format with no random access, so:
 //!
-//!   - [`Cbr::open`] does a cheap **list** pass: walk headers once to
+//!   - [`Cbr::open_file`] does a cheap **list** pass: walk headers once to
 //!     build the entry table + enforce the security caps. No payload is
 //!     decompressed.
 //!   - [`Cbr::read_entry_bytes`] does a **process** pass per call: walk
 //!     from the front, `skip`-ing (no decompress) until the target entry,
 //!     then `read` it. O(N) skips per read is cheap; only the requested
 //!     entry is ever decompressed.
-//!   - [`Cbr::open`] additionally runs **one** process pass to content-
+//!   - [`Cbr::open_file`] additionally runs **one** process pass to content-
 //!     sniff image-named entries ([`crate::image_sniff`]). `unrar` has no
 //!     partial read, so a candidate has to be decompressed in full just to
 //!     see its leading bytes; the pass is therefore bounded to entries of
@@ -25,29 +25,57 @@
 //!     whose bytes aren't an image are dropped from the index and reported
 //!     via [`ComicArchive::entries_skipped`].
 //!
+//! **Handle, not name.** The UnRAR library opens archives by file name
+//! only, so the reader cannot pass it the caller's handle directly. It
+//! passes a name that reaches the handle instead
+//! ([`ArchiveFile::rar_name`]): `/proc/self/fd/<n>` on Linux, which reopens
+//! exactly the file the caller opened whatever happened to its path since.
+//! Where `/proc/self/fd` cannot reopen descriptors (another platform,
+//! `/proc` not mounted, or a sandbox that forbids it; probed once per
+//! process with an ordinary open, never by how an archive opens), the
+//! display path is used instead and its device and inode are checked
+//! against the handle before and after every pass, refusing a link or a
+//! different file. The choice is made at open and kept for every later
+//! pass.
+//!
+//! Multi-part (multi-volume) RAR sets are not read: UnRAR would open the
+//! sibling volumes by name, which no checked handle can cover. Opening one
+//! fails with [`ArchiveError::Malformed`] carrying
+//! [`MULTI_VOLUME_MESSAGE`] ([`ArchiveError::is_multi_volume_rar`]); the
+//! scanner reports it as a malformed-archive finding with that reason.
+//!
 //! NOTICE: this file uses the `unrar` crate; its license requires
 //! attribution to rarlab's UnRAR library.
 
+use crate::source::ArchiveFile;
 use crate::{
     ArchiveEntry, ArchiveError, ArchiveLimits, SkippedEntry, comic_archive::ComicArchive,
     entry_name::validate as sanitize_entry_name, image_sniff,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use unrar::Archive;
+use unrar::{Archive, VolumeInfo};
+
+/// The reason a multi-part RAR set is not read, as the user sees it.
+pub const MULTI_VOLUME_MESSAGE: &str = "multi-part RAR archives are not supported: \
+     only single-file archives are read; repack the parts as one archive";
 
 const IGNORED_NAMES: &[&str] = &["Thumbs.db", "desktop.ini"];
 
 /// Largest unpacked entry the open-time content sniff will decompress.
 /// RAR offers no partial read, so every sniffed candidate costs a full
-/// decompress; capping it keeps `Cbr::open` from turning into a pass over
+/// decompress; capping it keeps `Cbr::open_file` from turning into a pass over
 /// every page. Comfortably above any plausible text sidecar, comfortably
 /// below a real comic page.
 pub const CBR_SNIFF_MAX_ENTRY_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug)]
 pub struct Cbr {
-    path: PathBuf,
+    /// The open file. Kept open for the reader's life: the name handed to
+    /// UnRAR (`/proc/self/fd/<n>`) is only valid while it is.
+    source: ArchiveFile,
+    /// The name every pass hands UnRAR, chosen at open.
+    rar: RarName,
     entries: Vec<ArchiveEntry>,
     limits: ArchiveLimits,
     /// Image-named entries whose bytes failed the content sniff at open.
@@ -55,11 +83,22 @@ pub struct Cbr {
 }
 
 impl Cbr {
-    pub fn open(path: impl AsRef<Path>, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
-        let path_buf = path.as_ref().to_path_buf();
-        let listing = Archive::new(&path_buf)
-            .open_for_listing()
-            .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
+    /// Open a file outside any library root by name (links followed).
+    /// Tests and temp files only; see [`crate::source`].
+    pub fn open_path_unchecked(
+        path: impl AsRef<Path>,
+        limits: ArchiveLimits,
+    ) -> Result<Self, ArchiveError> {
+        Self::open_file(ArchiveFile::open_path_unchecked(path)?, limits)
+    }
+
+    /// Open from a file the caller already opened. Every pass reaches the
+    /// same file (see the module docs).
+    pub fn open_file(source: ArchiveFile, limits: ArchiveLimits) -> Result<Self, ArchiveError> {
+        let (listing, rar) = open_listing(&source)?;
+        if !matches!(listing.volume_info(), VolumeInfo::None) {
+            return Err(ArchiveError::Malformed(MULTI_VOLUME_MESSAGE.to_owned()));
+        }
 
         let mut entries: Vec<ArchiveEntry> = Vec::new();
         let mut total_bytes: u64 = 0;
@@ -83,11 +122,17 @@ impl Cbr {
 
             let size = header.unpacked_size;
             if size > limits.max_entry_bytes {
-                return Err(ArchiveError::CapExceeded("entry size"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntrySize,
+                    "entry size",
+                )));
             }
             total_bytes = total_bytes.saturating_add(size);
             if total_bytes > limits.max_total_bytes {
-                return Err(ArchiveError::CapExceeded("total bytes"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::TotalSize,
+                    "total bytes",
+                )));
             }
 
             entries.push(ArchiveEntry {
@@ -97,12 +142,17 @@ impl Cbr {
                 compressed_size: size,
             });
             if entries.len() as u64 > limits.max_entries {
-                return Err(ArchiveError::CapExceeded("entry count"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntryCount,
+                    "entry count",
+                )));
             }
         }
 
+        rar.finish_pass(&source)?;
         let mut me = Self {
-            path: path_buf,
+            source,
+            rar,
             entries,
             limits,
             skipped: Vec::new(),
@@ -129,11 +179,11 @@ impl Cbr {
         if candidates.is_empty() {
             return;
         }
-        let non_images = match sniff_candidates(&self.path, &candidates, self.limits) {
+        let non_images = match sniff_candidates(&self.source, &self.rar, &candidates, self.limits) {
             Ok(set) => set,
             Err(e) => {
                 tracing::debug!(
-                    path = %self.path.display(),
+                    path = %self.source.display_path().display(),
                     error = %e,
                     "cbr: content sniff pass failed; keeping every entry",
                 );
@@ -150,7 +200,7 @@ impl Cbr {
                 continue;
             }
             tracing::warn!(
-                path = %self.path.display(),
+                path = %self.source.display_path().display(),
                 entry = %entry.name,
                 size = entry.uncompressed_size,
                 "cbr: dropping image-named entry whose bytes aren't an image",
@@ -170,14 +220,13 @@ impl Cbr {
 /// rest. Returns the canonical names whose bytes did **not** sniff as an
 /// image.
 fn sniff_candidates(
-    path: &Path,
+    source: &ArchiveFile,
+    rar: &RarName,
     candidates: &HashSet<String>,
     limits: ArchiveLimits,
 ) -> Result<HashSet<String>, ArchiveError> {
     let mut non_images = HashSet::new();
-    let mut cursor = Archive::new(path)
-        .open_for_processing()
-        .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
+    let mut cursor = rar.open_for_processing(source)?;
     loop {
         let Some(open) = cursor
             .read_header()
@@ -208,7 +257,65 @@ fn sniff_candidates(
         }
         cursor = next;
     }
+    rar.finish_pass(source)?;
     Ok(non_images)
+}
+
+/// The name UnRAR opens for every pass over one reader's file, and whether
+/// it is the checked fallback (see the module docs).
+#[derive(Debug, Clone)]
+struct RarName {
+    name: PathBuf,
+    /// The display path: its identity is checked before and after a pass.
+    check: bool,
+}
+
+/// Open the listing pass and settle the name every later pass uses:
+/// `/proc/self/fd/<n>` when [`ArchiveFile::rar_name`] offers it (the
+/// process can reopen descriptors that way), else the display path under
+/// the identity check. UnRAR's own error opening the archive is returned
+/// as it is: a corrupt archive never moves the reader to the other path.
+fn open_listing(
+    source: &ArchiveFile,
+) -> Result<
+    (
+        unrar::OpenArchive<unrar::List, unrar::CursorBeforeHeader>,
+        RarName,
+    ),
+    ArchiveError,
+> {
+    let (name, check) = source.rar_name();
+    if check {
+        source.check_rar_name()?;
+    }
+    let listing = Archive::new(&name)
+        .open_for_listing()
+        .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
+    Ok((listing, RarName { name, check }))
+}
+
+impl RarName {
+    /// Start a processing pass over the caller's file.
+    fn open_for_processing(
+        &self,
+        source: &ArchiveFile,
+    ) -> Result<unrar::OpenArchive<unrar::Process, unrar::CursorBeforeHeader>, ArchiveError> {
+        if self.check {
+            source.check_rar_name()?;
+        }
+        Archive::new(&self.name)
+            .open_for_processing()
+            .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))
+    }
+
+    /// End of a pass: on the fallback path, confirm the name still led to
+    /// the caller's file for the whole pass.
+    fn finish_pass(&self, source: &ArchiveFile) -> Result<(), ArchiveError> {
+        if self.check {
+            source.check_rar_name()?;
+        }
+        Ok(())
+    }
 }
 
 impl ComicArchive for Cbr {
@@ -238,9 +345,7 @@ impl ComicArchive for Cbr {
             .map(|s| s.canonical)
             .unwrap_or_else(|_| name.to_ascii_lowercase());
 
-        let mut cursor = Archive::new(&self.path)
-            .open_for_processing()
-            .map_err(|e| ArchiveError::Malformed(format!("cbr open: {e}")))?;
+        let mut cursor = self.rar.open_for_processing(&self.source)?;
 
         loop {
             let Some(open) = cursor
@@ -257,11 +362,15 @@ impl ComicArchive for Cbr {
 
             if header.is_file() && canonical == want {
                 if header.unpacked_size > self.limits.max_entry_bytes {
-                    return Err(ArchiveError::CapExceeded("entry size"));
+                    return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                        crate::SafetyCheck::EntrySize,
+                        "entry size",
+                    )));
                 }
                 let (data, _next) = open
                     .read()
                     .map_err(|e| ArchiveError::Malformed(format!("cbr read: {e}")))?;
+                self.rar.finish_pass(&self.source)?;
                 return Ok(data);
             }
             cursor = open
@@ -272,6 +381,14 @@ impl ComicArchive for Cbr {
         Err(ArchiveError::Malformed(format!("entry not found: {name}")))
     }
     fn path(&self) -> &Path {
-        &self.path
+        self.source.display_path()
+    }
+}
+
+impl Cbr {
+    /// Whether this reader went through the checked display path rather
+    /// than `/proc/self/fd` (see the module docs). For tests.
+    pub fn uses_checked_path(&self) -> bool {
+        self.rar.check
     }
 }

@@ -16,7 +16,6 @@
 use crate::cbz_write::RebuildSummary;
 use crate::{ArchiveError, ArchiveLimits};
 use std::fs::File;
-use std::path::Path;
 use tar::{Builder, Header};
 
 /// Write a fresh CBT from materialized pages + preserved sidecars.
@@ -29,11 +28,10 @@ use tar::{Builder, Header};
 pub fn write_pages(
     pages: Vec<(String, Vec<u8>, i64)>,
     extras: Vec<(String, Vec<u8>, i64)>,
-    dst_path: &Path,
+    dst: File,
     limits: ArchiveLimits,
 ) -> Result<RebuildSummary, ArchiveError> {
-    let file = File::create(dst_path)?;
-    let mut builder = Builder::new(file);
+    let mut builder = Builder::new(dst);
     let mut summary = RebuildSummary::default();
 
     for (i, (ext, bytes, _level)) in pages.iter().enumerate() {
@@ -73,11 +71,10 @@ pub fn write_pages(
 /// composed `ComicInfo.xml` + `MetronInfo.xml`.
 pub fn write_entries(
     entries: Vec<(String, Vec<u8>)>,
-    dst_path: &Path,
+    dst: File,
     limits: ArchiveLimits,
 ) -> Result<RebuildSummary, ArchiveError> {
-    let file = File::create(dst_path)?;
-    let mut builder = Builder::new(file);
+    let mut builder = Builder::new(dst);
     let mut summary = RebuildSummary::default();
 
     for (name, bytes) in &entries {
@@ -109,14 +106,16 @@ fn append(builder: &mut Builder<File>, name: &str, bytes: &[u8]) -> Result<(), A
 
 fn enforce(summary: &RebuildSummary, limits: ArchiveLimits) -> Result<(), ArchiveError> {
     if summary.uncompressed_bytes > limits.max_total_bytes {
-        return Err(ArchiveError::CapExceeded(
+        return Err(ArchiveError::CapExceeded(crate::Cap::new(
+            crate::SafetyCheck::TotalSize,
             "rebuild output exceeded max_total_bytes",
-        ));
+        )));
     }
     if summary.entries_written > limits.max_entries {
-        return Err(ArchiveError::CapExceeded(
+        return Err(ArchiveError::CapExceeded(crate::Cap::new(
+            crate::SafetyCheck::EntryCount,
             "rebuild output exceeded max_entries",
-        ));
+        )));
     }
     Ok(())
 }
@@ -137,9 +136,15 @@ mod tests {
             ("png".to_string(), b"\x89PNG\r\n\x1a\nPAGETWO".to_vec(), 0),
         ];
         let extras = vec![("ComicInfo.xml".to_string(), b"<ComicInfo/>".to_vec(), 0)];
-        write_pages(pages, extras, dst.path(), ArchiveLimits::default()).unwrap();
+        write_pages(
+            pages,
+            extras,
+            std::fs::File::create(dst.path()).unwrap(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
 
-        let mut c = Cbt::open(dst.path(), ArchiveLimits::default()).unwrap();
+        let mut c = Cbt::open_path_unchecked(dst.path(), ArchiveLimits::default()).unwrap();
         let names: Vec<String> = c.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, vec!["p0001.png", "p0002.png"]);
         assert_eq!(
@@ -169,10 +174,15 @@ mod tests {
             ("CoMet.xml".to_string(), b"<comet/>".to_vec()),
             ("ComicInfo.xml".to_string(), b"<ComicInfo/>".to_vec()),
         ];
-        let summary = write_entries(entries, dst.path(), ArchiveLimits::default()).unwrap();
+        let summary = write_entries(
+            entries,
+            std::fs::File::create(dst.path()).unwrap(),
+            ArchiveLimits::default(),
+        )
+        .unwrap();
         assert_eq!(summary.entries_written, 4);
 
-        let mut c = Cbt::open(dst.path(), ArchiveLimits::default()).unwrap();
+        let mut c = Cbt::open_path_unchecked(dst.path(), ArchiveLimits::default()).unwrap();
         // Names are verbatim; the reader's natural sort still orders pages.
         let names: Vec<String> = c.pages().iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, vec!["Issue/x-0001.png", "Issue/x-0002.png"]);
@@ -188,7 +198,13 @@ mod tests {
             max_total_bytes: 1024,
             ..ArchiveLimits::default()
         };
-        let err = write_pages(pages, Vec::new(), dst.path(), limits).unwrap_err();
+        let err = write_pages(
+            pages,
+            Vec::new(),
+            std::fs::File::create(dst.path()).unwrap(),
+            limits,
+        )
+        .unwrap_err();
         assert!(matches!(err, ArchiveError::CapExceeded(_)));
     }
 }

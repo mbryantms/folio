@@ -543,6 +543,42 @@ pub fn visible_issues_select(acl: &VisibleLibraries) -> sea_orm::Select<issue::E
     select
 }
 
+/// One issue through [`visible_issues_select`]: `Some(row)` only when it
+/// is live (not soft-removed, live parent series) and inside the caller's
+/// grant + cap. The lookup for every new write keyed on one issue
+/// (progress, markers, ratings, notes, …): a `None` must answer exactly
+/// like an unknown id. Existing rows on content removed later are kept.
+pub async fn visible_issue(
+    db: &sea_orm::DatabaseConnection,
+    acl: &VisibleLibraries,
+    issue_id: &str,
+) -> Result<Option<issue::Model>, sea_orm::DbErr> {
+    visible_issues_select(acl)
+        .filter(issue::Column::Id.eq(issue_id))
+        .one(db)
+        .await
+}
+
+/// [`visible_issue`] as a yes / no for a caller that already loaded the
+/// row (the protocol shims answer an unknown id in their own shape). A
+/// lookup error reads as not visible (fail closed).
+pub async fn issue_writable(app: &AppState, user: &CurrentUser, issue_id: &str) -> bool {
+    let acl = for_user(app, user).await;
+    matches!(visible_issue(&app.db, &acl, issue_id).await, Ok(Some(_)))
+}
+
+/// [`visible_issue`]'s series twin, through [`visible_series_select`].
+pub async fn visible_series(
+    db: &sea_orm::DatabaseConnection,
+    acl: &VisibleLibraries,
+    series_id: Uuid,
+) -> Result<Option<series::Model>, sea_orm::DbErr> {
+    visible_series_select(acl)
+        .filter(series::Column::Id.eq(series_id))
+        .one(db)
+        .await
+}
+
 /// [`visible_issues_select`] for hand-written SQL over an `issues` row
 /// aliased `alias` (e.g. `i` in `markers m JOIN issues i ON ...`): not
 /// soft-removed, a live parent series, and the caller's grant + cap.
@@ -720,6 +756,63 @@ pub async fn issue_allowed<T: IssueAclFields>(
 pub async fn series_visible(app: &AppState, user: &CurrentUser, row: &series::Model) -> bool {
     let acl = for_library(app, user, row.library_id).await;
     acl.series_ok(row.library_id, row.age_rating.as_deref())
+}
+
+/// The series-page gate: grant + cap, and a soft-removed series is gone
+/// for everyone but an admin (who can still open it to restore or confirm
+/// it from the Removed tab). Every route keyed on one series that a
+/// reader can call (`/series/{slug}` and its metadata, external-id,
+/// provider-range and reader-preference sub-resources) answers through
+/// this, so a `false` is the same 404 an unknown slug gets.
+pub fn series_page_ok(acl: &VisibleLibraries, user: &CurrentUser, row: &series::Model) -> bool {
+    if row.removed_at.is_some() && user.role != UserRole::Admin {
+        return false;
+    }
+    acl.series_ok(row.library_id, row.age_rating.as_deref())
+}
+
+/// [`series_page_ok`] with the single-library grant lookup.
+pub async fn series_page_visible(app: &AppState, user: &CurrentUser, row: &series::Model) -> bool {
+    if row.removed_at.is_some() && user.role != UserRole::Admin {
+        return false;
+    }
+    series_visible(app, user, row).await
+}
+
+/// The issue-page twin of [`series_page_ok`] for read routes keyed on a
+/// `(series, issue)` pair: the series gate (a soft-removed series is gone
+/// for non-admins), then the issue's own grant + cap. A soft-removed issue
+/// in a live series still reads, as its detail page does: it is history,
+/// not hidden. Writes refuse it separately.
+pub async fn issue_page_allowed<T: IssueAclFields>(
+    app: &AppState,
+    acl: &VisibleLibraries,
+    user: &CurrentUser,
+    series_row: &series::Model,
+    issue_row: &T,
+) -> bool {
+    if !series_page_ok(acl, user, series_row) {
+        return false;
+    }
+    issue_allowed(app, acl, issue_row).await
+}
+
+/// [`issue_page_allowed`] for a route addressed through a `(series, issue)`
+/// slug pair whose handler holds only the issue row: loads the parent
+/// series. A lookup error or a missing series reads as not allowed.
+pub async fn issue_route_visible<T: IssueAclFields>(
+    app: &AppState,
+    user: &CurrentUser,
+    issue_row: &T,
+) -> bool {
+    let Ok(Some(series_row)) = series::Entity::find_by_id(issue_row.acl_series_id())
+        .one(&app.db)
+        .await
+    else {
+        return false;
+    };
+    let acl = for_library(app, user, issue_row.acl_library_id()).await;
+    issue_page_allowed(app, &acl, user, &series_row, issue_row).await
 }
 
 /// Drop issues the caller can't see ([`VisibleLibraries::issue_ok`]),

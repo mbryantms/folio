@@ -1765,3 +1765,27 @@ html.theme-reveal::view-transition-group(root) {
 .queue-indeterminate {
   animation: queue-indeterminate 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
+
+/* Sign-in "Signing you in…" card: its "Sign in instead" way out appears
+ * after a few seconds by CSS alone, so a failed hydration never strands the
+ * visitor. Hidden (not just transparent) until then, so it can't be focused
+ * or clicked early. Reduced motion: shown at once. */
+@keyframes delayed-reveal {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+.delayed-reveal {
+  animation: delayed-reveal 0s linear 4s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .delayed-reveal {
+    animation: none;
+  }
+}
+[data-motion="reduced"] .delayed-reveal {
+  animation: none;
+}

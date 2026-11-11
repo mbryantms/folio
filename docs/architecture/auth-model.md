@@ -27,7 +27,7 @@ Verified against the code at `ed5d9019` on 2026-11-10.
 
 ## Token shapes
 
-### Access token (JWT, 24 h default)
+### Access token (JWT, 1 h default)
 
 ```json
 {
@@ -43,35 +43,46 @@ Verified against the code at `ed5d9019` on 2026-11-10.
 
 `tv` (token_version) is the user's `users.token_version` at issuance. Mismatch → 401, force re-auth.
 
-**TTL: 24 hours** (`COMIC_JWT_ACCESS_TTL`, default `24h`). This is longer than typical JWT advice but deliberate: Folio is a content-consumption app, and being kicked back to sign-in mid-issue is friction with no proportional security win. Revocation is still prompt because:
+**TTL: 1 hour** (`auth.jwt.access_ttl` under **Admin → Auth → Tokens**; `COMIC_JWT_ACCESS_TTL` seeds it on first boot; built-in default `1h`, `24h` before this version, and an install that saved a value keeps it). The access token carries no session id and is not looked up per request, so it cannot be recalled: signing out revokes the refresh session, but an access token already issued keeps working until its `exp`. The short TTL bounds that window. Other revocation is prompt:
 
-- The auth extractor re-fetches the user row on every request, so admin disable (`token_version` bump) blocks the next request.
-- The refresh cookie rotates on every use, so an exfiltrated access cookie is invalidated at the next `/auth/refresh` regardless of its `exp`.
-- Worst-case window for a stolen access cookie is the full 24h, but the attacker would also need the refresh cookie or the CSRF cookie to do anything destructive.
+- The auth extractor re-fetches the user row on every request, so admin disable (state change plus `token_version` bump) blocks the next request.
+- A password change or reset and "sign out everywhere" bump `token_version`, which voids every access token at once.
 
-Operators wanting tighter defaults can set `COMIC_JWT_ACCESS_TTL=15m`. The web client transparently calls `/auth/refresh` on 401 so the user-visible experience is unchanged — only `/auth/refresh` QPS increases.
+Expiry is normally not visible to the web user. Signed-in pages renew the access token before it lapses ([proactive refresh](#refresh)); a request that still meets an expired cookie gets a 401, and `apiFetch` then calls `POST /auth/refresh` once and retries the request once; a full page load that lands on `/sign-in` because the access cookie expired renews the session there and returns to the page. What can still sign a user out is listed under [Refresh](#refresh).
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 Algorithm: `EdDSA` (Ed25519). Server holds the keypair under `/data/secrets/jwt-ed25519.key`. The audience is hardcoded to `folio`; verification also accepts the legacy `comic-reader` audience from before the rename.
 
-### Refresh token (random opaque, 30 d default)
+### Refresh token (random opaque, 30 d sliding, 90 d maximum)
 
 - 32 bytes, base64url. Never inspectable.
 - SHA-256 hash stored in `auth_sessions.refresh_token_hash`.
-- Rotated on every use: the session row's hash is overwritten in the same transaction.
+- Rotated on every use by one conditional `UPDATE` (see [Refresh](#refresh)); single-use.
 - `auth_sessions.ip` + `.user_agent` recorded on issue and refresh (M1) — used by `/me/sessions` (M5) and the audit log. Not enforced as a binding (proxy IPs change).
-- `COMIC_JWT_REFRESH_TTL` controls the cookie lifetime; validated at boot to be `>= access TTL`.
+- Sliding expiry: `auth.jwt.refresh_ttl` (default `30d`, `COMIC_JWT_REFRESH_TTL` seeds it) sets the cookie lifetime and moves `expires_at` forward on every refresh; validated to be `>= access TTL`.
+- Absolute age: `auth.session.max_age` (default `90d`, floor `1d`, `>=` access TTL, at most `3650d` like the access and refresh TTLs; **Admin → Auth → Tokens**). A session cannot be refreshed past `created_at + max age` however often it is used; `expires_at`, and the Max-Age of the refresh and CSRF cookies, are clamped to that bound at sign-in and on every refresh. `/me/sessions` does not list a session past it. Change it in the admin UI. `COMIC_SESSION_MAX_AGE` is also read, through the generic `COMIC_` env prefix, as the baseline while no row is saved; a saved row wins (see [runtime-configuration.md](../dev/runtime-configuration.md)).
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ## Cookie shape (web)
 
 ```
-__Host-comic_session=<jwt>;     HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=86400
-__Host-comic_csrf=<csrf>;                 Secure; SameSite=Lax; Path=/; Max-Age=86400
+__Host-comic_session=<jwt>;     HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600
+__Host-comic_access_exp=<exp>.<ttl>;      Secure; SameSite=Lax; Path=/; Max-Age=3600
+__Host-comic_csrf=<csrf>;                 Secure; SameSite=Lax; Path=/; Max-Age=2592000
 __Host-comic_refresh=<rt>;      HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000
 ```
 
+Max-Age values shown for the defaults. The session and access-expiry cookies live for the access TTL. The refresh cookie lives for the refresh TTL clamped to what is left of the session's absolute age, never below 1 s when the refresh was accepted. The CSRF cookie gets max(access TTL, that same clamped value) from one helper (`cookies::csrf_max_age`), so it never expires before the access cookie; handlers that don't load the session row (`/auth/me`, preferences, account updates) use the unclamped refresh TTL there.
+
+`__Host-comic_access_exp` holds `<exp>.<ttl>`: the access token's `exp` (epoch seconds, server clock) and its lifetime in seconds. It is **not** HttpOnly, so the web client can see when the token lapses without reading the token. It holds no secret. It is set wherever the session cookie is set (local login and registration, refresh, the OIDC callback) and cleared with it (logout, account deletion).
+
 All auth cookies are host-only. The refresh path is `/` (not the narrower `/auth/refresh`) because the Next dev proxy rewrites `/api/auth/refresh` → `/auth/refresh` and browsers compare the cookie's `Path` against the original request URL — a narrower path made the cookie omit from the dev refresh call.
 
-The CSRF cookie is intentionally **not** HttpOnly — JS reads it for the `X-CSRF-Token` header (double-submit). The session cookie is HttpOnly.
+The CSRF cookie is intentionally **not** HttpOnly — JS reads it for the `X-CSRF-Token` header (double-submit). The session cookie is HttpOnly. The CSRF cookie outlives the access cookie (see above): `POST /auth/refresh` is CSRF-checked, so it must still be there after the access cookie expired. It is not a credential on its own, and sign-out clears it.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ## Flows
 
@@ -86,12 +97,13 @@ verify argon2id(password + pepper, hash); user must be active
    ↓
 INSERT auth_sessions (refresh_token_hash) VALUES (sha256(rt))
    ↓
-mint access (access TTL, 24h default) → set __Host-comic_session
+mint access (access TTL, 1h default) → set __Host-comic_session
 mint refresh (30d) → set __Host-comic_refresh
-generate csrf       → set __Host-comic_csrf, return in body
+set __Host-comic_access_exp (access expiry; access TTL)
+generate csrf       → set __Host-comic_csrf (refresh lifetime), return in body
 ```
 
-Verified against the code at `1c51a486` on 2026-11-10.
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### OIDC login (PKCE)
 
@@ -137,23 +149,41 @@ Verified against the code at `59714b1f` on 2026-11-10.
 ### Refresh
 
 ```
-POST /auth/refresh  (with __Host-comic_refresh cookie)
+POST /auth/refresh  (with __Host-comic_refresh cookie; CSRF-checked)
    ↓
-look up auth_sessions WHERE refresh_token_hash = sha256(rt); refuse (401) if missing, revoked or expired
-   ↓
-UPDATE that row with the rotated refresh hash, last_used_at, expiry, IP, user agent;
-user must be active, else roll back (401); one transaction
+one transaction:
+  UPDATE auth_sessions
+     SET refresh_token_hash = sha256(new rt), last_used_at = now(),
+         expires_at = LEAST(now() + refresh TTL, created_at + max age),
+         ip, user_agent (kept when the request has none)
+   WHERE refresh_token_hash = sha256(rt) AND revoked_at IS NULL
+     AND expires_at > now() AND created_at + max age > now()
+  RETURNING id, user_id, created_at
+  exactly one row, else 401 auth.invalid
+  user must be active, else roll back (401)
    ↓
 mint new access; set new cookies
+  (refresh Max-Age = max(1 s, min(refresh TTL, created_at + max age - now));
+   CSRF Max-Age = max(access TTL, that clamp))
 ```
 
-If the lookup misses (an already-rotated token replayed, a race between two tabs, an expired or unknown token), the request gets 401 `auth.invalid` and nothing else happens: the server cannot tell which user the old hash belonged to, so no other session is revoked. Refresh-token reuse detection is not implemented. To cut off every device, revoke all sessions (`POST /me/sessions/revoke-all`, which also bumps `token_version`); a password change revokes every session except the current one.
+The `WHERE` is evaluated under the row lock, so the rotation is atomic: of two concurrent refreshes carrying the same token, one updates the row and the other then finds the rotated hash, matches nothing and gets 401 `auth.invalid`. If nothing matches (an already-rotated token replayed, the loser of such a race, an expired, revoked or unknown token) the request gets 401 `auth.invalid` and only one more thing can happen: when the row exists, is not revoked and is past its maximum age, it is marked revoked (so `/me/sessions` stops listing it). The server cannot tell which user an unknown hash belonged to, so no other session is revoked. Refresh-token reuse detection is not implemented.
 
-Verified against the code at `1c51a486` on 2026-11-10.
+The rotation commits before the response leaves the server. If that response is lost (the connection drops, the tab is closed mid-request), the browser keeps the old refresh cookie, which is now dead, and the next refresh is refused: that session is over and the user signs in again. A short grace window accepting the previous token is a possible later change; it is not implemented. To cut off every device, revoke all sessions (`POST /me/sessions/revoke-all`, which also bumps `token_version`); a password change revokes every session except the current one.
+
+**Proactive refresh.** Signed-in pages mount a scheduler ([`web/lib/api/session-refresh.ts`](../../web/lib/api/session-refresh.ts), mounted once by the root layout for a signed-in request, inert on the auth pages). It reads `__Host-comic_access_exp` and refreshes at about 80 % of the remaining lifetime, never later than 30 s before expiry (with the 1 h default: about 48 min after each renewal). It re-arms after every refresh, its own or another tab's, when the page becomes visible again and when the browser comes back online; a page that becomes visible with the token near or past expiry refreshes at once. Without the CSRF cookie (signed out) it arms nothing. The expiry is on the server's clock, so every comparison uses the client clock plus an offset learned from the `Date` header of the refresh response and of any response through `apiFetch` (zero until one arrives). Whatever the clocks say, a proactive refresh (the scheduler's or `ensureFreshSession()`'s) never starts within max(60 s, 10 % of the token lifetime from the cookie) of the previous one in that tab; a refresh with no answer is retried after 30 s, doubling to 10 min, reset when the page becomes visible or the browser comes back online. Requests the 401 retry cannot cover call `ensureFreshSession()` first, which resolves at once when the token is fresh and otherwise waits for a refresh (promptly when offline or on a network failure): the reader's page-image retry and Tap to retry, a prefetch batch near expiry, and one retry of an offline-download asset that got 401.
+
+**Two tabs.** Tabs share cookies, so the tab that loses a refresh race already holds the winner's new tokens. The web client ([`web/lib/api/auth-refresh.ts`](../../web/lib/api/auth-refresh.ts)) serializes refreshes across tabs with the Web Locks API (`folio:auth-refresh`). Whether another tab refreshed is read from the access-expiry cookie: it counts only when the cookie is present, later than the value this tab saw before it tried, and in the future. A missing cookie never counts (sign-out clears it), and a changed CSRF cookie alone means nothing. Inside the lock, a tab that sees the moved expiry skips its own refresh. Without Web Locks, a 401 from `/auth/refresh` counts as a lost race when the expiry moved, checked again after 300 ms; either way the tab retries its original request once with the new cookies. Only when the expiry did not move is the session treated as gone, and the client then expires the CSRF and access-expiry cookies itself so nothing keeps retrying a dead session. A refresh that times out (15 s), fails on the network, gets a 5xx or gets a 403 (a CSRF failure, which says nothing about the session) is "no answer": nothing is signed out and no private state is cleared.
+
+**Full page loads.** Server-rendered pages cannot refresh. A page load whose access cookie expired is redirected to `/sign-in?next=…`; when a CSRF cookie is present (a session may exist) and the URL does not carry `signed_out=1`, the sign-in page first shows "Signing you in…" (rendered on the server, so the form does not flash; the card carries a `<noscript>` link and a "Sign in instead" link that CSS reveals after 4 s, or at once with reduced motion, both to `/sign-in?resume=0`, which renders the form without resuming and without a banner), calls the same refresh and, on success, returns to `next`. Loop guard: every attempt, successful or not, is stamped in sessionStorage and the page does not try again within 30 s; without sessionStorage it tries at most once per page load. A refused refresh also expires the CSRF cookie, so the next visit does not try at all.
+
+**What can still sign a user out:** sign-out or "sign out everywhere"; a session past its maximum age, expired (unused for the refresh TTL) or revoked; an account disabled; a password change on another session; a lost refresh response (above); two separate clients sharing one refresh token; and a browser that stays asleep or offline past the refresh lifetime.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ### CSRF (double-submit)
 
-- Server sets `__Host-comic_csrf=<32B base64>` on `/auth/me`.
+- A new `__Host-comic_csrf=<32B base64>` value is minted at sign-in, registration, refresh and the single sign-on callback. `/auth/me` mints one only when the cookie is absent; preferences and account updates keep the caller's value and only extend its lifetime, so no request already in flight is failed by a rotation.
 - Client reads cookie, includes value as `X-CSRF-Token` on POST/PUT/PATCH/DELETE.
 - Server compares cookie value to header; mismatch = 403.
 - Bearer-authenticated requests (mobile, API, OPDS-Bearer) skip CSRF entirely — there's no ambient credential to forge.
@@ -205,8 +235,10 @@ Verified against the code at `ffaa3249` on 2026-11-10.
 
 ### Logout
 
-- `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`) and clears all three cookies; for an OIDC session it also redirects through the issuer's `end_session_endpoint` when one is published. It does not touch other sessions or `token_version`.
+- `POST /auth/logout` revokes the current refresh row (`UPDATE … SET revoked_at = now()`) and clears the auth cookies (session, access expiry, CSRF, refresh); for an OIDC session it also redirects through the issuer's `end_session_endpoint` when one is published. It does not touch other sessions or `token_version`, so a copy of the access token taken before sign-out stays valid until it expires (at most the access TTL, 1 h by default).
 - "Log out everywhere" is a separate call, `POST /me/sessions/revoke-all`: it revokes every refresh row for the user and bumps `users.token_version`.
+
+Verified against the code at `5a1d2f64` on 2026-11-10.
 
 ## Library ACL and the age-rating cap
 
@@ -397,6 +429,121 @@ similar-series reasons (see
 Admins and callers whose grants hide nothing keep the rollup queries
 unchanged.
 
+### Hidden and missing answer alike
+
+Two cases are kept apart.
+
+**Hidden by access.** To a caller who may not see an object (a library
+they hold no grant on, a series or issue above their cap, another user's
+personal list, view, collection, batch or marker), the object does not
+exist: every read and write route answers exactly as it does for an id
+that was never issued, with the same status, error code and body. A 403
+is kept only for an action the caller may not take on something they can
+see (a reader editing a shared reading list or a system view, a reader
+calling an admin-only route). Admins have no grant or cap limits.
+
+**Soft-removed content** (the file went missing; it may be restored, and
+its history is kept) is not secret:
+
+- A removed series answers not-found to non-admins on every route
+  addressed through its slug or id, exactly as its page does
+  (`access::series_page_ok` / `series_page_visible`), and so do the issue
+  routes addressed through the series slug (`/series/{s}/issues/{i}` and
+  its sub-routes, `access::issue_page_allowed` /
+  `issue_route_visible`). Admins still open it to restore or confirm the
+  removal. Routes addressed by an issue id alone (page bytes, thumbnails,
+  covers, OCR, the reader's marker overlay, page overrides, the Komga
+  book, the issue and marker permalinks) keep serving its issues as
+  history.
+- A removed issue in a live series keeps its reads: its detail page,
+  cached thumbnails, the reader-side data for it (the reader's marker
+  overlay, page overrides, the issue-level metadata and external-id
+  reads) and the reading log, which lists such issues on purpose.
+- Nobody, admins included, makes new personal writes on removed content:
+  no new progress through any protocol, marker, marker edit, rating,
+  closing note, reading session, page override, collection entry, reader
+  preference or completion override. These key on `access::visible_issue`
+  / `access::visible_series` (the `visible_issues_select` /
+  `visible_series_select` predicates). Deleting one's own rows stays
+  possible (`DELETE` of a marker, of page overrides, of reader
+  preferences, and clearing a completion override). Rows written before
+  the removal stay and come back with a restore.
+- Admin curation of removed rows is deliberate and stays allowed: issue
+  and series `PATCH`, external-id edits, metadata apply and series
+  relationships are how a removed row is prepared for a restore.
+- Two jobs a reader can start keep their earlier behaviour on a removed
+  issue in a live series: a metadata search and OCR.
+
+A caller's own markers follow the two cases. On content hidden by access
+the marker list, count, search, tag index and permalink leave them out;
+reading or editing one by id answers like an unknown marker; deleting
+one by id still works. On removed content the marker surfaces keep
+their earlier behaviour: the list, count, search and tags leave
+markers on removed issues out, and the reader's overlay for the issue
+still shows them.
+
+The notes export (`/me/markers/export`) carries every marker and closing
+note the user owns. Removed content keeps its series and issue identity,
+`available: false`, no jump URL. Content hidden by access names nothing:
+its markers and notes sit in one anonymous "No longer available" group
+with only the fields the user wrote. The account export (`/me/export`)
+blanks the names (series name, year, issue number, library slug) of
+content hidden by access and keeps ids and content hashes for a
+re-import; removed content keeps its names.
+
+A CBL saved view may reference only a reading list the caller owns or a
+shared one; any other list id is refused like a nonexistent one. A view
+row written before that check that points at someone else's list reads
+like a view whose list is gone: no list id, no year range, no covers, no
+Up Next walk, no "appears in" entry, no OPDS pin, and the list itself
+answers 404.
+
+A metadata batch is readable by admins and by its creator only. A
+creator who has since lost the admin role still sees every child of
+their own batch, including children named past a cap set later; such a
+batch can only have been created while they were an admin.
+
+Routes whose answer changed (reader = non-admin; "hidden" = outside the
+grant or above the cap):
+
+| Route | Case | Before | After |
+|---|---|---|---|
+| `POST /me/progress/bulk` | issue in a soft-removed series | written | counted in `not_found` (`forbidden` is always 0) |
+| `POST /me/progress/series-bulk` | soft-removed series | written | counted in `not_found_series` |
+| `POST /series/{slug}/progress`, `…/progress-matching` | soft-removed series | 200 | 404 `not_found` |
+| `POST /progress`, OPDS `PUT …/progress`, KOReader sync `PUT`, OPDS Progression `PUT`, Komga `PATCH` | soft-removed issue or series | written | the route's own unknown-id answer |
+| `POST /me/markers`, `POST /me/markers/restore` | soft-removed issue or series | written | 404 / counted in `skipped` |
+| `PATCH /me/markers/{id}` | another user's marker; own marker on a hidden or removed issue | 403 `forbidden`; 200 | 404 `not_found` (on a removed issue this is a refused write: the reader's overlay still shows the marker) |
+| `DELETE /me/markers/{id}` | another user's marker | 403 `forbidden` | 404 `not_found` |
+| `GET /me/markers/export` | own marker or closing note on a hidden issue | exported with names | exported in the anonymous group |
+| `GET /me/export` | rows on a hidden issue or series | names | ids and content hash only |
+| `GET /me/series/{id}/reader-prefs` | hidden series, removed series for a reader; unknown id | 200 | 404 `not_found` |
+| `PUT /me/series/{id}/reader-prefs` | hidden series; removed series, any role | 200 | 404 `not_found` |
+| `PUT /me/series/{id}/completion-prefs` | removed series, any role, setting an override | 200 | 404 `not_found` |
+| `GET /series/{slug}/external-ids`, `…/provider-ranges`, `…/provider-coverage`, `…/metadata/{search,candidates,coverage-hints,status,lookup,proposed-diff,composite-diff}` | hidden series | 403 `auth.forbidden` | 404 `not_found` |
+| `…/metadata/overview`, `…/metadata/issues`, `/series/{slug}/collection`, `…/issues`, `…/resume`, `…/similar`, `…/relationships`, `…/appearances`, `…/same-universe` | soft-removed series (reader) | 200 | 404 `not_found` |
+| `GET /series/{slug}/issues/{issue}/external-ids` and the issue-level metadata routes | hidden series | 403 `auth.forbidden` | 404 `issue.not_found` |
+| the same | soft-removed series (reader) | 200 | 404 `issue.not_found` |
+| `GET /series/{s}/issues/{i}`, `…/metadata-overview`, `…/next`, `…/prev`, `…/health-issues`, `…/appearances` | soft-removed series (reader) | 200 | 404 `not_found` |
+| `GET /metadata/batch/{id}` | another user's batch | 403 `forbidden`, or 200 with a library grant | 404 `not_found` |
+| `PUT /series/{slug}/rating` | soft-removed series | 200 | 404 `not_found` |
+| `PUT /series/{s}/issues/{i}/rating`, `…/note` | soft-removed issue or series | 200 | 404 `not_found` |
+| `PUT /me/issues/{id}/page-overrides`, `POST /me/reading-sessions` | soft-removed issue or series | 200 | 404 `not_found` |
+| `DELETE /me/issues/{id}/page-overrides` | hidden or unknown issue | 404 | 204 (only the caller's own row is removed) |
+| Every `/series/{s}/issues/{i}/…` route | unknown series slug | 404 "series not found" | 404 "issue not found" (as for a hidden series) |
+| `POST /me/saved-views` (`kind: cbl`) | another user's list; unknown list | 500 on an unknown id | 422 `validation`, field `cbl_list_id`, for both |
+| `PATCH`, `DELETE /me/saved-views/{id}` and its pin, sidebar, icon, results and issue-results routes | another user's view | 403 `forbidden` | 404 `not_found` (a system view stays 403) |
+| `/me/collections/{id}` and every sub-route | another user's collection | 403 `forbidden` | 404 `not_found` |
+| `/me/cbl-lists/{id}` and every sub-route | another user's list | 403 `forbidden` | 404 `not_found` (a reader writing a shared list stays 403) |
+| `GET /opds/pse/…` page stream | hidden issue | 403 `library_access_denied` | 404 `not_found` |
+| `GET` filter-option pickers with `?library=` | hidden library | 403 `forbidden` | 404 `not_found` |
+| `GET /me/saved-views`, `/me/view-covers`, appearances, starter lists, Up Next / Prev Up `?cbl=`, OPDS pins | CBL view row pointing at another user's list | list id, year range, covers, list name, walk, pin | as if the list were gone |
+
+Regression suite: `crates/server/tests/denied_and_missing_alike.rs`
+compares each hidden request with the same request on a random unknown
+id, byte for byte, for a reader without a grant and a capped reader,
+and checks the soft-removed rules for a reader with a grant.
+
 Regression suite: `crates/server/tests/age_rating_cap.rs` (a `Teen`-capped
 user against `Teen` / `Mature 17+` / unrated series, an issue-level
 override, a series rated above its issues, the derived series rating with
@@ -417,6 +564,6 @@ can be re-introduced with real semantics later.
 |---|---|
 | Loop: cookie set, immediately rejected | `COMIC_PUBLIC_URL` doesn't match the host the cookie was set on (`__Host-` requires exact host). |
 | OIDC callback 401 with valid token | Clock skew > 60 s; check NTP on the app host. |
-| One tab or device signed out unexpectedly | Its refresh token was already rotated by another request (two tabs refreshing at once) or the session expired or was revoked; `/auth/refresh` answers 401 for that token only. |
+| One tab or device signed out unexpectedly | The session expired, reached its maximum age (`auth.session.max_age`, 90 d) or was revoked; `/auth/refresh` answers 401 for that token only. Two tabs of one browser refreshing at once do not cause this (see [Refresh](#refresh)); two separate clients sharing one refresh token do. |
 | All sessions invalidated | A password reset, an admin disable, or "revoke all sessions" (each bumps `token_version` and revokes sessions; a self-serve password change does the same but keeps the current session). Refresh-token replay never does this. |
 | OIDC user marked unverified | `email_verified` claim missing from the issuer; fix the Authentik mapping (`docs/install/authentik.md`) or set the trust flag. |

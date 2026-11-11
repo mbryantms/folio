@@ -236,6 +236,7 @@ async fn build(
         "SELECT l.catalog_source_id, l.catalog_path, v.id AS view_id \
          FROM saved_views v JOIN cbl_lists l ON l.id = v.cbl_list_id \
          WHERE v.kind = 'cbl' AND (v.user_id = $1 OR v.user_id IS NULL) \
+           AND (l.owner_user_id IS NULL OR l.owner_user_id = $1) \
            AND l.catalog_source_id IS NOT NULL AND l.catalog_path IS NOT NULL \
          ORDER BY (v.user_id IS NULL), v.created_at",
         [user.id.into()],

@@ -105,6 +105,125 @@ seed assumes the default 2,500 series).
 tree. The "before" numbers below came from an `origin/main` build run
 against the same database.
 
+### The weekly gate
+
+[`.github/workflows/perf-plans.yml`](../../.github/workflows/perf-plans.yml)
+runs the full harness against `main` every Monday at 05:23 UTC, and on
+demand from the Actions tab (**Query plans (weekly)** → **Run workflow**).
+It never runs on pull requests or pushes: a run takes too long for a
+per-PR check, and a plan regression is rarely urgent enough to block a
+merge.
+
+- **Scale.** The default library, 2,500 series × 20 issues (50,000
+  issues), with the default 5,000-row gate. The two are chosen together:
+  at a smaller scale the issue-scale junction tables (`series_characters`
+  is about 7,800 rows here) fall under the threshold and stop being gated,
+  and a lower threshold would gate `series` (2,500 rows), where a scan is
+  often the right plan. The full run fits a standard hosted runner (the
+  fixture is about 200 MB and the debug-build scan a few minutes); the
+  server build reuses the `rust-test` dependency cache.
+- **Where the result goes.** Every run uploads the report
+  (`summary.md`, `plans/`, the server and harness logs) as the
+  `perf-plans-<run id>` artifact, and the job summary shows `summary.md`.
+  A red run opens or rewrites one issue, **"Query-plan gate: attention
+  needed"** (label `performance`), listing the flagged endpoints. It is
+  commented on only when the set of flagged plans changes, and closed by
+  the first green run. A run where the harness itself failed (build,
+  container, scan) uses the same issue and says so.
+- **When a plan is flagged,** read `plans/<label>.txt` from the artifact.
+  If the scan is a regression, fix the query or the index. If a full scan
+  is the right plan, add a line to
+  [`expected_seqscans.txt`](../../scripts/perf/expected_seqscans.txt):
+  `label | table | reason`, where the reason says why no narrower plan
+  exists (a whole-table aggregate, or a filter that matches the whole
+  single-library fixture). An entry exempts that one label and table
+  only, so the same scan on any other endpoint still fails.
+- **By hand**, `just perf-explain` runs the same thing locally (the
+  section above); exit status 1 is the gate. To check a new expected entry
+  without a new scan, keep the containers from one run (`PERF_KEEP=1`)
+  and rerun against them.
+
+The reviewed exceptions added with the gate (audit 2026-11, P-06):
+`library-stats-all` and `library-stats-one` (one aggregate pass over the
+issue rows; `file_size` is in no index, and the one-library filter matches
+the whole single-library fixture) and `similar-large-cold |
+series_characters` (the same all-series candidate set as the existing
+`series_tags` entry).
+
+**Entity indexes (P-01, fixed).** The same change put the A–Z indexes on
+the harness (`characters-*`, `teams-list`, `locations-list`, `creators-*`,
+`people-search` in `endpoints.txt`; `arcs-*` in `endpoints-m7.txt`). They
+used to seq-scan their whole junctions on every request, the second page
+and the `q` filter included (`issue_characters`, 150,000 rows, plus
+`series_characters`; `issue_credits`, 100,000 rows, plus `series_credits`):
+each request aggregated every visible appearance (`WITH hits AS …`) before
+the keyset picked one page, so the cost grew with the library. The
+queries now follow the page:
+
+- **Characters / teams / locations / arcs / publishers**
+  (`entity_pages::list_page`, also the OPDS navigation feeds): walk the
+  entity table in `(lower(name), slug)` order (`<table>_name_order_idx`,
+  migration `m20271112_000001`), keep a row when a `CROSS JOIN LATERAL
+  (… LIMIT 1)` over its membership arms finds a visible appearance (FK
+  arm and name-fallback arm separately, each on its own index), stop at
+  `limit + 1`, then count series / issues for those rows only. The probe
+  is a lateral with `LIMIT 1`, not `EXISTS`: with `EXISTS … OR EXISTS …`
+  the planner chose hashed sub-plans that read the junction once per
+  request — the original scan in another form. The first-page `total`
+  probes every entity row that passes the bucket / `q` filter (bounded by
+  the entity table, not the junctions).
+- **Creators** (`/creators`): a skip scan over the distinct credit names
+  (`min(person) WHERE person > $prev` on `issue_credits_person_idx` and
+  `series_credits_person_idx`, two probes per name), the same lateral
+  visibility probe, the roles + count aggregated for the page's names
+  only. `total` walks every distinct name once (cost follows the number of
+  names, not credits).
+- **People search** (`/people`): ranked by similarity, then credit count,
+  so it cannot stop at the page. The candidates are the distinct names
+  from the same walk filtered by the match predicate; each is probed for
+  visibility, and credit counts are aggregated only for names at least as
+  similar as the `limit`-th best visible one.
+
+| label | Σ SQL before | Σ SQL after | pgbench p95 at 16 clients, before → after |
+|---|---:|---:|---:|
+| `characters-list` | 350.0 ms | 23.9 ms | 441 → 47 ms |
+| `characters-page2` | 320.1 ms | 17.8 ms | 371 → 37 ms |
+| `characters-letter` | 344.3 ms | 23.7 ms | 447 → 49 ms |
+| `characters-search` | 316.7 ms | 1.3 ms | 427 → 8 ms |
+| `creators-list` | 179.8 ms | 37.6 ms | 246 → 57 ms |
+| `creators-page2` | 133.2 ms | 24.6 ms | 219 → 42 ms |
+| `creators-letter` | 150.2 ms | 36.8 ms | 578 → 65 ms |
+| `people-search` | 202.1 ms | 49.9 ms | 322 → 91 ms |
+| `arcs-list` | 17.1 ms | 9.4 ms | 28 → 17 ms |
+
+(Single-request SQL time from `summary.md`; the concurrency column replays
+each label's statements, parameters inlined, with `pgbench -c 16 -T 15`
+against the same database, because the harness's `oha` pass cannot load
+these routes: they sit behind the per-user `SEARCH` rate-limit bucket,
+which `COMIC_RATE_LIMIT_ENABLED=false` does not turn off, so nearly every
+`oha` request is a 429.) Equivalence — same rows, order, counts, `total`
+and cursors for an admin, a partially granted reader and a capped
+reader — is pinned by `crates/server/tests/entity_list_equivalence.rs`,
+whose snapshots were recorded against the old queries.
+
+Limits of the rewrite:
+
+- **The table is for an unrestricted caller** (the harness signs in as
+  the admin). For a reader who can see little, every page walks past and
+  probes each entity or credit name they cannot see until it has
+  `limit + 1` visible ones, and the first-page `total` walks them all. Their
+  cost follows the hidden part of the entity list as index lookups — about
+  the same order as before the change, not better.
+- **`/people`** is ranked by similarity, then credit count, so it cannot
+  stop at a page: its cost follows the number of distinct credit names
+  (two index probes each) plus the credits of the names in the top
+  similarity tier.
+- **Cursor caveat (pre-existing, not changed here):** the entity-index
+  cursor key is lowercased in Rust (`str::to_lowercase`) while the keyset
+  compares it with Postgres `lower(name)`. The two can disagree for
+  non-ASCII names, depending on the database's ctype, which can repeat or
+  skip a row at a page boundary.
+
 ### Dataset at stress scale
 
 | table | rows | size (heap + indexes) |
@@ -755,6 +874,14 @@ builds on production-like storage). The one hard invariant is the
 `perf-explain` gate: no seq scan on an issue-scale table among these
 endpoints. The k6 soak and Automerge sync-stress items in spec §16.5 are
 not covered here.
+
+**Socket setup.** The public listener sets `TCP_NODELAY` on every accepted
+connection (`app::tuned_listener`), and the reverse-proxy client to the
+Next.js upstream does the same (`tcp_nodelay(true)` in `AppState::new`).
+With Nagle's algorithm on, a response whose last write is small (a cached
+page variant, a short JSON body) waited for the client's delayed ACK,
+which showed up as a steady extra ~40 ms on cached page requests. A p50
+near 40 ms on the cached page-turn recipe means this setting is missing.
 
 ## Observations from the stress scan
 

@@ -14,7 +14,8 @@
 //!
 //!   1. Try-claim per-issue rewrite mutex
 //!      (`archive:rewrite:<issue_id>`, TTL = 120s).
-//!   2. Open the source archive via [`archive::open`].
+//!   2. Open the source archive through the handle `archive_rewrite::rewrite_atomic`
+//!      opened (no link followed below the library root).
 //!   3. Build a [`archive::cbz_write::RebuildPlan`] with
 //!      `set_entry("ComicInfo.xml", …)` + `set_entry("MetronInfo.xml", …)`.
 //!      Every page entry takes the default `Keep` path → stream-copied
@@ -299,7 +300,20 @@ pub async fn handle(
             }
             let message = format!("sidecar writeback for {}: {e}", job.issue_id);
             return match disposition {
-                FailureDisposition::Refused => Ok(()),
+                FailureDisposition::Refused => {
+                    // Not retried (the answer would not change), but a
+                    // refusal met at the file still fails the run: the XML
+                    // never landed and the post-apply writes are dropped.
+                    if e.refusal_fails_run() {
+                        fail_triggering_run(
+                            &state,
+                            &job,
+                            &format!("{RUN_ERROR_PREFIX} refused: {e}"),
+                        )
+                        .await;
+                    }
+                    Ok(())
+                }
                 FailureDisposition::Retrying { attempt } => {
                     tracing::warn!(
                         issue_id = %job.issue_id,
@@ -713,11 +727,42 @@ impl WritebackError {
     /// job completes instead of consuming the apalis budget. Everything
     /// else — conversion, the rewrite itself, DB round-trips — may be a
     /// transient NAS / disk / connection fault and is retried.
+    ///
+    /// A symbolic link (the archive, or a folder on its path), a
+    /// non-regular file or a path outside the library root is refused by
+    /// the no-follow writer (`RewriteError::Refused`): also an answer.
+    ///
+    /// A conversion whose `.cbz` name is already taken
+    /// (`DestinationExists`) and a multi-part RAR set are answers too.
     pub(crate) fn is_refusal(&self) -> bool {
-        matches!(
-            self,
-            Self::IssueGone(_) | Self::WritebackDisabled(_) | Self::UnsupportedFormat(_)
-        )
+        use crate::library::scanner::cbr_convert::CbrConvertError;
+        match self {
+            Self::IssueGone(_) | Self::WritebackDisabled(_) | Self::UnsupportedFormat(_) => true,
+            Self::Convert(CbrConvertError::DestinationExists(_)) => true,
+            Self::Rewrite(RewriteError::ArchiveErr(e))
+            | Self::Convert(CbrConvertError::Rewrite(RewriteError::ArchiveErr(e))) => {
+                e.is_multi_volume_rar()
+            }
+            Self::Rewrite(e) | Self::Convert(CbrConvertError::Rewrite(e)) => e.is_refusal(),
+            _ => false,
+        }
+    }
+
+    /// Whether a refusal must still fail the run that queued the rewrite:
+    /// every refusal met *at the file* (a link, not a regular file,
+    /// outside the root, the `.cbz` name taken, a multi-part RAR), because
+    /// the run says "applied" while the XML never landed and the
+    /// post-apply writes were dropped. The three older refusals keep their
+    /// behaviour and leave the run alone: the format gate is decided by
+    /// the apply dispatch first (`sidecar_refusal`, reported in
+    /// `sidecar_skip_reasons`), writeback switched off is the operator's
+    /// own choice, and an issue that is gone leaves nothing to apply to.
+    pub(crate) fn refusal_fails_run(&self) -> bool {
+        self.is_refusal()
+            && !matches!(
+                self,
+                Self::IssueGone(_) | Self::WritebackDisabled(_) | Self::UnsupportedFormat(_)
+            )
     }
 }
 
@@ -766,11 +811,11 @@ pub fn sidecar_refusal(lib: &entity::library::Model, file_path: &str) -> Option<
 /// makes `archive_backup_retain_count = 0` (no `.bak`) safe — a corrupt
 /// or lossy rewrite never replaces a good original.
 fn validate_rewrite(
-    tmp: &std::path::Path,
+    staged: archive::ArchiveFile,
     source_names: &[String],
     limits: ArchiveLimits,
 ) -> Result<(), RewriteError> {
-    let new = Cbz::open(tmp, limits).map_err(|e| {
+    let new = Cbz::open_file(staged, limits).map_err(|e| {
         RewriteError::ValidationFailed(format!("rewritten archive won't re-open: {e}"))
     })?;
     let new_names: std::collections::HashSet<&str> =
@@ -842,7 +887,7 @@ pub(crate) async fn rewrite_one_issue(
 
     // Format gate — CBZ/CBT rewrite in place; CBR converts to a sibling
     // `.cbz` first when the library allows it; anything else is refused
-    // here with a clear reason instead of failing at `Cbz::open` below
+    // here with a clear reason instead of failing at `Cbz::open_file` below
     // (WP-2.6 (f), audit DI-10).
     if let Some(reason) = sidecar_refusal(&lib, &row.file_path) {
         return Err(WritebackError::UnsupportedFormat(reason));
@@ -857,8 +902,6 @@ pub(crate) async fn rewrite_one_issue(
         max_entry_bytes: limits.max_entry_bytes,
         max_compression_ratio: limits.max_compression_ratio,
         max_nesting_depth: limits.max_nesting_depth,
-        subprocess_wall_timeout: limits.subprocess_wall_timeout,
-        subprocess_rss_bytes: limits.subprocess_rss_bytes,
     };
     let source_ext = source_path
         .extension()
@@ -875,13 +918,27 @@ pub(crate) async fn rewrite_one_issue(
     // `<name>.cbr.bak` / `<name>.cb7.bak`; the row is repointed at the `.cbz`
     // before the sidecar rewrite runs against it, so a failure in the second
     // step still leaves a readable, correctly-pointed archive.
+    // Every read and write below goes through the library root's no-follow
+    // walk (`library::no_follow`, `archive_rewrite`): a link is refused.
+    // The root comes from the library row loaded above: no second lookup
+    // that could fail and be mistaken for "library gone".
+    let root = crate::library::no_follow::library_root_of(state, &lib).await;
     let archive_path = if is_cbr || is_cb7 {
         let src = source_path.clone();
+        let conv_root = std::sync::Arc::clone(&root);
         let converted = tokio::task::spawn_blocking(move || {
             if is_cb7 {
-                crate::library::scanner::cbr_convert::convert_cb7_to_cbz(&src, arch_limits)
+                crate::library::scanner::cbr_convert::convert_cb7_to_cbz(
+                    &conv_root,
+                    &src,
+                    arch_limits,
+                )
             } else {
-                crate::library::scanner::cbr_convert::convert_cbr_to_cbz(&src, arch_limits)
+                crate::library::scanner::cbr_convert::convert_cbr_to_cbz(
+                    &conv_root,
+                    &src,
+                    arch_limits,
+                )
             }
         })
         .await
@@ -889,13 +946,26 @@ pub(crate) async fn rewrite_one_issue(
             WritebackError::Db(sea_orm::DbErr::Custom(format!("join: {join_err}")))
         })??;
         state.zip_lru.invalidate(&row.id);
+        // Both names exist now. Repoint the row first, then remove the old
+        // name (`Converted::finish`); if the row can't be repointed, undo
+        // the conversion (`Converted::abandon`) so the row's name is again
+        // the only copy and a retry starts clean.
+        let new_path = converted.outcome.target.clone();
         let am = issue::ActiveModel {
             id: Set(row.id.clone()),
-            file_path: Set(converted.to_string_lossy().into_owned()),
+            file_path: Set(new_path.to_string_lossy().into_owned()),
             updated_at: Set(Utc::now().fixed_offset()),
             ..Default::default()
         };
-        am.update(&state.db).await?;
+        if let Err(e) = am.update(&state.db).await {
+            // The update may have been applied although the client saw an
+            // error: settle by what the row names now, never by guess.
+            archive_rewrite::settle_unclear_repoint(&state.db, &row.id, converted).await;
+            return Err(e.into());
+        }
+        let converted = tokio::task::spawn_blocking(move || converted.finish().target)
+            .await
+            .unwrap_or(new_path);
         // First CBR conversion in a library stamps `cbr_convert_confirmed_at`
         // so the page editor stops prompting for the format change (CB7 has
         // no page-editor path, so it leaves the gate alone).
@@ -935,11 +1005,11 @@ pub(crate) async fn rewrite_one_issue(
 
     let result = tokio::task::spawn_blocking(
         move || -> Result<(RebuildSummary, Option<PathBuf>), WritebackError> {
-            let outcome = archive_rewrite::rewrite_atomic(&src_path, retain_count, |tmp| {
+            let outcome = archive_rewrite::rewrite_atomic(&root, &src_path, retain_count, |io| {
                 if is_cbt {
-                    rewrite_cbt_into(&src_path, tmp, comic_info_xml, metron_info_xml, arch_limits)
+                    rewrite_cbt_into(io, comic_info_xml, metron_info_xml, arch_limits)
                 } else {
-                    rewrite_cbz_into(&src_path, tmp, comic_info_xml, metron_info_xml, arch_limits)
+                    rewrite_cbz_into(io, comic_info_xml, metron_info_xml, arch_limits)
                 }
             })?;
             // We don't propagate the per-call RebuildSummary out (the
@@ -993,15 +1063,14 @@ pub(crate) async fn rewrite_one_issue(
 /// stream-copy every kept entry, swap in the fresh sidecars, then
 /// validate the staged archive before the swap.
 fn rewrite_cbz_into(
-    src_path: &std::path::Path,
-    tmp: &std::path::Path,
+    io: &archive_rewrite::RewriteIo<'_>,
     comic_info_xml: String,
     metron_info_xml: String,
     arch_limits: ArchiveLimits,
 ) -> Result<(), RewriteError> {
-    // Open the source inside the closure so the Cbz handle is dropped
-    // before the rename swaps the file out from under it.
-    let mut src = Cbz::open(src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
+    // Read the original through the handle `rewrite_atomic` opened (never
+    // by name); dropped before the swap.
+    let mut src = Cbz::open_file(io.source()?, arch_limits).map_err(RewriteError::ArchiveErr)?;
     // Snapshot the source entries the rebuild is contractually required
     // to preserve verbatim: the pages AND every foreign non-page entry
     // (`CoMet.xml`, notes, `.json` — WP-2.6 (b)). Only junk (dotfiles,
@@ -1020,7 +1089,8 @@ fn rewrite_cbz_into(
     let mut plan = RebuildPlan::new();
     plan.set_entry("ComicInfo.xml", comic_info_xml.into_bytes());
     plan.set_entry("MetronInfo.xml", metron_info_xml.into_bytes());
-    let _summary = rebuild(&mut src, plan, tmp, arch_limits).map_err(RewriteError::ArchiveErr)?;
+    let _summary = rebuild(&mut src, plan, io.staging_file()?, arch_limits)
+        .map_err(RewriteError::ArchiveErr)?;
     // Drop the source handle before validation re-opens files.
     drop(src);
     // Validate-before-swap: confirm the freshly-built archive is a sound
@@ -1028,7 +1098,7 @@ fn rewrite_cbz_into(
     // failure here aborts the rewrite with the original untouched — the
     // safety net that lets retain_count=0 (no `.bak`) run without risking
     // image-byte loss to a writer bug.
-    validate_rewrite(tmp, &source_names, arch_limits)
+    validate_rewrite(io.staged_archive()?, &source_names, arch_limits)
 }
 
 /// CBT sidecar rewrite body (WP-2.6 (f)): tar has no stream-copy path, so
@@ -1039,15 +1109,14 @@ fn rewrite_cbz_into(
 /// minus the Folio pair) + the two fresh sidecars. Validated by re-opening
 /// the staged tar before the swap, same contract as the CBZ path.
 fn rewrite_cbt_into(
-    src_path: &std::path::Path,
-    tmp: &std::path::Path,
+    io: &archive_rewrite::RewriteIo<'_>,
     comic_info_xml: String,
     metron_info_xml: String,
     arch_limits: ArchiveLimits,
 ) -> Result<(), RewriteError> {
     use archive::comic_archive::ComicArchive;
-    let mut src =
-        archive::cbt::Cbt::open(src_path, arch_limits).map_err(RewriteError::ArchiveErr)?;
+    let mut src = archive::cbt::Cbt::open_file(io.source()?, arch_limits)
+        .map_err(RewriteError::ArchiveErr)?;
     let page_names: Vec<String> = src.pages().iter().map(|e| e.name.clone()).collect();
     let mut entries: Vec<(String, Vec<u8>)> = Vec::with_capacity(page_names.len() + 4);
     for name in &page_names {
@@ -1066,10 +1135,10 @@ fn rewrite_cbt_into(
     entries.push(("ComicInfo.xml".to_owned(), comic_info_xml.into_bytes()));
     entries.push(("MetronInfo.xml".to_owned(), metron_info_xml.into_bytes()));
     drop(src);
-    archive::cbt_write::write_entries(entries, tmp, arch_limits)
+    archive::cbt_write::write_entries(entries, io.staging_file()?, arch_limits)
         .map_err(RewriteError::ArchiveErr)?;
 
-    let new = archive::cbt::Cbt::open(tmp, arch_limits).map_err(|e| {
+    let new = archive::cbt::Cbt::open_file(io.staged_archive()?, arch_limits).map_err(|e| {
         RewriteError::ValidationFailed(format!("rewritten archive won't re-open: {e}"))
     })?;
     let new_names: std::collections::HashSet<&str> =
@@ -1304,7 +1373,14 @@ mod tests {
             ],
         );
         let source = vec!["page-001.png".to_owned(), "page-002.png".to_owned()];
-        assert!(validate_rewrite(&tmp, &source, ArchiveLimits::default()).is_ok());
+        assert!(
+            validate_rewrite(
+                archive::ArchiveFile::open_path_unchecked(&tmp).unwrap(),
+                &source,
+                ArchiveLimits::default()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1316,7 +1392,11 @@ mod tests {
         // retain_count = 0) is preserved.
         write_cbz(&tmp, &["page-001.png", "ComicInfo.xml", "MetronInfo.xml"]);
         let source = vec!["page-001.png".to_owned(), "page-002.png".to_owned()];
-        let res = validate_rewrite(&tmp, &source, ArchiveLimits::default());
+        let res = validate_rewrite(
+            archive::ArchiveFile::open_path_unchecked(&tmp).unwrap(),
+            &source,
+            ArchiveLimits::default(),
+        );
         assert!(
             matches!(res, Err(RewriteError::ValidationFailed(_))),
             "{res:?}"
@@ -1330,7 +1410,11 @@ mod tests {
         // MetronInfo.xml absent from the rewrite.
         write_cbz(&tmp, &["page-001.png", "ComicInfo.xml"]);
         let source = vec!["page-001.png".to_owned()];
-        let res = validate_rewrite(&tmp, &source, ArchiveLimits::default());
+        let res = validate_rewrite(
+            archive::ArchiveFile::open_path_unchecked(&tmp).unwrap(),
+            &source,
+            ArchiveLimits::default(),
+        );
         assert!(
             matches!(res, Err(RewriteError::ValidationFailed(_))),
             "{res:?}"
@@ -1342,7 +1426,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tmp = dir.path().join("new.cbz.tmp");
         std::fs::write(&tmp, b"not a zip").unwrap();
-        let res = validate_rewrite(&tmp, &[], ArchiveLimits::default());
+        let res = validate_rewrite(
+            archive::ArchiveFile::open_path_unchecked(&tmp).unwrap(),
+            &[],
+            ArchiveLimits::default(),
+        );
         assert!(
             matches!(res, Err(RewriteError::ValidationFailed(_))),
             "{res:?}"
@@ -1373,7 +1461,7 @@ mod tests {
         );
 
         let limits = ArchiveLimits::default();
-        let mut src = Cbz::open(&src_path, limits).unwrap();
+        let mut src = Cbz::open_path_unchecked(&src_path, limits).unwrap();
         // Snapshot the must-survive set exactly as `rewrite_one_issue` does.
         let source_names: Vec<String> = src
             .entries()
@@ -1392,15 +1480,19 @@ mod tests {
         let mut plan = RebuildPlan::new();
         plan.set_entry("ComicInfo.xml", b"<ComicInfo/>".to_vec());
         plan.set_entry("MetronInfo.xml", b"<MetronInfo/>".to_vec());
-        rebuild(&mut src, plan, &tmp, limits).unwrap();
+        rebuild(&mut src, plan, std::fs::File::create(&tmp).unwrap(), limits).unwrap();
         drop(src);
 
-        validate_rewrite(&tmp, &source_names, limits)
-            .expect("a dropped nested/duplicate sidecar must not fail validation");
+        validate_rewrite(
+            archive::ArchiveFile::open_path_unchecked(&tmp).unwrap(),
+            &source_names,
+            limits,
+        )
+        .expect("a dropped nested/duplicate sidecar must not fail validation");
 
         // The pages survived; the canonical sidecars landed; the nested
         // duplicate is gone.
-        let out = Cbz::open(&tmp, limits).unwrap();
+        let out = Cbz::open_path_unchecked(&tmp, limits).unwrap();
         let names: std::collections::HashSet<&str> =
             out.entries().iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains("Sub Folder/page-001.jpg"));
@@ -1437,7 +1529,7 @@ mod tests {
         );
 
         let limits = ArchiveLimits::default();
-        let mut src = Cbz::open(&src_path, limits).unwrap();
+        let mut src = Cbz::open_path_unchecked(&src_path, limits).unwrap();
         let source_names: Vec<String> = src
             .entries()
             .iter()
@@ -1462,12 +1554,17 @@ mod tests {
         let mut plan = RebuildPlan::new();
         plan.set_entry("ComicInfo.xml", b"<ComicInfo/>".to_vec());
         plan.set_entry("MetronInfo.xml", b"<MetronInfo/>".to_vec());
-        rebuild(&mut src, plan, &tmp, limits).unwrap();
+        rebuild(&mut src, plan, std::fs::File::create(&tmp).unwrap(), limits).unwrap();
         drop(src);
 
-        validate_rewrite(&tmp, &source_names, limits).expect("foreign sidecars survive");
+        validate_rewrite(
+            archive::ArchiveFile::open_path_unchecked(&tmp).unwrap(),
+            &source_names,
+            limits,
+        )
+        .expect("foreign sidecars survive");
 
-        let mut out = Cbz::open(&tmp, limits).unwrap();
+        let mut out = Cbz::open_path_unchecked(&tmp, limits).unwrap();
         let names: std::collections::HashSet<String> =
             out.entries().iter().map(|e| e.name.clone()).collect();
         for kept in [

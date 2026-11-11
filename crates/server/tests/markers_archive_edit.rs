@@ -196,7 +196,7 @@ async fn remove_and_reorder_moves_markers_and_progress_with_their_pages() {
     assert_eq!(res.anchors.progress_moved, 1);
 
     // Sanity: the archive really is [p4, p1, p3] now.
-    let c = Cbz::open(&path, ArchiveLimits::default()).unwrap();
+    let c = Cbz::open_path_unchecked(&path, ArchiveLimits::default()).unwrap();
     assert_eq!(c.pages().len(), 3);
     drop(c);
 

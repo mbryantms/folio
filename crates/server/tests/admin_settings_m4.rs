@@ -243,3 +243,159 @@ async fn log_level_accepts_module_scoped_directive() {
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(app.state().cfg().log_level, "info,server::auth=debug");
 }
+
+// ───────── Default access TTL vs a saved value ─────────
+
+/// The built-in access TTL is now 1 h, but an install that saved a value
+/// (every install that booted before seeds `auth.jwt.access_ttl`) keeps it:
+/// the DB row wins over the default.
+#[tokio::test]
+async fn saved_access_ttl_wins_over_the_1h_default() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = patch_settings(&app, &admin, json!({ "auth.jwt.access_ttl": "24h" })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let state = app.state();
+    let mut fresh = (*state.cfg()).clone();
+    fresh.jwt_access_ttl = "1h".into(); // the new built-in default
+    fresh
+        .overlay_db(&state.db, &state.secrets)
+        .await
+        .expect("overlay");
+    assert_eq!(fresh.jwt_access_ttl, "24h");
+    assert_eq!(fresh.access_ttl().as_secs(), 24 * 3600);
+}
+
+// ───────── Maximum session age ─────────
+
+#[tokio::test]
+async fn session_max_age_overlay_takes_effect() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    assert_eq!(app.state().cfg().session_max_age().as_secs(), 90 * 86_400);
+
+    let resp = patch_settings(&app, &admin, json!({ "auth.session.max_age": "7d" })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(app.state().cfg().session_max_age().as_secs(), 7 * 86_400);
+}
+
+#[tokio::test]
+async fn session_max_age_below_the_floor_rejected_pre_write() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    for bad in ["12h", "forever"] {
+        let resp = patch_settings(&app, &admin, json!({ "auth.session.max_age": bad })).await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "settings.invalid_combination");
+    }
+    assert_eq!(app.state().cfg().session_max_age, "90d");
+}
+
+/// Inputs that used to panic the duration parser (empty, a multi-byte last
+/// character) answer 422 like any other malformed value.
+#[tokio::test]
+async fn session_max_age_empty_or_non_ascii_rejected_pre_write() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    for bad in ["", "1日"] {
+        let resp = patch_settings(&app, &admin, json!({ "auth.session.max_age": bad })).await;
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY, "{bad:?}");
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["error"]["code"], "settings.invalid_combination");
+    }
+    assert_eq!(app.state().cfg().session_max_age, "90d");
+}
+
+/// Durations above 3650 days would overflow timestamp arithmetic.
+#[tokio::test]
+async fn auth_durations_above_the_cap_rejected_pre_write() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    for bad in ["10000000000d", "18446744073709551615s"] {
+        for key in ["auth.session.max_age", "auth.jwt.refresh_ttl"] {
+            let resp = patch_settings(&app, &admin, json!({ key: bad })).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{key}={bad}"
+            );
+            let body = body_json(resp.into_body()).await;
+            assert_eq!(body["error"]["code"], "settings.invalid_combination");
+        }
+    }
+    assert_eq!(app.state().cfg().session_max_age, "90d");
+}
+
+/// An access token must not outlive its session.
+#[tokio::test]
+async fn session_max_age_below_the_access_lifetime_rejected_pre_write() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+
+    let resp = patch_settings(
+        &app,
+        &admin,
+        json!({ "auth.jwt.access_ttl": "2d", "auth.session.max_age": "1d" }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error"]["code"], "settings.invalid_combination");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("session_max_age"),
+        "{body}"
+    );
+    assert_eq!(app.state().cfg().session_max_age, "90d");
+}
+
+/// A new session's refresh and CSRF cookies never outlive the absolute
+/// session age, even when it is shorter than the refresh TTL.
+#[tokio::test]
+async fn new_session_cookies_are_clamped_to_the_session_max_age() {
+    let app = TestApp::spawn().await;
+    let admin = register_authed(&app, "admin@example.com", "correctly-horse-battery").await;
+    let resp = patch_settings(&app, &admin, json!({ "auth.session.max_age": "7d" })).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let login = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/auth/local/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"email":"admin@example.com","password":"correctly-horse-battery"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let max_age = |name: &str| -> String {
+        login
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .find(|c| c.starts_with(&format!("{name}=")))
+            .and_then(|c| {
+                c.split(';')
+                    .map(str::trim)
+                    .find_map(|p| p.strip_prefix("Max-Age=").map(str::to_owned))
+            })
+            .expect(name)
+    };
+    let week = (7 * 86_400).to_string();
+    assert_eq!(max_age("__Host-comic_refresh"), week);
+    assert_eq!(max_age("__Host-comic_csrf"), week);
+}

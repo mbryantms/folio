@@ -210,18 +210,14 @@ pub async fn upsert(
             "page must be >= 0",
         );
     }
-    // ACL: confirm the user can see the issue at all.
-    let issue_row = match issue::Entity::find_by_id(req.issue_id.clone())
-        .one(&app.db)
-        .await
-    {
+    // ACL: an issue the caller can't see (outside the grant, above the
+    // cap) or that was soft-removed answers exactly like an unknown id.
+    let acl = access::for_user(&app, &user).await;
+    let issue_row = match access::visible_issue(&app.db, &acl, &req.issue_id).await {
         Ok(Some(r)) => r,
         Ok(None) => return error(StatusCode::NOT_FOUND, "not_found", "issue not found"),
         Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "internal", "internal"),
     };
-    if !access::issue_visible(&app, &user, &issue_row).await {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
-    }
 
     let result = upsert_for_run(
         &app,
@@ -305,6 +301,19 @@ pub(crate) async fn upsert_for(
 /// stored page hash is kept when the resulting page is unchanged;
 /// otherwise the hash captured for `page` is stored when `page` is the
 /// resulting page, else NULL (ordinal fallback).
+///
+/// **The page is read only when its hash is stored (audit 2026-11 P-08).**
+/// A repeated write of the same page, an implicit write behind the
+/// furthest page and an ignored write keep or clear the stored hash
+/// without looking at it. [`hash_will_be_stored`] predicts which case a
+/// write is from what the previous write left in the row
+/// ([`ProgressHashHints`]); when it predicts "not stored" the statement
+/// runs with no hash. If the returned row shows the hash was due after all
+/// (the hint was stale: another writer changed the row), the page is read
+/// then and stored by a guarded `UPDATE` ([`store_missed_hash`]), so the
+/// stored row is the one the single statement would have written.
+///
+/// [`ProgressHashHints`]: crate::reading::page_hash::ProgressHashHints
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn upsert_for_run(
     app: &AppState,
@@ -319,9 +328,16 @@ pub(crate) async fn upsert_for_run(
     use sea_orm::{DbBackend, Statement};
 
     let now = Utc::now().fixed_offset();
-    // Captured up front so no archive I/O sits between the row read and
-    // the row write — the statement below is the only DB round-trip.
-    let page_hash = crate::reading::page_hash::capture(app, issue_row, page).await;
+    // Captured up front when the hint says the statement will store it, so
+    // no archive I/O sits between the row read and the row write and the
+    // statement below is the only DB round-trip.
+    let hint = app.progress_hash_hints.get(user_id, &issue_row.id);
+    let captured = if hash_will_be_stored(hint, page, finished, run, restart) {
+        Some(crate::reading::page_hash::capture(app, issue_row, page).await)
+    } else {
+        None
+    };
+    let page_hash = captured.clone().flatten();
     let page_count = issue_row.page_count.unwrap_or(0);
 
     let stmt = Statement::from_sql_and_values(
@@ -344,24 +360,107 @@ pub(crate) async fn upsert_for_run(
             Option::<f64>::None.into(),
         ],
     );
-    let row = ProgressEntity::find()
+    let mut row = ProgressEntity::find()
         .from_raw_sql(stmt)
         .one(&app.db)
         .await?
         .ok_or_else(|| {
             sea_orm::DbErr::RecordNotFound("progress upsert returned no row".to_owned())
         })?;
-    if let Some(r) = run
-        && row.run > r + i32::from(restart)
-    {
+    let ignored = run.is_some_and(|r| row.run > r + i32::from(restart));
+    // The statement stores the given hash exactly when the write was not
+    // ignored, the resulting page is `page`, and no stored hash was kept;
+    // with no hash given that leaves `page_hash` NULL on `page`.
+    if captured.is_none() && !ignored && row.last_page == page && row.page_hash.is_none() {
+        store_missed_hash(app, issue_row, &mut row).await?;
+    }
+    app.progress_hash_hints.put(
+        user_id,
+        &issue_row.id,
+        crate::reading::page_hash::ProgressHashHint {
+            run: row.run,
+            last_page: row.last_page,
+            has_hash: row.page_hash.is_some(),
+        },
+    );
+    if ignored {
         tracing::debug!(
             issue_id = %issue_row.id,
-            client_run = r,
+            client_run = ?run,
             server_run = row.run,
             "progress write ignored: client is on an older reading run"
         );
     }
     Ok(row)
+}
+
+/// Whether [`PROGRESS_UPSERT_SQL`] will store the hash passed for `page`,
+/// given the row the previous write left (`prev`, `None` when unknown or
+/// absent). Mirrors the statement's `page_hash` arm: an insert stores it;
+/// an ignored write keeps the row; otherwise the stored hash is kept when
+/// the resulting page is unchanged and hashed, and the given hash is
+/// stored when the resulting page is `page`. Unknown → `true` (read the
+/// page, as every write did before).
+pub(crate) fn hash_will_be_stored(
+    prev: Option<crate::reading::page_hash::ProgressHashHint>,
+    page: i32,
+    finished: Option<bool>,
+    run: Option<i32>,
+    restart: bool,
+) -> bool {
+    let Some(prev) = prev else {
+        return true;
+    };
+    if run.is_some_and(|r| prev.run > r + i32::from(restart)) {
+        return false;
+    }
+    let restarts = restart && run.is_none_or(|r| prev.run <= r);
+    let next_page = if restarts || finished.is_some() {
+        page
+    } else {
+        prev.last_page.max(page)
+    };
+    if next_page == prev.last_page && prev.has_hash {
+        return false;
+    }
+    next_page == page
+}
+
+/// The hint predicted no hash but the written row shows it was due: read
+/// the page now and store its hash, guarded on the row being exactly the
+/// one just written (same run, page, `updated_at`, still no hash), so a
+/// write that landed in between is never overwritten. `updated_at` is not
+/// bumped: the statement already set it for this write.
+async fn store_missed_hash(
+    app: &AppState,
+    issue_row: &issue::Model,
+    row: &mut progress_record::Model,
+) -> Result<(), sea_orm::DbErr> {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let Some(hash) = crate::reading::page_hash::capture(app, issue_row, row.last_page).await else {
+        return Ok(());
+    };
+    let res = app
+        .db
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE progress_records SET page_hash = $1 \
+              WHERE user_id = $2 AND issue_id = $3 AND run = $4 AND last_page = $5 \
+                AND updated_at = $6 AND page_hash IS NULL",
+            [
+                hash.clone().into(),
+                row.user_id.into(),
+                row.issue_id.clone().into(),
+                row.run.into(),
+                row.last_page.into(),
+                row.updated_at.into(),
+            ],
+        ))
+        .await?;
+    if res.rows_affected() == 1 {
+        row.page_hash = Some(hash);
+    }
+    Ok(())
 }
 
 /// Explicit bulk write (mark read / unread) through the same atomic
@@ -601,8 +700,11 @@ pub async fn upsert_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
+    // A series the caller can't see, or one soft-removed (no new writes
+    // on removed content, `access::visible_series_select`), answers like
+    // an unknown slug.
     let acl = access::for_library(&app, &user, srow.library_id).await;
-    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+    if srow.removed_at.is_some() || !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -685,7 +787,7 @@ pub async fn upsert_series(
                     Err(e) => {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-progress write failed");
                         failed += 1;
-                        first_error.get_or_insert_with(|| e.to_string());
+                        first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     }
                 }
             }
@@ -745,8 +847,11 @@ pub async fn upsert_series_matching(
         Ok(r) => r,
         Err(resp) => return resp,
     };
+    // A series the caller can't see, or one soft-removed (no new writes
+    // on removed content, `access::visible_series_select`), answers like
+    // an unknown slug.
     let acl = access::for_library(&app, &user, srow.library_id).await;
-    if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+    if srow.removed_at.is_some() || !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
         return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
@@ -804,7 +909,7 @@ pub async fn upsert_series_matching(
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress lookup failed");
                 failed += 1;
-                first_error.get_or_insert_with(|| e.to_string());
+                first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                 continue;
             }
         };
@@ -835,7 +940,7 @@ pub async fn upsert_series_matching(
                     Err(e) => {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress write failed");
                         failed += 1;
-                        first_error.get_or_insert_with(|| e.to_string());
+                        first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     }
                 }
             }
@@ -890,8 +995,10 @@ pub struct UpsertBulkResp {
     pub updated: u32,
     /// Issues already in the target state (no DB write — cheap re-click).
     pub skipped: u32,
-    /// Always 0. Kept for response shape: an issue the caller can't see
-    /// is counted in `not_found`, indistinguishable from an unknown id.
+    /// Always 0. Kept so the response schema does not change: an issue the
+    /// caller can't see (outside the grant, above the age cap, or
+    /// soft-removed) is counted in `not_found`, indistinguishable from an
+    /// unknown id.
     pub forbidden: u32,
     /// Issues whose id didn't resolve to a row (removed / never
     /// existed / typo) or that the caller can't see — the caller
@@ -958,11 +1065,17 @@ pub async fn upsert_bulk(
         .filter(|id| seen.insert(id.clone()))
         .collect();
 
-    // WP-3.6: id / page_count + the ACL columns are all that's read.
-    let rows = match issue::Entity::find()
+    // Pre-fetch the library-access set (membership + WP-2.7 age-rating
+    // caps) in one query; the issue lookup below applies it in SQL.
+    let acl = access::for_user(&app, &user).await;
+
+    // WP-3.6: id / page_count are all that's read. Only issues the caller
+    // can see (live, live parent series, inside the grant + cap:
+    // `access::visible_issues_select`) are found; the rest are counted as
+    // `not_found`, exactly like an unknown id.
+    let rows = match access::visible_issues_select(&acl)
         .filter(issue::Column::Id.is_in(ids.clone()))
         .filter(issue::Column::State.eq(issue::IssueState::Active))
-        .filter(issue::Column::RemovedAt.is_null())
         .into_partial_model::<IssueCardRow>()
         .all(&app.db)
         .await
@@ -975,23 +1088,18 @@ pub async fn upsert_bulk(
     };
 
     let found_ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-    let mut not_found = ids
+    let not_found = ids
         .iter()
         .filter(|id| !found_ids.contains(id.as_str()))
         .count() as u32;
-
-    // Pre-fetch the library-access set (membership + WP-2.7 age-rating
-    // caps) in one query, so the per-issue ACL check is a HashSet hit
-    // rather than a SELECT per row.
-    let acl = access::for_user(&app, &user).await;
 
     let mut updated: u32 = 0;
     let mut skipped: u32 = 0;
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
-    // An issue the caller can't see (outside the grant, or rated above
-    // their cap) is counted exactly like an unknown id; `forbidden` stays
-    // in the response for shape and is always 0.
+    // An issue the caller can't see (outside the grant, rated above their
+    // cap, soft-removed) is counted exactly like an unknown id; `forbidden`
+    // stays in the response so its schema does not change, and is always 0.
     let forbidden: u32 = 0;
 
     // One parent-rating query for the whole batch, not one per row.
@@ -1015,7 +1123,7 @@ pub async fn upsert_bulk(
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress lookup failed");
                 failed += 1;
-                first_error.get_or_insert_with(|| e.to_string());
+                first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                 continue;
             }
         };
@@ -1046,7 +1154,7 @@ pub async fn upsert_bulk(
                     Err(e) => {
                         tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress write failed");
                         failed += 1;
-                        first_error.get_or_insert_with(|| e.to_string());
+                        first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     }
                 }
             }
@@ -1100,8 +1208,9 @@ pub struct UpsertSeriesBulkResp {
     pub updated: u32,
     /// Issues already in the target state.
     pub skipped: u32,
-    /// Always 0. Kept for response shape: a series the caller can't see
-    /// is counted in `not_found_series`.
+    /// Always 0. Kept so the response schema does not change: a series
+    /// the caller can't see (or a soft-removed one) is counted in
+    /// `not_found_series`.
     pub forbidden_series: u32,
     /// Series whose id didn't resolve, or that the caller can't see.
     pub not_found_series: u32,
@@ -1192,7 +1301,9 @@ pub async fn upsert_series_bulk(
     let forbidden_series: u32 = 0;
 
     for srow in series_rows {
-        if !acl.series_ok(srow.library_id, srow.age_rating.as_deref()) {
+        // Hidden or soft-removed: counted like an unknown id.
+        if srow.removed_at.is_some() || !acl.series_ok(srow.library_id, srow.age_rating.as_deref())
+        {
             not_found_series += 1;
             continue;
         }
@@ -1233,7 +1344,7 @@ pub async fn upsert_series_bulk(
                 Err(e) => {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk lookup failed");
                     failed += 1;
-                    first_error.get_or_insert_with(|| e.to_string());
+                    first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     continue;
                 }
             };
@@ -1263,7 +1374,8 @@ pub async fn upsert_series_bulk(
                         Err(e) => {
                             tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk write failed");
                             failed += 1;
-                            first_error.get_or_insert_with(|| e.to_string());
+                            first_error
+                                .get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                         }
                     }
                 }

@@ -78,12 +78,12 @@ pub(crate) async fn find_by_slugs(
         .await
     {
         Ok(Some(r)) => r,
+        // The same answer as an unknown issue slug: an issue route under a
+        // series the caller can't see answers "issue not found" (the
+        // caller's visibility check runs after this), so an unknown series
+        // must too, or the two would tell a hidden series from a missing one.
         Ok(None) => {
-            return Err(error(
-                StatusCode::NOT_FOUND,
-                "not_found",
-                "series not found",
-            ));
+            return Err(error(StatusCode::NOT_FOUND, "not_found", "issue not found"));
         }
         Err(e) => {
             tracing::error!(error = %e, series_slug, "series slug lookup failed");
@@ -137,27 +137,25 @@ pub async fn get_one(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    // One read of the parent series serves the visibility rule here and the
+    // view below: its reading-direction override (consulted in the reader's
+    // resolution chain below ComicInfo `<Manga>` but above the LTR default —
+    // `manga-and-bulk-metadata-1.0` M1 + M2) and its display name, which the
+    // reader's end-of-issue card uses to name the finished issue
+    // ("Saga #11"). A lookup error or a missing series reads as not found,
+    // like `access::issue_route_visible`.
+    let Ok(Some(parent)) = series::Entity::find_by_id(row.series_id).one(&app.db).await else {
+        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+    };
+    let acl = access::for_library(&app, &user, row.library_id).await;
+    if !access::issue_page_allowed(&app, &acl, &user, &parent, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
-    // PERF-8: the rating, parent-series direction, library row, and
-    // creator-slug lookups below are independent of each other (they only need
-    // the already-fetched `row`), so run them concurrently instead of paying
-    // four sequential round-trips. `tokio::join!` polls them together on this
-    // task; each grabs a pooled connection briefly (pool has ample headroom).
-    let series_fut = async {
-        // Parent series row: its reading-direction override (consulted in
-        // the reader's resolution chain below ComicInfo `<Manga>` but above
-        // the LTR default — `manga-and-bulk-metadata-1.0` M1 + M2) and its
-        // display name, which the reader's end-of-issue card uses to name
-        // the finished issue ("Saga #11").
-        series::Entity::find_by_id(row.series_id)
-            .one(&app.db)
-            .await
-            .ok()
-            .flatten()
-            .map(|s| (s.reading_direction, s.name))
-    };
+    // PERF-8: the rating, library row, and creator-slug lookups below are
+    // independent of each other (they only need the already-fetched `row`),
+    // so run them concurrently instead of paying sequential round-trips.
+    // `tokio::join!` polls them together on this task; each grabs a pooled
+    // connection briefly (pool has ample headroom).
     let library_fut = async {
         library::Entity::find_by_id(row.library_id)
             .one(&app.db)
@@ -168,10 +166,9 @@ pub async fn get_one(
     // Creator-slug map for this issue's credits. One JOIN against `person` —
     // the FK populated by the scanner's series rollup. The UI uses this so
     // credit chips link to /creators/<slug> directly.
-    let (rating, note, series_row, library_row, creator_slugs, junctions) = tokio::join!(
+    let (rating, note, library_row, creator_slugs, junctions) = tokio::join!(
         crate::api::series::lookup_user_rating(&app, user.id, "issue", &row.id),
         crate::api::issue_notes::lookup_user_note(&app, user.id, &row.id),
-        series_fut,
         library_fut,
         build_issue_creator_slugs(&app, &row.id),
         build_issue_junction_lists(&app, &row.id),
@@ -189,12 +186,17 @@ pub async fn get_one(
     let mut view = IssueDetailView::from_model(row, &series_slug);
     view.user_rating = rating;
     view.user_note = note;
-    let (series_dir, series_name) = series_row.unzip();
-    view.series_reading_direction = series_dir.flatten();
-    view.series_name = series_name;
+    view.series_reading_direction = parent.reading_direction;
+    view.series_name = Some(parent.name);
     view.library_default_reading_direction = library_default_dir;
-    view.allow_archive_writeback = allow_archive_writeback;
-    view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
+    // The archive path and the library's writeback settings are server
+    // configuration: admins only.
+    if user.role == entity::user::UserRole::Admin {
+        view.allow_archive_writeback = Some(allow_archive_writeback);
+        view.library_cbr_convert_confirmed = Some(library_cbr_convert_confirmed);
+    } else {
+        view.file_path = None;
+    }
     view.creator_slugs = creator_slugs;
     view.credits = junctions.credits;
     view.cast = junctions.cast;
@@ -347,7 +349,7 @@ pub async fn metadata_overview(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1048,8 +1050,10 @@ pub async fn update(
 
     if !touched {
         let row_id = row.id.clone();
+        let library_id = row.library_id;
         let mut view = IssueDetailView::from_model(row, &series_slug);
         crate::api::series::enrich_issue_detail(&app.db, &mut view, &row_id).await;
+        fill_admin_library_flags(&app.db, &mut view, library_id).await;
         return Json(view).into_response();
     }
 
@@ -1162,9 +1166,30 @@ pub async fn update(
     .await;
 
     let updated_id = updated.id.clone();
+    let library_id = updated.library_id;
     let mut view = IssueDetailView::from_model(updated, &series_slug);
     crate::api::series::enrich_issue_detail(&app.db, &mut view, &updated_id).await;
+    fill_admin_library_flags(&app.db, &mut view, library_id).await;
     Json(view).into_response()
+}
+
+/// The two library flags an admin's issue detail carries, read from the
+/// library row so the PATCH response matches GET.
+async fn fill_admin_library_flags(
+    db: &sea_orm::DatabaseConnection,
+    view: &mut IssueDetailView,
+    library_id: Uuid,
+) {
+    let lib = library::Entity::find_by_id(library_id)
+        .one(db)
+        .await
+        .ok()
+        .flatten();
+    view.allow_archive_writeback = Some(lib.as_ref().is_some_and(|l| l.allow_archive_writeback));
+    view.library_cbr_convert_confirmed = Some(
+        lib.as_ref()
+            .is_some_and(|l| l.cbr_convert_confirmed_at.is_some()),
+    );
 }
 
 // ───── POST /issues/{id}/scan ─────
@@ -1472,10 +1497,10 @@ pub async fn next_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    let acl = access::for_library(&app, &user, row.library_id).await;
-    if !access::issue_allowed(&app, &acl, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
+    let acl = access::for_library(&app, &user, row.library_id).await;
     let limit = q.limit.unwrap_or(5).clamp(1, 20);
 
     // Match the series-page sort: sort_number ASC NULLS LAST, then id.
@@ -1572,10 +1597,10 @@ pub async fn prev_in_series(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    let acl = access::for_library(&app, &user, row.library_id).await;
-    if !access::issue_allowed(&app, &acl, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
+    let acl = access::for_library(&app, &user, row.library_id).await;
 
     let mut select = issue::Entity::find()
         .filter(issue::Column::SeriesId.eq(row.series_id))
@@ -1662,7 +1687,7 @@ pub async fn list_issue_health(
         Ok(r) => r,
         Err(resp) => return resp,
     };
-    if !access::issue_visible(&app, &user, &row).await {
+    if !access::issue_route_visible(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 
@@ -1691,9 +1716,13 @@ pub async fn list_issue_health(
         }
     };
 
+    // Findings name server paths (in `fingerprint` and `payload.data`):
+    // a non-admin gets the reader view.
+    let is_admin = user.role == entity::user::UserRole::Admin;
     Json(
         rows.into_iter()
             .map(crate::api::health_issues::HealthIssueView::from)
+            .map(|v| if is_admin { v } else { v.for_reader() })
             .collect::<Vec<_>>(),
     )
     .into_response()
@@ -2007,7 +2036,7 @@ pub async fn bulk_metadata(
                 // Post-audit T3.7: a failed write is reported as such, not
                 // disguised as an ACL filter.
                 failed += 1;
-                first_error.get_or_insert_with(|| e.to_string());
+                first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
             }
         }
     }

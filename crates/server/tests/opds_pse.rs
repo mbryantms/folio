@@ -5,7 +5,7 @@
 //!  - tampered signature → 401
 //!  - tampered user id → 401
 //!  - expired → 401
-//!  - library ACL revoked → 403
+//!  - library ACL revoked → 404 (like an unknown issue)
 //!  - missing params → 401
 //!  - feed entry shape: `pse:count` + `{pageNumber}` template + signed query
 
@@ -564,7 +564,7 @@ async fn missing_params_returns_401() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn library_acl_revoked_returns_403() {
+async fn library_acl_revoked_returns_404() {
     let app = TestApp::spawn().await;
     // First user becomes admin automatically; we want our signing user
     // to be a non-admin instead, so register an admin first and then a
@@ -617,7 +617,15 @@ async fn library_acl_revoked_returns_403() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    // A hidden issue answers like an unknown one.
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let nf: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(nf["error"]["code"], "not_found", "{nf}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

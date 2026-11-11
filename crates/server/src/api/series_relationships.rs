@@ -395,10 +395,11 @@ pub async fn list(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    // Same gate as `GET /series/{slug}`: invisible ⇒ 404 (don't confirm
-    // the series exists). The caller's ACL also scopes every card below.
+    // Same gate as `GET /series/{slug}`: a series outside the grant or cap,
+    // or soft-removed for a non-admin, is 404. The caller's ACL also scopes
+    // every card below.
     let acl = access::for_user(&app, &user).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
+    if !access::series_page_ok(&acl, &user, &s) {
         return respond(
             StatusCode::NOT_FOUND,
             ApiErrorCode::NotFound,

@@ -224,6 +224,9 @@ export type DownloadManagerDeps = {
   /** Called after an issue completes (warms the offline shell). */
   afterComplete?: () => Promise<void> | void;
   online?: () => boolean;
+  /** Renew a lapsed access token before re-fetching an asset that got 401
+   *  (`ensureFreshSession`). */
+  freshSession?: () => Promise<void>;
 };
 
 const STRIP_THUMB_BYTES = 15_000;
@@ -391,6 +394,12 @@ export function createDownloadManager(
       const { apiFetch } = await import("@/lib/api/auth-refresh");
       return apiFetch(path, { headers: { Accept: "application/json" } });
     });
+  const freshSession =
+    deps.freshSession ??
+    (async () => {
+      const { ensureFreshSession } = await import("@/lib/api/session-refresh");
+      await ensureFreshSession();
+    });
   const now = deps.now ?? Date.now;
   const pageConcurrency = deps.pageConcurrency ?? 3;
   const isOnline = deps.online ?? (() => globalThis.navigator?.onLine ?? true);
@@ -513,11 +522,19 @@ export function createDownloadManager(
   ): Promise<number> => {
     const existing = await target.match(key);
     if (existing) return storedSize(existing);
-    const res = await doFetch(url, {
+    const init = {
       credentials: "include",
       signal,
       priority: "low",
-    } as RequestInit);
+    } as RequestInit;
+    let res = await doFetch(url, init);
+    if (res.status === 401) {
+      // Page bytes are cookie-authed and bypass `apiFetch`'s refresh:
+      // renew the session, then try this asset once more.
+      await freshSession();
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      res = await doFetch(url, init);
+    }
     if (!res.ok) {
       if (required) throw new HttpStatusError(res.status);
       return 0;

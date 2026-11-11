@@ -500,7 +500,7 @@ feed. Another user's view is a 404 on both protocols.
 Both filter-view detail pages carry the shared `useSelection` +
 `SelectionToolbar` wiring (`web/components/saved-views/FilterViewDetail.tsx`,
 `IssueFilterViewDetail.tsx`; the latter since the 2026-11 audit, N-O4).
-Select sits before the card-size icon in the title row and in the phone
+Select sits before the cover-size icon in the title row and in the phone
 bar's View options sheet (phone-layout rule 11); the bar yields to the
 sticky toolbar while selecting. The series view's actions are
 series-shaped (every selected series expands to its issues server-side:
@@ -564,6 +564,92 @@ query path and no `total` (On deck also returns no cursor there). The
   counts that set; `bounded_to` is set on the first page when either
   source hit the bound, and the page says so. The preview, the OPDS On
   Deck feeds and the next-up fallback keep the rail's 40 candidates.
+
+## Server prefetch + HydrationBoundary (the Home page)
+
+The system Home is the app's one server-prefetched TanStack page (D18).
+Without it the browser ran a request chain after hydration — pinned views,
+then each rail's data — before the first rail could paint. Now
+`app/[locale]/(library)/page.tsx` fetches, in the same render that already
+read `/me/pages`, the page's pinned views (plus the library list for the
+no-library card) and then the **first rail** only, and hands them to the
+client through `<PrefetchBoundary>` (`components/PrefetchBoundary.tsx`, a
+`<HydrationBoundary>`). The rail renders in the server HTML and its covers
+start loading before any `/api` request.
+
+How to prefetch for a page:
+
+- **Same keys, same shape.** Key, path and response transform live once in
+  `lib/api/query-options.ts` (`xOptions(fetch, …)`); the client hook spreads
+  them with `jsonFetch`, the server calls them with `apiGet`. A prefetch
+  that builds its own key or skips the hook's transform (e.g. `useMePages`
+  unwraps `.items`) is just a wasted server request. Infinite hooks
+  prefetch with `prefetchInfiniteQuery` and the same `initialPageParam`
+  (they share the options object, so they cannot differ). Rail parameters
+  (`RAIL_PREVIEW_LIMIT`, `CBL_RAIL_WINDOW`) live in
+  `lib/saved-views/rail-queries.ts` for the same reason.
+- **One `QueryClient` per request** (`createServerQueryClient()`), never at
+  module level: the data is the signed-in user's. `apiGet` sends that
+  request's cookies with `cache: "no-store"` (no cross-user caching; the
+  app does not enable Cache Components, so nothing else caches it).
+- **Best effort, bounded.** `prefetchPageRails` never throws; a failed,
+  401 or unfinished query is simply not dehydrated (`dehydrate` keeps
+  `success` only) and the client fetches it as before. At
+  `PAGE_RAILS_PREFETCH_BUDGET_MS` (600 ms) the whole prefetch stops: the
+  requests still in flight are aborted (`apiGet` takes an `AbortSignal`)
+  and no further one starts, so a slow rail can neither slow the page nor
+  keep calling the API after the response has gone. On loopback the chain
+  (pinned views, then the first rail, the library list in parallel) costs
+  about 20 ms.
+- **The first rail that shows is the priority one.** A leading system
+  rail that loads empty hides itself, so the prefetch walks on to the next
+  rail and returns its id (`priorityViewId`); `PageRails` renders that
+  rail eagerly with priority covers and mounts the empty ones before it
+  (they render nothing). Without a prefetched rail the first rail is the
+  priority one, as before. One degraded case is accepted: when the
+  browser holds newer data than the snapshot (or refuses a replayed
+  snapshot) and a rail the server judged empty now has cards, that rail
+  shows above the priority one with lazy covers. The layout is right; only
+  the eager covers sit one rail lower than they ideally would.
+- **Why `PrefetchBoundary`, not the bare boundary.** The topbar search
+  (`useSearchActions`, `lib/search/use-search-actions.ts`) calls
+  `useContinueReading({ enabled: active && !!me.data })`, so that cache
+  entry exists, empty, before the page renders. The stock boundary
+  hydrates *existing* entries only in an effect, so the prefetched
+  Continue reading rail rendered its skeleton on the server and refetched
+  on the client. `PrefetchBoundary` hydrates an existing entry during
+  render when it has no data and no request in flight. (The page list is
+  different: the topbar's `useSearch` calls `useMePages()` enabled, so on
+  every full page load the shell requests `/me/pages` itself before the
+  page renders; the prefetched copy only matters on client navigations.)
+- **Old snapshots are not hydrated.** Next replays a page's cached RSC
+  payload on back/forward (the reader exits with `router.back()`). Each
+  render carries a `snapshotId` (`lib/saved-views/snapshot-id.ts`: the
+  server's render time plus a random part); the browser remembers when it
+  first saw each id (its own clock, a bounded module-level map) and a
+  snapshot first seen more than `SNAPSHOT_FRESH_MS` (30 s) ago hydrates
+  nothing, so the hooks fetch as they did before the prefetch existed
+  instead of painting the pre-reading Continue reading. An id the tab has
+  forgotten is refused too when its render time is well behind the newest
+  render the tab has seen (server time against server time), so an old
+  page replayed from history can never pass for a new one.
+- **One clock.** A fresh snapshot's queries are restamped to the moment
+  this browser first saw it, so staleness and TanStack's newer-than-cache
+  test never compare the server's clock with the browser's. An optimistic
+  update in flight when Home opens can be replaced by the snapshot (it was
+  fetched before the write landed); the mutation's `invalidateRails` on
+  settle refetches it.
+- **CSP.** The dehydrated state travels as a prop in the RSC payload; no
+  inline script is added.
+
+When not to: below-the-fold rails stay client-fetched on purpose
+(`LazyRail`), and so does On this day (keyed by the browser's local date)
+and the per-card `/progress` map (unbounded per user, and only the
+`IssueCard` badge reads it, not the cover). A prefetch only pays where the
+first paint waits on a client request chain; data the shell already
+fetches, or that is cheap and below the fold, is better left to the client.
+A page that is reached mostly by client navigation with a warm cache pays
+the server fetch for little gain.
 
 ## Visibility on the other personal surfaces
 

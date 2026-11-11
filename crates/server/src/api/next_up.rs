@@ -474,8 +474,20 @@ async fn resolve_cbl_next(
     if sv.kind != KIND_CBL {
         return Ok(CblBranchOutcome::NoMatch);
     }
-    let Some(cbl_list_id) = sv.cbl_list_id else {
-        return Ok(CblBranchOutcome::NoMatch);
+    // A view whose list the caller may not use (own or shared) reads like
+    // a view whose list is gone.
+    let cbl_list_id = match crate::api::saved_views::usable_cbl_list_id(&app.db, &sv, user_id).await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => return Ok(CblBranchOutcome::NoMatch),
+        Err(e) => {
+            tracing::error!(error = %e, "next_up: cbl list lookup failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
     };
 
     // Find the entry that points at the current issue. If the issue
@@ -1374,8 +1386,20 @@ async fn resolve_cbl_prev(
     if sv.kind != KIND_CBL {
         return Ok(CblBranchOutcome::NoMatch);
     }
-    let Some(cbl_list_id) = sv.cbl_list_id else {
-        return Ok(CblBranchOutcome::NoMatch);
+    // A view whose list the caller may not use (own or shared) reads like
+    // a view whose list is gone.
+    let cbl_list_id = match crate::api::saved_views::usable_cbl_list_id(&app.db, &sv, user_id).await
+    {
+        Ok(Some(id)) => id,
+        Ok(None) => return Ok(CblBranchOutcome::NoMatch),
+        Err(e) => {
+            tracing::error!(error = %e, "next_up: cbl list lookup failed");
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                "internal",
+            ));
+        }
     };
 
     let current_entry = match cbl_entry::Entity::find()

@@ -2312,3 +2312,135 @@ async fn comictagger_notes_ids_land_in_external_ids() {
         "{found:?}"
     );
 }
+
+/// A CBZ with arbitrary (name, bytes) entries, stored.
+fn write_raw_cbz(path: &Path, entries: &[(&str, Vec<u8>)]) {
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, bytes) in entries {
+        zw.start_file(*name, opts).unwrap();
+        zw.write_all(bytes).unwrap();
+    }
+    zw.finish().unwrap();
+}
+
+fn png_page(marker: u32, len: usize) -> Vec<u8> {
+    let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    png.extend_from_slice(&marker.to_le_bytes());
+    png.resize(len, 0);
+    png
+}
+
+/// An archive refused by a protective limit or an unsafe entry name is a
+/// `ArchiveSafetyRefusal` naming the check, not a `MalformedArchive`: the
+/// refusal is not a verdict on damage. A genuinely corrupt file keeps `MalformedArchive`,
+/// and a file within the limits ingests normally.
+#[tokio::test]
+async fn safety_refusals_are_not_reported_as_malformed() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    // Tight limits so small fixtures trip each one.
+    let mut cfg = (*state.cfg()).clone();
+    cfg.archive_max_entries = 3;
+    cfg.archive_max_entry_bytes = 100;
+    cfg.archive_max_total_bytes = 120;
+    state.replace_cfg(cfg);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = |name: &str| {
+        let p = tmp.path().join(name);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    };
+    // 5 entries > 3.
+    let pages: Vec<(String, Vec<u8>)> = (0..5)
+        .map(|i| (format!("page-{i:03}.png"), png_page(10 + i, 40)))
+        .collect();
+    let refs: Vec<(&str, Vec<u8>)> = pages.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+    write_raw_cbz(&folder("Count (2020)").join("Count 001.cbz"), &refs);
+    // One 200-byte entry > 100.
+    write_raw_cbz(
+        &folder("Size (2020)").join("Size 001.cbz"),
+        &[("page-000.png", png_page(20, 200))],
+    );
+    // Three 48-byte entries: 144 > 120 in total, each within 100.
+    write_raw_cbz(
+        &folder("Total (2020)").join("Total 001.cbz"),
+        &[
+            ("page-000.png", png_page(30, 48)),
+            ("page-001.png", png_page(31, 48)),
+            ("page-002.png", png_page(32, 48)),
+        ],
+    );
+    // An entry path that climbs out of the archive.
+    write_raw_cbz(
+        &folder("Escape (2020)").join("Escape 001.cbz"),
+        &[("../escape.png", png_page(40, 48))],
+    );
+    // Genuinely corrupt.
+    std::fs::write(
+        folder("Corrupt (2020)").join("Corrupt 001.cbz"),
+        b"definitely not a zip, rar, 7z or tar",
+    )
+    .unwrap();
+    // Within every limit.
+    write_raw_cbz(
+        &folder("Fine (2020)").join("Fine 001.cbz"),
+        &[("page-000.png", png_page(50, 48))],
+    );
+
+    let lib_id = create_library(&app, tmp.path()).await;
+    scanner::scan_library(&state, lib_id)
+        .await
+        .expect("scan succeeds");
+
+    let rows = HealthEntity::find().all(&state.db).await.unwrap();
+    let mut refusals: Vec<(String, String)> = Vec::new();
+    let mut malformed: Vec<String> = Vec::new();
+    for r in &rows {
+        let data = &r.payload["data"];
+        let path = data["path"].as_str().unwrap_or_default().to_owned();
+        match r.kind {
+            entity::library_health_issue::HealthIssueKind::ArchiveSafetyRefusal => {
+                assert_eq!(r.severity, "error");
+                assert_eq!(r.payload["kind"], "archive_safety_refusal");
+                assert!(data["error"].as_str().is_some_and(|e| !e.is_empty()));
+                refusals.push((path, data["check"].as_str().unwrap().to_owned()));
+            }
+            entity::library_health_issue::HealthIssueKind::MalformedArchive => malformed.push(path),
+            _ => {}
+        }
+    }
+    refusals.sort();
+    let want = |stem: &str, check: &str| {
+        (
+            tmp.path()
+                .join(format!("{stem} (2020)"))
+                .join(format!("{stem} 001.cbz"))
+                .to_string_lossy()
+                .into_owned(),
+            check.to_owned(),
+        )
+    };
+    let mut expected = vec![
+        want("Count", "entry_count"),
+        want("Size", "entry_size"),
+        want("Total", "total_size"),
+        want("Escape", "unsafe_entry_name"),
+    ];
+    expected.sort();
+    assert_eq!(refusals, expected, "{rows:#?}");
+    assert_eq!(malformed.len(), 1, "{malformed:?}");
+    assert!(malformed[0].ends_with("Corrupt 001.cbz"), "{malformed:?}");
+
+    // The file within the limits ingested with its page.
+    let fine = IssueEntity::find()
+        .filter(entity::issue::Column::FilePath.contains("Fine 001"))
+        .one(&state.db)
+        .await
+        .unwrap()
+        .expect("the file within the limits ingests");
+    assert_eq!(fine.state, entity::issue::IssueState::Active);
+}

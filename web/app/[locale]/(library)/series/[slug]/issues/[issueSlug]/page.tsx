@@ -40,6 +40,7 @@ import { IssueHealthBadge } from "@/components/library/IssueHealthBadge";
 import { AppearancesTab } from "@/components/library/AppearancesTab";
 import { CoverGallery } from "@/components/library/CoverGallery";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
+import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 import { ProviderBadgesRow } from "@/components/library/ProviderBadgesRow";
 import {
   StableTabsPanel,
@@ -94,6 +95,7 @@ import { InlineNotesEditor } from "./InlineNotesEditor";
 import { IssueActions } from "./IssueActions";
 import { IssueReadLabel } from "./IssueReadLabel";
 import { IssueMetadataTab } from "./IssueMetadataTab";
+import { fileRowItem } from "./file-row";
 import { apiPath, routeParam } from "@/lib/api/path";
 
 export default async function IssuePage({
@@ -724,11 +726,7 @@ export default async function IssuePage({
                     label: "File size",
                     value: formatFileSize(issue.file_size),
                   },
-                  {
-                    label: "File",
-                    value: <FilePathValue path={issue.file_path} />,
-                    wide: true,
-                  },
+                  fileRowItem(issue.file_path),
                 ]}
               />
             </DetailSection>
@@ -1068,14 +1066,6 @@ function ExternalTextLink({
   );
 }
 
-function FilePathValue({ path }: { path: string }) {
-  return (
-    <code className="bg-muted/50 block rounded-md px-3 py-2 font-mono text-xs break-all">
-      {path}
-    </code>
-  );
-}
-
 const REDUNDANT_WEB_URL_SOURCES = new Set(["comicvine", "metron", "gcd"]);
 
 function isProviderWebUrlDuplicate(
@@ -1213,7 +1203,7 @@ function NextInSeries({
       <h2 className="text-base font-semibold tracking-tight">More in series</h2>
       <HorizontalScrollRail className="-mx-1">
         {prev && (
-          <div className="w-36 shrink-0 space-y-2 sm:w-40">
+          <div className="shrink-0 space-y-2" style={COVER_ITEM_STYLE}>
             <p className="text-muted-foreground flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase">
               <ArrowLeft aria-hidden="true" className="size-3" />
               Previous issue
@@ -1223,7 +1213,11 @@ function NextInSeries({
         )}
 
         {items.map((it, index) => (
-          <div key={it.id} className="w-36 shrink-0 space-y-2 sm:w-40">
+          <div
+            key={it.id}
+            className="shrink-0 space-y-2"
+            style={COVER_ITEM_STYLE}
+          >
             <p
               aria-hidden={index === 0 ? undefined : "true"}
               className={cn(
@@ -1238,7 +1232,7 @@ function NextInSeries({
           </div>
         ))}
 
-        <div className="w-36 shrink-0 space-y-2 sm:w-40">
+        <div className="shrink-0 space-y-2" style={COVER_ITEM_STYLE}>
           <p
             aria-hidden="true"
             className="invisible flex items-center gap-1 text-[11px] font-semibold tracking-wide uppercase"

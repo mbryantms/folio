@@ -318,7 +318,7 @@ pub struct ListEntriesQuery {
 // ───── helpers ─────
 
 /// Fetch a collection by id and verify the caller owns it. Returns the
-/// row on success; an HTTP response otherwise (404 / 403 / 500).
+/// row on success; an HTTP response otherwise (404 / 500).
 async fn fetch_owned(
     db: &impl ConnectionTrait,
     user_id: Uuid,
@@ -345,11 +345,12 @@ async fn fetch_owned(
             "collection not found",
         ));
     }
+    // Another user's collection answers exactly like an unknown id.
     if row.user_id != Some(user_id) {
         return Err(error(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            "not your collection",
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "collection not found",
         ));
     }
     Ok(row)
@@ -787,7 +788,6 @@ pub async fn list_entries(
     responses(
         (status = 200, body = CollectionNextUpView),
         (status = 404, description = "collection not found"),
-        (status = 403, description = "not the caller's collection")
     )
 )]
 #[handler]
@@ -848,7 +848,6 @@ pub async fn next_up(
     responses(
         (status = 200, body = CollectionWindowView),
         (status = 404, description = "collection not found"),
-        (status = 403, description = "not the caller's collection")
     )
 )]
 #[handler]
@@ -1079,7 +1078,6 @@ pub async fn add_entry(
     request_body = BulkAddMembersReq,
     responses(
         (status = 200, body = BulkAddMembersResp),
-        (status = 403, description = "not owner"),
         (status = 404, description = "collection not found"),
         (status = 429, description = "collection write rate limit"),
     )
@@ -1314,7 +1312,6 @@ pub async fn bulk_add_members(
     request_body = BulkRemoveMembersReq,
     responses(
         (status = 200, body = BulkRemoveMembersResp),
-        (status = 403, description = "not owner"),
         (status = 404, description = "collection not found"),
         (status = 429, description = "collection write rate limit"),
     )

@@ -1420,3 +1420,94 @@ async fn opds_recent_feed_is_projected_and_paged() {
         );
     }
 }
+
+/// Insert `runs` finished scan runs, each with two open findings.
+async fn seed_runs_with_findings(app: &TestApp, lib_id: Uuid, runs: usize) {
+    use entity::library_health_issue::{self, HealthIssueKind};
+    use entity::scan_run::{self, ScanRunKind, ScanRunState};
+    let db = Database::connect(&app.db_url).await.unwrap();
+    for _ in 0..runs {
+        let now = Utc::now().fixed_offset();
+        let run = Uuid::now_v7();
+        scan_run::ActiveModel {
+            id: Set(run),
+            library_id: Set(lib_id),
+            state: Set(ScanRunState::Complete),
+            started_at: Set(now),
+            ended_at: Set(Some(now)),
+            stats: Set(serde_json::json!({})),
+            error: Set(None),
+            kind: Set(ScanRunKind::Library),
+            series_id: Set(None),
+            issue_id: Set(None),
+            batch_id: Set(None),
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            library_health_issue::ActiveModel {
+                id: Set(Uuid::now_v7()),
+                library_id: Set(lib_id),
+                scan_id: Set(Some(run)),
+                kind: Set(HealthIssueKind::FileAtRoot),
+                payload: Set(serde_json::json!({"kind": "file_at_root", "data": {"path": "/x"}})),
+                severity: Set("warning".into()),
+                fingerprint: Set(Uuid::now_v7().simple().to_string()),
+                first_seen_at: Set(now),
+                last_seen_at: Set(now),
+                resolved_at: Set(None),
+                dismissed_at: Set(None),
+            }
+            .insert(&db)
+            .await
+            .unwrap();
+        }
+    }
+}
+
+/// Scan-run lists carry each run's finding count from one grouped query
+/// per page: the statement count is the same for 2 runs as for 25.
+#[tokio::test]
+async fn scan_run_finding_counts_do_not_grow_with_the_page() {
+    let _serial = SERIAL.lock().await;
+    let counter = install_query_counter();
+    let app = TestApp::spawn_with_query_logging().await;
+    let admin = register(&app, "scan-runs@example.com").await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib_id = seed_scan_library(&app, tmp.path()).await;
+    let paths = [
+        format!("/api/libraries/{lib_id}/scan-runs?limit=50"),
+        "/api/admin/scan-runs?limit=50".to_owned(),
+    ];
+
+    async fn measure(
+        app: &TestApp,
+        admin: &Authed,
+        counter: &AtomicU64,
+        path: &str,
+        runs: usize,
+    ) -> u64 {
+        let q = QueryCount::snapshot(counter);
+        let (status, body, _) = get(app, admin, path).await;
+        let taken = q.taken();
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        let items = body["items"].as_array().unwrap();
+        assert_eq!(items.len(), runs, "{path}");
+        for item in items {
+            assert_eq!(item["health_issue_count"], 2, "{path}: {item}");
+        }
+        taken
+    }
+
+    seed_runs_with_findings(&app, lib_id, 2).await;
+    let mut small = Vec::new();
+    for p in &paths {
+        small.push(measure(&app, &admin, &counter, p, 2).await);
+    }
+    seed_runs_with_findings(&app, lib_id, 23).await;
+    for (p, before) in paths.iter().zip(small) {
+        let after = measure(&app, &admin, &counter, p, 25).await;
+        assert_query_count(after, before, p);
+    }
+}

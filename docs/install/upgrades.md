@@ -49,8 +49,11 @@ current file gives Postgres a 256 MB `/dev/shm` (`shm_size`) so parallel
 queries on large libraries don't fail with "could not resize shared
 memory segment", gives `app` a 35 s `stop_grace_period` so job workers
 can finish their 25 s drain, and rotates every container's logs at
-10 MB × 5 files. If your copy predates these, download the new
-`compose.prod.yml` (re-apply any local edits) before `up -d`.
+10 MB × 5 files. It also runs every container read-only with dropped
+capabilities and puts Postgres and Redis on an internal network (see
+*Unreleased — hardened compose template* below). If your copy predates
+these, download the new `compose.prod.yml` (re-apply any local edits)
+before `up -d`.
 
 ## Postgres version requirement
 
@@ -213,6 +216,113 @@ docker compose -f compose.prod.yml up -d --no-deps app
   `hide_unrated` on `POST /api/admin/users/{id}/library-access` (a map
   of library id to `true` / `false`). Saving library access from the
   current admin screen keeps whatever value is stored.
+
+### Unreleased — hardened compose template; optional Redis password
+
+- **Image updates need no action.** The `folio` image no longer contains
+  the `unrar` program (it was never run: RAR comics are read inside the
+  server through the UnRAR library, as before). Nothing else in the
+  images changed, and they keep working with the `compose.prod.yml` you
+  already have.
+- **Adopting the hardened template is optional and manual** (`pull`
+  never touches your compose file). Download the new `compose.prod.yml`,
+  re-apply your local edits, and run `docker compose up -d`; every
+  container is recreated once, volumes and data are untouched. What the
+  new file adds, if you prefer to merge it into your own copy:
+  - the `x-hardening` block (`read_only: true`, `cap_drop: [ALL]`,
+    `security_opt: ["no-new-privileges:true"]`) merged into every
+    service with `<<: *hardening`;
+  - `cap_add` per service: `app-init` `CHOWN`, `DAC_READ_SEARCH`,
+    `FOWNER`; `postgres` `CHOWN`, `DAC_READ_SEARCH`, `FOWNER`, `SETUID`,
+    `SETGID`; `redis` `SETUID`, `SETGID`; `app` and `web` none;
+  - `tmpfs`: `/tmp` on `app`, `/var/run/postgresql` on `postgres`;
+  - `network_mode: none` on `app-init`; `networks: [default, backend]`
+    on `app`, `[default]` on `web`, `[backend]` on `postgres` and
+    `redis`, and the top-level `networks:` block declaring `backend`
+    as `internal: true`;
+  - on `redis`: the `environment` (`SKIP_FIX_PERMS`, `REDIS_PASSWORD`),
+    the new `command` and `healthcheck`; on `app`: the new
+    `COMIC_REDIS_URL` line.
+
+  The `default` network keeps its name, so a reverse proxy attached to
+  `<project>_default` still reaches `app:8080`. Postgres and Redis are
+  no longer on it: anything else of yours that connected to them over
+  that network (a backup container, an admin tool) must join `backend`
+  instead. `docker compose exec` (and `just backup` / `just restore`)
+  work as before.
+- **Optional Redis password.** Add `REDIS_PASSWORD=<value>` to `.env`
+  (letters, digits and `- . _ ~` only, e.g. `openssl rand -hex 32`; any
+  other character makes Redis refuse to start with a message saying
+  so), then run `docker compose -f compose.prod.yml up -d`. Compose
+  recreates Redis and the app together, Redis with `requirepass` and the
+  app with the password in `COMIC_REDIS_URL`; queued jobs survive (they
+  are in the Redis volume). Do not restart only one of the two: an app
+  without the password cannot reach a Redis that requires one. To turn
+  it off again, remove the line and run `up -d` the same way. Leaving it
+  unset keeps today's behaviour. Needs the new template: an older file
+  ignores the variable.
+- **If you customised your compose file**, check before adopting:
+  - *Extra mounts:* only the image's own filesystem is read-only. Bind
+    mounts and volumes stay writable as declared, so a writeback library
+    still needs its mount without `:ro`. Anything that writes elsewhere
+    in a container (a tool you `docker exec` into it, a sidecar sharing
+    its filesystem) fails with `Read-only file system`; give it a
+    volume or `tmpfs`.
+  - *Custom `user:`* on `postgres` or `redis`: their entrypoints then
+    skip the root steps and need none of the added capabilities; the
+    data volume must already belong to that user.
+  - *SELinux / AppArmor:* the template sets no labels or profiles, so
+    Docker's defaults apply. The new settings only take permissions
+    away, but they were tested on a host with neither enabled: if a
+    container fails to start under your policy, check the audit log for
+    a denial. On SELinux hosts a bind mount still needs its usual `:z` /
+    `:Z` suffix.
+
+### Unreleased — 1 h access tokens by default; sessions end after 90 days
+
+- **The built-in access-token lifetime is now 1 hour** (was 24 hours).
+  An existing install does not change: its first boot saved the access
+  TTL in the database (`auth.jwt.access_ttl`, normally `24h`), and the
+  saved value wins. `/admin/auth` → *Tokens* shows what is in effect; set
+  *Access TTL* to `1h` there to adopt the new default. A shorter access
+  token limits how long a copied session cookie keeps working after
+  sign-out; the web app renews it silently, including on a full page load
+  after the access cookie expired. A fresh install gets `1h` (and
+  `.env.example` no longer sets `24h`; if your `.env` still carries
+  `COMIC_JWT_ACCESS_TTL=24h` it only matters on a fresh database).
+- **Sessions have a maximum age, 90 days by default** (new setting
+  `auth.session.max_age`, `/admin/auth` → *Tokens* → *Maximum session
+  age*, at least `1d`). A sign-in can be refreshed until 90 days after
+  it was made, however often it is used; then the user signs in again.
+  It applies to existing sessions at once: anyone who last signed in
+  more than 90 days before the upgrade is asked to sign in again at the
+  next token refresh. Raise the setting first if that is unwelcome.
+- **The CSRF cookie lives as long as the refresh cookie** (it used to
+  expire with the access cookie, which made the silent refresh fail once
+  the access cookie had expired).
+
+### Unreleased — archives refused by a safety limit get their own finding
+
+- A comic the archive reader refuses on a protective limit (entry count,
+  entry or total size, compression ratio, 7z decoder memory) or on an
+  unsafe or non-portable entry name is now reported as **Archive refused
+  by a safety limit**, naming the check, instead of as a malformed
+  archive. That includes RAR and 7z files refused while a library
+  converts them to CBZ, which were reported as an unsupported format.
+  Files already flagged keep their old finding until they are read
+  again: an ordinary scan skips a file that has not changed, so run a
+  **Content verify** scan (the library's *Scan* menu, or *Scan all* with
+  *Content-verify scan* ticked) to re-word them. Migration
+  `m20271111_000002_health_issue_scan_idx` adds an index used to count
+  each scan run's findings.
+
+### Unreleased — multi-part RAR comics are no longer read
+
+- Comics stored as a multi-part RAR set (`.part1.rar`, `.r00`, …) are
+  no longer read. In a library with CBR conversion on, the scan reports
+  each as a malformed archive with that reason; with conversion off a
+  `.cbr` gets the unsupported-format finding, as before. Repack the
+  parts as a single archive (CBZ, or a one-part RAR).
 
 ### Unreleased — app passwords are looked up by digest
 

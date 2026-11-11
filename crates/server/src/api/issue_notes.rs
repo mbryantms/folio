@@ -78,7 +78,9 @@ pub async fn set_issue_note(
             Ok(r) => r,
             Err(resp) => return resp,
         };
-    if !crate::library::access::issue_visible(&app, &user, &issue_row).await {
+    // Hidden or soft-removed (with its series): no new note, answered like
+    // an unknown slug.
+    if !crate::library::access::issue_writable(&app, &user, &issue_row.id).await {
         return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
     }
 

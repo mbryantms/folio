@@ -1,0 +1,350 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: opds
+---
+{
+  "admin /opds/v1/publishers": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000001</id>\n    <title>Acme Press</title>\n    \n    <summary>6 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/acme-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000002</id>\n    <title>Adult Press</title>\n    \n    <summary>2 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/adult-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000007</id>\n    <title>FK Only Press</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/fk-only-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v1/publishers?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v1/publishers?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v2/publishers": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 3,
+        "title": "Publishers"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/publishers/acme-press",
+          "metadata": {
+            "description": "6 issues · 2 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000001",
+            "numberOfItems": 6
+          },
+          "title": "Acme Press",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/publishers/adult-press",
+          "metadata": {
+            "description": "2 issues · 1 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000002",
+            "numberOfItems": 2
+          },
+          "title": "Adult Press",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/publishers/fk-only-press",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000007",
+            "numberOfItems": 0
+          },
+          "title": "FK Only Press",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /opds/v2/publishers?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 3,
+        "title": "Publishers"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "admin /opds/v2/publishers?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 3,
+        "title": "Publishers"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "capped /opds/v1/publishers": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000001</id>\n    <title>Acme Press</title>\n    \n    <summary>5 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/acme-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000007</id>\n    <title>FK Only Press</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/fk-only-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v1/publishers?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v1/publishers?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v2/publishers": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 2,
+        "title": "Publishers"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/publishers/acme-press",
+          "metadata": {
+            "description": "5 issues · 2 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000001",
+            "numberOfItems": 5
+          },
+          "title": "Acme Press",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/publishers/fk-only-press",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000007",
+            "numberOfItems": 0
+          },
+          "title": "FK Only Press",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /opds/v2/publishers?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 2,
+        "title": "Publishers"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "capped /opds/v2/publishers?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 2,
+        "title": "Publishers"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "partial /opds/v1/publishers": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000001</id>\n    <title>Acme Press</title>\n    \n    <summary>4 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/acme-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000002</id>\n    <title>Adult Press</title>\n    \n    <summary>2 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/adult-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:publishers:01940000-0000-7000-8000-000050000007</id>\n    <title>FK Only Press</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/publishers/fk-only-press\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v1/publishers?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v1/publishers?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:publishers</id>\n  <title>Publishers</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/publishers?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v2/publishers": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 3,
+        "title": "Publishers"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/publishers/acme-press",
+          "metadata": {
+            "description": "4 issues · 1 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000001",
+            "numberOfItems": 4
+          },
+          "title": "Acme Press",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/publishers/adult-press",
+          "metadata": {
+            "description": "2 issues · 1 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000002",
+            "numberOfItems": 2
+          },
+          "title": "Adult Press",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/publishers/fk-only-press",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:publishers:01940000-0000-7000-8000-000050000007",
+            "numberOfItems": 0
+          },
+          "title": "FK Only Press",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /opds/v2/publishers?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 3,
+        "title": "Publishers"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "partial /opds/v2/publishers?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/publishers?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:publishers",
+        "itemsPerPage": 50,
+        "numberOfItems": 3,
+        "title": "Publishers"
+      },
+      "navigation": []
+    },
+    "status": 200
+  }
+}

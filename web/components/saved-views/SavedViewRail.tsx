@@ -15,6 +15,7 @@ import { CoverPriorityProvider } from "@/components/library/cover-priority";
 import { HorizontalScrollRail } from "@/components/library/HorizontalScrollRail";
 import { RailIconPicker } from "@/components/library/RailIconPicker";
 import { SurpriseMeButton } from "@/components/library/SurpriseMeButton";
+import { getCoverWidth } from "@/components/library/use-cover-size";
 import {
   useCblListWindowInfinite,
   useCollectionEntries,
@@ -23,6 +24,13 @@ import {
 } from "@/lib/api/queries";
 import { filterQueryErrorMessage } from "@/lib/saved-views/filter-bounds";
 import type { SavedViewView } from "@/lib/api/types";
+import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
+// Rail parameters shared with the server prefetch (D18), so the hooks
+// below read the cache entries the home page dehydrated.
+import {
+  CBL_RAIL_WINDOW,
+  RAIL_PREVIEW_LIMIT,
+} from "@/lib/saved-views/rail-queries";
 
 import {
   ContinueReadingRailBody,
@@ -36,7 +44,6 @@ import {
   SimilarSeriesRailBody,
   useSystemRailIsEmpty,
 } from "./system-rails";
-import { cardWidth } from "@/lib/library/card-size";
 
 /** URL for the rail's "View all" affordance + header link.
  *
@@ -52,11 +59,6 @@ function viewDetailHref(view: SavedViewView): string {
   return `/views/${view.id}`;
 }
 
-/** Max cards we hydrate on the home page for filter rails. Higher = more
- *  cards visible before the trailing "View all" tile becomes the way to
- *  reach the long tail. */
-const RAIL_PREVIEW_LIMIT = 30;
-
 /** Built-in "Recently Added" filter view (saved_views.rs, m20261205). The
  *  rail hosts the "Surprise me" discovery action in its header (3.7) — the
  *  feature lives on the existing rail rather than a duplicate one. */
@@ -66,20 +68,15 @@ const RECENTLY_ADDED_VIEW_ID = "00000000-0000-0000-0000-000000000001";
  *  live on the management page (`/settings/views`); the home page is
  *  pure presentation.
  *
- *  `cardSize` is the home-page density slider value in pixels. Each
- *  card wrapper sets its width inline so the same toggle that drives
- *  the library grid also drives rail card widths. */
+ *  Every card wrapper takes the app-wide cover width
+ *  (`COVER_ITEM_STYLE`, lib/library/cover-size.ts): a rail card is as
+ *  wide as a cover in the library grid, and follows the one size
+ *  control without this component re-rendering. */
 export function SavedViewRail({
   view,
-  cardSize,
-  cardSizeKey,
   priority = false,
 }: {
   view: SavedViewView;
-  cardSize: number;
-  /** The page's card-size key: the stored size applies from the first
-   *  frame, before `cardSize` rehydrates (lib/library/card-size.ts). */
-  cardSizeKey?: string;
   /** First/above-the-fold rail: eager-load + high-priority its covers so
    *  the LCP image isn't deferred. Off for every other rail. */
   priority?: boolean;
@@ -91,13 +88,10 @@ export function SavedViewRail({
   const systemEmpty = useSystemRailIsEmpty(systemKey);
   if (view.kind === "system" && systemEmpty) return null;
 
-  const itemStyle: React.CSSProperties = {
-    width: cardWidth(cardSizeKey, cardSize),
-  };
   // "View all" trailing tile fires for surfaces that have a finite preview
   // but a deeper detail page. Suppressed when the rail body says it's
   // already showing everything (returns hasMore: false).
-  const railContent = renderRailBody(view, itemStyle);
+  const railContent = renderRailBody(view, COVER_ITEM_STYLE);
   return (
     <section
       className="flex flex-col"
@@ -110,7 +104,7 @@ export function SavedViewRail({
       <CoverPriorityProvider value={priority}>
         <HorizontalScrollRail
           viewAllHref={railContent.hasMore ? viewDetailHref(view) : undefined}
-          itemWidthPx={cardSize}
+          coverSized
         >
           {railContent.body}
         </HorizontalScrollRail>
@@ -335,11 +329,7 @@ function CblRailBody({
   // variant lets the rail asynchronously extend in either direction
   // as the user scrolls past the edge sentinels, without disturbing
   // the anchored slice that landed first.
-  const query = useCblListWindowInfinite(listId, {
-    before: 3,
-    after: 24,
-    limit: 24,
-  });
+  const query = useCblListWindowInfinite(listId, CBL_RAIL_WINDOW);
 
   // Latest query stashed in a ref so the IntersectionObserver callbacks
   // can read `hasNextPage` / `isFetching*` without us having to rebuild
@@ -450,8 +440,11 @@ function CblRailBody({
   // adding content past the right edge doesn't shift anything
   // currently visible. Lives in a `useLayoutEffect` so the fix
   // commits before the next paint — no perceptible jump.
+  //
+  // The card width is a CSS variable (`COVER_ITEM_STYLE`), so the px
+  // value is read from the cover-size store at the moment of the
+  // compensation rather than parsed out of `itemStyle`.
   const lowestPosRef = React.useRef<number | null>(null);
-  const cardSize = parseFloat(String(itemStyle.width ?? "0"));
   React.useLayoutEffect(() => {
     if (items.length === 0) return;
     const newLowest = items[0]!.position;
@@ -465,10 +458,12 @@ function CblRailBody({
     }
     if (prepended === 0) return;
     const scroller = railScrollRef.current;
-    if (!scroller || !Number.isFinite(cardSize) || cardSize <= 0) return;
+    if (!scroller) return;
+    const coverWidth = getCoverWidth();
+    if (!Number.isFinite(coverWidth) || coverWidth <= 0) return;
     // gap-3 = 12px between flex children inside HorizontalScrollRail.
-    scroller.scrollLeft += prepended * (cardSize + 12);
-  }, [items, cardSize]);
+    scroller.scrollLeft += prepended * (coverWidth + 12);
+  }, [items]);
 
   if (query.isLoading) {
     return (

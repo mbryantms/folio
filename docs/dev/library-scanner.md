@@ -106,6 +106,89 @@ reconcile so unscanned siblings stay untouched.
 | Scheduled scan | `library.scan_schedule_cron` per-library | [`jobs/scheduler.rs:224`](../../crates/server/src/jobs/scheduler.rs#L224) — `coalesce_scan(.., false)`. 5- or 6-field cron via `tokio_cron_scheduler`. |
 | File watcher | `library.file_watch_enabled` per library ([library/watcher.rs](../../crates/server/src/library/watcher.rs)) | inotify on local mounts, directory-mtime poll on NFS/SMB/CIFS/FUSE (picked by `statfs` at watcher start). Touched directories are collapsed over `scanner.watch_debounce_secs` (30 s) and enqueued via [`JobRuntime::coalesce_watch_scan`](../../crates/server/src/jobs/mod.rs) as a **scoped, non-forced** library scan of those directories only ([`scan_library_scoped`](../../crates/server/src/library/scanner/mod.rs)). Shares the full scan's `scan:in_flight` / `scan:queued` keys, so a storm is one scan plus at most one queued follow-up. See [File watcher](#file-watcher). |
 
+### Coalescing key
+
+Full-library scans (manual, scheduled, file watcher, scan-all) share one
+Redis key per library, `scan:in_flight:<library_id>`, whose value is the
+scan run id that holds it ([`jobs/scan_lease.rs`](../../crates/server/src/jobs/scan_lease.rs)).
+Every change to it is a single atomic command or Lua script:
+
+- **Claim.** `coalesce_scan` runs one script: `SET key <run id> NX PX
+  <ttl>`; if the key is already held, the same script records the queued
+  follow-up (`scan:queued:<lib>`, its force flag and its watcher
+  directories) and returns the holder's run id. Concurrent triggers
+  therefore produce exactly one queued run; the others get
+  `coalesced: true` with that run's `scan_id`, as before. A claim whose
+  job could not be queued is undone with a compare-and-delete.
+- **Lifetime.** A claimed scan waiting in the queue carries
+  `SCAN_QUEUED_TTL` (6 h): nothing runs to refresh it, and the job itself
+  survives a restart. When the job starts, a lease task beside the scan
+  resets the expiry to `SCAN_LEASE_TTL` (120 s) every
+  `SCAN_LEASE_REFRESH` (30 s, one worker heartbeat), only while the key
+  still holds the run's id. The task runs for the whole job, including the
+  blocking enumerate and plan phases and the reconcile, which the
+  scanner's own 750 ms progress heartbeat does not cover. A process that
+  dies mid-scan frees the library within 120 s; the boot sweep clears the
+  keys on restart anyway. A key that expired and is still free is taken
+  back by its run.
+- **Lost key.** If a refresh finds another run's id on the key (the key
+  lapsed and another trigger claimed it), the lease flags itself lost. The
+  scanner checks that flag at every phase boundary and on its phase-3
+  heartbeat, and the reconcile checks it at entry, between series of its
+  folder-missing sweep and before its final restore of series that hold
+  live issues. The removals, restores and empty-series marks for the
+  series the run itself scanned always finish together once started: a
+  later non-forced scan skips an unchanged folder, so a series emptied
+  there and left unmarked would stay live. A stop in the folder-missing
+  sweep still flags the series already handled, and every manifest event
+  is recorded only after its rows were written. The scan stops through
+  the cooperative-cancel path: no new folders start, the reconcile is
+  skipped or stops early, and the run closes as `cancelled` with
+  the error "Superseded: another scan of this library is running" and a
+  terminal `ScanEvent::Failed`. A job that finds the key held by another
+  run before it starts scans nothing and closes its run the same way,
+  whether the row is still `queued` or `running` (a job re-delivered after
+  a crash); its run id does not hold the key, so any live copy of it stops
+  too.
+- **Superseded request.** A superseded run hands its own request (force
+  flag and scope) to the coalescing script once: it becomes the holder's
+  queued follow-up, force OR-ed in and a full request widening a scoped
+  one, or a new run when the key has become free. The follow-up is a new
+  run with a new id, so this cannot repeat for the same run. A new run
+  joins the superseded run's scan-all batch; a request folded into
+  another holder's follow-up runs unbatched, and the batch counts the
+  superseded run as cancelled. Either way the batch never reads as
+  complete for that library, because the superseded run stays cancelled
+  in it even though the library was scanned; when the run was the
+  batch's last open member, the batch is marked finished and then
+  finalised again once the new run ends.
+- **Cancel while queued.** The cancel endpoint flips a `queued` run with
+  one conditional update (`… WHERE state = 'queued'`) and, only when that
+  changed the row, releases the library run's claim through
+  `release_scan` (compare-and-delete, or hand-over to a follow-up recorded
+  meanwhile), so the library can be scanned again at once; the cancelled
+  job does nothing when a worker picks it up. If the job started first,
+  the update changes nothing and the run is cancelled as a running scan,
+  which keeps the key until it stops and releases it. The job side mirrors
+  this: `open_scan_run` moves a run to `running` only `WHERE state =
+  'queued'`, so a cancel that landed first stays `cancelled` and the scan
+  stops at its cancel check.
+- **Release.** `release_scan(library, run id)` is compare-and-delete in
+  one script; when a follow-up was queued, the same script hands the key
+  to a new run id and the follow-up is enqueued. A run that no longer
+  holds the key changes nothing, so it can never delete a newer holder's
+  key. The lease task is stopped and awaited before the release, so no
+  refresh lands after it. If the follow-up's job cannot be queued, the key
+  is given back and the follow-up is recorded again without a holder, so
+  the next scan of the library runs it when it releases.
+- **Redis unavailable.** A trigger fails as before: `coalesce_scan`
+  returns the Redis error and nothing is queued. A running scan whose
+  refresh fails keeps scanning and retries on the next tick; it is only
+  stopped when a refresh succeeds and finds another holder.
+
+Series- and issue-scoped scans use their own `scan:in_flight:<lib>:series:…`
+keys with the 6 h lifetime and are not leases.
+
 ## Phase walkthrough
 
 The library path (`scan_library_with_run_id` at
@@ -190,19 +273,43 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     finding names yet (the open findings' paths are loaded once per
     scan), so rows indexed through it are reconciled and the finding is
     recorded; with the finding open the folder is skipped again as usual.
-  - **Still opened by name after a check, or with none** (closing these
-    is the next part of the work): the archive reader behind the page
-    routes, thumbnails, OCR and page hashes (`zip_lru`, which reopens the
-    path the check just proved); the issue rescan's ingest
-    (`process::ingest_one`, after its own `open_below_roots` check); the
-    scanner's ingest and hashing of walked files (`process.rs`,
-    `library/hash.rs`); the writeback read and rewrite of the archive
-    (`jobs/rewrite_sidecars.rs`); thumbnail generation
-    (`jobs/post_scan.rs`); deep validation
-    (`library/deep_validate.rs`); cover hashing (`metadata/phash.rs`); and
-    the admin archive editor (`api/archive_edit.rs`). Each would need
-    someone with write access to the library folder to swap a file for a
-    link in the window between the walk or check and the open.
+  - **Every open is a checked handle.** No library file is opened by
+    name after a check, and none without one. Reads open the file once
+    through the no-follow walk and read only through that handle: the
+    page routes, thumbnails, OCR and page hashes hand it to the archive
+    reader cache (`zip_lru`, which builds the reader from the handle and
+    reuses a cached reader only when it was built from the same file,
+    by device and inode); scanner ingest sniffs, hashes and parses one
+    handle (`process::prepare_ingest`, also after the issue rescan's own
+    check), as do the identity peek, the hash backfill job, thumbnail
+    generation (`jobs/post_scan.rs`), deep validation
+    (`library/deep_validate.rs`), cover hashing (`metadata/phash.rs`) and
+    the page editor's live page count (`api/archive_edit.rs`). The
+    archive crate reads from the handle it is given (see its module
+    docs). Writers open the archive's folder through the same walk and
+    work relative to that folder handle (`archive_rewrite`, see
+    [archive-writes.md](archive-writes.md)); deletes of backups and
+    staging files go through it too. A refusal in a background path is
+    logged and leaves the file alone: ingest skips a link without a
+    finding (as the issue rescan does) and reports a non-regular file or
+    a path outside the root as `UnreadableFile`; thumbnail generation
+    records the refusal as the job's error; deep validation counts the
+    file as unopenable; cover hashing skips it; a writeback job ends as
+    a refusal and fails the run that queued it. The scanner stores the
+    file's size and modification time from the same handle it hashes
+    and parses (`fstat`), so the row's fingerprint describes that file.
+    `series.json` is read through the folder handle too, at most 1 MiB
+    (a larger one is ignored with a WARN naming its path and size).
+    Presence and fingerprint checks that only decide whether to look at
+    a file (`exists()`, `metadata()` in the folder walk and the
+    unchanged-file fast path) may follow links; every read does not.
+  - **Multi-part RAR.** A RAR that is one part of a multi-part set is
+    not read: its other parts would be opened by name, which no checked
+    handle covers. In a library with CBR conversion on, the scan reports
+    it as `MalformedArchive` with the reason ("multi-part RAR archives
+    are not supported … repack the parts as one archive"); with
+    conversion off a `.cbr` gets the `UnsupportedArchiveFormat` finding,
+    as before. Repack the parts into a single archive.
   - **Hard links** cannot be told apart from ordinary files and are
     deliberately not refused: download tools commonly hard-link finished
     files into a library.
@@ -397,7 +504,10 @@ without per-library configuration.
        `Encrypted` (password-protected → `EncryptedArchive` +
        `files_encrypted`) / `Malformed` (ComicInfo didn't parse →
        `MalformedComicInfo`) / `MalformedArchive` (the file isn't a
-       readable container → `MalformedArchive`) / `Unreadable`
+       readable container → `MalformedArchive`) / `Refused` (the reader
+       refused it on a protective limit or an unsafe entry name, per
+       `archive::ArchiveError::safety_check` → `ArchiveSafetyRefusal`;
+       counted in `files_malformed`, issue state `malformed`) / `Unreadable`
        ([process.rs `match archive_outcome`](../../crates/server/src/library/scanner/process.rs))
      - ComicInfo PageCount storage as metadata only; mismatches with
        archive image count are ignored because the tag is frequently
@@ -881,6 +991,7 @@ opaque JSON so adding variants doesn't need a migration.
 | `UnsupportedArchiveFormat` | warning | `.cbr` / `.cb7`: only when the library has the format's flag off (`auto_convert_cbr_on_scan` / `auto_convert_cb7_on_scan`) **or** the conversion failed (not ZIP/RAR/7z by magic bytes, encrypted, an archive cap or the 7z decoder-memory cap exceeded, I/O error). With the flag on, the scanner converts the file to a sibling `.cbz` via [scanner/cbr_convert.rs](../../crates/server/src/library/scanner/cbr_convert.rs) and ingests that instead — no health row. | [process.rs](../../crates/server/src/library/scanner/process.rs) (`ConvertibleFormat` branch) | `{ path, ext }` | Enable the matching conversion flag on the library (needs `allow_archive_writeback`), or convert to CBZ by hand. |
 | `SkippedArchiveEntries` | warning | The archive opened, but one or more entries were dropped from the page index by a soft defense in the archive crate. One row per `reason`: `compression ratio cap` (CBZ entry claiming >200× expansion) or `image extension but non-image content` (an image-named entry whose leading bytes carry no image signature — the "`ComicInfo.xml` saved as `-0001.jpg`" publisher bug; every reader content-sniffs page candidates at open via [`archive::image_sniff`](../../crates/archive/src/image_sniff.rs)). The issue ingests with the surviving pages, so cover thumbnails, the reader and OCR all agree on page 0. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `entries_skipped()`) | `{ path, dropped, total, reason }` | Repack the archive without the offending entry, or leave it — nothing downstream reads it. |
 | `MalformedArchive` | error | The file could not be opened as an archive at all: no reader recognises the container (magic bytes are not ZIP / RAR / 7z / TAR) or its structure is broken past the recovery branches. Distinct from `MalformedComicInfo` — the fix is to replace or rename the file, not re-tag it. The issue row is kept in the `malformed` parse state with no pages. | [process.rs `ArchiveOutcome::MalformedArchive`](../../crates/server/src/library/scanner/process.rs) | `{ path, error }` | Replace the file from a good source, or rename it to the format it really is. |
+| `ArchiveSafetyRefusal` | error | The archive reader refused the archive on a protective limit or an unsafe entry name, either when the scanner opened it or while scan-time CBR / CB7 conversion read it. `check` is the `archive::SafetyCheck` tag, taken from the typed `archive::Cap` the reader raised: `entry_count` (`COMIC_ARCHIVE_MAX_ENTRIES`), `entry_size` (`COMIC_ARCHIVE_MAX_ENTRY_BYTES`), `total_size` (`COMIC_ARCHIVE_MAX_TOTAL_BYTES`), `compression_ratio` (`COMIC_ARCHIVE_MAX_RATIO`; a hard refusal for 7z only, CBZ skips the entry as `SkippedArchiveEntries`), `decoder_memory` (fixed 7z cap) or `unsafe_entry_name` (an unsafe or non-portable name: empty, absolute, `..` past the root, an empty or `.` component, a backslash or a NUL; fixed). The refusal says nothing about damage either way, so it is not reported as `MalformedArchive`. On open: `malformed` parse state and `files_malformed`; during conversion: the source is left untouched, no issue row is written, and the file counts in `files_skipped`. Rows written before this kind existed keep their old kind until the file is read again, which for an unchanged file takes a content-verify scan. | [process.rs `ArchiveOutcome::Refused`, `classify_convert_error`](../../crates/server/src/library/scanner/process.rs) | `{ path, check, error }` | Raise the named env limit and restart for a file you trust, then run a **Content verify** scan (the library's *Scan* menu): an ordinary scan skips the unchanged file. Otherwise repack or replace it; a changed file is picked up by the next scan. |
 | `RecoveredArchive` | info | The CBZ only opened after a repair — `technique` is `unicode-path-crc-strip` (a bad Info-ZIP Unicode-Path extra was stripped) or `cdfh-offset-rebuild` (central-directory offsets pointed at garbage; the index was rebuilt by scanning the data area for each local header). Pages ingest normally; the row records that the file depends on a recovery branch. | [process.rs](../../crates/server/src/library/scanner/process.rs) (translates `Cbz::recovery_used()`) | `{ path, technique }` | Nothing required; repack the archive if a strict reader must open it. |
 | `UnreadablePage` | warning | A page entry could not be read or decoded end-to-end. Emitted only by the opt-in deep validation (`POST /libraries/{slug}/validate-deeply`), which decodes every page of every issue; the scanner itself never decodes pages. The run owns a `scan_runs` row (`kind = deep_validate`) that every exit closes: `complete`, `failed` with the error, or `cancelled` (the scan-run cancel, from the Live scan page or Background work, stops the walk within a couple of seconds and stands). One run per library at a time (a second POST is 409). Only a complete run resolves an `UnreadablePage` it did not re-emit, and never for a file it could not open this time; it never resolves another kind (E11). A row a restart abandoned is closed `failed` at boot, and the daily History trim never deletes an unfinished row. | [deep_validate.rs](../../crates/server/src/library/deep_validate.rs) | `{ path, page_index, error }` | Replace the archive, or re-save the page and repack. |
 | `NoPages` | warning | A structurally valid archive with zero image entries after sniffing — it used to ingest as a silent 0-page issue that opened in the reader and never turned. Raised only for an `active` parse state (encrypted and malformed files have their own outcome). | [process.rs](../../crates/server/src/library/scanner/process.rs) (`actual_pages == 0`) | `{ path }` | Repack the archive with its pages, or remove it. |
@@ -984,7 +1095,22 @@ durable side of the live channel. Fields:
 | `issue_id` | text? | For `kind = 'issue'` — links the History row back to the issue page. |
 
 History view: `GET /libraries/{slug}/scan-runs` reads this table; the
-admin "Scan history" tab paginates it.
+admin "Scan history" tab paginates it. Every scan-run response
+(`ScanRunView`, and `CrossLibScanRunView` on `/admin/scan-runs`,
+`/admin/scan-runs/latest-per-library` and batch detail) carries
+`health_issue_count`: the open findings (not resolved, not dismissed)
+whose `library_health_issues.scan_id` is the run, counted for the whole
+page in one grouped query (`scan_runs::finding_counts`, indexed by
+`library_health_issues_scan_idx`). A finding's `scan_id` moves to the
+latest run that sees it: the upsert when the run re-emits it, and the
+touch-on-skip update when the run skipped the unchanged file it names
+(only `first_seen_at` keeps the first sighting). One kind is the
+exception: a duplicate-external-id finding that is still true is kept
+alive by a settle step that runs on every scope and only refreshes
+`last_seen_at`, so it stays with the run that first recorded it. So the
+count is "open findings this run last recorded". The scan rows link to `/admin/findings?tab=health&scan_id=…`,
+which lists exactly those rows through the `scan_id` filter on
+`GET /admin/health-issues` (first-page `total` included).
 
 ## Adjacent systems triggered by a scan
 

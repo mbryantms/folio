@@ -154,8 +154,8 @@ can be specific.
 {
   "updated": 3,        // newly transitioned to the target state
   "skipped": 1,        // already in the target state
-  "forbidden": 0,      // library ACL drop (non-admin)
-  "not_found": 0       // issue_id didn't resolve
+  "forbidden": 0,      // always 0, kept for the response shape
+  "not_found": 0       // unknown, hidden or soft-removed issue
 }
 ```
 

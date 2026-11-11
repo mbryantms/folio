@@ -4,6 +4,9 @@ import * as React from "react";
 
 import { SavedViewRail } from "./SavedViewRail";
 import type { SavedViewView } from "@/lib/api/types";
+import { COVER_WIDTH } from "@/lib/library/cover-size";
+
+const PLACEHOLDER_STYLE = { minHeight: `calc(${COVER_WIDTH} + 120px)` };
 
 /** Lazy-mount wrapper around `<SavedViewRail>`.
  *
@@ -20,30 +23,31 @@ import type { SavedViewView } from "@/lib/api/types";
  *  once mounted, the rail stays mounted, so scrolling past and back
  *  doesn't refetch.
  *
- *  Placeholder height is estimated from the rail's card-size
- *  preference: roughly `cardSize` (the visible card height) plus a
- *  constant for the rail title row and gap. Off by a bit is fine
- *  because the swap happens while the rail is still off-screen — the
- *  user never sees the layout reflow.
+ *  Placeholder height is estimated from the app-wide cover size: the
+ *  cover width (`COVER_WIDTH`, a CSS length, so it needs no render)
+ *  plus a constant for the rail title row and gap. Off by a bit is
+ *  fine because the swap happens while the rail is still off-screen —
+ *  the user never sees the layout reflow.
  */
 export function LazyRail({
   view,
-  cardSize,
-  cardSizeKey,
   priority = false,
+  eager = priority,
 }: {
   view: SavedViewView;
-  cardSize: number;
-  cardSizeKey?: string;
   /** First/above-the-fold rail: mount immediately (skip the
    *  intersection-observer wait) and eager-load its covers, so the LCP
    *  cover paints fast instead of being deferred. */
   priority?: boolean;
+  /** Mount immediately without prioritizing covers: a leading system rail
+   *  the server prefetch found empty, which renders nothing (so it leaves
+   *  no placeholder-height gap above the priority rail). */
+  eager?: boolean;
 }) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   // The priority rail is in view at load — mount now rather than waiting
   // for the observer to fire.
-  const [mounted, setMounted] = React.useState(priority);
+  const [mounted, setMounted] = React.useState(eager);
 
   React.useEffect(() => {
     if (mounted) return;
@@ -81,27 +85,19 @@ export function LazyRail({
   }, [mounted]);
 
   if (mounted) {
-    return (
-      <SavedViewRail
-        view={view}
-        cardSize={cardSize}
-        cardSizeKey={cardSizeKey}
-        priority={priority}
-      />
-    );
+    return <SavedViewRail view={view} priority={priority} />;
   }
 
-  // Height estimate: one card-height row + ~120px for the title row
+  // Height estimate: one cover-width row + ~120px for the title row
   // + density gaps. Doesn't have to be exact because the swap fires
   // while the rail is still off-screen.
-  const placeholderHeight = cardSize + 120;
   return (
     <section
       ref={ref}
       aria-busy="true"
       aria-label={view.name}
       data-testid="lazy-rail-placeholder"
-      style={{ minHeight: `${placeholderHeight}px` }}
+      style={PLACEHOLDER_STYLE}
       className="flex flex-col"
     />
   );

@@ -5,8 +5,14 @@
  * The browser-only half (the retry sits above the reader's tap zones and in
  * view) is covered by tests/e2e/reader-flow.spec.ts.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Every retry first renews a lapsing session; resolved at once here.
+const ensureFreshSession = vi.fn(async () => {});
+vi.mock("@/lib/api/session-refresh", () => ({
+  ensureFreshSession: () => ensureFreshSession(),
+}));
 
 import {
   PageImage,
@@ -28,13 +34,14 @@ const retry = () =>
 
 afterEach(() => {
   vi.restoreAllMocks();
+  ensureFreshSession.mockClear();
 });
 
 describe("PageImage load failure", () => {
-  it("retries once silently, then offers a retry the cover can see", () => {
+  it("retries once silently, then offers a retry the cover can see", async () => {
     const { img, container } = page();
     fireEvent.error(img());
-    expect(img().getAttribute("src")).toBe(`${SRC}?r=1`);
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
     expect(retry()).toBeNull();
 
     fireEvent.error(img());
@@ -43,23 +50,43 @@ describe("PageImage load failure", () => {
     expect(container.querySelector("[data-page-load-error]")).toBe(retry());
   });
 
-  it("the retry re-requests the page", () => {
+  it("the retry re-requests the page", async () => {
     const { img } = page();
     fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
     fireEvent.error(img());
     fireEvent.click(retry()!);
-    expect(img().getAttribute("src")).toBe(`${SRC}?r=2`);
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=2`));
     expect(retry()).toBeNull();
   });
 
-  it("notices an image that failed before hydration", () => {
+  it("renews the session before the automatic retry and before Tap to retry", async () => {
+    let release!: () => void;
+    ensureFreshSession.mockImplementationOnce(
+      () => new Promise<void>((r) => (release = r)),
+    );
+    const { img } = page();
+    fireEvent.error(img());
+    expect(ensureFreshSession).toHaveBeenCalledTimes(1);
+    // The re-request waits for the renewal.
+    expect(img().getAttribute("src")).toBe(SRC);
+    release();
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
+
+    fireEvent.error(img());
+    fireEvent.click(retry()!);
+    expect(ensureFreshSession).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=2`));
+  });
+
+  it("notices an image that failed before hydration", async () => {
     // A server-rendered <img> can fail while React isn't listening yet, so
     // no `error` event ever arrives: broken means `complete` with no size.
     vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
       true,
     );
     const { img } = page();
-    expect(img().getAttribute("src")).toBe(`${SRC}?r=1`);
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
   });
 
   it("an image still loading is left alone", () => {

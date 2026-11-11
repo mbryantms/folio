@@ -13,7 +13,8 @@
 //!   1. parse + verify the URL signature → 401 on tamper/expired/malformed
 //!   2. look up `users` by the signed user_id → 401 if gone
 //!   3. look up `issues` by id → 404
-//!   4. confirm the user still has access to the library → 403 on revoke
+//!   4. confirm the user still has access to the library → 404 on revoke
+//!      (a hidden issue answers like an unknown id)
 //!   5. serve the page bytes (sniffed allowlist, ETag, Range-able)
 //!
 //! Audit: on the *first* page of an issue (`n == 0`) we record one
@@ -105,18 +106,23 @@ pub async fn stream(
     };
 
     // Library ACL — admins always pass, non-admins need an explicit grant
-    // and (WP-2.7) the issue must sit at or below the grant's age cap.
+    // and (WP-2.7) the issue must sit at or below the grant's age cap. A
+    // hidden issue answers exactly like an unknown id.
     if user_row.role != UserRole::Admin {
         let acl = crate::library::access::for_library_by_id(&app, u, issue_row.library_id).await;
         if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
-            return error(StatusCode::FORBIDDEN, "library_access_denied");
+            return error(StatusCode::NOT_FOUND, "not_found");
         }
     }
     // Regular file below the library root, no symbolic link on the way
-    // (`library::no_follow`), or not-found. The pread fast path reads
-    // through this handle.
-    let Some(file) = crate::library::no_follow::open_issue(&app, &issue_row).await else {
-        return error(StatusCode::NOT_FOUND, "not_found");
+    // (`library::no_follow`), or not-found (a failed library lookup is a
+    // server error). The pread fast path reads through this handle.
+    let archive_file = match crate::library::no_follow::open_issue_archive(&app, &issue_row).await {
+        Ok(f) => f,
+        Err(crate::library::no_follow::Refusal::Lookup(_)) => {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+        }
+        Err(_) => return error(StatusCode::NOT_FOUND, "not_found"),
     };
 
     let page_index = n as usize;
@@ -137,9 +143,18 @@ pub async fn stream(
     // than refactored into a shared helper because page_bytes also wires
     // up Cache-Control and If-Range against the `CurrentUser` etag, both
     // of which don't apply here verbatim.
+    // The reader is built from (or must match) the handle just opened; the
+    // pread fast path streams from a second handle to the same file.
+    let file = match archive_file.file().try_clone() {
+        Ok(dup) => dup,
+        Err(e) => {
+            tracing::warn!(error = %e, issue_id = %issue_row.id, "pse: handle dup failed");
+            return error(StatusCode::INTERNAL_SERVER_ERROR, "archive_unreadable");
+        }
+    };
     let (arc, pread) = match app
         .zip_lru
-        .get_or_open_indexed_tracked(&issue_row.id, std::path::Path::new(&issue_row.file_path))
+        .get_or_open_indexed_tracked(&issue_row.id, archive_file)
         .await
     {
         Ok((pair, opened)) => {

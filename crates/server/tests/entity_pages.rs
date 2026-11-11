@@ -1358,6 +1358,12 @@ async fn profile_is_queued_on_first_view_and_refreshed_by_admin() {
         .unwrap();
     let (_, body) = get_json(&app, "/api/characters/joker", &f.user).await;
     assert_eq!(body["enrichment"], "failed", "{body}");
+    assert_eq!(
+        body["enrichment_error"],
+        server::api::entity_pages::READER_PROFILE_ERROR
+    );
+    let (_, body) = get_json(&app, "/api/characters/joker", &f.admin).await;
+    assert_eq!(body["enrichment"], "failed", "{body}");
     let err = body["enrichment_error"].as_str().unwrap();
     assert!(
         err.contains("Metron has no record") && err.contains("ComicVine has no record"),
@@ -1854,4 +1860,43 @@ async fn rescan_keeps_user_edited_locations() {
         .await,
         Some(1)
     );
+}
+
+/// A recorded profile-fetch failure is the provider's own error text: an
+/// admin reads it, a reader gets the fixed sentence in its place.
+#[tokio::test]
+async fn profile_failure_detail_is_admin_only() {
+    let app = TestApp::spawn_with_comicvine("cv-key", true).await;
+    let f = fixture(&app).await;
+    let batman = add_entity(&f.db, "character", "batman", "Batman").await;
+    add_character(&f.db, &f.a_issues[0], "Batman", Some(batman)).await;
+    let detail = "comicvine: request to https://provider.invalid/api failed: 503";
+    entity::entity_profile::ActiveModel {
+        entity_type: Set("character".to_owned()),
+        entity_id: Set(batman),
+        summary: Set(None),
+        sections: Set(None),
+        facts: Set(None),
+        provider_counts: Set(None),
+        sources: Set(None),
+        requested_at: Set(Some(Utc::now().into())),
+        fetched_at: Set(Some(Utc::now().into())),
+        error: Set(Some(detail.to_owned())),
+        updated_at: Set(Utc::now().into()),
+    }
+    .insert(&f.db)
+    .await
+    .unwrap();
+
+    let (s, body) = get_json(&app, "/api/characters/batman", &f.admin).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["enrichment_error"], detail);
+
+    let (s, body) = get_json(&app, "/api/characters/batman", &f.user).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["enrichment_error"],
+        server::api::entity_pages::READER_PROFILE_ERROR
+    );
+    assert!(!body.to_string().contains("provider.invalid"), "{body}");
 }

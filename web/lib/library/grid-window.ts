@@ -1,9 +1,10 @@
 /**
  * Pure layout math for the window-virtualized library grid
- * (`LibraryGridView`, audit G1). The on-screen grid uses a responsive
- * CSS `cardGridColumns` template; to virtualize by
+ * (`LibraryGridView`, audit G1). The on-screen grid uses the responsive
+ * CSS template `COVER_GRID_COLUMNS` (cover-size.ts); to virtualize by
  * row we have to reproduce the column count the browser would pick, then
- * window the resulting rows.
+ * window the resulting rows. The same math turns the app-wide cover size
+ * into the slider's column-count stops.
  *
  * Kept side-effect-free so it's unit-testable in the node-env harness
  * (the rendering + measurement live in the component).
@@ -23,19 +24,19 @@ export const GRID_GAP_PX = 16;
 export const SERIES_TEXT_H = 56;
 export const ISSUE_TEXT_H = 64;
 
-/**
- * How many columns the `cardGridColumns` grid yields at
- * a given container width. Inverts the CSS formula: each column needs at
- * least `cardSize`, columns are separated by `gap`, and there's one
- * fewer gap than columns — so `n` columns fit when
- * `n*cardSize + (n-1)*gap <= width`, i.e.
- * `n <= (width + gap) / (cardSize + gap)`. Always at least 1 (a single
- * card never disappears, even in a sliver of width).
- */
 /** Smallest card the two-column floor will shrink to. Below this a
  *  container is a sliver (a collapsed pane), not a phone. */
 const MIN_CARD_PX = 96;
 
+/**
+ * How many columns the `COVER_GRID_COLUMNS` grid yields at a given
+ * container width. Inverts the CSS formula: each column needs at least
+ * `cardSize` (the cover target), columns are separated by `gap`, and
+ * there's one fewer gap than columns — so `n` columns fit when
+ * `n*cardSize + (n-1)*gap <= width`, i.e.
+ * `n <= (width + gap) / (cardSize + gap)`. Always at least 1 (a single
+ * card never disappears, even in a sliver of width).
+ */
 export function computeColumnsPerRow(
   containerWidth: number,
   cardSize: number,
@@ -47,7 +48,7 @@ export function computeColumnsPerRow(
   // collapse a phone grid to one column. The effective card width is
   // capped at half the row (never below `MIN_CARD_PX`, so a genuine
   // sliver still gets one card). Mirrors the CSS grids'
-  // `min(<cardSize>px, calc(50% - 0.5rem))` tracks; wide
+  // `minmax(min(<cardSize>px, calc(50% - 0.5rem)), 1fr)` tracks; wide
   // containers are unaffected because half their width exceeds any
   // card size.
   const half = Math.max(MIN_CARD_PX, (containerWidth - gap) / 2);
@@ -65,22 +66,21 @@ export function computeRowCount(
 }
 
 /**
- * Rendered card/column width. Columns are fixed at the card size (they
- * do NOT stretch to fill the row), so "200px" on the slider is a 200px
- * cover here exactly as it is on the home rails, which size each card
- * with `width: <cardSize>px`. The only exception is the two-column
- * phone floor: once half the row is narrower than the card size, each
- * column is half the row. Mirrors `cardGridColumns`.
+ * Rendered card/column width. Columns stretch to fill the row (`1fr`
+ * tracks), so the row never ends in a blank strip: the width left after
+ * the gaps is shared equally between the columns. Mirrors
+ * `COVER_GRID_COLUMNS`.
  */
 export function computeColumnWidth(
   containerWidth: number,
   columnsPerRow: number,
-  cardSize: number,
   gap: number = GRID_GAP_PX,
 ): number {
   if (containerWidth <= 0 || columnsPerRow <= 0) return 0;
-  const half = (containerWidth - gap) / 2;
-  return Math.max(0, Math.min(cardSize, half > 0 ? half : containerWidth));
+  return Math.max(
+    0,
+    (containerWidth - (columnsPerRow - 1) * gap) / columnsPerRow,
+  );
 }
 
 /**
@@ -115,11 +115,11 @@ export function estimateRowHeight(
 }
 
 /**
- * The real column width of a `cardGridColumns` grid at
- * `containerWidth` (WP-7.7): the card size, or half the row once the
- * two-column phone floor kicks in. Lets surfaces that aren't that grid
- * (rails, strips) render covers at exactly the issue grid's width.
- * Falls back to `minSize` before the first measurement.
+ * The real column width of a `COVER_GRID_COLUMNS` grid at
+ * `containerWidth` (WP-7.7): the row shared between as many columns of at
+ * least `minSize` as fit. Lets surfaces that aren't that grid (rails,
+ * strips) render covers at exactly the issue grid's width. Falls back to
+ * `minSize` before the first measurement.
  */
 export function effectiveColumnWidth(
   containerWidth: number,
@@ -128,5 +128,5 @@ export function effectiveColumnWidth(
 ): number {
   if (containerWidth <= 0) return minSize;
   const cols = computeColumnsPerRow(containerWidth, minSize, gap);
-  return computeColumnWidth(containerWidth, cols, minSize, gap);
+  return computeColumnWidth(containerWidth, cols, gap);
 }

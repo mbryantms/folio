@@ -102,7 +102,6 @@ pub struct AddProviderRangeReq {
     params(("slug" = String, Path)),
     responses(
         (status = 200, body = ProviderRangesListResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
     )
 )]
@@ -116,12 +115,8 @@ pub async fn list_series(
         Ok(s) => s,
         Err(resp) => return resp,
     };
-    if !crate::library::access::series_visible(&app, &user, &s).await {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_visible(&app, &user, &s).await {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
     let rows = fetch_rows(&app, s.id).await;
     Json(ProviderRangesListResp {
@@ -167,7 +162,6 @@ pub struct CoverageSegment {
     params(("slug" = String, Path)),
     responses(
         (status = 200, body = ProviderCoverageResp),
-        (status = 403, description = "library access denied"),
         (status = 404, description = "series not found"),
     )
 )]
@@ -185,12 +179,8 @@ pub async fn coverage_series(
         Err(resp) => return resp,
     };
     let acl = crate::library::access::for_library(&app, &user, s.library_id).await;
-    if !acl.series_ok(s.library_id, s.age_rating.as_deref()) {
-        return error(
-            StatusCode::FORBIDDEN,
-            "auth.forbidden",
-            "library access denied",
-        );
+    if !crate::library::access::series_page_ok(&acl, &user, &s) {
+        return error(StatusCode::NOT_FOUND, "not_found", "series not found");
     }
 
     // Project only the issue number (in reading order) — loading full

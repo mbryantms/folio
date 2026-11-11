@@ -1,0 +1,690 @@
+---
+source: crates/server/tests/entity_list_equivalence.rs
+expression: opds
+---
+{
+  "admin /opds/v1/arcs": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000e</id>\n    <title>1-Shot</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/1-shot\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000005</id>\n    <title>Adult Series Arc</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/adult-series-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000065</id>\n    <title>Arc Filler 001</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-001\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000066</id>\n    <title>Arc Filler 002</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-002\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000067</id>\n    <title>Arc Filler 003</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-003\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000068</id>\n    <title>Arc Filler 004</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-004\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000069</id>\n    <title>Arc Filler 005</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-005\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000006a</id>\n    <title>Arc Filler 006</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-006\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000f</id>\n    <title>Cee Arc</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/cee-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000a</id>\n    <title>Event</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-a\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000b</id>\n    <title>EVENT</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-b\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000c</id>\n    <title>event</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-c\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000002</id>\n    <title>Hidden War</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/hidden-war\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000001</id>\n    <title>Knightfall</title>\n    \n    <summary>5 issues · 3 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/knightfall\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000003</id>\n    <title>Mature Saga</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/mature-saga\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000004</id>\n    <title>Rated Series Arc</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/rated-series-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000006</id>\n    <title>Series Only Arc</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/series-only-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000d</id>\n    <title>Éclipse</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/eclipse-accent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v1/arcs?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v1/arcs?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "admin /opds/v2/arcs": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 18,
+        "title": "Story arcs"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/arcs/1-shot",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000e",
+            "numberOfItems": 1
+          },
+          "title": "1-Shot",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/adult-series-arc",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000005",
+            "numberOfItems": 0
+          },
+          "title": "Adult Series Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-001",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000065",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 001",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-002",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000066",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 002",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-003",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000067",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 003",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-004",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000068",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 004",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-005",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000069",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 005",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-006",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000006a",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 006",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/cee-arc",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000f",
+            "numberOfItems": 0
+          },
+          "title": "Cee Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-a",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000a",
+            "numberOfItems": 1
+          },
+          "title": "Event",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-b",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000b",
+            "numberOfItems": 1
+          },
+          "title": "EVENT",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-c",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000c",
+            "numberOfItems": 2
+          },
+          "title": "event",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/hidden-war",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000002",
+            "numberOfItems": 1
+          },
+          "title": "Hidden War",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/knightfall",
+          "metadata": {
+            "description": "5 issues · 3 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000001",
+            "numberOfItems": 5
+          },
+          "title": "Knightfall",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/mature-saga",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000003",
+            "numberOfItems": 1
+          },
+          "title": "Mature Saga",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/rated-series-arc",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000004",
+            "numberOfItems": 1
+          },
+          "title": "Rated Series Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/series-only-arc",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000006",
+            "numberOfItems": 0
+          },
+          "title": "Series Only Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/eclipse-accent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000d",
+            "numberOfItems": 1
+          },
+          "title": "Éclipse",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "admin /opds/v2/arcs?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 18,
+        "title": "Story arcs"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "admin /opds/v2/arcs?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 18,
+        "title": "Story arcs"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "capped /opds/v1/arcs": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000e</id>\n    <title>1-Shot</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/1-shot\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000065</id>\n    <title>Arc Filler 001</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-001\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000066</id>\n    <title>Arc Filler 002</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-002\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000068</id>\n    <title>Arc Filler 004</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-004\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000069</id>\n    <title>Arc Filler 005</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-005\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000f</id>\n    <title>Cee Arc</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/cee-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000a</id>\n    <title>Event</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-a\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000c</id>\n    <title>event</title>\n    \n    <summary>2 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-c\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000001</id>\n    <title>Knightfall</title>\n    \n    <summary>3 issues · 2 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/knightfall\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000006</id>\n    <title>Series Only Arc</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/series-only-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000d</id>\n    <title>Éclipse</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/eclipse-accent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v1/arcs?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v1/arcs?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "capped /opds/v2/arcs": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 11,
+        "title": "Story arcs"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/arcs/1-shot",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000e",
+            "numberOfItems": 1
+          },
+          "title": "1-Shot",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-001",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000065",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 001",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-002",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000066",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 002",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-004",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000068",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 004",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-005",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000069",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 005",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/cee-arc",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000f",
+            "numberOfItems": 0
+          },
+          "title": "Cee Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-a",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000a",
+            "numberOfItems": 1
+          },
+          "title": "Event",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-c",
+          "metadata": {
+            "description": "2 issues · 2 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000c",
+            "numberOfItems": 2
+          },
+          "title": "event",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/knightfall",
+          "metadata": {
+            "description": "3 issues · 2 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000001",
+            "numberOfItems": 3
+          },
+          "title": "Knightfall",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/series-only-arc",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000006",
+            "numberOfItems": 0
+          },
+          "title": "Series Only Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/eclipse-accent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000d",
+            "numberOfItems": 1
+          },
+          "title": "Éclipse",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "capped /opds/v2/arcs?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 11,
+        "title": "Story arcs"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "capped /opds/v2/arcs?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 11,
+        "title": "Story arcs"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "partial /opds/v1/arcs": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000005</id>\n    <title>Adult Series Arc</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/adult-series-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000065</id>\n    <title>Arc Filler 001</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-001\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000066</id>\n    <title>Arc Filler 002</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-002\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000068</id>\n    <title>Arc Filler 004</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-004\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000069</id>\n    <title>Arc Filler 005</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/arc-filler-005\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000a</id>\n    <title>Event</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-a\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000b</id>\n    <title>EVENT</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-b\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000c</id>\n    <title>event</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/event-c\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000001</id>\n    <title>Knightfall</title>\n    \n    <summary>3 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/knightfall\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000003</id>\n    <title>Mature Saga</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/mature-saga\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000004</id>\n    <title>Rated Series Arc</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/rated-series-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-000040000006</id>\n    <title>Series Only Arc</title>\n    \n    <summary>0 issues · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/series-only-arc\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n  <entry>\n    <id>urn:folio:arcs:01940000-0000-7000-8000-00004000000d</id>\n    <title>Éclipse</title>\n    \n    <summary>1 issue · 1 series</summary>\n    <link rel=\"subsection\" href=\"/opds/v1/arcs/eclipse-accent\" type=\"application/atom+xml;profile=opds-catalog;kind=acquisition\"/>\n  </entry>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v1/arcs?page=2": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs?page=2\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v1/arcs?page=3": {
+    "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n  <id>urn:opds:arcs</id>\n  <title>Story arcs</title>\n  \n  <link rel=\"self\" href=\"/opds/v1/arcs?page=3\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n  <link rel=\"up\" href=\"/opds/v1\" type=\"application/atom+xml;profile=opds-catalog;kind=navigation\"/>\n</feed>\n",
+    "status": 200
+  },
+  "partial /opds/v2/arcs": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 1,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 13,
+        "title": "Story arcs"
+      },
+      "navigation": [
+        {
+          "href": "/opds/v2/arcs/adult-series-arc",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000005",
+            "numberOfItems": 0
+          },
+          "title": "Adult Series Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-001",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000065",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 001",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-002",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000066",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 002",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-004",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000068",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 004",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/arc-filler-005",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000069",
+            "numberOfItems": 1
+          },
+          "title": "Arc Filler 005",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-a",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000a",
+            "numberOfItems": 1
+          },
+          "title": "Event",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-b",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000b",
+            "numberOfItems": 1
+          },
+          "title": "EVENT",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/event-c",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000c",
+            "numberOfItems": 1
+          },
+          "title": "event",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/knightfall",
+          "metadata": {
+            "description": "3 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000001",
+            "numberOfItems": 3
+          },
+          "title": "Knightfall",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/mature-saga",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000003",
+            "numberOfItems": 1
+          },
+          "title": "Mature Saga",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/rated-series-arc",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000004",
+            "numberOfItems": 1
+          },
+          "title": "Rated Series Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/series-only-arc",
+          "metadata": {
+            "description": "0 issues · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-000040000006",
+            "numberOfItems": 0
+          },
+          "title": "Series Only Arc",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2/arcs/eclipse-accent",
+          "metadata": {
+            "description": "1 issue · 1 series",
+            "identifier": "urn:folio:arcs:01940000-0000-7000-8000-00004000000d",
+            "numberOfItems": 1
+          },
+          "title": "Éclipse",
+          "type": "application/opds+json"
+        }
+      ]
+    },
+    "status": 200
+  },
+  "partial /opds/v2/arcs?page=2": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs?page=2",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 2,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 13,
+        "title": "Story arcs"
+      },
+      "navigation": []
+    },
+    "status": 200
+  },
+  "partial /opds/v2/arcs?page=3": {
+    "body": {
+      "links": [
+        {
+          "href": "/opds/v2/arcs?page=3",
+          "rel": "self",
+          "type": "application/opds+json"
+        },
+        {
+          "href": "/opds/v2",
+          "rel": "up",
+          "type": "application/opds+json"
+        }
+      ],
+      "metadata": {
+        "currentPage": 3,
+        "identifier": "urn:opds:arcs",
+        "itemsPerPage": 50,
+        "numberOfItems": 13,
+        "title": "Story arcs"
+      },
+      "navigation": []
+    },
+    "status": 200
+  }
+}

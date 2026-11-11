@@ -6,43 +6,34 @@ import { RailsSkeleton } from "@/components/skeletons/LoadingShapes";
 import { FolderPlus, LibraryBig } from "lucide-react";
 
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import { PhoneControlsBar } from "@/components/library/PhoneControlsBar";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
-import {
-  useCardSize,
-  usePageSlugRecord,
-} from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { useLibraryList, useMe, useSavedViews } from "@/lib/api/queries";
 
 import { LazyRail } from "./LazyRail";
 import { PageActionsMenu } from "./PageActionsMenu";
 import { PageHeading } from "./PageHeading";
-import { CARD_SIZE_KEYS } from "@/lib/library/card-size";
-
-/** Card-size bounds for the page rails. Mirrors the library-grid bounds
- *  so toggling between a page and a library grid feels consistent, but
- *  uses its own storage key so each surface remembers its own density. */
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
 
 /** Page-rail dispatcher. Owns the page heading and the pinned control
- *  row (card size + page actions) and renders the saved views pinned to
+ *  row (cover size + page actions) and renders the saved views pinned to
  *  the supplied page below. Pinning, reorder, add, edit, delete all
  *  happen elsewhere — the page itself stays read-only.
+ *
+ *  Cover size is the app-wide one (lib/library/cover-size.ts): the page
+ *  holds no size state and passes none down. The control here sets the
+ *  same size as the library's, and the rails follow it through CSS.
  *
  *  Chrome (docs/dev/phone-layout.md, rule 3): a rails page is a long
  *  stack of rails whose density you tune while browsing, so its two
  *  controls pin under the topbar at every width. From `sm` up the
  *  heading (title + description) stays in flow and a `StickyToolbarRow`
- *  beneath it carries `CardSizeOptions` + `PageActionsMenu`, right
+ *  beneath it carries `CoverSizeOptions` + `PageActionsMenu`, right
  *  aligned. Below `sm` the heading is hidden and the title rides in the
- *  sticky `PhoneControlsBar`'s leading slot beside View options (card
+ *  sticky `PhoneControlsBar`'s leading slot beside View options (cover
  *  size as a sheet) and `⋯`; the description, when set, follows the bar
  *  in flow. Inline title editing is a `sm`-and-up affordance — phones
  *  rename through `⋯`.
@@ -56,30 +47,26 @@ export function PageRails({
   pageDescription,
   isSystem,
   showInSidebar,
+  priorityViewId = null,
 }: {
   pageId: string;
   pageName: string;
   pageDescription: string | null;
   isSystem: boolean;
   showInSidebar: boolean;
+  /** The rail the server prefetch settled on (`prefetchPageRails`): the
+   *  first rail that will show. Rails before it are empty system rails
+   *  that hide; they mount at once so they leave no placeholder gap.
+   *  `null` (no prefetch): the first rail is the priority one. */
+  priorityViewId?: string | null;
 }) {
   const pinnedQ = useSavedViews({ pinnedOn: pageId });
-  // Per-page density key so customizing Marvel doesn't reset Home (or
-  // vice versa). System page keeps the legacy global key so existing
-  // users' Home density survives the M5 rename without a migration.
-  const storageKey = isSystem
-    ? CARD_SIZE_KEYS.home
-    : CARD_SIZE_KEYS.page(pageId);
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
-
-  usePageSlugRecord(isSystem ? null : pageId);
 
   const items = pinnedQ.data?.items ?? [];
+  const settledIdx = priorityViewId
+    ? items.findIndex((v) => v.id === priorityViewId)
+    : -1;
+  const priorityIdx = settledIdx >= 0 ? settledIdx : 0;
 
   const pageActions = (
     <PageActionsMenu
@@ -104,16 +91,9 @@ export function PageRails({
       </div>
       {/* Universal search lives in the topbar (see `MainShell`) at every
           width, so no inline search input here: the row is the
-          card-size toggle + page actions. */}
+          cover-size control + page actions. */}
       <StickyToolbarRow className="mb-(--density-page-pad-y) justify-end">
-        <CardSizeOptions
-          cardSize={cardSize}
-          onCardSize={setCardSize}
-          min={CARD_SIZE_MIN}
-          max={CARD_SIZE_MAX}
-          step={CARD_SIZE_STEP}
-          defaultSize={CARD_SIZE_DEFAULT}
-        />
+        <CoverSizeOptions />
         {pageActions}
       </StickyToolbarRow>
       {/* Phone (< sm): title · View options · ⋯ in one sticky band at the
@@ -127,17 +107,7 @@ export function PageRails({
           </h1>
         }
         more={pageActions}
-        menu={() => (
-          <CardSizeFields
-            cardSize={cardSize}
-            onCardSize={setCardSize}
-            min={CARD_SIZE_MIN}
-            max={CARD_SIZE_MAX}
-            step={CARD_SIZE_STEP}
-            defaultSize={CARD_SIZE_DEFAULT}
-            fieldId="page-phone-card-size"
-          />
-        )}
+        menu={() => <CoverSizeFields fieldId="page-phone-card-size" />}
       />
       {pageDescription ? (
         <p className="text-muted-foreground mb-(--density-page-pad-y) text-xs sm:hidden">
@@ -153,7 +123,6 @@ export function PageRails({
 
       {pinnedQ.isLoading ? (
         <RailsSkeleton
-          cardSizeKey={storageKey}
           rails={3}
           card={isSystem ? "issue" : "series"}
           label="Loading views…"
@@ -180,11 +149,10 @@ export function PageRails({
             <LazyRail
               key={view.id}
               view={view}
-              cardSize={cardSize}
-              cardSizeKey={storageKey}
-              // Prioritize the first (above-the-fold) rail's covers — the
-              // LCP element lives there; the rest stay lazy.
-              priority={idx === 0}
+              // Prioritize the first rail that shows (above the fold) —
+              // the LCP element lives there; the rest stay lazy.
+              priority={idx === priorityIdx}
+              eager={idx <= priorityIdx}
             />
           ))}
         </div>

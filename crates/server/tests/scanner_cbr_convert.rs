@@ -141,7 +141,7 @@ async fn scan_converts_rar_named_cbz_in_place_when_enabled() {
     // Same path, now a ZIP; the RAR bytes survive as `<name>.cbz.bak`.
     assert!(cbz_path.exists(), ".cbz still at its path");
     assert_eq!(
-        archive::container::detect_container(&cbz_path).unwrap(),
+        archive::container::detect_container_path_unchecked(&cbz_path).unwrap(),
         archive::container::Container::Zip
     );
     let bak = folder.join("Martian Manhunter V2006 002 (November 2006).cbz.bak");
@@ -279,4 +279,51 @@ async fn scan_skips_cbr_when_disabled() {
         .unwrap();
     assert_eq!(unsupported.len(), 1, "one UnsupportedArchiveFormat issue");
     assert!(unsupported[0].resolved_at.is_none(), "issue is open");
+}
+
+/// A CBR the conversion refuses on a protective limit is an
+/// `ArchiveSafetyRefusal` naming the check, not an unsupported format, and
+/// the source file is left as it was.
+#[tokio::test]
+async fn conversion_refused_by_a_limit_is_a_safety_refusal() {
+    let fixture = first_cbr_fixture().expect("fixtures/synthetic-3page.cbr is committed");
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    // The fixture holds three pages; one is the limit.
+    let mut cfg = (*state.cfg()).clone();
+    cfg.archive_max_entries = 1;
+    state.replace_cfg(cfg);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Thanos (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    let cbr_path = folder.join("Thanos 001.cbr");
+    std::fs::copy(&fixture, &cbr_path).unwrap();
+    let original = std::fs::read(&cbr_path).unwrap();
+
+    let lib_id = LibrarySeed::new(tmp.path())
+        .with_auto_convert_cbr_on_scan()
+        .insert(&state.db)
+        .await;
+    let stats = scanner::scan_library(&state, lib_id).await.expect("scan");
+    assert_eq!(stats.files_converted, 0, "{stats:?}");
+    assert_eq!(stats.files_added, 0, "{stats:?}");
+    assert_eq!(stats.files_skipped, 1, "{stats:?}");
+
+    assert_eq!(
+        std::fs::read(&cbr_path).unwrap(),
+        original,
+        "file untouched"
+    );
+    assert!(!cbr_path.with_extension("cbz").exists(), "no .cbz written");
+
+    let rows = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_health_issue::Column::ResolvedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap();
+    let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+    assert_eq!(kinds, ["ArchiveSafetyRefusal"], "{kinds:?}");
+    assert_eq!(rows[0].payload["data"]["check"], "entry_count");
 }
