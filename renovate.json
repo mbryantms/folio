@@ -383,6 +383,16 @@
         "folio-web"
       ],
       "enabled": false
+    },
+    {
+      "description": "hf-hub is a direct dependency only so `ocr::models` computes the same cache path the two OCR crates (comic-text-detector, manga-ocr) read, and that holds only while Cargo resolves ONE hf-hub for all three. A standalone bump leaves two copies in Cargo.lock: 0.5 passes CI because the tests use temp directories, and 1.x no longer has `Cache` and does not build (#1585 / #1586 proved both). Bump it by hand, together with the OCR crates, when they move; `ocr::models::tests::one_hf_hub_in_the_lock_file` fails if the copies diverge.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchPackageNames": [
+        "hf-hub"
+      ],
+      "enabled": false
     }
   ],
   "prHourlyLimit": 0,
