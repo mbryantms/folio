@@ -1083,12 +1083,47 @@ async fn revoke_if_past_max_age(
 ///
 /// The kept session also forgets its previous refresh token, so a copy of
 /// that token cannot use the refresh grace window (`REFRESH_GRACE`) to take
-/// over the one session the credential change left standing.
+/// over the one session the credential change left standing. That clear
+/// runs FIRST, so on the caller's transaction it holds the kept row's lock
+/// until commit: a grace refresh queued behind it re-checks against a NULL
+/// previous hash and is refused. A grace refresh that committed before the
+/// clear changed the kept row's current hash, so the clear matches nothing
+/// and the revoke below (`refresh_token_hash <> keep`) takes that row too.
 pub(crate) async fn revoke_sessions_for_user<C: sea_orm::ConnectionTrait>(
     db: &C,
     user_id: uuid::Uuid,
     keep_refresh_hash: Option<&str>,
 ) -> u64 {
+    if let Some(h) = keep_refresh_hash {
+        // Unconditional on the previous hash so the row is locked even when
+        // it has none. Clearing only the previous hash keeps the row's CHECK
+        // (`previous IS NULL OR rotated_at IS NOT NULL`) satisfied.
+        let cleared = SessionEntity::update_many()
+            .col_expr(
+                auth_session::Column::PreviousRefreshTokenHash,
+                sea_orm::sea_query::Expr::value(Option::<String>::None),
+            )
+            .filter(auth_session::Column::UserId.eq(user_id))
+            .filter(auth_session::Column::RefreshTokenHash.eq(h))
+            .filter(auth_session::Column::RevokedAt.is_null())
+            .exec(db)
+            .await;
+        match cleared {
+            Ok(r) if r.rows_affected == 1 => {}
+            Ok(r) => {
+                // The kept session rotated or was revoked meanwhile: nothing
+                // is kept, and the revoke below ends whatever it became.
+                tracing::info!(
+                    user_id = %user_id,
+                    matched = r.rows_affected,
+                    "the session to keep changed before the credential change; not kept"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, user_id = %user_id, "clearing the kept session's previous refresh token failed");
+            }
+        }
+    }
     let mut q = SessionEntity::update_many()
         .col_expr(
             auth_session::Column::RevokedAt,
@@ -1099,31 +1134,13 @@ pub(crate) async fn revoke_sessions_for_user<C: sea_orm::ConnectionTrait>(
     if let Some(h) = keep_refresh_hash {
         q = q.filter(auth_session::Column::RefreshTokenHash.ne(h));
     }
-    let revoked = match q.exec(db).await {
+    match q.exec(db).await {
         Ok(r) => r.rows_affected,
         Err(e) => {
             tracing::error!(error = %e, user_id = %user_id, "revoke_sessions_for_user failed");
             0
         }
-    };
-    if let Some(h) = keep_refresh_hash {
-        // Clearing only the previous hash keeps the row's CHECK
-        // (`previous IS NULL OR rotated_at IS NOT NULL`) satisfied.
-        let cleared = SessionEntity::update_many()
-            .col_expr(
-                auth_session::Column::PreviousRefreshTokenHash,
-                sea_orm::sea_query::Expr::value(Option::<String>::None),
-            )
-            .filter(auth_session::Column::UserId.eq(user_id))
-            .filter(auth_session::Column::RefreshTokenHash.eq(h))
-            .filter(auth_session::Column::PreviousRefreshTokenHash.is_not_null())
-            .exec(db)
-            .await;
-        if let Err(e) = cleared {
-            tracing::error!(error = %e, user_id = %user_id, "clearing the kept session's previous refresh token failed");
-        }
     }
-    revoked
 }
 
 /// SQL for "a rotation recent enough for the refresh grace", on the

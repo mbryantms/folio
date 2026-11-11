@@ -161,21 +161,28 @@ export function onSessionRenewed(listener: RenewedListener): () => void {
   return () => renewedListeners.delete(listener);
 }
 
-type UnansweredListener = (sentAt: number) => void;
-const unansweredListeners = new Set<UnansweredListener>();
+type SettledListener = (outcome: RefreshOutcome, sentAt: number | null) => void;
+const settledListeners = new Set<SettledListener>();
 
-/** Subscribe to "a refresh this tab sent got no answer". `sentAt` is the
- *  client time (`Date.now()`) just before the request went out, which is no
- *  later than any rotation the server may have made for it. */
-export function onRefreshUnanswered(listener: UnansweredListener): () => void {
-  unansweredListeners.add(listener);
-  return () => unansweredListeners.delete(listener);
+/**
+ * Subscribe to "a refresh attempt in this tab settled", whoever started it
+ * (the scheduler, `ensureFreshSession`, the 401 retry in `apiFetch`).
+ * Called after the attempt is no longer in flight, so a listener that
+ * starts a new refresh gets a new request rather than the settled one.
+ * `sentAt` is the client time (`Date.now()`) just before the request went
+ * out, which is no later than any rotation the server may have made for
+ * it; `null` when no request was sent (another tab had refreshed, or no
+ * CSRF cookie).
+ */
+export function onRefreshSettled(listener: SettledListener): () => void {
+  settledListeners.add(listener);
+  return () => settledListeners.delete(listener);
 }
 
-function notifyUnanswered(sentAt: number) {
-  for (const l of unansweredListeners) {
+function notifySettled(outcome: RefreshOutcome, sentAt: number | null) {
+  for (const l of settledListeners) {
     try {
-      l(sentAt);
+      l(outcome, sentAt);
     } catch {
       /* a listener's failure must not break the refresh */
     }
@@ -221,7 +228,7 @@ function expireReadableAuthCookies() {
  * cookies (it refreshed, or another tab did). `signed-out`: the session is
  * gone. `answered` (a 403 or 5xx) and `no-answer` (unreachable, or nothing
  * within `REFRESH_TIMEOUT_MS`): nothing is known and nothing is signed out;
- * `no-answer` also tells `onRefreshUnanswered` listeners when it was sent.
+ * every outcome reaches `onRefreshSettled` listeners once it has settled.
  *
  * Refresh-token rotation is single-use on the server, except that the
  * token a rotation replaced is accepted once more within a minute (a lost
@@ -253,13 +260,14 @@ function attemptRefresh(): Promise<RefreshOutcome> {
     if (before !== null && now <= before) return false;
     return now * 1000 > serverNow();
   };
+  let sentAt: number | null = null;
   const p = withRefreshLock(async (): Promise<RefreshOutcome> => {
     if (someoneElseRefreshed()) return "renewed";
     const csrf = getCsrfToken();
     // Without the CSRF cookie the refresh cannot pass the CSRF check: the
     // session is gone (sign-out cleared it).
     if (!csrf) return "signed-out";
-    const sentAt = Date.now();
+    sentAt = Date.now();
     try {
       const res = await connectionFetch("/api/auth/refresh", {
         method: "POST",
@@ -278,20 +286,22 @@ function attemptRefresh(): Promise<RefreshOutcome> {
       return "signed-out";
     } catch {
       // Network failure or timeout: no answer.
-      notifyUnanswered(sentAt);
       return "no-answer";
     }
   });
   refreshInFlight = p;
+  // One reaction, registered before any caller's: the in-flight slot is
+  // cleared first, then listeners run, then callers resume.
   void p.then(
     (outcome) => {
+      if (refreshInFlight === p) refreshInFlight = null;
       if (outcome === "renewed") notifyRenewed();
+      notifySettled(outcome, sentAt);
     },
-    () => {},
+    () => {
+      if (refreshInFlight === p) refreshInFlight = null;
+    },
   );
-  void p.finally(() => {
-    if (refreshInFlight === p) refreshInFlight = null;
-  });
   return p;
 }
 

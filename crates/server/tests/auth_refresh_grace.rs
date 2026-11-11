@@ -157,8 +157,9 @@ fn grace_secs() -> i64 {
     REFRESH_GRACE.as_secs() as i64
 }
 
-/// Wait until `n` connections are blocked on a lock running the refresh
-/// rotation. Panics after 20 s.
+/// Wait until `n` connections are blocked on a lock while updating
+/// `auth_sessions` (the refresh rotation, or a credential change's clear of
+/// the kept session). Panics after 20 s.
 async fn wait_for_lock_waiters(db: &sea_orm::DatabaseConnection, n: i64) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
@@ -168,7 +169,7 @@ async fn wait_for_lock_waiters(db: &sea_orm::DatabaseConnection, n: i64) {
                 "SELECT count(*)::bigint AS waiting FROM pg_stat_activity \
                   WHERE datname = current_database() \
                     AND wait_event_type = 'Lock' \
-                    AND query LIKE 'UPDATE auth_sessions%'",
+                    AND query LIKE 'UPDATE%auth_sessions%'",
             ))
             .await
             .unwrap()
@@ -386,6 +387,47 @@ async fn current_and_previous_token_queued_together_have_one_winner() {
     rotate(&app, &issued, &s.csrf).await;
 }
 
+/// `PATCH /api/me/account` changing the password, from the browser holding
+/// `refresh`.
+fn password_change(access: &str, csrf: &str, refresh: &str) -> Request<Body> {
+    Request::builder()
+        .method(Method::PATCH)
+        .uri("/api/me/account")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-comic_session={access}; __Host-comic_csrf={csrf}; __Host-comic_refresh={refresh}"
+            ),
+        )
+        .header("x-csrf-token", csrf)
+        .body(Body::from(
+            r#"{"current_password":"correctly-horse-battery","new_password":"another-horse-battery-2"}"#,
+        ))
+        .unwrap()
+}
+
+/// A registered user who refreshed once: T0 is the previous token, `t1`
+/// the current one, with the access and CSRF cookies of that refresh.
+struct Rotated {
+    s: Signed,
+    t1: String,
+    access: String,
+    csrf: String,
+}
+
+async fn register_and_rotate(app: &TestApp, email: &str) -> Rotated {
+    let s = register(app, email).await;
+    let resp = refresh_call(app, &s.refresh, &s.csrf).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    Rotated {
+        t1: extract_cookie(&resp, "__Host-comic_refresh").unwrap(),
+        access: extract_cookie(&resp, "__Host-comic_session").unwrap(),
+        csrf: extract_cookie(&resp, "__Host-comic_csrf").unwrap(),
+        s,
+    }
+}
+
 /// A password change keeps the caller's session but drops its previous
 /// token: inside the window that token no longer gets the grace. Control:
 /// the same token is accepted inside the window without the change (see
@@ -395,14 +437,9 @@ async fn current_and_previous_token_queued_together_have_one_winner() {
 async fn a_password_change_drops_the_kept_sessions_previous_token() {
     let app = TestApp::spawn().await;
     let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
-    let s = register(&app, "pw-grace@example.com").await;
-    let resp = refresh_call(&app, &s.refresh, &s.csrf).await;
-    assert_eq!(resp.status(), StatusCode::OK);
-    let t1 = extract_cookie(&resp, "__Host-comic_refresh").unwrap();
-    let access = extract_cookie(&resp, "__Host-comic_session").unwrap();
-    let csrf = extract_cookie(&resp, "__Host-comic_csrf").unwrap();
+    let r = register_and_rotate(&app, "pw-grace@example.com").await;
     assert!(
-        session_for(&db, s.user_id)
+        session_for(&db, r.s.user_id)
             .await
             .previous_refresh_token_hash
             .is_some()
@@ -411,36 +448,112 @@ async fn a_password_change_drops_the_kept_sessions_previous_token() {
     let changed = app
         .router
         .clone()
-        .oneshot(
-            Request::builder()
-                .method(Method::PATCH)
-                .uri("/api/me/account")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(
-                    header::COOKIE,
-                    format!(
-                        "__Host-comic_session={access}; __Host-comic_csrf={csrf}; __Host-comic_refresh={t1}"
-                    ),
-                )
-                .header("x-csrf-token", &csrf)
-                .body(Body::from(
-                    r#"{"current_password":"correctly-horse-battery","new_password":"another-horse-battery-2"}"#,
-                ))
-                .unwrap(),
-        )
+        .oneshot(password_change(&r.access, &r.csrf, &r.t1))
         .await
         .unwrap();
     assert_eq!(changed.status(), StatusCode::OK);
 
-    let row = session_for(&db, s.user_id).await;
+    let row = session_for(&db, r.s.user_id).await;
     assert!(row.revoked_at.is_none(), "the caller's session is kept");
     assert!(row.previous_refresh_token_hash.is_none());
     assert_refused(
-        refresh_call(&app, &s.refresh, &csrf).await,
+        refresh_call(&app, &r.s.refresh, &r.csrf).await,
         "previous token after a password change, inside the window",
     )
     .await;
-    rotate(&app, &t1, &csrf).await;
+    rotate(&app, &r.t1, &r.csrf).await;
+}
+
+/// Hold the session row, queue `first` and then `second` on it, release,
+/// and return both responses.
+async fn queue_in_order(
+    app: &TestApp,
+    db: &sea_orm::DatabaseConnection,
+    user_id: uuid::Uuid,
+    first: Request<Body>,
+    second: Request<Body>,
+) -> (axum::http::Response<Body>, axum::http::Response<Body>) {
+    let holder = db.begin().await.unwrap();
+    holder
+        .execute_unprepared(&format!(
+            "SELECT id FROM auth_sessions WHERE user_id = '{user_id}' FOR UPDATE"
+        ))
+        .await
+        .unwrap();
+    let a = tokio::spawn(app.router.clone().oneshot(first));
+    wait_for_lock_waiters(db, 1).await;
+    let b = tokio::spawn(app.router.clone().oneshot(second));
+    wait_for_lock_waiters(db, 2).await;
+    holder.commit().await.unwrap();
+    (a.await.unwrap().unwrap(), b.await.unwrap().unwrap())
+}
+
+fn refresh_request(refresh: &str, csrf: &str) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri("/auth/refresh")
+        .header(
+            header::COOKIE,
+            format!("__Host-comic_refresh={refresh}; __Host-comic_csrf={csrf}"),
+        )
+        .header("x-csrf-token", csrf)
+        .body(Body::empty())
+        .unwrap()
+}
+
+/// A grace refresh queued behind a password change on the kept row is
+/// refused once the change commits: the change cleared the previous token
+/// under the row lock before it revoked anything. The kept session lives.
+#[tokio::test]
+async fn a_grace_refresh_queued_behind_a_password_change_is_refused() {
+    let app = TestApp::spawn().await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let r = register_and_rotate(&app, "pw-race-a@example.com").await;
+
+    let (changed, grace) = queue_in_order(
+        &app,
+        &db,
+        r.s.user_id,
+        password_change(&r.access, &r.csrf, &r.t1),
+        refresh_request(&r.s.refresh, &r.csrf),
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::OK);
+    assert_refused(grace, "grace refresh queued behind the change").await;
+
+    let row = session_for(&db, r.s.user_id).await;
+    assert!(row.revoked_at.is_none(), "the caller's session is kept");
+    assert!(row.previous_refresh_token_hash.is_none());
+    assert_eq!(row.refresh_token_hash, sha256_hex(&r.t1));
+    rotate(&app, &r.t1, &r.csrf).await;
+}
+
+/// The other order: a grace refresh that got the row first rotates it, so
+/// the session the password change meant to keep is no longer the caller's;
+/// the change then keeps nothing and revokes it with the rest. Neither the
+/// grace's token nor the caller's works afterwards.
+#[tokio::test]
+async fn a_grace_refresh_ahead_of_a_password_change_loses_the_session() {
+    let app = TestApp::spawn().await;
+    let db = sea_orm::Database::connect(&app.db_url).await.unwrap();
+    let r = register_and_rotate(&app, "pw-race-b@example.com").await;
+
+    let (grace, changed) = queue_in_order(
+        &app,
+        &db,
+        r.s.user_id,
+        refresh_request(&r.s.refresh, &r.csrf),
+        password_change(&r.access, &r.csrf, &r.t1),
+    )
+    .await;
+    assert_eq!(grace.status(), StatusCode::OK, "the grace ran first");
+    let t2 = extract_cookie(&grace, "__Host-comic_refresh").unwrap();
+    assert_eq!(changed.status(), StatusCode::OK);
+
+    let row = session_for(&db, r.s.user_id).await;
+    assert!(row.revoked_at.is_some(), "the rotated session is revoked");
+    assert_refused(refresh_call(&app, &t2, &r.csrf).await, "grace's token").await;
+    assert_refused(refresh_call(&app, &r.t1, &r.csrf).await, "caller's token").await;
 }
 
 /// (4) + (6) Someone else presents the previous token inside the window.

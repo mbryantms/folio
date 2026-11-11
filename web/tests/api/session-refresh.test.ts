@@ -473,27 +473,144 @@ describe("a refresh with no answer (the server's 60 s grace)", () => {
     stop();
   });
 
-  it("coming back online while unanswered retries at once", async () => {
+  it("coming back online while unanswered retries at once, within the budget", async () => {
     signIn(3600);
+    let offline = false;
+    vi.spyOn(navigator, "onLine", "get").mockImplementation(() => !offline);
     let fail = true;
     onRefresh = async () => {
-      if (fail) throw new TypeError("Failed to fetch");
+      if (fail) {
+        // The connection drops with the request.
+        offline = true;
+        throw new TypeError("Failed to fetch");
+      }
       jar.set(EXP, String(epoch(3600)));
       return new Response("{}", { status: 200 });
     };
     const stop = startSessionRefresh();
     await vi.advanceTimersByTimeAsync(0.8 * 3600_000 + 1_000);
-    // The attempt and its two fast retries (at once, then 5 s later).
-    await vi.advanceTimersByTimeAsync(6_000);
-    expect(refreshes).toBe(1 + MAX_FAST_RETRIES);
-    // Now on the 30 s backoff; the network comes back 10 s in.
+    expect(refreshes).toBe(1);
+    // Offline: the fast retry finds no network and sends nothing.
     await vi.advanceTimersByTimeAsync(10_000);
-    const before = refreshes;
+    expect(refreshes).toBe(1);
+    offline = false;
     fail = false;
     window.dispatchEvent(new Event("online"));
     await vi.advanceTimersByTimeAsync(0);
-    expect(refreshes).toBe(before + 1);
+    expect(refreshes).toBe(2);
     stop();
+  });
+
+  it("repeated online events spend the fast-retry budget, then leave the backoff alone", async () => {
+    signIn(3600);
+    const sent: number[] = [];
+    onRefresh = async () => {
+      sent.push(Date.now());
+      throw new TypeError("Failed to fetch");
+    };
+    const stop = startSessionRefresh();
+    await vi.advanceTimersByTimeAsync(0.8 * 3600_000 + 500);
+    const start = sent[0]!;
+    const online = () => window.dispatchEvent(new Event("online"));
+    // Inside the horizon: an event per second sends at most the budget.
+    for (let t = 0; t < 39; t++) {
+      online();
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    // The attempt and its two fast retries (at once, then 5 s later); the
+    // events add nothing, and the next send is the ordinary 30 s backoff.
+    const offsets = sent.map((t) => t - start);
+    expect(offsets.filter((o) => o < 30_000).length).toBe(1 + MAX_FAST_RETRIES);
+    expect(offsets[2]!).toBeLessThanOrEqual(FAST_RETRY_HORIZON_MS);
+    expect(offsets[3]! - offsets[2]!).toBeGreaterThanOrEqual(30_000);
+    // Past the horizon: events neither send early nor shorten the backoff,
+    // which keeps doubling.
+    const backoffSends = () =>
+      sent.filter((t) => t - start > FAST_RETRY_HORIZON_MS);
+    for (let t = 0; t < 400; t++) {
+      online();
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    const later = backoffSends();
+    expect(later.length).toBeGreaterThanOrEqual(2);
+    const gaps = later.slice(1).map((t, k) => t - later[k]!);
+    for (let k = 1; k < gaps.length; k++)
+      expect(gaps[k]!).toBeGreaterThanOrEqual(gaps[k - 1]!);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(60_000);
+    stop();
+  });
+
+  it("a 403 or 5xx through another path ends the unanswered state", async () => {
+    signIn(3600);
+    let offline = false;
+    vi.spyOn(navigator, "onLine", "get").mockImplementation(() => !offline);
+    onRefresh = async () => {
+      offline = true;
+      throw new TypeError("Failed to fetch");
+    };
+    const stop = startSessionRefresh();
+    await vi.advanceTimersByTimeAsync(0.8 * 3600_000 + 1_000);
+    expect(refreshes).toBe(1);
+    // The network is back; a request meets 401 and its refresh gets a 502.
+    offline = false;
+    onRefresh = async () => new Response("down", { status: 502 });
+    fetchSpy.mockImplementation((async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/auth/refresh")) {
+        refreshes += 1;
+        return onRefresh();
+      }
+      return new Response("unauth", { status: 401 });
+    }) as typeof fetch);
+    await apiFetch("/series", {});
+    expect(refreshes).toBe(2);
+    // Answered: `online` re-arms on the ordinary schedule instead of
+    // spending a fast retry (the token is not near expiry).
+    window.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshes).toBe(2);
+    stop();
+  });
+
+  it("the fast retry after a 401-path no-answer is a new request, even when the lock settles late", async () => {
+    // A Web Locks stand-in whose request settles one task after `fn`, as a
+    // real lock manager may: the retry must not join the settled attempt.
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: (_name: string, fn: () => Promise<unknown>) =>
+          fn().then(
+            (r) => new Promise((resolve) => setTimeout(() => resolve(r), 0)),
+          ),
+      },
+    });
+    try {
+      signIn(3600);
+      const stop = startSessionRefresh();
+      let first = true;
+      onRefresh = async () => {
+        if (first) {
+          first = false;
+          throw new TypeError("Failed to fetch");
+        }
+        jar.set(EXP, String(epoch(3600)));
+        return new Response("{}", { status: 200 });
+      };
+      fetchSpy.mockImplementation((async (input: RequestInfo | URL) => {
+        if (String(input).includes("/api/auth/refresh")) {
+          refreshes += 1;
+          return onRefresh();
+        }
+        return new Response("unauth", { status: 401 });
+      }) as typeof fetch);
+      const pending = apiFetch("/series", {});
+      await vi.advanceTimersByTimeAsync(0);
+      await pending;
+      await vi.advanceTimersByTimeAsync(10);
+      expect(refreshes).toBe(2);
+      stop();
+    } finally {
+      delete (navigator as { locks?: unknown }).locks;
+    }
   });
 
   it("a 401 retry that got no answer starts the fast retry too", async () => {

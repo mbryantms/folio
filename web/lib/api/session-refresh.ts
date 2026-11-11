@@ -1,7 +1,7 @@
 "use client";
 import {
   getCsrfToken,
-  onRefreshUnanswered,
+  onRefreshSettled,
   onSessionRenewed,
   readAccessExp,
   readAccessExpiry,
@@ -45,7 +45,11 @@ import {
  * request timeout: sent at 0, timeout at 15 s, retry at 15 s, its timeout
  * at 30 s, retry at 35 s, its timeout at 50 s, then 30 s, 60 s, ... later.
  * While the last attempt is unanswered, coming back online or becoming
- * visible retries at once. The floor still holds after any HTTP answer.
+ * visible retries at once if a fast retry is left in the budget and the
+ * horizon, spending it; otherwise it leaves the backoff alone. A refresh
+ * from any path (the 401 retry, `ensureFreshSession`) counts: no answer
+ * starts the fast retries once that attempt has settled, and any answer
+ * ends them. The floor still holds after any HTTP answer.
  */
 
 /** Never refresh later than this before the access token expires. */
@@ -175,7 +179,13 @@ export function startSessionRefresh(): () => void {
   const schedule = (delay: number) => {
     clear();
     if (stopped) return;
-    timer = setTimeout(() => void fire(), Math.min(delay, MAX_TIMER_MS));
+    timer = setTimeout(
+      () => {
+        timer = null;
+        void fire();
+      },
+      Math.min(delay, MAX_TIMER_MS),
+    );
   };
 
   /** Arm from the cookie; refresh at once when already due. */
@@ -200,16 +210,21 @@ export function startSessionRefresh(): () => void {
     noAnswerDelay = Math.min(noAnswerDelay * 2, MAX_NO_ANSWER_BACKOFF_MS);
   };
 
+  /** True while a fast retry `delay` ms from now is still in the budget:
+   *  retries left, and sent within the horizon of the unanswered request. */
+  const fastRetryAllowed = (delay: number) =>
+    unansweredSince !== null &&
+    fastRetriesUsed < MAX_FAST_RETRIES &&
+    Date.now() + delay - unansweredSince <= FAST_RETRY_HORIZON_MS;
+
   /** A refresh got no answer: retry fast while that can still land inside
    *  the server's grace window, then back off. */
   const afterNoAnswer = () => {
-    if (unansweredSince !== null && fastRetriesUsed < MAX_FAST_RETRIES) {
-      const delay = fastRetriesUsed === 0 ? 0 : FAST_RETRY_GAP_MS;
-      if (Date.now() + delay - unansweredSince <= FAST_RETRY_HORIZON_MS) {
-        fastRetriesUsed += 1;
-        schedule(delay);
-        return;
-      }
+    const delay = fastRetriesUsed === 0 ? 0 : FAST_RETRY_GAP_MS;
+    if (fastRetryAllowed(delay)) {
+      fastRetriesUsed += 1;
+      schedule(delay);
+      return;
     }
     backoff();
   };
@@ -264,23 +279,38 @@ export function startSessionRefresh(): () => void {
   };
 
   /** Visible again or back online: the server may be back, so retry soon
-   *  instead of waiting out the backoff, and at once while the last refresh
-   *  is unanswered. */
+   *  instead of waiting out the backoff. While the last refresh is
+   *  unanswered, retry at once only within the fast-retry budget (it spends
+   *  one); otherwise leave the backoff as it is, and only make sure a timer
+   *  is pending (an offline `fire()` arms none). */
   const rearmFresh = () => {
-    noAnswerDelay = RETRY_AFTER_NO_ANSWER_MS;
     if (unansweredSince !== null) {
-      clear();
-      void fire();
+      if (firing) return;
+      if (fastRetryAllowed(0)) {
+        fastRetriesUsed += 1;
+        clear();
+        void fire();
+      } else if (timer === null) {
+        backoff();
+      }
       return;
     }
+    noAnswerDelay = RETRY_AFTER_NO_ANSWER_MS;
     arm();
   };
 
-  // Any refresh in this tab with no answer (this scheduler's, or the 401
-  // retry's, or `ensureFreshSession`'s) starts the fast retries. This
-  // scheduler's own attempt is handled when it returns.
-  const unsubscribeUnanswered = onRefreshUnanswered((sentAt) => {
-    if (unansweredSince === null) {
+  // Every settled refresh in this tab, whoever started it (this
+  // scheduler, the 401 retry, `ensureFreshSession`). Listeners run after
+  // the attempt has left the in-flight slot, so a retry scheduled here is a
+  // new request. An answer of any kind ends the unanswered state; no
+  // answer starts or continues it. This scheduler's own attempt is handled
+  // when it returns (`firing`).
+  const unsubscribeSettled = onRefreshSettled((outcome, sentAt) => {
+    if (outcome !== "no-answer") {
+      answered();
+      return;
+    }
+    if (unansweredSince === null && sentAt !== null) {
       unansweredSince = sentAt;
       fastRetriesUsed = 0;
     }
@@ -314,7 +344,7 @@ export function startSessionRefresh(): () => void {
     stopped = true;
     clear();
     unsubscribe();
-    unsubscribeUnanswered();
+    unsubscribeSettled();
     channel?.close();
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("online", rearmFresh);
