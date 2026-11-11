@@ -499,6 +499,7 @@ async fn grant(app: &TestApp, user_id: Uuid, library_id: Uuid, cap: Option<&str>
         user_id: Set(user_id),
         library_id: Set(library_id),
         age_rating_max: Set(cap.map(str::to_owned)),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -2275,6 +2276,8 @@ async fn entity_world() -> EntityWorld {
     )
     .await;
     for series_id in [gap.series_id, twin] {
+        // The seeded rating is a person's, so the rollup keeps it.
+        pin_series_rating(&db, series_id, "user").await;
         server::library::scanner::metadata_rollup::rollup_series_metadata(&db, series_id)
             .await
             .unwrap();
@@ -2788,6 +2791,7 @@ async fn dark_world() -> EntityWorld {
         None,
     )
     .await;
+    pin_series_rating(&db, dark, "user").await;
     server::library::scanner::metadata_rollup::rollup_series_metadata(&db, dark)
         .await
         .unwrap();
@@ -2988,6 +2992,7 @@ async fn similar_series_drops_a_neighbour_known_only_through_a_hidden_issue() {
         None,
     )
     .await;
+    pin_series_rating(&db, shadow, "user").await;
     server::library::scanner::metadata_rollup::rollup_series_metadata(&db, shadow)
         .await
         .unwrap();
@@ -3207,4 +3212,915 @@ async fn a_cap_in_one_library_leaves_an_uncapped_library_whole() {
     let (_, body) = get_json(&w.app, "/api/filter-options/genres", &w.capped).await;
     assert!(body.to_string().contains("Bee Genre"), "{body}");
     assert!(!body.to_string().contains("Hidden Genre"), "{body}");
+}
+
+// ───── a series is rated by its highest-rated issue ─────
+//
+// `series.age_rating` is derived from the series' active issues (the
+// highest rung on the ladder) unless a person or a provider set it. The
+// fixtures above seed ratings directly; a series a test rolls up keeps its
+// seeded rating only when it is pinned.
+
+/// Record that `set_by` (`user`, `comicvine`, …) set the series' rating,
+/// so the derivation leaves it alone.
+async fn pin_series_rating(db: &sea_orm::DatabaseConnection, series_id: Uuid, set_by: &str) {
+    entity::field_provenance::ActiveModel {
+        entity_type: Set("series".into()),
+        entity_id: Set(series_id.to_string()),
+        field: Set("age_rating".into()),
+        set_by: Set(set_by.into()),
+        set_at: Set(Utc::now().fixed_offset()),
+        source_external_id: Set(None),
+    }
+    .insert(db)
+    .await
+    .unwrap();
+}
+
+async fn rollup(db: &sea_orm::DatabaseConnection, series_id: Uuid) {
+    server::library::scanner::metadata_rollup::rollup_series_metadata(db, series_id)
+        .await
+        .unwrap();
+}
+
+async fn series_rating(db: &sea_orm::DatabaseConnection, series_id: Uuid) -> Option<String> {
+    entity::series::Entity::find_by_id(series_id)
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+        .age_rating
+}
+
+async fn reconcile(db: &sea_orm::DatabaseConnection, series_id: Uuid) {
+    let mut stats = server::library::scanner::stats::ScanStats::default();
+    server::library::reconcile::reconcile_series(db, series_id, &mut stats)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn series_rating_follows_its_highest_rated_active_issue() {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    // Seeded with a stale scan-order value and no provenance row.
+    let s = seed_series(
+        &db,
+        w.fx.lib_id,
+        "Derived Run",
+        "derived-run",
+        Some("Everyone"),
+    )
+    .await;
+    for (n, rating) in [(1u8, Some("teen")), (2, None), (3, Some("Sixteen and up"))] {
+        seed_issue(
+            &db,
+            &root,
+            w.fx.lib_id,
+            s,
+            n,
+            &format!("derived-{n}"),
+            &format!("Derived {n}"),
+            rating,
+            None,
+        )
+        .await;
+    }
+    rollup(&db, s).await;
+    // Canonical spelling; the off-ladder rating ranks as unrated.
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Teen"));
+
+    // A higher-rated issue arrives: the series rises with it.
+    let four = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        s,
+        4,
+        "derived-4",
+        "Derived 4",
+        Some(" mature 17+ "),
+        None,
+    )
+    .await;
+    rollup(&db, s).await;
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Mature 17+"));
+    let (_, body) = get_json(&w.app, "/api/series?q=Derived", &w.capped).await;
+    assert!(names(&body, "name").is_empty(), "{body}");
+
+    // Its file goes: the soft-removal lowers the series again.
+    let file = root.join("derived-4.cbz");
+    std::fs::remove_file(&file).unwrap();
+    reconcile(&db, s).await;
+    let removed = entity::issue::Entity::find_by_id(four.clone())
+        .one(&db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(removed.removed_at.is_some());
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Teen"));
+    let (_, body) = get_json(&w.app, "/api/series?q=Derived", &w.capped).await;
+    assert_eq!(names(&body, "name"), vec!["Derived Run"], "{body}");
+
+    // The file comes back: the restore raises it again.
+    write_cbz(&file);
+    reconcile(&db, s).await;
+    assert_eq!(series_rating(&db, s).await.as_deref(), Some("Mature 17+"));
+}
+
+#[tokio::test]
+async fn series_rating_ignores_unrated_issues_and_respects_who_set_it() {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let mk = |name: &'static str, slug: &'static str| (name, slug);
+    let mut ids = Vec::new();
+    for (name, slug) in [
+        mk("Unknown Run", "unknown-run"),
+        mk("User Run", "user-run"),
+        mk("Provider Run", "provider-run"),
+    ] {
+        let s = seed_series(&db, w.fx.lib_id, name, slug, Some("Everyone")).await;
+        ids.push(s);
+    }
+    let (unknown, user_set, provider_set) = (ids[0], ids[1], ids[2]);
+    // Only unrated issues (NULL, `Unknown`, off-ladder text): unrated.
+    for (n, rating) in [(1u8, None), (2, Some("Unknown")), (3, Some("Sixteen"))] {
+        seed_issue(
+            &db,
+            &root,
+            w.fx.lib_id,
+            unknown,
+            n,
+            &format!("unknown-run-{n}"),
+            &format!("Unknown Run {n}"),
+            rating,
+            None,
+        )
+        .await;
+    }
+    // A person set one series' rating, a provider the other's; their
+    // issues rank higher, and neither value moves.
+    for (s, slug) in [(user_set, "user-run"), (provider_set, "provider-run")] {
+        seed_issue(
+            &db,
+            &root,
+            w.fx.lib_id,
+            s,
+            1,
+            &format!("{slug}-1"),
+            &format!("{slug} one"),
+            Some("X18+"),
+            None,
+        )
+        .await;
+    }
+    pin_series_rating(&db, provider_set, "comicvine").await;
+    let (st, body) = raw(
+        &w.app,
+        Method::PATCH,
+        "/api/series/user-run",
+        &w.admin,
+        Some(serde_json::json!({ "age_rating": "Teen" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    for s in ids.iter().copied() {
+        rollup(&db, s).await;
+    }
+    assert_eq!(series_rating(&db, unknown).await, None);
+    assert_eq!(series_rating(&db, user_set).await.as_deref(), Some("Teen"));
+    assert_eq!(
+        series_rating(&db, provider_set).await.as_deref(),
+        Some("Everyone")
+    );
+}
+
+#[tokio::test]
+async fn an_issue_rating_edit_rederives_the_series_rating() {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    // No rollup on this path: the PATCH re-derives the series itself.
+    let (st, body) = raw(
+        &w.app,
+        Method::PATCH,
+        "/api/series/teen-tales/issues/teen-2",
+        &w.admin,
+        Some(serde_json::json!({ "age_rating": "Adults Only 18+" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        series_rating(&db, w.fx.teen_series).await.as_deref(),
+        Some("Adults Only 18+")
+    );
+    let (st, _) = get_json(&w.app, "/api/series/teen-tales", &w.capped).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // Bulk metadata follows the same rule.
+    let (st, body) = raw(
+        &w.app,
+        Method::PATCH,
+        "/api/me/issues/bulk-metadata",
+        &w.admin,
+        Some(serde_json::json!({
+            "issue_ids": [w.fx.teen_2],
+            "patch": { "age_rating": "Everyone" },
+            "mode": "replace",
+        })),
+    )
+    .await;
+    assert!(st.is_success(), "{st} {}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        series_rating(&db, w.fx.teen_series).await.as_deref(),
+        Some("Everyone")
+    );
+}
+
+#[tokio::test]
+async fn migration_ladder_and_recompute_agree_with_the_runtime_derivation() {
+    use sea_orm::ConnectionTrait;
+    use server::library::age_rating::LADDER;
+    assert_eq!(migration::AGE_RATING_LADDER, LADDER);
+
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let mut rung_series = Vec::new();
+    for (i, rung) in LADDER.iter().enumerate() {
+        let slug = format!("rung-{i}");
+        let s = seed_series(
+            &db,
+            w.fx.lib_id,
+            &format!("Rung {i}"),
+            &slug,
+            Some("Unknown"),
+        )
+        .await;
+        // An unranked issue and one on this rung, in odd case and spacing;
+        // plus a removed issue on the top rung that must not count.
+        seed_issue(
+            &db,
+            &root,
+            w.fx.lib_id,
+            s,
+            1,
+            &format!("{slug}-1"),
+            "r1",
+            Some("Rating Pending"),
+            None,
+        )
+        .await;
+        seed_issue(
+            &db,
+            &root,
+            w.fx.lib_id,
+            s,
+            2,
+            &format!("{slug}-2"),
+            "r2",
+            Some(&format!("  {}  ", rung.to_uppercase())),
+            None,
+        )
+        .await;
+        let gone = seed_issue(
+            &db,
+            &root,
+            w.fx.lib_id,
+            s,
+            3,
+            &format!("{slug}-3"),
+            "r3",
+            Some("X18+"),
+            None,
+        )
+        .await;
+        entity::issue::ActiveModel {
+            id: Unchanged(gone),
+            removed_at: Set(Some(Utc::now().fixed_offset())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+        rung_series.push((s, *rung));
+    }
+    // A user-set rating that disagrees with its issues.
+    let pinned = seed_series(&db, w.fx.lib_id, "Pinned", "pinned", Some("Everyone")).await;
+    seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        pinned,
+        1,
+        "pinned-1",
+        "p1",
+        Some("X18+"),
+        None,
+    )
+    .await;
+    pin_series_rating(&db, pinned, "user").await;
+
+    // The upgrade statement recomputes the wrong values and leaves the
+    // user-set one.
+    db.execute_unprepared(&migration::recompute_all_series_age_ratings_sql())
+        .await
+        .unwrap();
+    for (s, rung) in &rung_series {
+        assert_eq!(
+            series_rating(&db, *s).await.as_deref(),
+            Some(*rung),
+            "{rung}"
+        );
+    }
+    assert_eq!(
+        series_rating(&db, pinned).await.as_deref(),
+        Some("Everyone")
+    );
+    // An unpinned fixture series whose issues carry no rating is unrated.
+    assert_eq!(series_rating(&db, w.fx.teen_series).await, None);
+
+    // The runtime derivation gives the same answer on every rung.
+    for (s, _) in &rung_series {
+        entity::series::ActiveModel {
+            id: Unchanged(*s),
+            age_rating: Set(Some("Unknown".into())),
+            ..Default::default()
+        }
+        .update(&db)
+        .await
+        .unwrap();
+    }
+    let mut ids: Vec<Uuid> = rung_series.iter().map(|(s, _)| *s).collect();
+    ids.push(pinned);
+    let changed = server::library::series_rating::recompute_series_age_ratings(&db, &ids)
+        .await
+        .unwrap();
+    assert_eq!(changed, LADDER.len() as u64);
+    for (s, rung) in &rung_series {
+        assert_eq!(
+            series_rating(&db, *s).await.as_deref(),
+            Some(*rung),
+            "{rung}"
+        );
+        // And the in-memory twin agrees.
+        assert_eq!(
+            server::library::age_rating::highest([
+                Some("Rating Pending"),
+                Some(&format!("  {}  ", rung.to_uppercase())),
+            ]),
+            Some(*rung)
+        );
+    }
+    assert_eq!(
+        series_rating(&db, pinned).await.as_deref(),
+        Some("Everyone")
+    );
+}
+
+// ───── an issue is visible only when its series is ─────
+//
+// "Dark Saga" is rated `Mature 17+` by a person (pinned), above the `Teen`
+// reader's cap; both its issues carry their own `Teen` rating, which alone
+// would pass.
+
+struct DarkSeries {
+    one: String,
+    two: String,
+}
+
+async fn hidden_series_world() -> (World, DarkSeries) {
+    let w = world().await;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    let root = w.app._data_dir.path().join("cap-lib");
+    let dark = seed_series(
+        &db,
+        w.fx.lib_id,
+        "Dark Saga",
+        "dark-saga",
+        Some("Mature 17+"),
+    )
+    .await;
+    pin_series_rating(&db, dark, "user").await;
+    let one = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        dark,
+        1,
+        "dark-1",
+        "Dark One",
+        Some("Teen"),
+        None,
+    )
+    .await;
+    let two = seed_issue(
+        &db,
+        &root,
+        w.fx.lib_id,
+        dark,
+        2,
+        "dark-2",
+        "Dark Two",
+        Some("Teen"),
+        None,
+    )
+    .await;
+    rollup(&db, dark).await;
+    assert_eq!(
+        series_rating(&db, dark).await.as_deref(),
+        Some("Mature 17+")
+    );
+    (w, DarkSeries { one, two })
+}
+
+#[tokio::test]
+async fn an_issue_of_a_hidden_series_answers_like_an_unknown_id() {
+    let (w, dark) = hidden_series_world().await;
+    let hidden = dark.one.clone();
+    let unknown = unknown_issue_id();
+    // The Komga-compatible routes answer only in that compat mode.
+    let (st, body) = raw(
+        &w.app,
+        Method::PATCH,
+        "/api/admin/settings",
+        &w.admin,
+        Some(serde_json::json!({ "compat.opds_panels_mode": "komga" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let get_routes = [
+        "/api/issues/{}/covers",
+        "/api/me/issues/{}/markers",
+        "/api/me/issues/{}/page-overrides",
+        "/api/issues/{}/next-up",
+        "/api/issues/{}/prev-up",
+        "/issues/{}/pages/0",
+        "/issues/{}/pages/0/thumb",
+        "/issues/{}",
+        "/opds/v1/issues/{}/file",
+        "/api/v1/books/{}",
+    ];
+    for t in get_routes {
+        let h = masked(
+            &w.app,
+            Method::GET,
+            &t.replace("{}", &hidden),
+            &w.capped,
+            None,
+            &hidden,
+        )
+        .await;
+        let u = masked(
+            &w.app,
+            Method::GET,
+            &t.replace("{}", &unknown),
+            &w.capped,
+            None,
+            &unknown,
+        )
+        .await;
+        assert_eq!(h, u, "{t}");
+        assert!(h.0.is_client_error(), "{t}: {h:?}");
+        for user in [&w.uncapped, &w.admin] {
+            let (st, body) = raw(&w.app, Method::GET, &t.replace("{}", &hidden), user, None).await;
+            assert!(
+                st.is_success() || st.is_redirection(),
+                "{t}: {st} {}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+    }
+    // The neighbour's next-up / prev-up never lands on it either: the
+    // series walk of a hidden series is not the reader's to take.
+    for t in ["/api/issues/{}/next-up", "/api/issues/{}/prev-up"] {
+        let h = masked(
+            &w.app,
+            Method::GET,
+            &t.replace("{}", &dark.two),
+            &w.capped,
+            None,
+            &dark.two,
+        )
+        .await;
+        let u = masked(
+            &w.app,
+            Method::GET,
+            &t.replace("{}", &unknown),
+            &w.capped,
+            None,
+            &unknown,
+        )
+        .await;
+        assert_eq!(h, u, "{t}");
+    }
+
+    // Writes keyed on the issue.
+    type Body = fn(&str) -> serde_json::Value;
+    let writes: [(Method, &str, Body); 4] = [
+        (
+            Method::POST,
+            "/api/progress",
+            |id| serde_json::json!({"issue_id": id, "page": 1, "finished": true}),
+        ),
+        (
+            Method::POST,
+            "/api/me/markers",
+            |id| serde_json::json!({"issue_id": id, "page_index": 0, "kind": "bookmark"}),
+        ),
+        (
+            Method::POST,
+            "/api/me/issues/{}/ocr",
+            |_| serde_json::json!({"page": 0, "region": {"x": 0, "y": 0, "w": 1, "h": 1}}),
+        ),
+        (
+            Method::PATCH,
+            "/api/v1/books/{}/read-progress",
+            |_| serde_json::json!({"page": 1}),
+        ),
+    ];
+    for (method, path, body) in writes {
+        let h = masked(
+            &w.app,
+            method.clone(),
+            &path.replace("{}", &hidden),
+            &w.capped,
+            Some(body(&hidden)),
+            &hidden,
+        )
+        .await;
+        let u = masked(
+            &w.app,
+            method.clone(),
+            &path.replace("{}", &unknown),
+            &w.capped,
+            Some(body(&unknown)),
+            &unknown,
+        )
+        .await;
+        assert_eq!(h, u, "{method} {path}");
+        assert!(h.0.is_client_error(), "{method} {path}: {h:?}");
+    }
+    assert!(!has_progress_row(&w.app, w.capped.user_id, &hidden).await);
+    let (st, body) = post_json(
+        &w.app,
+        "/api/progress",
+        &w.uncapped,
+        serde_json::json!({"issue_id": hidden, "page": 1}),
+    )
+    .await;
+    assert!(st.is_success(), "{st} {body}");
+}
+
+#[tokio::test]
+async fn issue_lists_rails_and_feeds_leave_out_an_issue_of_a_hidden_series() {
+    let (w, dark) = hidden_series_world().await;
+    // The capped reader read #1 (and is mid-way through #2); so did the
+    // uncapped reader, whose rails prove the seed shows up.
+    for user in [&w.capped, &w.uncapped] {
+        progress(&w.app, user.user_id, &dark.one, true).await;
+        progress(&w.app, user.user_id, &dark.two, false).await;
+    }
+    let has_dark = |body: &serde_json::Value| body.to_string().contains("Dark ");
+    let lists = [
+        "/api/issues?limit=50",
+        "/api/issues/search?q=Dark",
+        "/api/me/recent-issues",
+        "/api/me/continue-reading",
+        "/api/me/on-deck",
+        "/api/me/new-in-series",
+    ];
+    for path in lists {
+        let (st, body) = get_json(&w.app, path, &w.capped).await;
+        assert_eq!(st, StatusCode::OK, "{path}: {body}");
+        assert!(!has_dark(&body), "{path}: {body}");
+    }
+    for path in [
+        "/api/issues?limit=50",
+        "/api/issues/search?q=Dark",
+        "/api/me/recent-issues",
+    ] {
+        for user in [&w.uncapped, &w.admin] {
+            let (_, body) = get_json(&w.app, path, user).await;
+            assert!(has_dark(&body), "{path}: {body}");
+        }
+    }
+
+    // An issue-rooted saved view.
+    let view = |user: &Authed| {
+        let user = Authed {
+            session: user.session.clone(),
+            csrf: user.csrf.clone(),
+            user_id: user.user_id,
+        };
+        let app = &w.app;
+        async move {
+            let (st, view) = post_json(
+                app,
+                "/api/me/saved-views",
+                &user,
+                serde_json::json!({
+                    "kind": "filter_issues",
+                    "name": "Teen issues",
+                    "filter": {"match_mode": "all", "conditions": [
+                        {"field": "title", "op": "contains", "value": "Dark"}
+                    ]},
+                    "sort_field": "name",
+                    "sort_order": "asc",
+                    "result_limit": 12,
+                }),
+            )
+            .await;
+            assert_eq!(st, StatusCode::CREATED, "{view}");
+            let id = view["id"].as_str().unwrap().to_owned();
+            let (st, body) = get_json(
+                app,
+                &format!("/api/me/saved-views/{id}/issue-results"),
+                &user,
+            )
+            .await;
+            assert_eq!(st, StatusCode::OK, "{body}");
+            body
+        }
+    };
+    assert!(!has_dark(&view(&w.capped).await));
+    assert!(has_dark(&view(&w.uncapped).await));
+
+    // OPDS: recent issues and the reader's history feeds.
+    for path in ["/opds/v1/recent", "/opds/v2/recent"] {
+        let (st, bytes) = raw(&w.app, Method::GET, path, &w.capped, None).await;
+        assert_eq!(st, StatusCode::OK, "{path}");
+        assert!(!String::from_utf8_lossy(&bytes).contains("Dark "), "{path}");
+        let (_, bytes) = raw(&w.app, Method::GET, path, &w.uncapped, None).await;
+        assert!(String::from_utf8_lossy(&bytes).contains("Dark "), "{path}");
+    }
+}
+
+// ───── per-grant "hide unrated" ─────
+
+/// Replace `user`'s grants through the admin endpoint.
+async fn set_access(
+    w: &World,
+    user: &Authed,
+    caps: serde_json::Value,
+    hide_unrated: serde_json::Value,
+) -> serde_json::Value {
+    let lib = w.fx.lib_id.to_string();
+    let (st, body) = post_json(
+        &w.app,
+        &format!("/api/admin/users/{}/library-access", user.user_id),
+        &w.admin,
+        serde_json::json!({
+            "library_ids": [lib],
+            "age_rating_caps": caps,
+            "hide_unrated": hide_unrated,
+        }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    body
+}
+
+#[tokio::test]
+async fn hide_unrated_round_trips_and_is_audited() {
+    let w = world().await;
+    let lib = w.fx.lib_id.to_string();
+    let body = set_access(
+        &w,
+        &w.capped,
+        serde_json::json!({ lib.clone(): "Teen" }),
+        serde_json::json!({ lib.clone(): true }),
+    )
+    .await;
+    assert_eq!(body["library_access"][0]["hide_unrated"], true, "{body}");
+    assert_eq!(
+        body["library_access"][0]["age_rating_max"], "Teen",
+        "{body}"
+    );
+    let (_, detail) = get_json(
+        &w.app,
+        &format!("/api/admin/users/{}", w.capped.user_id),
+        &w.admin,
+    )
+    .await;
+    assert_eq!(
+        detail["library_access"][0]["hide_unrated"], true,
+        "{detail}"
+    );
+
+    // Omitted: off again (the field is optional and defaults to false).
+    let (st, body) = post_json(
+        &w.app,
+        &format!("/api/admin/users/{}/library-access", w.capped.user_id),
+        &w.admin,
+        serde_json::json!({ "library_ids": [lib], "age_rating_caps": { lib.clone(): "Teen" } }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["library_access"][0]["hide_unrated"], false, "{body}");
+
+    let (_, audit) = get_json(
+        &w.app,
+        "/api/admin/audit?action=admin.user.library_access.set",
+        &w.admin,
+    )
+    .await;
+    let entries = audit["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        entries
+            .iter()
+            .any(|e| e["payload"]["hide_unrated"][&lib] == true),
+        "{audit}"
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| e["payload"]["hide_unrated"][&lib] == false),
+        "{audit}"
+    );
+}
+
+#[tokio::test]
+async fn hide_unrated_hides_an_unrated_series_and_its_issues() {
+    let w = world().await;
+    let fx = &w.fx;
+    let lib = fx.lib_id.to_string();
+    // Off: today's behaviour, unrated content is shown.
+    let (_, body) = get_json(&w.app, "/api/series", &w.capped).await;
+    assert!(names(&body, "name").contains(&"Unrated Stories".to_owned()));
+
+    set_access(
+        &w,
+        &w.capped,
+        serde_json::json!({ lib.clone(): "Teen" }),
+        serde_json::json!({ lib.clone(): true }),
+    )
+    .await;
+
+    // Series list, search arm and the series page.
+    let (_, body) = get_json(&w.app, "/api/series", &w.capped).await;
+    assert_eq!(names(&body, "name"), vec!["Teen Tales"], "{body}");
+    assert_eq!(body["total"], 1);
+    let (_, body) = get_json(&w.app, "/api/series?q=Unrated", &w.capped).await;
+    assert!(names(&body, "name").is_empty(), "{body}");
+    let (st, _) = get_json(&w.app, "/api/series/unrated-stories", &w.capped).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Issues of the unrated series, rated or not, are gone; the issues of
+    // the rated series with no rating of their own follow it and stay.
+    let (_, body) = get_json(&w.app, "/api/issues?limit=50", &w.capped).await;
+    let mut got = names(&body, "title");
+    got.sort();
+    assert_eq!(got, vec!["Teen One", "Teen Two"], "{body}");
+    let (_, body) = get_json(&w.app, "/api/issues/search?q=Unrated", &w.capped).await;
+    assert!(names(&body, "title").is_empty(), "{body}");
+    let (_, body) = get_json(&w.app, "/api/me/recent-issues", &w.capped).await;
+    let mut got = names(&body, "title");
+    got.sort();
+    assert_eq!(got, vec!["Teen One", "Teen Two"], "{body}");
+    let unknown = unknown_issue_id();
+    for t in ["/issues/{}/pages/0", "/api/issues/{}/covers"] {
+        let h = masked(
+            &w.app,
+            Method::GET,
+            &t.replace("{}", &fx.unrated_1),
+            &w.capped,
+            None,
+            &fx.unrated_1,
+        )
+        .await;
+        let u = masked(
+            &w.app,
+            Method::GET,
+            &t.replace("{}", &unknown),
+            &w.capped,
+            None,
+            &unknown,
+        )
+        .await;
+        assert_eq!(h, u, "{t}");
+        assert_eq!(h.0, StatusCode::NOT_FOUND, "{t}");
+    }
+    let (st, _) = raw(
+        &w.app,
+        Method::GET,
+        &format!("/issues/{}/pages/0", fx.teen_1),
+        &w.capped,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Entity surfaces: the writer credit counts only the Teen issues.
+    let (_, body) = get_json(&w.app, "/api/creators", &w.capped).await;
+    assert_eq!(body["items"][0]["credit_count"], 2, "{body}");
+
+    // OPDS.
+    let (_, bytes) = raw(&w.app, Method::GET, "/opds/v1/series", &w.capped, None).await;
+    let xml = String::from_utf8(bytes).unwrap();
+    assert!(
+        xml.contains("Teen Tales") && !xml.contains("Unrated Stories"),
+        "{xml}"
+    );
+    let (st, _) = raw(
+        &w.app,
+        Method::GET,
+        &format!("/opds/v1/series/{}", fx.unrated_series),
+        &w.capped,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Admins are unaffected.
+    let (_, body) = get_json(&w.app, "/api/series", &w.admin).await;
+    assert_eq!(names(&body, "name").len(), 3);
+}
+
+#[tokio::test]
+async fn hide_unrated_without_a_cap_hides_only_unrated_content() {
+    let w = world().await;
+    let lib = w.fx.lib_id.to_string();
+    set_access(
+        &w,
+        &w.uncapped,
+        serde_json::json!({}),
+        serde_json::json!({ lib.clone(): true }),
+    )
+    .await;
+    let (_, body) = get_json(&w.app, "/api/series", &w.uncapped).await;
+    let mut got = names(&body, "name");
+    got.sort();
+    assert_eq!(got, vec!["Mature Matters", "Teen Tales"], "{body}");
+    let (_, body) = get_json(&w.app, "/api/issues?limit=50", &w.uncapped).await;
+    let mut got = names(&body, "title");
+    got.sort();
+    assert_eq!(
+        got,
+        vec!["Mature One", "Mature Two", "Teen One", "Teen Two"],
+        "{body}"
+    );
+    let (st, _) = raw(
+        &w.app,
+        Method::GET,
+        &format!("/issues/{}/pages/0", w.fx.unrated_mature_2),
+        &w.uncapped,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn hide_unrated_entity_and_rail_surfaces_skip_an_unrated_series() {
+    let e = entity_world().await;
+    let w = &e.w;
+    let db = Database::connect(&w.app.db_url).await.unwrap();
+    // Twin Run loses its rating: with the option on, its cast is hidden.
+    entity::series::ActiveModel {
+        id: Unchanged(
+            entity::series::Entity::find()
+                .all(&db)
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|s| s.slug == "twin-run")
+                .unwrap()
+                .id,
+        ),
+        age_rating: Set(None),
+        ..Default::default()
+    }
+    .update(&db)
+    .await
+    .unwrap();
+    let lib = w.fx.lib_id.to_string();
+    let sidekick = admin_slug(w, "/api/characters", "name", "Shared Sidekick").await;
+    let base = format!("/api/characters/{sidekick}");
+    let (_, body) = get_json(&w.app, &format!("{base}/series"), &w.capped).await;
+    let mut got = item_strings(&body, "slug");
+    got.sort();
+    assert_eq!(got, vec!["gap-run", "twin-run"], "{body}");
+
+    set_access(
+        w,
+        &w.capped,
+        serde_json::json!({ lib.clone(): "Teen" }),
+        serde_json::json!({ lib.clone(): true }),
+    )
+    .await;
+    let (_, body) = get_json(&w.app, &format!("{base}/series"), &w.capped).await;
+    assert_eq!(item_strings(&body, "slug"), vec!["gap-run"], "{body}");
+    let (_, body) = get_json(&w.app, &base, &w.capped).await;
+    assert_eq!(body["series_count"], 1, "{body}");
+    let (_, bytes) = raw(
+        &w.app,
+        Method::GET,
+        &format!("/opds/v1/characters/{sidekick}"),
+        &w.capped,
+        None,
+    )
+    .await;
+    assert!(!String::from_utf8_lossy(&bytes).contains("Twin"));
+    let _ = &e.twin_one;
 }

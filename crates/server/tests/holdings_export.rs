@@ -172,6 +172,7 @@ async fn grant(db: &DatabaseConnection, lib: Uuid, user: Uuid, cap: Option<&str>
         library_id: Set(lib),
         user_id: Set(user),
         age_rating_max: Set(cap.map(str::to_owned)),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

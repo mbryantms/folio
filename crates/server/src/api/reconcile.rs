@@ -537,6 +537,10 @@ pub async fn restore_issue(
     }
     // A restored issue is live again and may rejoin a duplicate group.
     app.duplicates.invalidate(library_id);
+    // It counts toward its series' derived age rating again.
+    if crate::library::series_rating::recompute_best_effort(&app.db, &[series_id]).await > 0 {
+        app.similarity.invalidate_all();
+    }
     // An explicit restore overrides a Duplicates-page soft-remove (WP-3.3):
     // drop the pin so the next scan's reconcile treats the issue normally.
     if let Err(e) = entity::issue_duplicate_decision::Entity::delete_by_id(id.clone())
@@ -728,6 +732,10 @@ pub async fn restore_series(
     }
     // Restored issues are live again and may rejoin duplicate groups.
     app.duplicates.invalidate(row.library_id);
+    // ... and count toward the series' derived age rating again.
+    if crate::library::series_rating::recompute_best_effort(&app.db, &[row.id]).await > 0 {
+        app.similarity.invalidate_all();
+    }
 
     let series_id = row.id;
     let mut am: series::ActiveModel = row.into();

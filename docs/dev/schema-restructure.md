@@ -95,6 +95,9 @@ ComicInfo strings into the columns and derives the junctions from them
 (`rollup_series_metadata`) ends by rebuilding every active issue's
 cache for the series from the junctions
 (`writers::rebuild_series_issue_csv_cache`, one set-based statement).
+The same rollup derives `series.age_rating` from the issues' ratings
+(the highest rung on the ladder; `library::series_rating`), a file-tier
+value that a user- or provider-set series rating overrides.
 So after a scan the columns hold the normalized names the junctions
 hold — `"Mike Deodato Jr."`, not the file's `"Mike Deodato, Jr."` —
 and every column reader (library grid, OPDS, search, saved-view

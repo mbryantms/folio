@@ -9,18 +9,24 @@
 //! `age_rating_max`, and every surface that consults the ACL also hides
 //! rows whose rating ranks above the cap (see
 //! [`crate::library::age_rating`] for the ladder and the unrated rule).
-//! Three shapes are offered so callers don't re-derive the predicate:
+//! A grant may also set `hide_unrated`, which hides a series with no
+//! rating on the ladder as if it ranked above the cap. Three shapes are
+//! offered so callers don't re-derive the predicate:
 //!
 //! - in-memory: [`VisibleLibraries::series_ok`] / [`VisibleLibraries::issue_ok`]
 //! - sea-orm / sea-query: [`VisibleLibraries::series_filter`] /
-//!   [`VisibleLibraries::issue_filter`] / [`VisibleLibraries::cap_condition`]
-//! - raw SQL: [`VisibleLibraries::raw_cap_clause`]
+//!   [`VisibleLibraries::issue_filter`] / [`VisibleLibraries::issue_cap_condition`]
+//! - raw SQL: [`VisibleLibraries::raw_cap_clause`] (series rows),
+//!   [`VisibleLibraries::issue_cap_sql_joined`] / [`VisibleLibraries::issue_cap_sql`]
+//!   (issue rows)
 //!
-//! Issues inherit their series' rating when their own is NULL
-//! (`COALESCE(issue.age_rating, series.age_rating)`), so an issue-level
-//! check needs the parent rating; [`filter_issues`] and
-//! [`issue_visible`] fetch it — and only when the caller is actually
-//! capped, so uncapped users pay no extra round-trip.
+//! **An issue is visible only when its series is**: its own rating must
+//! pass the cap AND its series must pass the series-level rule. An issue
+//! with no rating of its own follows its series. The issue-level check
+//! therefore needs the parent rating; [`filter_issues`] and
+//! [`issue_visible`] fetch it, and only when the caller's grant hides
+//! something, so uncapped users pay no extra round-trip and send the same
+//! SQL as before (every predicate builder returns nothing for them).
 
 use crate::auth::extractor::CurrentUser;
 use crate::library::age_rating;
@@ -44,6 +50,22 @@ pub struct VisibleLibraries {
     /// in `allowed` but absent from `caps` is uncapped. Always empty for
     /// unrestricted (admin) callers.
     pub caps: HashMap<Uuid, String>,
+    /// Libraries whose grant hides unrated content
+    /// (`library_user_access.hide_unrated`): a series with no rating on
+    /// the ladder is hidden there as if it ranked above the cap, and its
+    /// issues with it. Independent of `caps` (a grant may hide unrated
+    /// content without a cap). Always empty for unrestricted callers.
+    pub hide_unrated: HashSet<Uuid>,
+}
+
+/// What one library's grant hides: the ladder rungs above its cap
+/// (lowercased) and whether unrated rows go too. Only libraries where
+/// at least one of the two hides something get a rule.
+struct LibraryRule {
+    library_id: Uuid,
+    hidden: Vec<String>,
+    hide_unrated: bool,
+    cap: Option<String>,
 }
 
 impl VisibleLibraries {
@@ -52,6 +74,7 @@ impl VisibleLibraries {
             unrestricted: true,
             allowed: HashSet::new(),
             caps: HashMap::new(),
+            hide_unrated: HashSet::new(),
         }
     }
 
@@ -66,89 +89,174 @@ impl VisibleLibraries {
         self.caps.get(&library_id).map(String::as_str)
     }
 
-    /// True iff at least one visible library carries a cap — the cheap
-    /// gate every helper uses to skip the rating work entirely.
-    pub fn has_caps(&self) -> bool {
-        !self.caps.is_empty()
+    /// True iff the grant on this library hides unrated content.
+    pub fn hides_unrated_in(&self, library_id: Uuid) -> bool {
+        self.hide_unrated.contains(&library_id)
     }
 
-    /// True iff some cap actually hides a rating rung (a cap on the top
-    /// rung hides nothing). The switch between the two shapes of an
-    /// entity query: the `series_*` rollup junctions are the union of
-    /// every issue in the series, so a caller this returns `true` for
-    /// reads the `issue_*` twin over the issues it can see instead; every
-    /// other caller keeps the rollup (and its query plan).
+    /// True iff at least one visible library carries a cap or hides
+    /// unrated content — the cheap gate for "this caller may not see
+    /// everything in the libraries it is granted".
+    pub fn has_caps(&self) -> bool {
+        !self.caps.is_empty() || !self.hide_unrated.is_empty()
+    }
+
+    /// True iff some grant actually hides rows: a cap that hides a rung
+    /// (a cap on the top rung hides nothing) or `hide_unrated`. The
+    /// switch between the two shapes of an entity query: the `series_*`
+    /// rollup junctions are the union of every issue in the series, so a
+    /// caller this returns `true` for reads the `issue_*` twin over the
+    /// issues it can see instead; every other caller keeps the rollup
+    /// (and its query plan).
     pub fn hides_any(&self) -> bool {
-        self.caps
-            .values()
-            .any(|cap| !age_rating::hidden_ratings(cap).is_empty())
+        !self.hide_unrated.is_empty()
+            || self
+                .caps
+                .values()
+                .any(|cap| !age_rating::hidden_ratings(cap).is_empty())
     }
 
     /// [`Self::hides_any`] for one library.
     pub fn hides_in(&self, library_id: Uuid) -> bool {
-        self.cap_for(library_id)
-            .is_some_and(|cap| !age_rating::hidden_ratings(cap).is_empty())
+        self.hides_unrated_in(library_id)
+            || self
+                .cap_for(library_id)
+                .is_some_and(|cap| !age_rating::hidden_ratings(cap).is_empty())
     }
 
-    /// Membership + cap check for a series row.
+    /// Membership + cap check for a series row (and `hide_unrated`).
     pub fn series_ok(&self, library_id: Uuid, rating: Option<&str>) -> bool {
-        self.contains(library_id) && age_rating::passes(rating, self.cap_for(library_id))
+        self.contains(library_id)
+            && age_rating::passes_grant(
+                rating,
+                self.cap_for(library_id),
+                self.hides_unrated_in(library_id),
+            )
     }
 
-    /// Membership + cap check for an issue row. The issue's own rating
-    /// wins; the series rating is the fallback when it's NULL.
+    /// Membership + cap check for an issue row. An issue is visible only
+    /// when its series is ([`Self::series_ok`] on `series_rating`) AND its
+    /// own rating passes the cap. An issue with no rating of its own (or
+    /// one not on the ladder) follows its series, so `hide_unrated` is a
+    /// question about the series alone.
     pub fn issue_ok(
         &self,
         library_id: Uuid,
         issue_rating: Option<&str>,
         series_rating: Option<&str>,
     ) -> bool {
-        self.contains(library_id)
-            && age_rating::passes(issue_rating.or(series_rating), self.cap_for(library_id))
+        self.series_ok(library_id, series_rating)
+            && age_rating::passes(issue_rating, self.cap_for(library_id))
     }
 
-    /// Capped libraries paired with the lowercased ladder rungs each one
-    /// hides. Libraries whose cap hides nothing (top rung / unknown) are
-    /// dropped so the predicate stays minimal.
-    fn hidden_by_library(&self) -> Vec<(Uuid, Vec<String>)> {
-        let mut out: Vec<(Uuid, Vec<String>)> = self
+    /// One rule per library whose grant hides something, sorted by
+    /// library id so the SQL text (HashMap order is random) keeps query
+    /// plans / logs stable. Empty when nothing is hidden, which is what
+    /// keeps uncapped callers' SQL unchanged.
+    fn rules(&self) -> Vec<LibraryRule> {
+        let mut libs: Vec<Uuid> = self
             .caps
-            .iter()
-            .filter_map(|(lib, cap)| {
-                let hidden = age_rating::hidden_ratings(cap);
-                (!hidden.is_empty()).then_some((*lib, hidden))
-            })
+            .keys()
+            .chain(self.hide_unrated.iter())
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
             .collect();
-        // Deterministic SQL text (HashMap order is random) keeps query
-        // plans / logs stable.
-        out.sort_by_key(|(lib, _)| *lib);
-        out
+        libs.sort();
+        libs.into_iter()
+            .filter_map(|library_id| {
+                let cap = self.cap_for(library_id).map(str::to_owned);
+                let hidden = cap
+                    .as_deref()
+                    .map(age_rating::hidden_ratings)
+                    .unwrap_or_default();
+                let hide_unrated = self.hides_unrated_in(library_id);
+                (!hidden.is_empty() || hide_unrated).then_some(LibraryRule {
+                    library_id,
+                    hidden,
+                    hide_unrated,
+                    cap,
+                })
+            })
+            .collect()
     }
 
-    /// Cap predicate as a sea-query condition, for any statement that
-    /// exposes a library column and a rating expression:
+    /// Series-level pass for one rule, as a sea-query condition on
+    /// `rating` (no library test). Without `hide_unrated`: unrated passes,
+    /// a rung above the cap does not. With it: only a rung at or below
+    /// the cap passes.
+    fn series_pass_condition(rule: &LibraryRule, rating: SimpleExpr) -> Condition {
+        if rule.hide_unrated {
+            Condition::all().add(
+                normalized_rating(rating).is_in(age_rating::shown_ratings(rule.cap.as_deref())),
+            )
+        } else {
+            Condition::any()
+                .add(rating.clone().is_null())
+                .add(normalized_rating(rating).is_not_in(rule.hidden.clone()))
+        }
+    }
+
+    /// Series-level cap predicate as a sea-query condition, for any
+    /// statement that exposes a library column and a **series** rating
+    /// expression:
     ///
     /// ```sql
     /// (library <> $lib OR rating IS NULL OR lower(btrim(rating)) NOT IN (...))
-    /// AND ... -- one conjunct per capped library
+    /// AND ... -- one conjunct per library whose grant hides something
     /// ```
     ///
-    /// `None` when nothing is capped (no predicate needed). Membership
-    /// (`library_id IN allowed`) is *not* included — pair it with the
-    /// existing ACL filter, or use [`Self::series_filter`] /
-    /// [`Self::issue_filter`] which bundle both.
+    /// (`lower(btrim(rating)) IN (<shown rungs>)` for a grant with
+    /// `hide_unrated`.) `None` when nothing is hidden (no predicate
+    /// needed). Membership (`library_id IN allowed`) is *not* included —
+    /// pair it with the existing ACL filter, or use [`Self::series_filter`]
+    /// / [`Self::issue_filter`] which bundle both. For an issue row use
+    /// [`Self::issue_cap_condition`], never this on an effective rating.
     pub fn cap_condition(&self, library_col: SimpleExpr, rating: SimpleExpr) -> Option<Condition> {
-        let hidden = self.hidden_by_library();
-        if hidden.is_empty() {
+        let rules = self.rules();
+        if rules.is_empty() {
             return None;
         }
         let mut all = Condition::all();
-        for (lib, rungs) in hidden {
+        for rule in rules {
             all = all.add(
                 Condition::any()
-                    .add(library_col.clone().ne(lib))
-                    .add(rating.clone().is_null())
-                    .add(normalized_rating(rating.clone()).is_not_in(rungs)),
+                    .add(library_col.clone().ne(rule.library_id))
+                    .add(Self::series_pass_condition(&rule, rating.clone())),
+            );
+        }
+        Some(all)
+    }
+
+    /// Issue-level cap predicate as a sea-query condition: per library
+    /// whose grant hides something, the issue's own rating passes the cap
+    /// (NULL / unranked passes) AND its series' rating passes the
+    /// series-level rule. `None` when nothing is hidden.
+    fn issue_condition(
+        &self,
+        library_col: SimpleExpr,
+        own: SimpleExpr,
+        series_rating: SimpleExpr,
+    ) -> Option<Condition> {
+        let rules = self.rules();
+        if rules.is_empty() {
+            return None;
+        }
+        let mut all = Condition::all();
+        for rule in rules {
+            let mut pass = Condition::all();
+            if !rule.hidden.is_empty() {
+                pass = pass.add(
+                    Condition::any()
+                        .add(own.clone().is_null())
+                        .add(normalized_rating(own.clone()).is_not_in(rule.hidden.clone())),
+                );
+            }
+            pass = pass.add(Self::series_pass_condition(&rule, series_rating.clone()));
+            all = all.add(
+                Condition::any()
+                    .add(library_col.clone().ne(rule.library_id))
+                    .add(pass),
             );
         }
         Some(all)
@@ -165,20 +273,16 @@ impl VisibleLibraries {
         }
         let mut cond = Condition::all()
             .add(series::Column::LibraryId.is_in(self.allowed.iter().copied().collect::<Vec<_>>()));
-        if let Some(cap) = self.cap_condition(
-            Expr::col((series::Entity, series::Column::LibraryId)),
-            Expr::col((series::Entity, series::Column::AgeRating)),
-        ) {
+        if let Some(cap) = self.series_cap_condition() {
             cond = cond.add(cap);
         }
         Some(cond)
     }
 
     /// Complete visibility predicate for an `issues` query: membership +
-    /// cap on `COALESCE(issues.age_rating, series.age_rating)`. The
-    /// series rating is reached through a correlated sub-select so the
-    /// caller doesn't have to join `series`. `None` for unrestricted
-    /// callers.
+    /// [`Self::issue_cap_condition`]. The series rating is reached through
+    /// a correlated sub-select so the caller doesn't have to join
+    /// `series`. `None` for unrestricted callers.
     pub fn issue_filter(&self) -> Option<Condition> {
         if self.unrestricted {
             return None;
@@ -192,60 +296,55 @@ impl VisibleLibraries {
     }
 
     /// Cap-only predicate for an `issues` query (membership handled by
-    /// the caller). `None` when nothing is capped.
+    /// the caller): the issue's own rating under the cap AND its series
+    /// visible under the series-level rule. `None` when nothing is
+    /// hidden.
     pub fn issue_cap_condition(&self) -> Option<Condition> {
-        self.cap_condition(
+        self.issue_condition(
             Expr::col((issue::Entity, issue::Column::LibraryId)),
-            issue_effective_rating_expr(),
+            Expr::col((issue::Entity, issue::Column::AgeRating)),
+            issue_series_rating_expr(),
         )
     }
 
     /// Raw-SQL twin of [`Self::issue_cap_condition`] for an `issues` row
-    /// aliased `alias`: the cap on the issue's own rating, the series
-    /// rating as the fallback. Same ` AND ` / `params` convention as
-    /// [`Self::raw_cap_clause`]; empty when nothing is capped. For
+    /// aliased `alias`, with the series rating read through a correlated
+    /// sub-select. Same ` AND ` / `params` convention as
+    /// [`Self::raw_cap_clause`]; empty when nothing is hidden. For
     /// statements scoped to one already-visible series (membership is
     /// settled), and the cap half of [`visible_issues_sql`].
     pub fn issue_cap_sql(&self, alias: &str, params: &mut Vec<Value>) -> String {
-        self.raw_cap_clause(
+        self.raw_issue_clause(
             &format!("{alias}.library_id"),
-            &format!(
-                "COALESCE({alias}.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = {alias}.series_id))"
-            ),
+            &format!("{alias}.age_rating"),
+            &format!("(SELECT s.age_rating FROM series s WHERE s.id = {alias}.series_id)"),
             params,
         )
     }
 
-    /// The cap half of the **entity-surface** issue predicate, for an
-    /// `issues` row aliased `issue` joined to its series aliased `series`:
-    /// the issue's effective rating (own rating, series as fallback) AND
-    /// the series' own rating. Entity surfaces (creator / character / …
-    /// lists, pages, counts, pickers) count an issue only when its series
-    /// is one the caller can open, so they never name a hidden series.
-    /// Same ` AND ` / `params` convention as [`Self::raw_cap_clause`];
-    /// empty when nothing is capped, so uncapped SQL is unchanged. Issue
-    /// routes keep [`visible_issues_sql`] (issue rating only).
-    pub fn entity_issue_cap_sql(
+    /// [`Self::issue_cap_sql`] for an `issues` row aliased `issue` that
+    /// the statement already joins to its series aliased `series`: the
+    /// issue's own rating under the cap AND the series visible. The one
+    /// issue predicate for every hand-written statement that has both
+    /// rows (issue lists, rails, the reading log, entity surfaces). Same
+    /// ` AND ` / `params` convention as [`Self::raw_cap_clause`]; empty
+    /// when nothing is hidden, so uncapped SQL is unchanged.
+    pub fn issue_cap_sql_joined(
         &self,
         issue: &str,
         series: &str,
         params: &mut Vec<Value>,
     ) -> String {
-        let mut sql = self.raw_cap_clause(
+        self.raw_issue_clause(
             &format!("{series}.library_id"),
-            &format!("COALESCE({issue}.age_rating, {series}.age_rating)"),
-            params,
-        );
-        sql.push_str(&self.raw_cap_clause(
-            &format!("{series}.library_id"),
+            &format!("{issue}.age_rating"),
             &format!("{series}.age_rating"),
             params,
-        ));
-        sql
+        )
     }
 
     /// Cap-only predicate for a `series` query (membership handled by
-    /// the caller). `None` when nothing is capped.
+    /// the caller). `None` when nothing is hidden.
     pub fn series_cap_condition(&self) -> Option<Condition> {
         self.cap_condition(
             Expr::col((series::Entity, series::Column::LibraryId)),
@@ -253,33 +352,85 @@ impl VisibleLibraries {
         )
     }
 
-    /// Cap predicate for hand-written SQL. `library_expr` / `rating_expr`
-    /// are SQL fragments (e.g. `i.library_id`,
-    /// `COALESCE(i.age_rating, s.age_rating)`); bound values are pushed
-    /// onto `params` and referenced as `$n` from the returned fragment,
-    /// which starts with ` AND ` and is empty when nothing is capped.
+    /// Series-level cap predicate for hand-written SQL. `library_expr` /
+    /// `rating_expr` are SQL fragments for a **series** row (e.g.
+    /// `s.library_id`, `s.age_rating`); bound values are pushed onto
+    /// `params` and referenced as `$n` from the returned fragment, which
+    /// starts with ` AND ` and is empty when nothing is hidden. An issue
+    /// row goes through [`Self::issue_cap_sql_joined`] /
+    /// [`Self::issue_cap_sql`] instead, never this on
+    /// `COALESCE(i.age_rating, s.age_rating)`.
     pub fn raw_cap_clause(
         &self,
         library_expr: &str,
         rating_expr: &str,
         params: &mut Vec<Value>,
     ) -> String {
-        let hidden = self.hidden_by_library();
-        if hidden.is_empty() {
-            return String::new();
-        }
         let mut sql = String::new();
-        for (lib, rungs) in hidden {
-            params.push(Value::from(lib));
+        for rule in self.rules() {
+            params.push(Value::from(rule.library_id));
             let lib_param = params.len();
-            params.push(Value::from(rungs));
-            let rungs_param = params.len();
+            let pass = raw_series_pass(&rule, rating_expr, params);
+            sql.push_str(&format!(" AND ({library_expr} <> ${lib_param} OR {pass})"));
+        }
+        sql
+    }
+
+    /// Record one `library_user_access` row: membership, its cap (when
+    /// on the ladder) and `hide_unrated`.
+    fn add_grant(&mut self, g: library_user_access::Model) {
+        self.allowed.insert(g.library_id);
+        if let Some(cap) = g.age_rating_max.filter(|c| age_rating::is_valid_cap(c)) {
+            self.caps.insert(g.library_id, cap);
+        }
+        if g.hide_unrated {
+            self.hide_unrated.insert(g.library_id);
+        }
+    }
+
+    /// Issue-level raw clause: per rule, the own rating under the cap AND
+    /// the series rating passing the series-level rule.
+    fn raw_issue_clause(
+        &self,
+        library_expr: &str,
+        own_expr: &str,
+        series_expr: &str,
+        params: &mut Vec<Value>,
+    ) -> String {
+        let mut sql = String::new();
+        for rule in self.rules() {
+            params.push(Value::from(rule.library_id));
+            let lib_param = params.len();
+            let own = if rule.hidden.is_empty() {
+                String::new()
+            } else {
+                params.push(Value::from(rule.hidden.clone()));
+                let rungs_param = params.len();
+                format!(
+                    "({own_expr} IS NULL OR lower(btrim({own_expr})) <> ALL(${rungs_param})) AND "
+                )
+            };
+            let series_pass = raw_series_pass(&rule, series_expr, params);
             sql.push_str(&format!(
-                " AND ({library_expr} <> ${lib_param} OR {rating_expr} IS NULL \
-                 OR lower(btrim({rating_expr})) <> ALL(${rungs_param}))"
+                " AND ({library_expr} <> ${lib_param} OR ({own}({series_pass})))"
             ));
         }
         sql
+    }
+}
+
+/// The series-level pass of one rule over `rating_expr`, binding its rung
+/// list onto `params`.
+fn raw_series_pass(rule: &LibraryRule, rating_expr: &str, params: &mut Vec<Value>) -> String {
+    if rule.hide_unrated {
+        params.push(Value::from(age_rating::shown_ratings(rule.cap.as_deref())));
+        format!("lower(btrim({rating_expr})) = ANY(${})", params.len())
+    } else {
+        params.push(Value::from(rule.hidden.clone()));
+        format!(
+            "{rating_expr} IS NULL OR lower(btrim({rating_expr})) <> ALL(${})",
+            params.len()
+        )
     }
 }
 
@@ -297,12 +448,12 @@ impl sea_orm::sea_query::Iden for BtrimFn {
     }
 }
 
-/// `COALESCE(issues.age_rating, (SELECT series.age_rating ...))` — the
-/// effective rating of an issue row, for statements selecting from
-/// `issues` without a `series` join.
-pub fn issue_effective_rating_expr() -> SimpleExpr {
+/// `(SELECT series.age_rating ...)` — the rating of an issue row's
+/// series, for statements selecting from `issues` without a `series`
+/// join.
+fn issue_series_rating_expr() -> SimpleExpr {
     Expr::cust(
-        r#"COALESCE("issues"."age_rating", (SELECT "series"."age_rating" FROM "series" WHERE "series"."id" = "issues"."series_id"))"#,
+        r#"(SELECT "series"."age_rating" FROM "series" WHERE "series"."id" = "issues"."series_id")"#,
     )
 }
 
@@ -338,8 +489,8 @@ pub fn visible_series_select(acl: &VisibleLibraries) -> sea_orm::Select<series::
 /// Issues the caller can currently open: `issue.removed_at IS NULL`, a
 /// live parent series (a removed series must not surface through its
 /// issues either), and the caller's grant + cap
-/// ([`VisibleLibraries::issue_filter`], own rating first, series rating as
-/// fallback). One predicate for every personal-list surface that keys on
+/// ([`VisibleLibraries::issue_filter`]: own rating under the cap, series
+/// visible). One predicate for every personal-list surface that keys on
 /// an issue (collection entries, reading sessions, markers, reading
 /// stats); [`visible_issues_sql`] is its twin for hand-written SQL. Scan
 /// `state` is left to the caller: list surfaces add `state = 'active'`,
@@ -411,19 +562,11 @@ pub async fn for_user(app: &AppState, user: &CurrentUser) -> VisibleLibraries {
         .all(&app.db)
         .await
         .unwrap_or_default();
-    let mut allowed = HashSet::with_capacity(granted.len());
-    let mut caps = HashMap::new();
+    let mut out = VisibleLibraries::default();
     for g in granted {
-        allowed.insert(g.library_id);
-        if let Some(cap) = g.age_rating_max.filter(|c| age_rating::is_valid_cap(c)) {
-            caps.insert(g.library_id, cap);
-        }
+        out.add_grant(g);
     }
-    VisibleLibraries {
-        unrestricted: false,
-        allowed,
-        caps,
-    }
+    out
 }
 
 /// True iff `acl` hides nothing in the library: an admin, or a non-admin
@@ -476,10 +619,7 @@ pub async fn for_library_by_id(
         .flatten();
     let mut out = VisibleLibraries::default();
     if let Some(g) = grant {
-        out.allowed.insert(g.library_id);
-        if let Some(cap) = g.age_rating_max.filter(|c| age_rating::is_valid_cap(c)) {
-            out.caps.insert(g.library_id, cap);
-        }
+        out.add_grant(g);
     }
     out
 }
@@ -503,9 +643,10 @@ pub async fn series_ratings(app: &AppState, series_ids: &[Uuid]) -> HashMap<Uuid
         .collect()
 }
 
-/// Full visibility check for one issue row: membership + cap, with the
-/// series-rating fallback fetched only when it's actually needed (the
-/// caller is capped in that library and the issue carries no rating).
+/// Full visibility check for one issue row: membership, the issue's own
+/// rating under the cap, and its series visible
+/// ([`VisibleLibraries::issue_ok`]). The series rating is fetched only
+/// when the caller's grant on that library hides something.
 /// The one gate for every issue-scoped route: a `false` must answer
 /// exactly like an unknown id. Takes the full model or a slim projection
 /// (`IssueCardRow`).
@@ -524,16 +665,17 @@ pub async fn issue_allowed<T: IssueAclFields>(
     if !acl.contains(library_id) {
         return false;
     }
-    let Some(cap) = acl.cap_for(library_id) else {
+    if !acl.hides_in(library_id) {
         return true;
-    };
-    if row.acl_age_rating().is_some() {
-        return age_rating::passes(row.acl_age_rating(), Some(cap));
+    }
+    // Own rating first: a hidden one settles it without the lookup.
+    if !age_rating::passes(row.acl_age_rating(), acl.cap_for(library_id)) {
+        return false;
     }
     let series_id = row.acl_series_id();
     let parent = series_ratings(app, &[series_id]).await;
     let series_rating = parent.get(&series_id).and_then(|r| r.as_deref());
-    age_rating::passes(series_rating, Some(cap))
+    acl.issue_ok(library_id, row.acl_age_rating(), series_rating)
 }
 
 /// Full visibility check for one series row (membership + cap).
@@ -542,15 +684,15 @@ pub async fn series_visible(app: &AppState, user: &CurrentUser, row: &series::Mo
     acl.series_ok(row.library_id, row.age_rating.as_deref())
 }
 
-/// Drop issues the caller can't see (membership + cap), preserving
-/// order. One extra query for the parent ratings, and only when the
-/// caller is capped somewhere and some candidate lacks its own rating.
+/// Drop issues the caller can't see ([`VisibleLibraries::issue_ok`]),
+/// preserving order. One extra query for the parent ratings, and only
+/// when some grant hides something.
 pub async fn filter_issues<T: IssueAclFields>(
     app: &AppState,
     acl: &VisibleLibraries,
     rows: Vec<T>,
 ) -> Vec<T> {
-    if !acl.has_caps() {
+    if !acl.hides_any() {
         return rows
             .into_iter()
             .filter(|i| acl.contains(i.acl_library_id()))
@@ -558,7 +700,7 @@ pub async fn filter_issues<T: IssueAclFields>(
     }
     let need_parent: Vec<Uuid> = rows
         .iter()
-        .filter(|i| i.acl_age_rating().is_none() && acl.cap_for(i.acl_library_id()).is_some())
+        .filter(|i| acl.hides_in(i.acl_library_id()))
         .map(|i| i.acl_series_id())
         .collect::<HashSet<_>>()
         .into_iter()
@@ -614,9 +756,10 @@ mod tests {
         assert!(v.series_ok(lib, Some("Teen")));
         assert!(!v.series_ok(lib, Some("Mature 17+")));
         assert!(!v.series_ok(other, None));
-        // issue rating wins over the series rating
+        // the issue's own rating and its series' rating must both pass
         assert!(!v.issue_ok(lib, Some("Mature 17+"), Some("Everyone")));
-        assert!(v.issue_ok(lib, Some("Everyone"), Some("Mature 17+")));
+        assert!(!v.issue_ok(lib, Some("Everyone"), Some("Mature 17+")));
+        assert!(v.issue_ok(lib, Some("Everyone"), Some("Teen")));
         // NULL issue rating falls back to the series rating
         assert!(!v.issue_ok(lib, None, Some("Mature 17+")));
         assert!(v.issue_ok(lib, None, None));
@@ -650,21 +793,17 @@ mod tests {
         let lib = Uuid::now_v7();
         let v = capped(lib, "Teen");
         let mut params: Vec<Value> = vec![Value::from(1i64)];
-        let sql = v.raw_cap_clause(
-            "i.library_id",
-            "COALESCE(i.age_rating, s.age_rating)",
-            &mut params,
-        );
+        let sql = v.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
         assert_eq!(
             sql,
-            " AND (i.library_id <> $2 OR COALESCE(i.age_rating, s.age_rating) IS NULL \
-             OR lower(btrim(COALESCE(i.age_rating, s.age_rating))) <> ALL($3))"
+            " AND (s.library_id <> $2 OR s.age_rating IS NULL \
+             OR lower(btrim(s.age_rating)) <> ALL($3))"
         );
         assert_eq!(params.len(), 3);
     }
 
     #[test]
-    fn issue_cap_sql_falls_back_to_the_series_rating() {
+    fn issue_cap_sql_checks_own_rating_and_series() {
         let lib = Uuid::now_v7();
         let mut params = Vec::new();
         assert_eq!(
@@ -672,34 +811,101 @@ mod tests {
             ""
         );
         let sql = capped(lib, "Teen").issue_cap_sql("i", &mut params);
-        assert!(sql.starts_with(" AND (i.library_id <> $1 OR "), "{sql}");
-        assert!(
-            sql.contains(
-                "COALESCE(i.age_rating, (SELECT s.age_rating FROM series s WHERE s.id = i.series_id))"
-            ),
-            "{sql}"
+        assert_eq!(
+            sql,
+            " AND (i.library_id <> $1 OR ((i.age_rating IS NULL OR lower(btrim(i.age_rating)) <> ALL($2)) \
+             AND ((SELECT s.age_rating FROM series s WHERE s.id = i.series_id) IS NULL \
+             OR lower(btrim((SELECT s.age_rating FROM series s WHERE s.id = i.series_id))) <> ALL($3))))"
         );
-        assert_eq!(params.len(), 2);
+        assert_eq!(params.len(), 3);
     }
 
     #[test]
-    fn entity_issue_cap_checks_issue_and_series() {
+    fn joined_issue_cap_checks_issue_and_series() {
         let lib = Uuid::now_v7();
         let mut params = Vec::new();
         assert_eq!(
-            VisibleLibraries::unrestricted().entity_issue_cap_sql("i", "s", &mut params),
+            VisibleLibraries::unrestricted().issue_cap_sql_joined("i", "s", &mut params),
             ""
         );
-        let sql = capped(lib, "Teen").entity_issue_cap_sql("i", "s", &mut params);
+        let sql = capped(lib, "Teen").issue_cap_sql_joined("i", "s", &mut params);
+        assert_eq!(
+            sql,
+            " AND (s.library_id <> $1 OR ((i.age_rating IS NULL OR lower(btrim(i.age_rating)) <> ALL($2)) \
+             AND (s.age_rating IS NULL OR lower(btrim(s.age_rating)) <> ALL($3))))"
+        );
+        assert_eq!(params.len(), 3);
+    }
+
+    #[test]
+    fn issue_ok_requires_the_series_to_pass() {
+        let lib = Uuid::now_v7();
+        let v = capped(lib, "Teen");
+        // An issue within the cap inside a series above it is hidden.
+        assert!(!v.issue_ok(lib, Some("Teen"), Some("Mature 17+")));
+        assert!(v.issue_ok(lib, Some("Teen"), None));
+        assert!(v.issue_ok(lib, Some("Unknown"), Some("Teen")));
+        assert!(!v.issue_ok(lib, Some("Unknown"), Some("Mature 17+")));
+    }
+
+    fn hiding_unrated(lib: Uuid, cap: Option<&str>) -> VisibleLibraries {
+        let mut v = VisibleLibraries::default();
+        v.allowed.insert(lib);
+        if let Some(cap) = cap {
+            v.caps.insert(lib, cap.to_owned());
+        }
+        v.hide_unrated.insert(lib);
+        v
+    }
+
+    #[test]
+    fn hide_unrated_hides_unrated_series_and_their_issues() {
+        let lib = Uuid::now_v7();
+        for v in [hiding_unrated(lib, None), hiding_unrated(lib, Some("Teen"))] {
+            assert!(v.has_caps() && v.hides_any() && v.hides_in(lib));
+            assert!(!v.series_ok(lib, None));
+            assert!(!v.series_ok(lib, Some("Unknown")));
+            assert!(v.series_ok(lib, Some("Teen")));
+            // No own rating in a rated series: follows the series.
+            assert!(v.issue_ok(lib, None, Some("Teen")));
+            assert!(v.issue_ok(lib, Some("Unknown"), Some("Teen")));
+            // Unrated series: its issues go with it, rated or not.
+            assert!(!v.issue_ok(lib, Some("Teen"), None));
+        }
+        // Without a cap only unrated content is hidden.
+        let v = hiding_unrated(lib, None);
+        assert!(v.series_ok(lib, Some("X18+")));
+        assert!(v.issue_ok(lib, Some("X18+"), Some("Teen")));
+        let v = hiding_unrated(lib, Some("Teen"));
+        assert!(!v.series_ok(lib, Some("Mature 17+")));
+    }
+
+    #[test]
+    fn hide_unrated_sql_requires_a_shown_rung() {
+        let lib = Uuid::now_v7();
+        let mut params = Vec::new();
+        let sql =
+            hiding_unrated(lib, None).raw_cap_clause("s.library_id", "s.age_rating", &mut params);
+        assert_eq!(
+            sql,
+            " AND (s.library_id <> $1 OR lower(btrim(s.age_rating)) = ANY($2))"
+        );
+        assert_eq!(params.len(), 2);
+        let mut params = Vec::new();
+        let sql = hiding_unrated(lib, None).issue_cap_sql_joined("i", "s", &mut params);
+        assert_eq!(
+            sql,
+            " AND (s.library_id <> $1 OR ((lower(btrim(s.age_rating)) = ANY($2))))"
+        );
+        let mut params = Vec::new();
+        let sql = hiding_unrated(lib, Some("Teen")).issue_cap_sql_joined("i", "s", &mut params);
         assert!(
-            sql.contains("COALESCE(i.age_rating, s.age_rating)"),
+            sql.contains("<> ALL($2)) AND (lower(btrim(s.age_rating)) = ANY($3))"),
             "{sql}"
         );
-        assert!(
-            sql.contains("lower(btrim(s.age_rating)) <> ALL($4)"),
-            "{sql}"
-        );
-        assert_eq!(params.len(), 4);
+        assert_eq!(params.len(), 3);
+        // A top-rung cap hides nothing on its own, but hide_unrated still does.
+        assert!(hiding_unrated(lib, Some("X18+")).hides_any());
     }
 
     #[test]
@@ -735,9 +941,19 @@ mod tests {
         q.column(issue::Column::Id).from(issue::Entity);
         q.cond_where(v.issue_filter().unwrap());
         let sql = q.to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""issues"."age_rating" IS NULL"#), "{sql}");
         assert!(
-            sql.contains(r#"COALESCE("issues"."age_rating", (SELECT "series"."age_rating""#),
+            sql.contains(r#"LOWER(btrim((SELECT "series"."age_rating" FROM "series""#),
             "{sql}"
         );
+        let mut q = Query::select();
+        q.column(series::Column::Id).from(series::Entity);
+        q.cond_where(hiding_unrated(lib, None).series_filter().unwrap());
+        let sql = q.to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"LOWER(btrim("series"."age_rating")) IN ('early childhood'"#),
+            "{sql}"
+        );
+        assert!(!sql.contains("IS NULL"), "{sql}");
     }
 }

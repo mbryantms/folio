@@ -436,6 +436,7 @@ async fn delete_library_cascades_and_wipes_thumbs() {
         library_id: Set(lib_id),
         user_id: Set(actor_user_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(Utc::now().fixed_offset()),
         updated_at: Set(Utc::now().fixed_offset()),
     }

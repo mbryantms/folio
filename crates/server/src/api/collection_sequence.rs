@@ -62,8 +62,9 @@ impl CollectionSequence {
         i32::try_from(self.items.len()).unwrap_or(i32::MAX)
     }
 
-    /// Can the caller open the item at `idx`? Membership + age cap, the
-    /// issue's own rating first and the series rating as fallback.
+    /// Can the caller open the item at `idx`? Membership + age cap: the
+    /// issue's own rating and its series' rating
+    /// ([`access::VisibleLibraries::issue_ok`]).
     pub(crate) fn visible(&self, acl: &access::VisibleLibraries, idx: usize) -> bool {
         let item = &self.items[idx];
         let series_rating = self

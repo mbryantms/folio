@@ -283,9 +283,13 @@ pub async fn reconcile_library(
         .all(db)
         .await?;
 
+    let mut rated_series: HashSet<Uuid> = HashSet::new();
     for row in issues {
         let path = Path::new(&row.file_path);
         let exists = path.exists();
+        if row.removed_at.is_some() == exists {
+            rated_series.insert(row.series_id);
+        }
         match (row.removed_at.is_some(), exists) {
             // Soft-delete: present in DB, missing on disk.
             (false, false) => {
@@ -306,6 +310,10 @@ pub async fn reconcile_library(
             // Steady states: present + present, or removed + still missing.
             _ => {}
         }
+    }
+    if !rated_series.is_empty() {
+        let ids: Vec<Uuid> = rated_series.into_iter().collect();
+        crate::library::series_rating::recompute_best_effort(db, &ids).await;
     }
     // Series with all issues removed → soft-delete the series itself.
     let series_rows = series::Entity::find()
@@ -499,6 +507,7 @@ pub async fn reconcile_library_seen_with_chunk(
         events.push(ev);
     }
     if !missing_series.is_empty() {
+        crate::library::series_rating::recompute_best_effort(db, &missing_series).await;
         for chunk in missing_series.chunks(500) {
             let res = series::Entity::update_many()
                 .col_expr(series::Column::RemovedAt, Expr::value(now))
@@ -559,6 +568,7 @@ pub async fn reconcile_series(
         .all(db)
         .await?;
 
+    let (removed_before, restored_before) = (stats.issues_removed, stats.issues_restored);
     for row in issues {
         let path = Path::new(&row.file_path);
         let exists = path.exists();
@@ -587,6 +597,10 @@ pub async fn reconcile_series(
             }
             _ => {}
         }
+    }
+
+    if stats.issues_removed > removed_before || stats.issues_restored > restored_before {
+        crate::library::series_rating::recompute_best_effort(db, &[series_id]).await;
     }
 
     // Soft-delete the series itself if every issue is now removed.
@@ -700,6 +714,9 @@ async fn reconcile_issue_rows_seen(
 ) -> anyhow::Result<()> {
     let mut remove_ids = Vec::new();
     let mut restore_ids = Vec::new();
+    // Series whose active issue set changes: their derived age rating is
+    // recomputed after the flips (`library::series_rating`).
+    let mut rated_series: HashSet<Uuid> = HashSet::new();
     for row in issues {
         let seen = seen_paths.contains(&row.file_path);
         match (row.removed_at.is_some(), seen) {
@@ -723,6 +740,7 @@ async fn reconcile_issue_rows_seen(
                             "file_path": row.file_path,
                         }));
                     events.push(ev);
+                    rated_series.insert(row.series_id);
                     remove_ids.push(row.id);
                 }
             }
@@ -736,6 +754,7 @@ async fn reconcile_issue_rows_seen(
                     )
                     .entity("issue", row.id.clone(), Some(row.slug.clone()));
                 events.push(ev);
+                rated_series.insert(row.series_id);
                 restore_ids.push(row.id);
             }
             _ => {}
@@ -771,6 +790,10 @@ async fn reconcile_issue_rows_seen(
     }
     // The series of restored issues come back in the caller's last step
     // (`restore_*series_with_live_issues`), after every removal sweep.
+    if !rated_series.is_empty() {
+        let ids: Vec<Uuid> = rated_series.into_iter().collect();
+        crate::library::series_rating::recompute_best_effort(db, &ids).await;
+    }
 
     Ok(())
 }

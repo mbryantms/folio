@@ -661,6 +661,7 @@ async fn list_surfaces_carry_the_viewers_progress_summary() {
             user_id: Set(bob),
             library_id: Set(lib),
             age_rating_max: Set(None),
+            hide_unrated: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
         }

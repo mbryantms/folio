@@ -1127,6 +1127,15 @@ pub async fn update(
         }
     }
 
+    // The series' rating is its highest-rated issue's (unless a person or
+    // provider set it): an edited issue rating re-derives it now, for
+    // DB-direct and writeback libraries alike (the rescan re-derives it
+    // again from the file). The similar-series cache, which carries series
+    // ratings, is dropped by `manual_rewrite_after_edit` below.
+    if edited_arr.contains(&"age_rating") {
+        crate::library::series_rating::recompute_best_effort(&app.db, &[updated.series_id]).await;
+    }
+
     // WP-2.10: in a writeback library the archive is the record, so the
     // edit is pushed into the sidecars too. The job re-enqueues the scoped
     // rescan; the user pins written above protect the values through it.
@@ -1921,6 +1930,9 @@ pub async fn bulk_metadata(
     let mut failed: u32 = 0;
     let mut first_error: Option<String> = None;
     let mut sidecar_rewrites: u32 = 0;
+    // Series whose issue ratings this call edited: their derived rating is
+    // recomputed once after the loop.
+    let mut rated_series: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
     let mode_skip_if_set = matches!(req.mode, BulkMode::SkipIfSet);
 
     for row in rows {
@@ -1966,6 +1978,9 @@ pub async fn bulk_metadata(
         match update_issue_with_user_pins(&app.db, am, &touched_names).await {
             Ok(_) => {
                 updated += 1;
+                if req.patch.age_rating.is_some() {
+                    rated_series.insert(row.series_id);
+                }
                 // WP-2.10: writeback libraries get the edit in the file too.
                 if manual_rewrite_after_edit(&app, &row.id, &user, &ctx).await
                     == crate::metadata::manual_writeback::IssueEnqueue::Enqueued
@@ -1981,6 +1996,11 @@ pub async fn bulk_metadata(
                 first_error.get_or_insert_with(|| e.to_string());
             }
         }
+    }
+
+    if !rated_series.is_empty() {
+        let ids: Vec<Uuid> = rated_series.into_iter().collect();
+        crate::library::series_rating::recompute_best_effort(&app.db, &ids).await;
     }
 
     // Single audit row per call. Payload includes the *names* of the

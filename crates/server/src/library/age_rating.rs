@@ -82,6 +82,44 @@ pub fn hidden_ratings(cap: &str) -> Vec<String> {
     }
 }
 
+/// [`passes`] for a grant that may also hide unrated content
+/// (`library_user_access.hide_unrated`). With `hide_unrated` on, a row
+/// whose rating has no rank (NULL, empty, `Unknown`, off-ladder text) is
+/// hidden as if it ranked above the cap; with no cap, that is all it
+/// hides.
+pub fn passes_grant(rating: Option<&str>, cap: Option<&str>, hide_unrated: bool) -> bool {
+    if hide_unrated && rating.and_then(rank).is_none() {
+        return false;
+    }
+    passes(rating, cap)
+}
+
+/// Canonical ladder spellings at or below `cap`, lowercased, for a
+/// `lower(btrim(col)) = ANY(...)` predicate: what a grant with
+/// `hide_unrated` on shows. Every rung when there is no cap (or the cap
+/// is not on the ladder, which [`passes`] treats as no cap).
+pub fn shown_ratings(cap: Option<&str>) -> Vec<String> {
+    let top = cap.and_then(rank).map_or(LADDER.len(), |r| r as usize + 1);
+    LADDER
+        .iter()
+        .take(top)
+        .map(|r| r.to_ascii_lowercase())
+        .collect()
+}
+
+/// The highest-ranked rating among `ratings`, in its canonical ladder
+/// spelling: how a series' rating is derived from its issues. Ratings
+/// with no rank (NULL, `Unknown`, off-ladder text) are ignored, the same
+/// way the cap treats them as unrated; `None` when nothing ranks. The
+/// SQL twin is [`crate::library::series_rating`].
+pub fn highest<'a>(ratings: impl IntoIterator<Item = Option<&'a str>>) -> Option<&'static str> {
+    ratings
+        .into_iter()
+        .filter_map(|r| r.and_then(rank))
+        .max()
+        .map(|r| LADDER[r as usize])
+}
+
 /// True iff `cap` names a rung on the ladder (what the admin API accepts
 /// for `age_rating_max`).
 pub fn is_valid_cap(cap: &str) -> bool {
@@ -166,6 +204,43 @@ mod tests {
         assert!(hidden_ratings("X18+").is_empty());
         assert!(hidden_ratings("bogus").is_empty());
         assert_eq!(hidden_ratings("adults only 18+"), vec!["x18+"]);
+    }
+
+    #[test]
+    fn hide_unrated_hides_only_unranked_rows_without_a_cap() {
+        assert!(!passes_grant(None, None, true));
+        assert!(!passes_grant(Some("Unknown"), None, true));
+        assert!(!passes_grant(Some("not-a-rating"), Some("Teen"), true));
+        assert!(passes_grant(Some("X18+"), None, true));
+        assert!(passes_grant(Some("teen"), Some("Teen"), true));
+        assert!(!passes_grant(Some("Mature 17+"), Some("Teen"), true));
+        assert!(passes_grant(None, Some("Teen"), false));
+    }
+
+    #[test]
+    fn shown_and_hidden_partition_the_ladder() {
+        for cap in LADDER {
+            let mut all = shown_ratings(Some(cap));
+            all.extend(hidden_ratings(cap));
+            let ladder: Vec<String> = LADDER.iter().map(|r| r.to_ascii_lowercase()).collect();
+            assert_eq!(all, ladder, "{cap}");
+        }
+        assert_eq!(shown_ratings(None).len(), LADDER.len());
+        assert_eq!(shown_ratings(Some("bogus")).len(), LADDER.len());
+    }
+
+    #[test]
+    fn highest_ignores_unranked_ratings() {
+        assert_eq!(
+            highest([Some("teen"), Some(" mature 17+ "), None]),
+            Some("Mature 17+")
+        );
+        assert_eq!(highest([Some("Unknown"), Some("Sixteen"), None]), None);
+        assert_eq!(highest(std::iter::empty()), None);
+        assert_eq!(
+            highest([Some("Everyone"), Some("Unknown")]),
+            Some("Everyone")
+        );
     }
 
     #[test]

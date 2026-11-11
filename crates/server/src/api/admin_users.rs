@@ -30,7 +30,7 @@ use sea_orm::{
     QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -95,8 +95,14 @@ pub struct LibraryAccessGrantView {
     /// ComicInfo `AgeRating` cap for this grant (a rung of the ladder in
     /// `library::age_rating::LADDER`), or `null` for unrestricted.
     /// Series / issues rated above the cap are hidden from the user on
-    /// every read surface; unrated rows are shown (WP-2.7, D6).
+    /// every read surface; unrated rows are shown (WP-2.7, D6) unless
+    /// `hide_unrated` is on.
     pub age_rating_max: Option<String>,
+    /// Hide unrated content in this library from the user: a series with
+    /// no rating on the ladder is hidden as if it ranked above the cap,
+    /// and its issues with it. With no cap set it hides only unrated
+    /// content.
+    pub hide_unrated: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -158,6 +164,15 @@ pub struct LibraryAccessReq {
     #[serde(default)]
     #[garde(custom(valid_age_rating_caps))]
     pub age_rating_caps: HashMap<String, String>,
+    /// Per-library "hide unrated content" switch, keyed by library id. A
+    /// library listed in `library_ids` but absent here (or `false`) shows
+    /// unrated content; keys for libraries not in `library_ids` are
+    /// ignored. Optional: omitting it turns the option off for every
+    /// granted library, so a client that saves grants should send back
+    /// the values it loaded.
+    #[serde(default)]
+    #[garde(skip)]
+    pub hide_unrated: HashMap<String, bool>,
 }
 
 fn valid_age_rating_caps(caps: &HashMap<String, String>, _: &()) -> garde::Result {
@@ -1047,11 +1062,18 @@ pub async fn set_library_access(
             ))
         })
         .collect();
+    let hide_unrated: HashSet<Uuid> = req
+        .hide_unrated
+        .iter()
+        .filter(|(_, on)| **on)
+        .filter_map(|(lib, _)| Uuid::parse_str(lib).ok())
+        .collect();
     for lib_id in &wanted {
         let am = library_user_access::ActiveModel {
             library_id: Set(*lib_id),
             user_id: Set(uuid),
             age_rating_max: Set(caps.get(lib_id).cloned()),
+            hide_unrated: Set(hide_unrated.contains(lib_id)),
             created_at: Set(now),
             updated_at: Set(now),
         };
@@ -1080,6 +1102,10 @@ pub async fn set_library_access(
                     .iter()
                     .filter_map(|id| caps.get(id).map(|c| (id.to_string(), c.clone())))
                     .collect::<HashMap<String, String>>(),
+                "hide_unrated": wanted
+                    .iter()
+                    .map(|id| (id.to_string(), hide_unrated.contains(id)))
+                    .collect::<HashMap<String, bool>>(),
             }),
             ip: ctx.ip_string(),
             user_agent: ctx.user_agent.clone(),
@@ -1163,6 +1189,7 @@ async fn library_access_grants(
                 library_id: g.library_id.to_string(),
                 library_name: lib.name.clone(),
                 age_rating_max: g.age_rating_max,
+                hide_unrated: g.hide_unrated,
             })
         })
         .collect())

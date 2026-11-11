@@ -242,7 +242,7 @@ pub async fn list(
     // check the series rating, issue-level credits the issue's own
     // rating with the series as fallback.
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut lib_params);
-    let issue_cap = visible.entity_issue_cap_sql("i", "s", &mut lib_params);
+    let issue_cap = visible.issue_cap_sql_joined("i", "s", &mut lib_params);
 
     // Keyset cursor = the last creator name of the prior page.
     let after = match q.cursor.as_deref() {
@@ -428,7 +428,7 @@ pub async fn get_one(
     };
     // WP-2.7: age-rating cap per UNION branch (see `list`).
     let series_cap = visible.raw_cap_clause("s.library_id", "s.age_rating", &mut params);
-    let issue_cap = visible.entity_issue_cap_sql("i", "s", &mut params);
+    let issue_cap = visible.issue_cap_sql_joined("i", "s", &mut params);
 
     // Distinct (series_id, role) pairs across BOTH credit tables.
     // Series-level credits already key on series_id; issue-level

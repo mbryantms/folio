@@ -230,30 +230,61 @@ Comparison is case-insensitive and ignores surrounding whitespace. The
 admin API validates a cap against the ladder (422 otherwise) and stores
 the canonical spelling.
 
+### How a series is rated
+
+A series' `age_rating` is derived from its issues: it is the
+highest-ranked rating among the series' active, not-removed issues
+(`library::series_rating`), stored in the ladder's canonical spelling. A
+rating that is not on the ladder ranks as unrated and never raises the
+result; a series none of whose issues carries a ladder rating is unrated
+(`NULL`). The value is recomputed by the scanner's per-series rollup and
+whenever an issue's rating or a series' set of active issues changes
+(issue edits, bulk metadata, a provider apply, soft-removal and restore).
+
+A rating set on the series by a person (series edit) or by a metadata
+provider is kept: a `field_provenance` row for the series field
+`age_rating` whose `set_by` is not a file-tier code protects it
+(`metadata::writers::is_file_tier_set_by`, user > provider > file). An
+admin overrides a series' rating by setting it on the series.
+
 ### What a capped user sees
 
 - A **series** is visible when `series.age_rating` ranks at or below the
   cap.
-- An **issue** is visible when `COALESCE(issue.age_rating,
-  series.age_rating)` ranks at or below the cap — an issue may carry its
-  own rating above its series' and is then hidden on its own.
-- **Unrated content is shown** (decision D6, 2026-09-29): `NULL`, empty,
-  `Unknown`, `Rating Pending` and any string not on the ladder all pass.
-  Only rows whose rating is a known rung *above* the cap are hidden, so
-  the SQL predicate is `rating IS NULL OR lower(btrim(rating)) NOT IN
-  (<rungs above the cap>)`, never an allow-list.
-
-Denied lookups return the same `404 not_found` an ACL miss returns —
-nothing about the hidden row leaks (not its existence, cover, or page
-bytes).
+- An **issue** is visible when its series is visible AND its own
+  `age_rating` ranks at or below the cap. An issue with no rating of its
+  own (or one not on the ladder) follows its series. So an issue rated
+  above its series is hidden on its own, and every issue of a hidden
+  series is hidden, whatever its own rating: it does not open by id, and
+  it is absent from issue lists, search, rails, feeds and entity
+  surfaces.
+- **Unrated content is shown** by default (decision D6, 2026-09-29):
+  `NULL`, empty, `Unknown`, `Rating Pending` and any string not on the
+  ladder all pass. Only rows whose rating is a known rung *above* the cap
+  are hidden, so the SQL predicate is `rating IS NULL OR
+  lower(btrim(rating)) NOT IN (<rungs above the cap>)`, never an
+  allow-list.
+- **Hide unrated** (`library_user_access.hide_unrated`, per grant, off by
+  default): when on, a series with no ladder rating is hidden from that
+  user exactly as if it ranked above the cap, and with it all its issues.
+  An issue with no rating of its own inside a rated series follows the
+  series and is not unrated. The option works without a cap: then it
+  hides only unrated content. The admin API field is `hide_unrated` on
+  `POST /admin/users/{id}/library-access` (a map of library id to
+  boolean) and on each grant in the user detail; the admin screen control
+  comes later. Admins are unaffected.
 
 ### Surfaces enforced
 
 The predicate is carried on `library::access::VisibleLibraries` (built
-once per request by `access::for_user`) and applied in three shapes —
-`series_filter()` / `issue_filter()` for sea-orm queries,
-`raw_cap_clause()` for hand-written SQL, and `series_ok()` /
-`issue_ok()` / `access::issue_visible()` for single rows. Every surface
+once per request by `access::for_user`, with each grant's cap and
+`hide_unrated`) and applied in three shapes — `series_filter()` /
+`issue_filter()` / `issue_cap_condition()` for sea-orm queries,
+`raw_cap_clause()` (series rows) and `issue_cap_sql_joined()` /
+`issue_cap_sql()` (issue rows) for hand-written SQL, and `series_ok()` /
+`issue_ok()` / `access::issue_visible()` for single rows. Every issue
+predicate includes the series condition. A caller whose grants hide
+nothing gets no predicate at all, so its SQL is unchanged. Every surface
 that consults the library ACL applies it:
 
 | Surface | Where |
@@ -277,16 +308,10 @@ that consults the library ACL applies it:
 Creators, characters, teams, locations, story arcs, publishers, genres
 and tags are shown to a capped caller only through the issues and series
 that caller can see. An issue counts when it is not removed, is active,
-sits in a non-removed series of a granted library and passes the cap
-(`COALESCE(issue.age_rating, series.age_rating)`, unrated passes), and
-its series' own rating passes the cap too
-(`VisibleLibraries::entity_issue_cap_sql`): entity surfaces never name a
-series the caller cannot open, even through an issue rated below it.
-The issue routes keep their own rule: an issue rated within the cap
-still opens when its series is rated above it, and its page shows its
-own cast and credits; the entity pages those names link to answer
-not-found for that caller unless something else they can see carries
-the same name.
+sits in a non-removed series of a granted library and is visible under
+the issue rule above (`VisibleLibraries::issue_cap_sql_joined`, the same
+predicate every issue surface uses): entity surfaces never name a series
+the caller cannot open, even through an issue rated below it.
 
 - **Issue junctions** (`issue_credits`, `issue_characters`,
   `issue_teams`, `issue_locations`, `issue_arcs`, `issue_genres`,
@@ -294,8 +319,9 @@ the same name.
 - **Series rollups** (`series_credits`, `series_characters`,
   `series_teams`, `series_locations`, `series_genres`, `series_tags`):
   the scanner rebuilds these as the union of every issue in the series,
-  hidden ones included. For a caller whose cap hides any rung
-  (`VisibleLibraries::hides_any`) they are not read; the issue junction
+  hidden ones included. For a caller whose grant hides anything (a cap
+  that hides a rung, or `hide_unrated`; `VisibleLibraries::hides_any`)
+  they are not read; the issue junction
   over the issues that caller can see answers instead.
 - **Series-level metadata** (`series.publisher`, `series_arcs`,
   `series_universes`, `series_concepts`, `series_objects`,
@@ -315,12 +341,14 @@ locations, genres and tags, the series "Appears in" arcs, OPDS author and genre 
 and the by-creator feeds, the reading-stats top creators and the
 similar-series reasons (see
 [`docs/dev/similar-series.md`](../dev/similar-series.md#acl-and-per-user-filtering)).
-Admins and callers without a cap that hides anything keep the rollup
-queries unchanged.
+Admins and callers whose grants hide nothing keep the rollup queries
+unchanged.
 
 Regression suite: `crates/server/tests/age_rating_cap.rs` (a `Teen`-capped
-user against `Teen` / `Mature 17+` / unrated series, plus an issue-level
-override) and the unit tests in `library/age_rating.rs` / `library/access.rs`.
+user against `Teen` / `Mature 17+` / unrated series, an issue-level
+override, a series rated above its issues, the derived series rating and
+`hide_unrated`) and the unit tests in `library/age_rating.rs` /
+`library/access.rs` / `library/series_rating.rs`.
 
 ### The removed `role` column
 

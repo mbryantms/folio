@@ -26361,7 +26361,8 @@
         "type": "object",
         "required": [
           "library_id",
-          "library_name"
+          "library_name",
+          "hide_unrated"
         ],
         "properties": {
           "age_rating_max": {
@@ -26369,7 +26370,11 @@
               "string",
               "null"
             ],
-            "description": "ComicInfo `AgeRating` cap for this grant (a rung of the ladder in\n`library::age_rating::LADDER`), or `null` for unrestricted.\nSeries / issues rated above the cap are hidden from the user on\nevery read surface; unrated rows are shown (WP-2.7, D6)."
+            "description": "ComicInfo `AgeRating` cap for this grant (a rung of the ladder in\n`library::age_rating::LADDER`), or `null` for unrestricted.\nSeries / issues rated above the cap are hidden from the user on\nevery read surface; unrated rows are shown (WP-2.7, D6) unless\n`hide_unrated` is on."
+          },
+          "hide_unrated": {
+            "type": "boolean",
+            "description": "Hide unrated content in this library from the user: a series with\nno rating on the ladder is hidden as if it ranked above the cap,\nand its issues with it. With no cap set it hides only unrated\ncontent."
           },
           "library_id": {
             "type": "string"
@@ -26390,6 +26395,16 @@
             "description": "Per-library age-rating caps, keyed by library id (WP-2.7). A\nlibrary listed in `library_ids` but absent here is uncapped.\nValues must be a rung of the ComicInfo `AgeRating` ladder\n(`Early Childhood` … `X18+`); keys for libraries not in\n`library_ids` are ignored.",
             "additionalProperties": {
               "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "hide_unrated": {
+            "type": "object",
+            "description": "Per-library \"hide unrated content\" switch, keyed by library id. A\nlibrary listed in `library_ids` but absent here (or `false`) shows\nunrated content; keys for libraries not in `library_ids` are\nignored. Optional: omitting it turns the option off for every\ngranted library, so a client that saves grants should send back\nthe values it loaded.",
+            "additionalProperties": {
+              "type": "boolean"
             },
             "propertyNames": {
               "type": "string"

@@ -174,6 +174,11 @@ cleared) by
 - manual metadata edits (issue PATCH and bulk metadata through
   `manual_rewrite_after_edit`; series PATCH),
 - relationship create / delete (`api::series_relationships`),
+- a re-derived series age rating that changed (`library::series_rating`;
+  the cached neighbours carry each series' rating): the admin issue and
+  series restores (`api::reconcile`) and the Duplicates soft-remove and
+  its undo drop the cache when the recompute changed a row; the scan,
+  issue-edit and apply paths that recompute it already drop it above,
 - WP-8.2: an external link promoted to a series relationship — the
   metadata-apply job's post-apply external-id write, the external-ids admin
   endpoints, the provider-range reconcile, the scanner's folder-tag pass and

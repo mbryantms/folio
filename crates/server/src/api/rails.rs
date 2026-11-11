@@ -614,11 +614,7 @@ async fn progress_cards(
     let Some(acl_clause) = rail_acl_clause(&acl, "i.library_id", &mut params) else {
         return Ok((Vec::new(), None, empty_total));
     };
-    let cap_clause = acl.raw_cap_clause(
-        "i.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
+    let cap_clause = acl.issue_cap_sql_joined("i", "s", &mut params);
     let keyset = match &page.after {
         Some(k) => {
             params.push(k.at.into());
@@ -904,11 +900,7 @@ pub async fn new_in_series(
         })
         .into_response();
     };
-    let cap_clause = acl.raw_cap_clause(
-        "i.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
+    let cap_clause = acl.issue_cap_sql_joined("i", "s", &mut params);
     let keyset = match &after {
         Some(k) => {
             params.push(k.at.into());
@@ -1089,11 +1081,7 @@ pub async fn on_this_day(
         })
         .into_response();
     };
-    let cap_clause = acl.raw_cap_clause(
-        "i.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut params,
-    );
+    let cap_clause = acl.issue_cap_sql_joined("i", "s", &mut params);
     params.push(ON_THIS_DAY_LIMIT.into());
     let limit_param = params.len();
     let sql = format!(
@@ -1312,11 +1300,7 @@ pub async fn recent_issues(State(app): State<AppState>, user: CurrentUser) -> Re
         base_values.push(allowed.into());
     }
     // WP-2.7: age-rating cap on the issue's own rating, series fallback.
-    let cap_clause = acl.raw_cap_clause(
-        "i.library_id",
-        "COALESCE(i.age_rating, s.age_rating)",
-        &mut base_values,
-    );
+    let cap_clause = acl.issue_cap_sql_joined("i", "s", &mut base_values);
     const BATCH: usize = 128;
     let cap = RECENT_ISSUES_PER_SERIES_CAP as usize;
     let limit = RECENT_ISSUES_LIMIT as usize;

@@ -107,6 +107,7 @@ async fn grant_access(app: &TestApp, user_id: Uuid, lib_id: Uuid) {
         library_id: Set(lib_id),
         user_id: Set(user_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }

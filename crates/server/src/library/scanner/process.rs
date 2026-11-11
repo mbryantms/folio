@@ -1177,6 +1177,10 @@ pub async fn persist_prepared<C: ConnectionTrait>(
         // `content_hash` carries the live fingerprint instead.
         let row_id = row.id.clone();
         let prev_page_count = row.page_count;
+        // A row re-homed to another series leaves its old one: that
+        // series' derived age rating is recomputed after the update (the
+        // new series' is, by its own rollup).
+        let left_series = (row.series_id != series_id).then_some(row.series_id);
         let mut am: IssueAM = row.into();
         am.library_id = Set(lib.id);
         am.series_id = Set(series_id);
@@ -1345,6 +1349,9 @@ pub async fn persist_prepared<C: ConnectionTrait>(
             .await;
         }
         let updated = am.update(db).await?;
+        if let Some(old_series) = left_series {
+            crate::library::series_rating::recompute_series_age_rating(db, old_series).await?;
+        }
 
         // New bytes under a stable issue id — a retag, a sidecar
         // rewrite, an archive edit's follow-up rescan, or an external

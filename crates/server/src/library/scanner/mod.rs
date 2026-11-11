@@ -1793,6 +1793,7 @@ async fn run_issue_phase(
             am.removal_confirmed_at = Set(None);
             am.update(&state.db).await?;
             stats.issues_removed += 1;
+            crate::library::series_rating::recompute_best_effort(&state.db, &[row.series_id]).await;
             let ev = events
                 .build(
                     Category::Issue,

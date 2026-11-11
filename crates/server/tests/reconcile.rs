@@ -643,6 +643,7 @@ async fn removed_series_hidden_from_lists_rails_and_opds() {
         user_id: Set(reader_row.id),
         library_id: Set(lib_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
@@ -1181,6 +1182,7 @@ impl ParkedSeries {
             user_id: Set(reader_id),
             library_id: Set(lib_id),
             age_rating_max: Set(None),
+            hide_unrated: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
         }

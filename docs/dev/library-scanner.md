@@ -417,7 +417,17 @@ without per-library configuration.
      ([mod.rs:1621–1631](../../crates/server/src/library/scanner/mod.rs#L1621-L1631))
      so the next scan's folder mtime fast-path can fire.
   5. **Metadata rollup** — refresh genre/tag/credit junction tables
-     for the series ([mod.rs:1635](../../crates/server/src/library/scanner/mod.rs#L1635)).
+     for the series ([mod.rs:1635](../../crates/server/src/library/scanner/mod.rs#L1635)),
+     and re-derive `series.age_rating`: the highest-ranked rating among
+     the series' active, not-removed issues on the age-rating ladder
+     (unranked ratings ignored, NULL when none ranks), unless a person or
+     a provider set the series rating (a non-file-tier `field_provenance`
+     row on `age_rating`). The value the identity step gap-fills at
+     series creation is only a first guess that this step replaces. The
+     same derivation (`library::series_rating`) runs when reconcile
+     soft-removes or restores issues, when a single-issue scan removes a
+     missing file, and when a rescan re-homes an issue to another series
+     (for the series it left).
   6. **Status reconcile** — for narrow scans only; the library path
      defers this to a single batch call after Phase 4
      ([mod.rs:1645–1652](../../crates/server/src/library/scanner/mod.rs#L1645-L1652),

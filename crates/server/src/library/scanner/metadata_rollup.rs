@@ -12,6 +12,7 @@
 //!   - `rollup_series_metadata` — called once per series after a folder scan
 //!     completes. Recomputes `series_genres / series_tags / series_credits`
 //!     as the distinct union of the series's active issues' junctions.
+//!     Also re-derives `series.age_rating` (`library::series_rating`).
 //!
 //! Series-level rows are pure aggregations: there is no admin override path.
 //! Editing a series's surfaced genres means editing the underlying issues.
@@ -898,6 +899,12 @@ pub async fn rollup_series_metadata<C: ConnectionTrait>(
     step!(
         "reading_direction",
         auto_set_reading_direction(db, series_id)
+    );
+    // The series' age rating is its highest-rated active issue's, unless a
+    // person or a provider set it (`library::series_rating`).
+    step!(
+        "age_rating",
+        crate::library::series_rating::recompute_series_age_rating(db, series_id)
     );
 
     // Junctions are the truth for every write path; the CSV read-cache

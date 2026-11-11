@@ -146,6 +146,33 @@ docker compose -f compose.prod.yml up -d --no-deps app
 
 ## Breaking changes by version
 
+### Unreleased — series age ratings come from their issues
+
+- **Series ratings are recomputed from their issues at upgrade**
+  (migration `m20271111_000001_series_rating_from_issues`). A series'
+  age rating used to be copied from whichever file the scanner read
+  first. It is now the highest rating among the series' issues, and
+  scans keep it up to date. A series whose rating was set by a person
+  or by a metadata provider keeps it. A reader with an age-rating cap
+  may therefore no longer see a series that contains one issue rated
+  above the cap. To override, an admin sets the rating on the series
+  (series edit); a rating set that way is never replaced by the
+  recomputed one.
+- **An issue of a hidden series no longer opens.** For a reader with an
+  age-rating cap, an issue is visible only when its series is visible
+  and its own rating is within the cap. An issue rated within the cap
+  inside a series rated above it used to open by direct link and appear
+  in issue lists; it now answers like an unknown issue everywhere.
+- **Library grants gain a "hide unrated" option** (column
+  `library_user_access.hide_unrated`, off for every existing grant).
+  When on, a series with no rating is hidden from that user as if it
+  were rated above the cap, along with its issues; without a cap it
+  hides only unrated content. The admin screen control for it comes in
+  a later release; until then it is set through the API field
+  `hide_unrated` on `POST /api/admin/users/{id}/library-access` (a map
+  of library id to `true` / `false`). Saving library access from the
+  current admin screen keeps whatever value is stored.
+
 ### Unreleased — app passwords are looked up by digest
 
 - **App passwords gain a lookup digest** (migration

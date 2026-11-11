@@ -154,6 +154,7 @@ async fn seed_user_visible_issue(
         user_id: Set(auth.user_id),
         library_id: Set(lib_id),
         age_rating_max: Set(None),
+        hide_unrated: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
     }
