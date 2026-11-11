@@ -15952,14 +15952,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "RFC 3339: when the newest backup was made; `None` as for\n`oldest_modified_at`."
           },
           "oldest_modified_at": {
             "type": [
               "string",
               "null"
             ],
-            "description": "RFC 3339; `None` when there are no backup files."
+            "description": "RFC 3339: when the oldest backup was made (its inode change time,\nthe clock the retention sweep ages by), not its modification time.\n`None` when there are no backup files, or when no backup's age can\nbe told (a modification time in the future, or no change time);\nsuch backups still count in `file_count` / `total_bytes`."
           },
           "total_bytes": {
             "type": "integer",
@@ -15981,7 +15982,7 @@
               "string",
               "null"
             ],
-            "description": "RFC3339 modification time, or null if unavailable."
+            "description": "RFC3339 modification time of the backup file, or null if\nunavailable. For a hard-linked backup (the usual kind) this is the\nORIGINAL archive's modification time, not when the backup was made;\nthe retention sweep ages backups by when they were made instead."
           },
           "path": {
             "type": "string"
@@ -26680,12 +26681,12 @@
           "archive_backup_retain_count": {
             "type": "integer",
             "format": "int32",
-            "description": "How many `.bak` siblings to keep per archive after a rewrite.\n1..=5; default 1."
+            "description": "How many `.bak` slots a rewrite keeps per archive (`.bak`, then\n`.bak.1` …). 0..=5; default 1. `0` keeps no backup (the rewrite is\nvalidated before the swap)."
           },
           "archive_backup_retain_days": {
             "type": "integer",
             "format": "int32",
-            "description": "Auto-prune `.bak` files older than this many days. Default 30;\n`0` = keep forever."
+            "description": "Days a backup is kept before the daily sweep deletes it, counted\nfrom when Folio made the backup (its inode change time), not from\nthe archive's own date; a backup whose age cannot be told is kept.\nOnly Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular\nfiles) are deleted, and only in a library with archive writeback\non. `0` keeps backups forever. Default 30; non-negative."
           },
           "archive_writeback_jpeg_quality": {
             "type": "integer",
@@ -37722,7 +37723,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Days a `.bak` file lives before the daily prune cron removes\nit; `0` = keep forever. Non-negative."
+            "description": "Days a backup is kept before the daily sweep deletes it, counted\nfrom when Folio made the backup (its inode change time), not from\nthe archive's own date; a backup whose age cannot be told is kept.\nOnly Folio's backups (`<archive>.bak` / `<archive>.bak.N` regular\nfiles) are deleted, and only in a library with archive writeback\non. `0` keeps backups forever. Default 30; non-negative."
           },
           "archive_writeback_jpeg_quality": {
             "type": [

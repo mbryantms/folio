@@ -1,10 +1,16 @@
 //! archive-rewrite-1.0 M8 / roadmap WP-1.5 — `.bak` retention sweep.
 //!
-//! Drives [`server::jobs::backup_prune::run`] (the daily 04:45 UTC job)
-//! against seeded libraries with real files on disk and asserts that only
-//! backups older than the library's `archive_backup_retain_days` go away,
-//! that `0` keeps everything, and that libraries without archive
-//! writeback are never walked.
+//! Drives [`server::jobs::backup_prune::run_at`] (the daily 04:45 UTC job,
+//! with its clock moved forward) against seeded libraries with real files
+//! on disk and asserts that only backups made more than the library's
+//! `archive_backup_retain_days` ago go away, that `0` keeps everything,
+//! and that libraries without archive writeback are never walked.
+//!
+//! A backup's age counts from when it was made (its inode change time,
+//! `archive_rewrite::backup_made_at`), which no test can set back, so the
+//! tests move the sweep's clock forward instead of back-dating files.
+//! Back-dating the mtime still matters: it is what a hard-linked backup
+//! of an old archive looks like, and it must not make the backup "old".
 
 mod common;
 
@@ -13,7 +19,7 @@ use common::seed::LibrarySeed;
 use entity::library;
 use entity::library_event::{Column as EventCol, Entity as EventEntity};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
-use server::jobs::backup_prune::run;
+use server::jobs::backup_prune::{run, run_at};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 use tempfile::tempdir;
@@ -21,11 +27,21 @@ use uuid::Uuid;
 
 const DAY: Duration = Duration::from_secs(86_400);
 
-/// Create `path` with `age` subtracted from its mtime.
+/// Create `path` with `age` subtracted from its mtime (its ctime, the
+/// backup's age, stays "now").
 fn touch_aged(path: &Path, age: Duration) {
     std::fs::write(path, b"backup bytes").unwrap();
     let t = filetime::FileTime::from_system_time(SystemTime::now() - age);
     filetime::set_file_mtime(path, t).unwrap();
+}
+
+/// A moment strictly between the files made before and after it, far
+/// enough apart that the filesystem's (coarse) ctime tells them apart.
+fn checkpoint() -> SystemTime {
+    std::thread::sleep(Duration::from_millis(60));
+    let t = SystemTime::now();
+    std::thread::sleep(Duration::from_millis(60));
+    t
 }
 
 async fn set_retain_days(app: &TestApp, lib_id: Uuid, days: i32) {
@@ -57,19 +73,28 @@ async fn prunes_backups_older_than_retain_days_and_keeps_younger_ones() {
     let decoy = nested.join("notes.bak.txt"); // not a backup name
     touch_aged(&old_bak, 45 * DAY);
     touch_aged(&old_slot, 31 * DAY);
-    touch_aged(&young_bak, 2 * DAY);
     touch_aged(&archive, 400 * DAY);
     touch_aged(&decoy, 400 * DAY);
+    let made = checkpoint();
+    // Made after the checkpoint; its old mtime does not make it old.
+    touch_aged(&young_bak, 400 * DAY);
 
-    let stats = run(&app.state()).await.unwrap();
+    // Not yet: 29 days after the old backups were made.
+    let early = run_at(&app.state(), made + 29 * DAY).await.unwrap();
+    assert_eq!(early.removed, 0, "{early:?}");
+
+    let stats = run_at(&app.state(), made + 30 * DAY).await.unwrap();
     assert_eq!(stats.removed, 2, "{stats:?}");
     assert_eq!(stats.errors, 0, "{stats:?}");
     assert_eq!(stats.libraries, 1, "{stats:?}");
     assert!(stats.bytes > 0);
 
-    assert!(!old_bak.exists(), "45-day-old .bak must be pruned");
-    assert!(!old_slot.exists(), "31-day-old .bak.1 must be pruned");
-    assert!(young_bak.exists(), "2-day-old .bak must survive");
+    assert!(!old_bak.exists(), "a .bak made 30 days ago must be pruned");
+    assert!(
+        !old_slot.exists(),
+        "a .bak.1 made 30 days ago must be pruned"
+    );
+    assert!(young_bak.exists(), "a .bak made later must survive");
     assert!(archive.exists(), "the archive itself is never touched");
     assert!(decoy.exists(), "only `.bak` / `.bak.N` names are backups");
 
@@ -88,7 +113,7 @@ async fn prunes_backups_older_than_retain_days_and_keeps_younger_ones() {
     assert_eq!(detail["retain_days"], 30);
 
     // Second run: nothing left to prune, no new event.
-    let again = run(&app.state()).await.unwrap();
+    let again = run_at(&app.state(), made + 30 * DAY).await.unwrap();
     assert_eq!(again.removed, 0);
     let events = EventEntity::find()
         .filter(EventCol::LibraryId.eq(lib_id))
@@ -112,7 +137,9 @@ async fn zero_retain_days_keeps_backups_forever() {
     let ancient = dir.path().join("issue.cbz.bak");
     touch_aged(&ancient, 3_000 * DAY);
 
-    let stats = run(&app.state()).await.unwrap();
+    let stats = run_at(&app.state(), SystemTime::now() + 3_000 * DAY)
+        .await
+        .unwrap();
     assert_eq!(stats.removed, 0);
     assert_eq!(stats.libraries, 0, "retain_days=0 libraries are not walked");
     assert!(ancient.exists());
@@ -128,7 +155,9 @@ async fn libraries_without_archive_writeback_are_skipped() {
     let ancient = dir.path().join("issue.cbz.bak");
     touch_aged(&ancient, 400 * DAY);
 
-    let stats = run(&app.state()).await.unwrap();
+    let stats = run_at(&app.state(), SystemTime::now() + 400 * DAY)
+        .await
+        .unwrap();
     assert_eq!(stats.removed, 0);
     assert_eq!(stats.libraries, 0);
     assert!(
@@ -151,15 +180,16 @@ async fn sweep_stores_a_backup_tally_for_every_library() {
         .with_sidecar_writeback()
         .insert(&app.state().db)
         .await;
-    touch_aged(&wb_dir.path().join("old.cbz.bak"), 45 * DAY);
-    touch_aged(&wb_dir.path().join("young.cbz.bak"), 2 * DAY);
-    touch_aged(&wb_dir.path().join("young.cbz.bak.1"), DAY);
-
     let ro_dir = tempdir().unwrap();
     let ro_lib = LibrarySeed::new(ro_dir.path())
         .insert(&app.state().db)
         .await;
+    touch_aged(&wb_dir.path().join("old.cbz.bak"), 45 * DAY);
     touch_aged(&ro_dir.path().join("stray.cbz.bak"), 400 * DAY);
+    let made = checkpoint();
+    touch_aged(&wb_dir.path().join("young.cbz.bak"), 2 * DAY);
+    std::thread::sleep(Duration::from_millis(60));
+    touch_aged(&wb_dir.path().join("young.cbz.bak.1"), DAY);
 
     // Pretend both cards were flagged stale by a scan; the sweep clears it.
     for lib in [wb_lib, ro_lib] {
@@ -174,7 +204,7 @@ async fn sweep_stores_a_backup_tally_for_every_library() {
         server::library::backup_stats::mark_stale(&app.state().db, lib).await;
     }
 
-    let stats = run(&app.state()).await.unwrap();
+    let stats = run_at(&app.state(), made + 30 * DAY).await.unwrap();
     assert_eq!(stats.removed, 1, "{stats:?}");
     assert_eq!(stats.libraries, 1, "only the writeback library is pruned");
 
@@ -186,7 +216,13 @@ async fn sweep_stores_a_backup_tally_for_every_library() {
     assert_eq!(wb.file_count, 2, "the two young backups survive");
     assert_eq!(wb.total_bytes, 2 * "backup bytes".len() as i64);
     assert!(!wb.stale);
-    assert!(wb.oldest_modified_at.unwrap() < wb.newest_modified_at.unwrap());
+    // The card's dates are when the backups were made, not their mtimes.
+    let (oldest, newest) = (
+        wb.oldest_modified_at.unwrap(),
+        wb.newest_modified_at.unwrap(),
+    );
+    assert!(oldest < newest);
+    assert!(oldest.with_timezone(&chrono::Utc) > chrono::DateTime::<chrono::Utc>::from(made));
 
     let ro = Stats::find_by_id(ro_lib)
         .one(&app.state().db)
@@ -196,4 +232,162 @@ async fn sweep_stores_a_backup_tally_for_every_library() {
     assert_eq!(ro.file_count, 1, "counted, never deleted");
     assert!(!ro.stale);
     assert!(ro_dir.path().join("stray.cbz.bak").exists());
+}
+
+/// The daily job end to end with the real clock: a backup a rewrite made
+/// a moment ago of an archive last modified 400 days ago is still there
+/// after today's sweep (the bug pruned it: the hard link carries the
+/// archive's mtime). A user's `notes.bak` / `photo.jpg.bak` beside it are
+/// never deleted, however old.
+#[tokio::test]
+async fn todays_sweep_keeps_a_fresh_backup_of_an_old_archive_and_foreign_bak_files() {
+    let app = TestApp::spawn().await;
+    let dir = tempdir().unwrap();
+    LibrarySeed::new(dir.path())
+        .with_sidecar_writeback()
+        .insert(&app.state().db)
+        .await;
+    let series = dir.path().join("Saga (2012)");
+    std::fs::create_dir_all(&series).unwrap();
+    let archive = series.join("Saga 001.cbz");
+    touch_aged(&archive, 400 * DAY);
+    let root = server::library::no_follow::LibraryRoot::resolve(dir.path());
+    let outcome = server::archive_rewrite::rewrite_atomic(&root, &archive, 1, |io| {
+        use std::io::Write;
+        io.staging_file()?.write_all(b"rewritten")?;
+        Ok(())
+    })
+    .unwrap();
+    let bak = outcome.backup.expect("backup made");
+    assert!(
+        std::fs::metadata(&bak).unwrap().modified().unwrap() < SystemTime::now() - 399 * DAY,
+        "the hard-linked backup carries the archive's old mtime"
+    );
+    let notes = series.join("notes.bak");
+    let photo = series.join("photo.jpg.bak");
+    touch_aged(&notes, 4_000 * DAY);
+    touch_aged(&photo, 4_000 * DAY);
+
+    let stats = run(&app.state()).await.unwrap();
+    assert_eq!(stats.removed, 0, "{stats:?}");
+    assert!(
+        bak.exists(),
+        "a backup made just now survives today's sweep"
+    );
+
+    // Control: a month later the backup goes, the user's files never do.
+    let later = run_at(&app.state(), SystemTime::now() + 31 * DAY)
+        .await
+        .unwrap();
+    assert_eq!(later.removed, 1, "{later:?}");
+    assert!(!bak.exists());
+    let far = run_at(&app.state(), SystemTime::now() + 10_000 * DAY)
+        .await
+        .unwrap();
+    assert_eq!(far.removed, 0, "{far:?}");
+    assert!(notes.exists() && photo.exists());
+    assert_eq!(std::fs::read(&archive).unwrap(), b"rewritten");
+}
+
+/// Write `bytes` into the staging file and, when `bump` is set, move the
+/// staging file's mtime a year ahead: the rewrite must use that mtime as
+/// the reference a fresh link's age is checked against.
+fn stage(
+    io: &server::archive_rewrite::RewriteIo<'_>,
+    bytes: &[u8],
+    bump: bool,
+) -> Result<(), server::archive_rewrite::RewriteError> {
+    use std::io::Write;
+    let mut f = io.staging_file()?;
+    f.write_all(bytes)?;
+    if bump {
+        let ahead = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
+        filetime::set_file_handle_times(&f, None, Some(ahead))?;
+    }
+    Ok(())
+}
+
+fn ino(p: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(p).unwrap().ino()
+}
+
+/// ARC-1 review: the rewrite passes the staging file's mtime as the
+/// reference. With that mtime a year ahead, a perfectly good link reads as
+/// older than the reference, so the backup must be a copy; passing no
+/// reference (our clock) would keep the link. Control: the same rewrite
+/// without the bump keeps the hard link.
+#[test]
+fn rewrite_checks_the_link_against_the_staging_files_time() {
+    let dir = tempdir().unwrap();
+    let root = server::library::no_follow::LibraryRoot::resolve(dir.path());
+    for (bump, want_link) in [(false, true), (true, false)] {
+        let archive = dir.path().join(format!("issue-{bump}.cbz"));
+        std::fs::write(&archive, b"v1").unwrap();
+        let before = ino(&archive);
+        let out = server::archive_rewrite::rewrite_atomic(&root, &archive, 1, |io| {
+            stage(io, b"v2", bump)
+        })
+        .unwrap();
+        let bak = out.backup.unwrap();
+        assert_eq!(ino(&bak) == before, want_link, "bump={bump}");
+        assert_eq!(std::fs::read(&bak).unwrap(), b"v1");
+        assert_eq!(std::fs::read(&archive).unwrap(), b"v2");
+    }
+}
+
+/// ARC-1 review: an archive whose mtime lies a year in the future would
+/// give a link of unknown age (kept forever); its backup must be a copy
+/// with fresh times. Control: an ordinary old archive's backup is the
+/// original's file (a hard link). Through `rewrite_atomic` and
+/// `convert_atomic`.
+#[test]
+fn a_future_dated_archive_is_backed_up_by_copy_and_an_old_one_by_link() {
+    let dir = tempdir().unwrap();
+    let root = server::library::no_follow::LibraryRoot::resolve(dir.path());
+    let future = filetime::FileTime::from_system_time(SystemTime::now() + 365 * DAY);
+    let past = filetime::FileTime::from_system_time(SystemTime::now() - 400 * DAY);
+    let fresh = |p: &Path| {
+        let m = std::fs::symlink_metadata(p).unwrap();
+        let mtime = m.modified().unwrap();
+        mtime <= SystemTime::now() && mtime > SystemTime::now() - Duration::from_secs(600)
+    };
+
+    for (label, stamp, want_link) in [("old", past, true), ("future", future, false)] {
+        // rewrite_atomic
+        let archive = dir.path().join(format!("rw-{label}.cbz"));
+        std::fs::write(&archive, b"v1").unwrap();
+        filetime::set_file_mtime(&archive, stamp).unwrap();
+        let before = ino(&archive);
+        let out = server::archive_rewrite::rewrite_atomic(&root, &archive, 1, |io| {
+            stage(io, b"v2", false)
+        })
+        .unwrap();
+        let bak = out.backup.unwrap();
+        assert_eq!(ino(&bak) == before, want_link, "rewrite {label}");
+        if !want_link {
+            assert!(fresh(&bak), "the copy has fresh times");
+            let made =
+                server::archive_rewrite::backup_made_at(&std::fs::symlink_metadata(&bak).unwrap());
+            assert!(made.is_some(), "and a known age");
+        }
+
+        // convert_atomic to a new name
+        let original = dir.path().join(format!("cv-{label}.cbr"));
+        let dst = dir.path().join(format!("cv-{label}.cbz"));
+        std::fs::write(&original, b"rar").unwrap();
+        filetime::set_file_mtime(&original, stamp).unwrap();
+        let before = ino(&original);
+        let converted = server::archive_rewrite::convert_atomic(&root, &original, &dst, |io| {
+            stage(io, b"zip", false)
+        })
+        .unwrap();
+        let out = converted.finish();
+        let bak = out.backup.unwrap();
+        assert_eq!(ino(&bak) == before, want_link, "convert {label}");
+        assert_eq!(std::fs::read(&bak).unwrap(), b"rar");
+        if !want_link {
+            assert!(fresh(&bak), "the copy has fresh times");
+        }
+    }
 }
