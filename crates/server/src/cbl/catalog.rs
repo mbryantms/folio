@@ -88,6 +88,17 @@ pub enum CatalogError {
     Db(#[from] sea_orm::DbErr),
 }
 
+impl CatalogError {
+    /// The text a response may carry: a database error's own text stays
+    /// in the log.
+    pub fn public_message(&self) -> String {
+        match self {
+            Self::Db(_) => crate::api::INTERNAL_ERROR_TEXT.to_owned(),
+            other => other.to_string(),
+        }
+    }
+}
+
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {

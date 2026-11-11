@@ -75,97 +75,154 @@ pub(crate) async fn find_by_slug(
     }
 }
 
+/// A library as the API returns it. A non-admin receives only `id`,
+/// `name` and `slug`: the library root path and every library setting
+/// below are server configuration and are set for admins only
+/// ([`LibraryView::for_user`]); for any other caller they are absent from
+/// the JSON.
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LibraryView {
     pub id: String,
     pub name: String,
     pub slug: String,
-    pub root_path: String,
-    pub default_language: String,
-    pub default_reading_direction: String,
-    pub dedupe_by_content: bool,
-    pub last_scan_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub root_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub default_language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub default_reading_direction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub dedupe_by_content: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_scan_at: Option<Option<String>>,
     /// Library Scanner v1 (Milestone 4) settings.
-    pub ignore_globs: Vec<String>,
-    pub report_missing_comicinfo: bool,
-    pub file_watch_enabled: bool,
-    pub soft_delete_days: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub ignore_globs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub report_missing_comicinfo: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub file_watch_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub soft_delete_days: Option<i32>,
     /// Cron expression governing the scheduled scan, or `null` if disabled.
-    pub scan_schedule_cron: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan_schedule_cron: Option<Option<String>>,
     /// When true, the post-scan pipeline auto-enqueues page-strip thumbnails
     /// alongside the always-on cover thumbnails. See migration
     /// `m20261211_000001_generate_page_thumbs_on_scan` for rationale.
-    pub generate_page_thumbs_on_scan: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub generate_page_thumbs_on_scan: Option<bool>,
     /// Hard prerequisite for any code path that mutates archive bytes
     /// (sidecar writeback + page edits). Default false; admin flips on
     /// when ready to start rewriting files for this library.
-    pub allow_archive_writeback: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub allow_archive_writeback: Option<bool>,
     /// When true AND `allow_archive_writeback` is also true, provider
     /// apply takes the XML-first path: worker writes ComicInfo.xml +
     /// MetronInfo.xml into the archive and enqueues a scoped rescan.
     /// Per-library so operators migrate gradually.
-    pub metadata_writeback_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub metadata_writeback_enabled: Option<bool>,
     /// How many `.bak` siblings to keep per archive after a rewrite.
     /// 1..=5; default 1.
-    pub archive_backup_retain_count: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub archive_backup_retain_count: Option<i32>,
     /// Auto-prune `.bak` files older than this many days. Default 30;
     /// `0` = keep forever.
-    pub archive_backup_retain_days: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub archive_backup_retain_days: Option<i32>,
     /// Encoder quality (60..=100) the page editor uses when re-encoding a
     /// rotated / replaced JPEG page. Default 92. PNG / WebP pages are
     /// rewritten losslessly and ignore this. `archive-rewrite-1.0`.
-    pub archive_writeback_jpeg_quality: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub archive_writeback_jpeg_quality: Option<i32>,
     /// RFC3339 timestamp of the operator's first acknowledgement of the
     /// CBR→CBZ conversion for this library, or `null` if they haven't
     /// acknowledged yet. The page editor uses this to decide whether to
     /// show the conversion confirm dialog. `archive-rewrite-1.0` M6.
-    pub cbr_convert_confirmed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cbr_convert_confirmed_at: Option<Option<String>>,
     /// When true AND `allow_archive_writeback` is also true, the scanner
     /// converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
     /// the original as `.cbr.bak`) and ingests the `.cbz`. Default false.
-    pub auto_convert_cbr_on_scan: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub auto_convert_cbr_on_scan: Option<bool>,
     /// CB7 twin of `auto_convert_cbr_on_scan` (WP-6.5): when true AND
     /// `allow_archive_writeback` is also true, the scanner converts each
     /// `.cb7` (7z) into a sibling `.cbz` (keeping the original as
     /// `.cb7.bak`) and ingests the `.cbz`. Default false.
-    pub auto_convert_cb7_on_scan: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub auto_convert_cb7_on_scan: Option<bool>,
     /// First-import lazy-hash mode (WP-3.2): while the library has never
     /// completed a full scan, new files ingest on size+mtime and their
     /// full-file BLAKE3 backfills in the background
     /// (`GET /libraries/{slug}/hash-backfill` reports progress).
-    pub trust_fingerprint_on_first_import: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub trust_fingerprint_on_first_import: Option<bool>,
     /// Whether the library's `root_path` is on a writable mount. When
     /// false the admin UI disables the archive-writeback toggle and the
     /// PATCH handler refuses to enable it — rewrites can't land on a
     /// read-only mount. Computed per-request via `statvfs`.
-    pub root_path_writable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub root_path_writable: Option<bool>,
     /// Publisher names the matcher's pre-filter should drop before
     /// scoring. Comparison is case-insensitive against the
     /// title-sanitized form so "DC Comics" / "dc comics" / "DC" all
     /// match the same entry. Matching-accuracy-1.0 M3.
-    pub metadata_publisher_blacklist: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub metadata_publisher_blacklist: Option<Vec<String>>,
     /// When true the scanner's filename inferer drops a leading
     /// numeric token before parsing the series. Matching-accuracy-1.0 M7.
-    pub filename_ignore_leading_numbers: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub filename_ignore_leading_numbers: Option<bool>,
     /// When true the scanner's filename inferer assumes issue `1`
     /// when no issue number is detected. Matching-accuracy-1.0 M7.
-    pub filename_assume_issue_one: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub filename_assume_issue_one: Option<bool>,
     /// When true, non-manual searches that produce a strict
     /// SingleGood outcome auto-apply the top candidate. User-edit
     /// precedence still fires. Matching-accuracy-1.0 M12.
-    pub metadata_auto_apply_strong_matches: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub metadata_auto_apply_strong_matches: Option<bool>,
     /// When true, a library scan that creates new series enqueues a
     /// provider search (`trigger_kind = scanner`) for each unmatched one,
     /// at most 50 per library per 24 h. Spends provider quota; with
     /// `metadata_auto_apply_strong_matches` on a writeback library a
     /// strong match rewrites the archives. Audit 2026-11 N-M9.
-    pub auto_search_new_series: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub auto_search_new_series: Option<bool>,
     /// Default visibility of this library in a user's sidebar when the user
     /// has no override for it (Start Here + default pins M1).
-    pub show_in_sidebar_by_default: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub show_in_sidebar_by_default: Option<bool>,
 }
 
 impl From<library::Model> for LibraryView {
+    /// The full (admin) view: every field set.
     fn from(m: library::Model) -> Self {
         let root_path_writable =
             crate::archive_rewrite::mount_writable(std::path::Path::new(&m.root_path));
@@ -173,49 +230,104 @@ impl From<library::Model> for LibraryView {
             id: m.id.to_string(),
             name: m.name,
             slug: m.slug,
-            root_path: m.root_path,
-            default_language: m.default_language,
-            default_reading_direction: m.default_reading_direction,
-            dedupe_by_content: m.dedupe_by_content,
-            last_scan_at: m.last_scan_at.map(|t| t.to_rfc3339()),
-            ignore_globs: m
-                .ignore_globs
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            report_missing_comicinfo: m.report_missing_comicinfo,
-            file_watch_enabled: m.file_watch_enabled,
-            soft_delete_days: m.soft_delete_days,
-            scan_schedule_cron: m.scan_schedule_cron,
-            generate_page_thumbs_on_scan: m.generate_page_thumbs_on_scan,
-            allow_archive_writeback: m.allow_archive_writeback,
-            metadata_writeback_enabled: m.metadata_writeback_enabled,
-            archive_backup_retain_count: m.archive_backup_retain_count,
-            archive_backup_retain_days: m.archive_backup_retain_days,
-            archive_writeback_jpeg_quality: m.archive_writeback_jpeg_quality,
-            cbr_convert_confirmed_at: m.cbr_convert_confirmed_at.map(|t| t.to_rfc3339()),
-            auto_convert_cbr_on_scan: m.auto_convert_cbr_on_scan,
-            auto_convert_cb7_on_scan: m.auto_convert_cb7_on_scan,
-            trust_fingerprint_on_first_import: m.trust_fingerprint_on_first_import,
-            root_path_writable,
-            metadata_publisher_blacklist: m
-                .metadata_publisher_blacklist
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            filename_ignore_leading_numbers: m.filename_ignore_leading_numbers,
-            filename_assume_issue_one: m.filename_assume_issue_one,
-            metadata_auto_apply_strong_matches: m.metadata_auto_apply_strong_matches,
-            auto_search_new_series: m.auto_search_new_series,
-            show_in_sidebar_by_default: m.show_in_sidebar_by_default,
+            root_path: Some(m.root_path),
+            default_language: Some(m.default_language),
+            default_reading_direction: Some(m.default_reading_direction),
+            dedupe_by_content: Some(m.dedupe_by_content),
+            last_scan_at: Some(m.last_scan_at.map(|t| t.to_rfc3339())),
+            ignore_globs: Some(
+                m.ignore_globs
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            ),
+            report_missing_comicinfo: Some(m.report_missing_comicinfo),
+            file_watch_enabled: Some(m.file_watch_enabled),
+            soft_delete_days: Some(m.soft_delete_days),
+            scan_schedule_cron: Some(m.scan_schedule_cron),
+            generate_page_thumbs_on_scan: Some(m.generate_page_thumbs_on_scan),
+            allow_archive_writeback: Some(m.allow_archive_writeback),
+            metadata_writeback_enabled: Some(m.metadata_writeback_enabled),
+            archive_backup_retain_count: Some(m.archive_backup_retain_count),
+            archive_backup_retain_days: Some(m.archive_backup_retain_days),
+            archive_writeback_jpeg_quality: Some(m.archive_writeback_jpeg_quality),
+            cbr_convert_confirmed_at: Some(m.cbr_convert_confirmed_at.map(|t| t.to_rfc3339())),
+            auto_convert_cbr_on_scan: Some(m.auto_convert_cbr_on_scan),
+            auto_convert_cb7_on_scan: Some(m.auto_convert_cb7_on_scan),
+            trust_fingerprint_on_first_import: Some(m.trust_fingerprint_on_first_import),
+            root_path_writable: Some(root_path_writable),
+            metadata_publisher_blacklist: Some(
+                m.metadata_publisher_blacklist
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            ),
+            filename_ignore_leading_numbers: Some(m.filename_ignore_leading_numbers),
+            filename_assume_issue_one: Some(m.filename_assume_issue_one),
+            metadata_auto_apply_strong_matches: Some(m.metadata_auto_apply_strong_matches),
+            auto_search_new_series: Some(m.auto_search_new_series),
+            show_in_sidebar_by_default: Some(m.show_in_sidebar_by_default),
+        }
+    }
+}
+
+impl LibraryView {
+    /// The view for `user`: the full view for an admin, else only the
+    /// identity a reader's UI uses (`id`, `name`, `slug`). The root path
+    /// and the library settings are server configuration.
+    pub fn for_user(m: library::Model, user: &CurrentUser) -> Self {
+        if user.role == UserRole::Admin {
+            return Self::from(m);
+        }
+        Self {
+            id: m.id.to_string(),
+            name: m.name,
+            slug: m.slug,
+            ..Self::empty()
+        }
+    }
+
+    /// Identity-less shell with every admin-only field absent.
+    fn empty() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            slug: String::new(),
+            root_path: None,
+            default_language: None,
+            default_reading_direction: None,
+            dedupe_by_content: None,
+            last_scan_at: None,
+            ignore_globs: None,
+            report_missing_comicinfo: None,
+            file_watch_enabled: None,
+            soft_delete_days: None,
+            scan_schedule_cron: None,
+            generate_page_thumbs_on_scan: None,
+            allow_archive_writeback: None,
+            metadata_writeback_enabled: None,
+            archive_backup_retain_count: None,
+            archive_backup_retain_days: None,
+            archive_writeback_jpeg_quality: None,
+            cbr_convert_confirmed_at: None,
+            auto_convert_cbr_on_scan: None,
+            auto_convert_cb7_on_scan: None,
+            trust_fingerprint_on_first_import: None,
+            root_path_writable: None,
+            metadata_publisher_blacklist: None,
+            filename_ignore_leading_numbers: None,
+            filename_assume_issue_one: None,
+            metadata_auto_apply_strong_matches: None,
+            auto_search_new_series: None,
+            show_in_sidebar_by_default: None,
         }
     }
 }
@@ -513,7 +625,7 @@ pub async fn list(State(app): State<AppState>, user: CurrentUser) -> impl IntoRe
     Json(
         visible
             .into_iter()
-            .map(LibraryView::from)
+            .map(|m| LibraryView::for_user(m, &user))
             .collect::<Vec<_>>(),
     )
     .into_response()
@@ -541,7 +653,7 @@ pub async fn get_one(
     if !user_can_see(&app, &user, &row).await {
         return error(StatusCode::NOT_FOUND, "not_found", "library not found");
     }
-    Json(LibraryView::from(row)).into_response()
+    Json(LibraryView::for_user(row, &user)).into_response()
 }
 
 /// Resolve a library by its human-readable slug, falling back to its

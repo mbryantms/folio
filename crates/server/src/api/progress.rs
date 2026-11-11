@@ -788,7 +788,7 @@ pub async fn upsert_series(
                     Err(e) => {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series-progress write failed");
                         failed += 1;
-                        first_error.get_or_insert_with(|| e.to_string());
+                        first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     }
                 }
             }
@@ -907,7 +907,7 @@ pub async fn upsert_series_matching(
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress lookup failed");
                 failed += 1;
-                first_error.get_or_insert_with(|| e.to_string());
+                first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                 continue;
             }
         };
@@ -938,7 +938,7 @@ pub async fn upsert_series_matching(
                     Err(e) => {
                         tracing::warn!(error = %e, issue_id = %iss.id, "series matching-progress write failed");
                         failed += 1;
-                        first_error.get_or_insert_with(|| e.to_string());
+                        first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     }
                 }
             }
@@ -1117,7 +1117,7 @@ pub async fn upsert_bulk(
             Err(e) => {
                 tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress lookup failed");
                 failed += 1;
-                first_error.get_or_insert_with(|| e.to_string());
+                first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                 continue;
             }
         };
@@ -1148,7 +1148,7 @@ pub async fn upsert_bulk(
                     Err(e) => {
                         tracing::warn!(error = %e, issue_id = %iss.id, "bulk-progress write failed");
                         failed += 1;
-                        first_error.get_or_insert_with(|| e.to_string());
+                        first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     }
                 }
             }
@@ -1335,7 +1335,7 @@ pub async fn upsert_series_bulk(
                 Err(e) => {
                     tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk lookup failed");
                     failed += 1;
-                    first_error.get_or_insert_with(|| e.to_string());
+                    first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                     continue;
                 }
             };
@@ -1365,7 +1365,8 @@ pub async fn upsert_series_bulk(
                         Err(e) => {
                             tracing::warn!(error = %e, issue_id = %iss.id, "series-bulk write failed");
                             failed += 1;
-                            first_error.get_or_insert_with(|| e.to_string());
+                            first_error
+                                .get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
                         }
                     }
                 }

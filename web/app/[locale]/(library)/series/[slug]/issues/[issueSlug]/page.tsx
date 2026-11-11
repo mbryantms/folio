@@ -95,6 +95,7 @@ import { InlineNotesEditor } from "./InlineNotesEditor";
 import { IssueActions } from "./IssueActions";
 import { IssueReadLabel } from "./IssueReadLabel";
 import { IssueMetadataTab } from "./IssueMetadataTab";
+import { fileRowItem } from "./file-row";
 import { apiPath, routeParam } from "@/lib/api/path";
 
 export default async function IssuePage({
@@ -725,11 +726,7 @@ export default async function IssuePage({
                     label: "File size",
                     value: formatFileSize(issue.file_size),
                   },
-                  {
-                    label: "File",
-                    value: <FilePathValue path={issue.file_path} />,
-                    wide: true,
-                  },
+                  fileRowItem(issue.file_path),
                 ]}
               />
             </DetailSection>
@@ -1066,14 +1063,6 @@ function ExternalTextLink({
     >
       {label ?? url.replace(/^https?:\/\//, "")}
     </a>
-  );
-}
-
-function FilePathValue({ path }: { path: string }) {
-  return (
-    <code className="bg-muted/50 block rounded-md px-3 py-2 font-mono text-xs break-all">
-      {path}
-    </code>
   );
 }
 

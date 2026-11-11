@@ -17406,7 +17406,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Why the run failed. Admins get the job's error text; any other\ncaller gets a fixed sentence whenever a failure was recorded."
           },
           "finished_at": {
             "type": [
@@ -22472,7 +22473,7 @@
               "string",
               "null"
             ],
-            "description": "Last fetch failure (`enrichment = failed`)."
+            "description": "Last fetch failure (`enrichment = failed`).\nAdmins get the provider's error text; any other caller gets\n[`READER_PROFILE_ERROR`] whenever a failure is recorded."
           },
           "founded_year": {
             "type": [
@@ -24855,7 +24856,6 @@
           "id",
           "kind",
           "severity",
-          "fingerprint",
           "payload",
           "first_seen_at",
           "last_seen_at"
@@ -24868,7 +24868,8 @@
             ]
           },
           "fingerprint": {
-            "type": "string"
+            "type": "string",
+            "description": "Dedupe key, built from the server paths the finding names. Admins\nonly; absent on the reader-facing per-issue list."
           },
           "first_seen_at": {
             "type": "string"
@@ -24882,7 +24883,9 @@
           "last_seen_at": {
             "type": "string"
           },
-          "payload": {},
+          "payload": {
+            "description": "The finding's `{kind, data}` payload. On the reader-facing\nper-issue list `data` keeps only the counts and labels the reader\nshows ([`HealthIssueView::for_reader`]); paths and raw errors are\nfor admins."
+          },
           "resolved_at": {
             "type": [
               "string",
@@ -25221,7 +25224,6 @@
           "series_slug",
           "series_id",
           "library_id",
-          "file_path",
           "state",
           "file_size",
           "created_at",
@@ -25251,7 +25253,7 @@
           },
           "allow_archive_writeback": {
             "type": "boolean",
-            "description": "Whether the parent library has archive writeback enabled. Gates\nthe admin \"Edit archive…\" affordance in the UI\n(`archive-rewrite-1.0` M3). Populated by the issue-detail handler;\ndefaults false (not stored on the issue row)."
+            "description": "Whether the parent library has archive writeback enabled. Gates\nthe admin \"Edit archive…\" affordance in the UI\n(`archive-rewrite-1.0` M3). Populated by the issue-detail handler\nfor admins only (a library setting); absent for other callers."
           },
           "alternate_series": {
             "type": [
@@ -25346,7 +25348,8 @@
             ]
           },
           "file_path": {
-            "type": "string"
+            "type": "string",
+            "description": "Absolute path of the archive on the server. Admins only (the page\neditor and the Details tab); absent for every other caller."
           },
           "file_size": {
             "type": "integer",
@@ -25428,7 +25431,7 @@
           },
           "library_cbr_convert_confirmed": {
             "type": "boolean",
-            "description": "Whether the parent library has acknowledged the CBR→CBZ conversion\nat least once (`library.cbr_convert_confirmed_at` is set). The page\neditor uses this to decide whether to show the one-time conversion\nexplainer when editing a `.cbr`. `archive-rewrite-1.0` M6."
+            "description": "Whether the parent library has acknowledged the CBR→CBZ conversion\nat least once (`library.cbr_convert_confirmed_at` is set). The page\neditor uses this to decide whether to show the one-time conversion\nexplainer when editing a `.cbr`. `archive-rewrite-1.0` M6. Admins\nonly (a library setting); absent for other callers."
           },
           "library_default_reading_direction": {
             "type": [
@@ -26598,34 +26601,11 @@
       },
       "LibraryView": {
         "type": "object",
+        "description": "A library as the API returns it. A non-admin receives only `id`,\n`name` and `slug`: the library root path and every library setting\nbelow are server configuration and are set for admins only\n([`LibraryView::for_user`]); for any other caller they are absent from\nthe JSON.",
         "required": [
           "id",
           "name",
-          "slug",
-          "root_path",
-          "default_language",
-          "default_reading_direction",
-          "dedupe_by_content",
-          "ignore_globs",
-          "report_missing_comicinfo",
-          "file_watch_enabled",
-          "soft_delete_days",
-          "generate_page_thumbs_on_scan",
-          "allow_archive_writeback",
-          "metadata_writeback_enabled",
-          "archive_backup_retain_count",
-          "archive_backup_retain_days",
-          "archive_writeback_jpeg_quality",
-          "auto_convert_cbr_on_scan",
-          "auto_convert_cb7_on_scan",
-          "trust_fingerprint_on_first_import",
-          "root_path_writable",
-          "metadata_publisher_blacklist",
-          "filename_ignore_leading_numbers",
-          "filename_assume_issue_one",
-          "metadata_auto_apply_strong_matches",
-          "auto_search_new_series",
-          "show_in_sidebar_by_default"
+          "slug"
         ],
         "properties": {
           "allow_archive_writeback": {
@@ -30645,7 +30625,7 @@
               "string",
               "null"
             ],
-            "description": "`failed` only: the provider error, for the run detail."
+            "description": "`failed` only: the provider error, for the run detail. Admin\nresponses only; a non-admin's view leaves it out."
           },
           "retry_after_secs": {
             "type": [
@@ -34497,7 +34477,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The series folder on the server. Admins only; `null` for every\nother caller and when the series has no folder."
           },
           "last_scanned_at": {
             "type": [

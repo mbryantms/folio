@@ -193,8 +193,14 @@ pub async fn get_one(
     view.series_reading_direction = series_dir.flatten();
     view.series_name = series_name;
     view.library_default_reading_direction = library_default_dir;
-    view.allow_archive_writeback = allow_archive_writeback;
-    view.library_cbr_convert_confirmed = library_cbr_convert_confirmed;
+    // The archive path and the library's writeback settings are server
+    // configuration: admins only.
+    if user.role == entity::user::UserRole::Admin {
+        view.allow_archive_writeback = Some(allow_archive_writeback);
+        view.library_cbr_convert_confirmed = Some(library_cbr_convert_confirmed);
+    } else {
+        view.file_path = None;
+    }
     view.creator_slugs = creator_slugs;
     view.credits = junctions.credits;
     view.cast = junctions.cast;
@@ -1046,8 +1052,10 @@ pub async fn update(
 
     if !touched {
         let row_id = row.id.clone();
+        let library_id = row.library_id;
         let mut view = IssueDetailView::from_model(row, &series_slug);
         crate::api::series::enrich_issue_detail(&app.db, &mut view, &row_id).await;
+        fill_admin_library_flags(&app.db, &mut view, library_id).await;
         return Json(view).into_response();
     }
 
@@ -1151,9 +1159,30 @@ pub async fn update(
     .await;
 
     let updated_id = updated.id.clone();
+    let library_id = updated.library_id;
     let mut view = IssueDetailView::from_model(updated, &series_slug);
     crate::api::series::enrich_issue_detail(&app.db, &mut view, &updated_id).await;
+    fill_admin_library_flags(&app.db, &mut view, library_id).await;
     Json(view).into_response()
+}
+
+/// The two library flags an admin's issue detail carries, read from the
+/// library row so the PATCH response matches GET.
+async fn fill_admin_library_flags(
+    db: &sea_orm::DatabaseConnection,
+    view: &mut IssueDetailView,
+    library_id: Uuid,
+) {
+    let lib = library::Entity::find_by_id(library_id)
+        .one(db)
+        .await
+        .ok()
+        .flatten();
+    view.allow_archive_writeback = Some(lib.as_ref().is_some_and(|l| l.allow_archive_writeback));
+    view.library_cbr_convert_confirmed = Some(
+        lib.as_ref()
+            .is_some_and(|l| l.cbr_convert_confirmed_at.is_some()),
+    );
 }
 
 // ───── POST /issues/{id}/scan ─────
@@ -1680,9 +1709,13 @@ pub async fn list_issue_health(
         }
     };
 
+    // Findings name server paths (in `fingerprint` and `payload.data`):
+    // a non-admin gets the reader view.
+    let is_admin = user.role == entity::user::UserRole::Admin;
     Json(
         rows.into_iter()
             .map(crate::api::health_issues::HealthIssueView::from)
+            .map(|v| if is_admin { v } else { v.for_reader() })
             .collect::<Vec<_>>(),
     )
     .into_response()
@@ -1978,7 +2011,7 @@ pub async fn bulk_metadata(
                 // Post-audit T3.7: a failed write is reported as such, not
                 // disguised as an ACL filter.
                 failed += 1;
-                first_error.get_or_insert_with(|| e.to_string());
+                first_error.get_or_insert_with(|| super::INTERNAL_ERROR_TEXT.to_owned());
             }
         }
     }

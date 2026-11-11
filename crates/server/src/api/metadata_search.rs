@@ -124,6 +124,8 @@ pub struct CandidatesResp {
     pub items_matched_high: i32,
     pub items_matched_medium: i32,
     pub items_matched_low: i32,
+    /// Why the run failed. Admins get the job's error text; any other
+    /// caller gets a fixed sentence whenever a failure was recorded.
     pub error_summary: Option<String>,
     pub candidates: Vec<CandidateView>,
     /// Match-outcome classification (matching-accuracy-1.0 M8).
@@ -718,7 +720,7 @@ pub async fn candidates_series(
             "no such run",
         );
     }
-    Json(build_candidates_resp(&app, run).await).into_response()
+    Json(build_candidates_resp(&app, &user, run).await).into_response()
 }
 
 // ───────── /series/{slug}/metadata/coverage-hints ─────────
@@ -1630,7 +1632,7 @@ pub async fn candidates_issue(
             "no such run",
         );
     }
-    Json(build_candidates_resp(&app, run).await).into_response()
+    Json(build_candidates_resp(&app, &user, run).await).into_response()
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -3915,7 +3917,11 @@ pub async fn batch_status(
             series_slug,
             issue_slug,
             library_id,
-            providers,
+            providers: if user.role == UserRole::Admin {
+                providers
+            } else {
+                provider_status_for_reader(providers)
+            },
         });
     }
 
@@ -4470,7 +4476,28 @@ async fn latest_run_for_scope(
         .flatten()
 }
 
-async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> CandidatesResp {
+/// What a non-admin reads in place of a failed run's `error_summary`. The
+/// stored summary is the job's own error text, which is server detail;
+/// a reader only needs to know that the last update failed.
+pub const READER_RUN_ERROR: &str = "The last metadata update failed";
+
+/// The reader view of a run's per-provider status: the state and counts
+/// stay, the provider's raw error text is for admins.
+fn provider_status_for_reader(
+    mut statuses: Vec<crate::metadata::provider_status::ProviderStatus>,
+) -> Vec<crate::metadata::provider_status::ProviderStatus> {
+    for s in &mut statuses {
+        s.error = None;
+    }
+    statuses
+}
+
+async fn build_candidates_resp(
+    app: &AppState,
+    user: &CurrentUser,
+    run: metadata_run::Model,
+) -> CandidatesResp {
+    let is_admin = user.role == UserRole::Admin;
     let rows = orchestrator::fetch_candidates(&app.db, run.id)
         .await
         .unwrap_or_default();
@@ -4500,6 +4527,14 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
     let query = SearchQueryView::from_stored(&run.query);
     let provider_status =
         crate::metadata::provider_status::parse(run.provider_status.as_ref()).unwrap_or_default();
+    let (error_summary, provider_status) = if is_admin {
+        (run.error_summary, provider_status)
+    } else {
+        (
+            run.error_summary.map(|_| READER_RUN_ERROR.to_owned()),
+            provider_status_for_reader(provider_status),
+        )
+    };
     CandidatesResp {
         run_id: run.id,
         status: run.status,
@@ -4511,7 +4546,7 @@ async fn build_candidates_resp(app: &AppState, run: metadata_run::Model) -> Cand
         items_matched_high: run.items_matched_high,
         items_matched_medium: run.items_matched_medium,
         items_matched_low: run.items_matched_low,
-        error_summary: run.error_summary,
+        error_summary,
         candidates,
         match_outcome,
         quota,

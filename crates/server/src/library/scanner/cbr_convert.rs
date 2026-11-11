@@ -58,12 +58,15 @@ pub enum CbrConvertError {
     /// A `.cbz` sibling already exists at the destination. We refuse to
     /// overwrite it — the existing `.cbz` is ingested by the normal path and
     /// the source is left for the operator to resolve (likely a duplicate).
+    ///
+    /// The message names the file only; the full path is logged where the
+    /// error is raised and stays on the variant for the scanner.
     #[error(
         "{} already exists; nothing was written. If Folio wrote that file during a \
          conversion that did not finish, remove that file and retry: the original \
          and its .bak still hold the original bytes. Otherwise another file has \
          this name.",
-        .0.display()
+        archive_rewrite::file_label(.0)
     )]
     DestinationExists(PathBuf),
     /// The file isn't a container we can read (not ZIP, RAR, or 7z) — the
@@ -123,6 +126,7 @@ fn convert_to_cbz(
     // atomically); this early answer only spares a pointless sniff.
     let (dir, dst_name) = root.open_parent(&dst).map_err(RewriteError::from)?;
     if !in_place && dir.kind(&dst_name).map_err(RewriteError::Io)? != EntryKind::Missing {
+        tracing::info!(path = %dst.display(), "archive conversion: destination already exists");
         return Err(CbrConvertError::DestinationExists(dst));
     }
     let source = root.open_archive(src).map_err(RewriteError::from)?;

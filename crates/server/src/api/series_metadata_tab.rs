@@ -117,6 +117,8 @@ pub struct SeriesFilesState {
     pub cvinfo_present: bool,
     /// `.bak` backups in the folder; `None` when the folder can't be read.
     pub backups: Option<i64>,
+    /// The series folder on the server. Admins only; `null` for every
+    /// other caller and when the series has no folder.
     pub folder_path: Option<String>,
     /// Issues per tagging tool ([`tag_tool`] keys), largest first.
     pub tagged_by: Vec<TagToolCount>,
@@ -321,7 +323,11 @@ pub async fn overview(
         series_json_present: s.series_json_present.unwrap_or(false),
         cvinfo_present,
         backups,
-        folder_path: s.folder_path.clone(),
+        // Server path: admins only.
+        folder_path: s
+            .folder_path
+            .clone()
+            .filter(|_| user.role == entity::user::UserRole::Admin),
         tagged_by,
         last_scanned_at: s.last_scanned_at.map(|t| t.to_rfc3339()),
     };

@@ -170,7 +170,8 @@ export function PageEditor({
 
   // CBR archives can't be written in place — editing converts them to
   // CBZ. Explain the one-time-per-library extension change in the confirm.
-  const isCbr = issue.file_path.toLowerCase().endsWith(".cbr");
+  // The editor is admin-only, and an admin's issue carries `file_path`.
+  const isCbr = (issue.file_path ?? "").toLowerCase().endsWith(".cbr");
   const showConversionNote = isCbr && !issue.library_cbr_convert_confirmed;
 
   const apply = () => {

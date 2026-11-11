@@ -7566,6 +7566,10 @@ export interface components {
         };
         CandidatesResp: {
             candidates: components["schemas"]["CandidateView"][];
+            /**
+             * @description Why the run failed. Admins get the job's error text; any other
+             *     caller gets a fixed sentence whenever a failure was recorded.
+             */
             error_summary?: string | null;
             finished_at?: string | null;
             /** Format: int32 */
@@ -9616,7 +9620,11 @@ export interface components {
             description?: string | null;
             /** @description Where the profile fetch stands. */
             enrichment: components["schemas"]["EnrichmentStatus"];
-            /** @description Last fetch failure (`enrichment = failed`). */
+            /**
+             * @description Last fetch failure (`enrichment = failed`).
+             *     Admins get the provider's error text; any other caller gets
+             *     [`READER_PROFILE_ERROR`] whenever a failure is recorded.
+             */
             enrichment_error?: string | null;
             /**
              * Format: int32
@@ -10467,11 +10475,21 @@ export interface components {
         };
         HealthIssueView: {
             dismissed_at?: string | null;
-            fingerprint: string;
+            /**
+             * @description Dedupe key, built from the server paths the finding names. Admins
+             *     only; absent on the reader-facing per-issue list.
+             */
+            fingerprint?: string;
             first_seen_at: string;
             id: string;
             kind: components["schemas"]["HealthIssueKind"];
             last_seen_at: string;
+            /**
+             * @description The finding's `{kind, data}` payload. On the reader-facing
+             *     per-issue list `data` keeps only the counts and labels the reader
+             *     shows ([`HealthIssueView::for_reader`]); paths and raw errors are
+             *     for admins.
+             */
             payload: unknown;
             resolved_at?: string | null;
             scan_id?: string | null;
@@ -10637,8 +10655,8 @@ export interface components {
             /**
              * @description Whether the parent library has archive writeback enabled. Gates
              *     the admin "Edit archive…" affordance in the UI
-             *     (`archive-rewrite-1.0` M3). Populated by the issue-detail handler;
-             *     defaults false (not stored on the issue row).
+             *     (`archive-rewrite-1.0` M3). Populated by the issue-detail handler
+             *     for admins only (a library setting); absent for other callers.
              */
             allow_archive_writeback?: boolean;
             alternate_series?: string | null;
@@ -10685,7 +10703,11 @@ export interface components {
             day?: number | null;
             editor?: string | null;
             entity_slugs?: components["schemas"]["EntitySlugs"] | null;
-            file_path: string;
+            /**
+             * @description Absolute path of the archive on the server. Admins only (the page
+             *     editor and the Details tab); absent for every other caller.
+             */
+            file_path?: string;
             /**
              * Format: int64
              * @description File size in bytes from the disk row at the last scan. Surfaced in the
@@ -10728,7 +10750,8 @@ export interface components {
              * @description Whether the parent library has acknowledged the CBR→CBZ conversion
              *     at least once (`library.cbr_convert_confirmed_at` is set). The page
              *     editor uses this to decide whether to show the one-time conversion
-             *     explainer when editing a `.cbr`. `archive-rewrite-1.0` M6.
+             *     explainer when editing a `.cbr`. `archive-rewrite-1.0` M6. Admins
+             *     only (a library setting); absent for other callers.
              */
             library_cbr_convert_confirmed?: boolean;
             /**
@@ -11203,45 +11226,52 @@ export interface components {
             series_count: number;
             slug: string;
         };
+        /**
+         * @description A library as the API returns it. A non-admin receives only `id`,
+         *     `name` and `slug`: the library root path and every library setting
+         *     below are server configuration and are set for admins only
+         *     ([`LibraryView::for_user`]); for any other caller they are absent from
+         *     the JSON.
+         */
         LibraryView: {
             /**
              * @description Hard prerequisite for any code path that mutates archive bytes
              *     (sidecar writeback + page edits). Default false; admin flips on
              *     when ready to start rewriting files for this library.
              */
-            allow_archive_writeback: boolean;
+            allow_archive_writeback?: boolean;
             /**
              * Format: int32
              * @description How many `.bak` siblings to keep per archive after a rewrite.
              *     1..=5; default 1.
              */
-            archive_backup_retain_count: number;
+            archive_backup_retain_count?: number;
             /**
              * Format: int32
              * @description Auto-prune `.bak` files older than this many days. Default 30;
              *     `0` = keep forever.
              */
-            archive_backup_retain_days: number;
+            archive_backup_retain_days?: number;
             /**
              * Format: int32
              * @description Encoder quality (60..=100) the page editor uses when re-encoding a
              *     rotated / replaced JPEG page. Default 92. PNG / WebP pages are
              *     rewritten losslessly and ignore this. `archive-rewrite-1.0`.
              */
-            archive_writeback_jpeg_quality: number;
+            archive_writeback_jpeg_quality?: number;
             /**
              * @description CB7 twin of `auto_convert_cbr_on_scan` (WP-6.5): when true AND
              *     `allow_archive_writeback` is also true, the scanner converts each
              *     `.cb7` (7z) into a sibling `.cbz` (keeping the original as
              *     `.cb7.bak`) and ingests the `.cbz`. Default false.
              */
-            auto_convert_cb7_on_scan: boolean;
+            auto_convert_cb7_on_scan?: boolean;
             /**
              * @description When true AND `allow_archive_writeback` is also true, the scanner
              *     converts each `.cbr` it finds into a sibling `.cbz` in place (keeping
              *     the original as `.cbr.bak`) and ingests the `.cbz`. Default false.
              */
-            auto_convert_cbr_on_scan: boolean;
+            auto_convert_cbr_on_scan?: boolean;
             /**
              * @description When true, a library scan that creates new series enqueues a
              *     provider search (`trigger_kind = scanner`) for each unmatched one,
@@ -11249,7 +11279,7 @@ export interface components {
              *     `metadata_auto_apply_strong_matches` on a writeback library a
              *     strong match rewrites the archives. Audit 2026-11 N-M9.
              */
-            auto_search_new_series: boolean;
+            auto_search_new_series?: boolean;
             /**
              * @description RFC3339 timestamp of the operator's first acknowledgement of the
              *     CBR→CBZ conversion for this library, or `null` if they haven't
@@ -11257,77 +11287,77 @@ export interface components {
              *     show the conversion confirm dialog. `archive-rewrite-1.0` M6.
              */
             cbr_convert_confirmed_at?: string | null;
-            dedupe_by_content: boolean;
-            default_language: string;
-            default_reading_direction: string;
-            file_watch_enabled: boolean;
+            dedupe_by_content?: boolean;
+            default_language?: string;
+            default_reading_direction?: string;
+            file_watch_enabled?: boolean;
             /**
              * @description When true the scanner's filename inferer assumes issue `1`
              *     when no issue number is detected. Matching-accuracy-1.0 M7.
              */
-            filename_assume_issue_one: boolean;
+            filename_assume_issue_one?: boolean;
             /**
              * @description When true the scanner's filename inferer drops a leading
              *     numeric token before parsing the series. Matching-accuracy-1.0 M7.
              */
-            filename_ignore_leading_numbers: boolean;
+            filename_ignore_leading_numbers?: boolean;
             /**
              * @description When true, the post-scan pipeline auto-enqueues page-strip thumbnails
              *     alongside the always-on cover thumbnails. See migration
              *     `m20261211_000001_generate_page_thumbs_on_scan` for rationale.
              */
-            generate_page_thumbs_on_scan: boolean;
+            generate_page_thumbs_on_scan?: boolean;
             id: string;
             /** @description Library Scanner v1 (Milestone 4) settings. */
-            ignore_globs: string[];
+            ignore_globs?: string[];
             last_scan_at?: string | null;
             /**
              * @description When true, non-manual searches that produce a strict
              *     SingleGood outcome auto-apply the top candidate. User-edit
              *     precedence still fires. Matching-accuracy-1.0 M12.
              */
-            metadata_auto_apply_strong_matches: boolean;
+            metadata_auto_apply_strong_matches?: boolean;
             /**
              * @description Publisher names the matcher's pre-filter should drop before
              *     scoring. Comparison is case-insensitive against the
              *     title-sanitized form so "DC Comics" / "dc comics" / "DC" all
              *     match the same entry. Matching-accuracy-1.0 M3.
              */
-            metadata_publisher_blacklist: string[];
+            metadata_publisher_blacklist?: string[];
             /**
              * @description When true AND `allow_archive_writeback` is also true, provider
              *     apply takes the XML-first path: worker writes ComicInfo.xml +
              *     MetronInfo.xml into the archive and enqueues a scoped rescan.
              *     Per-library so operators migrate gradually.
              */
-            metadata_writeback_enabled: boolean;
+            metadata_writeback_enabled?: boolean;
             name: string;
-            report_missing_comicinfo: boolean;
-            root_path: string;
+            report_missing_comicinfo?: boolean;
+            root_path?: string;
             /**
              * @description Whether the library's `root_path` is on a writable mount. When
              *     false the admin UI disables the archive-writeback toggle and the
              *     PATCH handler refuses to enable it — rewrites can't land on a
              *     read-only mount. Computed per-request via `statvfs`.
              */
-            root_path_writable: boolean;
+            root_path_writable?: boolean;
             /** @description Cron expression governing the scheduled scan, or `null` if disabled. */
             scan_schedule_cron?: string | null;
             /**
              * @description Default visibility of this library in a user's sidebar when the user
              *     has no override for it (Start Here + default pins M1).
              */
-            show_in_sidebar_by_default: boolean;
+            show_in_sidebar_by_default?: boolean;
             slug: string;
             /** Format: int32 */
-            soft_delete_days: number;
+            soft_delete_days?: number;
             /**
              * @description First-import lazy-hash mode (WP-3.2): while the library has never
              *     completed a full scan, new files ingest on size+mtime and their
              *     full-file BLAKE3 backfills in the background
              *     (`GET /libraries/{slug}/hash-backfill` reports progress).
              */
-            trust_fingerprint_on_first_import: boolean;
+            trust_fingerprint_on_first_import?: boolean;
         };
         LibraryWatcherView: {
             /** @description The library's `file_watch_enabled` toggle. */
@@ -13072,7 +13102,10 @@ export interface components {
              *     Meaningful once `answered`.
              */
             candidates?: number;
-            /** @description `failed` only: the provider error, for the run detail. */
+            /**
+             * @description `failed` only: the provider error, for the run detail. Admin
+             *     responses only; a non-admin's view leaves it out.
+             */
             error?: string | null;
             /**
              * Format: int64
@@ -14682,6 +14715,10 @@ export interface components {
             by_extension: components["schemas"]["ExtensionCount"][];
             /** @description A Mylar `cvinfo` file sits in the folder. */
             cvinfo_present: boolean;
+            /**
+             * @description The series folder on the server. Admins only; `null` for every
+             *     other caller and when the series has no folder.
+             */
             folder_path?: string | null;
             /** @description When the scanner last walked this series' folder. */
             last_scanned_at?: string | null;

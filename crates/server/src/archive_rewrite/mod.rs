@@ -93,7 +93,9 @@ pub enum RewriteError {
     ArchiveErr(#[from] ArchiveError),
     #[error("retain_count {0} out of allowed range 0..=5")]
     InvalidRetainCount(i32),
-    #[error("target path has no parent directory: {0}")]
+    /// The message names the file only; [`RewriteError::no_parent`] logs
+    /// the full path.
+    #[error("target path has no parent directory: {}", file_label(.0))]
     NoParent(PathBuf),
     /// The freshly-written archive failed post-write validation (an
     /// expected entry went missing, a sidecar is absent, or the archive
@@ -111,14 +113,26 @@ pub enum RewriteError {
     /// A conversion's destination name is already taken (another archive,
     /// often another issue's file). Nothing was written over it. A refusal:
     /// retrying gives the same answer until someone resolves the clash.
+    ///
+    /// The message names the file only (it sits beside the original);
+    /// [`RewriteError::destination_exists`] logs the full path.
     #[error(
         "{} already exists; nothing was written. If Folio wrote that file during a \
          conversion that did not finish, remove that file and retry: the original \
          and its .bak still hold the original bytes. Otherwise another file has \
          this name.",
-        .0.display()
+        file_label(.0)
     )]
     DestinationExists(PathBuf),
+}
+
+/// The file name of `p`, for error text. An error message can end up
+/// stored on a run or shown to a user, so it names the file and never
+/// the directory it lives in; the full path goes to the log.
+pub(crate) fn file_label(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "(no file name)".to_owned())
 }
 
 impl RewriteError {
@@ -126,6 +140,19 @@ impl RewriteError {
     /// [`RewriteError::DestinationExists`].
     pub fn is_refusal(&self) -> bool {
         matches!(self, Self::Refused(_) | Self::DestinationExists(_))
+    }
+
+    /// [`RewriteError::NoParent`] for `target`, logging the full path.
+    fn no_parent(target: &Path) -> Self {
+        tracing::warn!(path = %target.display(), "archive rewrite: target has no usable parent directory");
+        Self::NoParent(target.to_path_buf())
+    }
+
+    /// [`RewriteError::DestinationExists`] for `dst`, logging the full
+    /// path the message leaves out.
+    fn destination_exists(dst: &Path) -> Self {
+        tracing::warn!(path = %dst.display(), "archive conversion: destination already exists");
+        Self::DestinationExists(dst.to_path_buf())
     }
 }
 
@@ -277,7 +304,7 @@ pub enum RewriteStep {
 /// The target's folder and name, opened through the no-follow walk.
 fn open_target(root: &LibraryRoot, target: &Path) -> Result<(LibraryDir, OsString), RewriteError> {
     if target.file_name().is_none() {
-        return Err(RewriteError::NoParent(target.to_path_buf()));
+        return Err(RewriteError::no_parent(target));
     }
     Ok(root.open_parent(target)?)
 }
@@ -864,7 +891,7 @@ pub async fn settle_unclear_repoint(
 fn same_folder_name(original: &Path, dst: &Path) -> Result<OsString, RewriteError> {
     match (dst.parent(), dst.file_name()) {
         (Some(p), Some(n)) if Some(p) == original.parent() => Ok(n.to_os_string()),
-        _ => Err(RewriteError::NoParent(dst.to_path_buf())),
+        _ => Err(RewriteError::no_parent(dst)),
     }
 }
 
@@ -874,16 +901,14 @@ fn require_free(dir: &LibraryDir, name: &OsStr, dst: &Path) -> Result<(), Rewrit
     match dir.kind(name)? {
         EntryKind::Missing => Ok(()),
         EntryKind::Symlink => Err(RewriteError::Refused(Refusal::Symlink)),
-        EntryKind::Regular | EntryKind::Other => {
-            Err(RewriteError::DestinationExists(dst.to_path_buf()))
-        }
+        EntryKind::Regular | EntryKind::Other => Err(RewriteError::destination_exists(dst)),
     }
 }
 
 /// Map a no-replace rename or link that found its name taken.
 fn taken(e: io::Error, dst: &Path) -> RewriteError {
     if e.kind() == ErrorKind::AlreadyExists {
-        RewriteError::DestinationExists(dst.to_path_buf())
+        RewriteError::destination_exists(dst)
     } else {
         RewriteError::Io(e)
     }
@@ -1055,7 +1080,7 @@ pub fn rename_into_place(
             })
         }
         Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-            Err(RewriteError::DestinationExists(dst.to_path_buf()))
+            Err(RewriteError::destination_exists(dst))
         }
         Err(e) => {
             tracing::debug!(
