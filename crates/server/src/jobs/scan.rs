@@ -99,6 +99,9 @@ pub async fn run(state: &AppState, job: Job, timing: ScanLeaseTiming) {
             scan_run_id = %job.scan_run_id,
             "scan job superseded before it started: another run holds the library",
         );
+        // Hand the request on first, so a new run joins this run's scan-all
+        // batch before closing this run can finalize that batch.
+        hand_on_request(state, &job).await;
         crate::library::scanner::cancel_superseded_run(
             state,
             job.library_id,
@@ -106,7 +109,6 @@ pub async fn run(state: &AppState, job: Job, timing: ScanLeaseTiming) {
             SUPERSEDED_REASON,
         )
         .await;
-        hand_on_request(state, &job).await;
         return;
     }
 
@@ -205,9 +207,16 @@ pub async fn run(state: &AppState, job: Job, timing: ScanLeaseTiming) {
 /// queued follow-up, or start a new run if the key has become free. Once per
 /// superseded run: the follow-up is a new run with a new id.
 async fn hand_on_request(state: &AppState, job: &Job) {
+    // A new run joins the superseded run's scan-all batch, if it had one.
+    let batch_id = ScanRunEntity::find_by_id(job.scan_run_id)
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.batch_id);
     match state
         .jobs
-        .requeue_superseded_request(job.library_id, job.force, job.scope.clone())
+        .requeue_superseded_request(job.library_id, job.force, job.scope.clone(), batch_id)
         .await
     {
         Ok(outcome) => tracing::info!(

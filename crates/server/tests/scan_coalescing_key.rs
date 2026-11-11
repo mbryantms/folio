@@ -389,19 +389,22 @@ async fn follow_up(app: &TestApp, lib: Uuid) -> (bool, bool, bool) {
     )
 }
 
-/// Make a scoped, non-forced watcher scan the holder of `lib`'s key, as if
-/// the previous holder's key had lapsed. Returns its run id.
-async fn scoped_holder_takes_over(app: &TestApp, lib: Uuid) -> Uuid {
-    let state = app.state();
-    let mut conn = state.jobs.redis.clone();
-    let _: () = conn.del(in_flight_key(lib)).await.unwrap();
-    let b = state
-        .jobs
-        .coalesce_watch_scan(lib, vec!["/elsewhere".into()])
+/// Another run takes `lib`'s key in one atomic `SET … PX`, as if the
+/// previous holder's key had lapsed and a scoped, non-forced watcher scan
+/// had claimed it. One command, so a running lease's refresh can never find
+/// the key free in between. Returns the new holder's run id.
+async fn other_run_takes_over(app: &TestApp, lib: Uuid) -> Uuid {
+    let mut conn = app.state().jobs.redis.clone();
+    let b = Uuid::now_v7();
+    let _: () = redis::cmd("SET")
+        .arg(in_flight_key(lib))
+        .arg(b.to_string())
+        .arg("PX")
+        .arg(60_000)
+        .query_async(&mut conn)
         .await
         .unwrap();
-    assert!(!b.was_coalesced());
-    b.scan_id()
+    b
 }
 
 fn forced_full_job(lib: Uuid, run: Uuid) -> server::jobs::scan::Job {
@@ -421,7 +424,7 @@ async fn superseded_before_start_hands_on_a_forced_full_request() {
     let state = app.state();
 
     let a = state.jobs.coalesce_scan(lib, true).await.unwrap().scan_id();
-    let b = scoped_holder_takes_over(&app, lib).await;
+    let b = other_run_takes_over(&app, lib).await;
     assert_eq!(follow_up(&app, lib).await, (false, false, false));
 
     server::jobs::scan::run(&state, forced_full_job(lib, a), SHORT).await;
@@ -456,35 +459,37 @@ async fn superseded_mid_scan_stops_before_reconcile_and_hands_on_its_request() {
         .await
         .unwrap();
     std::fs::remove_dir_all(&gone).unwrap();
-    // Enough new folders that phase 3 outlasts a lease refresh.
-    for i in 0..120u32 {
+    for i in 0..8u32 {
         let folder = tmp.path().join(format!("Bulk {i:03} (2024)"));
         std::fs::create_dir_all(&folder).unwrap();
         write_minimal_cbz(&folder.join(format!("Bulk {i:03} 001.cbz")), 1000 + i);
     }
     let baseline = issue_count(&app, lib).await;
 
+    // Hold phase 3 at its first folders so the takeover certainly lands
+    // mid-scan.
+    let gate = server::library::scanner::folder_gate::install(lib);
     let a = state.jobs.coalesce_scan(lib, true).await.unwrap().scan_id();
     let scan = tokio::spawn({
         let state = state.clone();
         async move { server::jobs::scan::run(&state, forced_full_job(lib, a), SHORT).await }
     });
-    // Wait until phase 3 has written its first new issue, then let a
-    // scoped watcher scan take the library.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    while issue_count(&app, lib).await <= baseline {
+    while gate.entered() == 0 {
         assert!(
             tokio::time::Instant::now() < deadline,
             "phase 3 never started"
         );
-        assert!(
-            !scan.is_finished(),
-            "the scan finished before phase 3 was seen"
-        );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let b = scoped_holder_takes_over(&app, lib).await;
+    let b = other_run_takes_over(&app, lib).await;
+    // Detection takes at most one lease refresh (100 ms here) plus one
+    // phase-3 heartbeat (750 ms); wait well past both before letting the
+    // held folders go.
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    gate.open();
     scan.await.unwrap();
+    server::library::scanner::folder_gate::remove(lib);
 
     let row = run_row(&app, a).await;
     assert_eq!(row.state, ScanRunState::Cancelled);
@@ -492,9 +497,10 @@ async fn superseded_mid_scan_stops_before_reconcile_and_hands_on_its_request() {
         row.error.as_deref(),
         Some(server::jobs::scan::SUPERSEDED_REASON)
     );
-    assert!(
-        issue_count(&app, lib).await < baseline + 120,
-        "the superseded scan stopped starting folders"
+    assert_eq!(
+        issue_count(&app, lib).await,
+        baseline,
+        "no held folder ran after the stop"
     );
     let gone_series = entity::series::Entity::find()
         .filter(entity::series::Column::LibraryId.eq(lib))
@@ -529,7 +535,7 @@ async fn superseded_redelivered_job_closes_its_running_row() {
     let mut am: entity::scan_run::ActiveModel = run_row(&app, a).await.into();
     am.state = Set(ScanRunState::Running);
     am.update(&state.db).await.unwrap();
-    let b = scoped_holder_takes_over(&app, lib).await;
+    let b = other_run_takes_over(&app, lib).await;
     let mut events = state.events.subscribe();
 
     server::jobs::scan::run(
@@ -648,6 +654,100 @@ async fn register_admin(app: &TestApp) -> (String, String) {
         extract("__Host-comic_session="),
         extract("__Host-comic_csrf="),
     )
+}
+
+async fn post_cancel(app: &TestApp, auth: &(String, String), slug: &str, run: Uuid) -> StatusCode {
+    let (session, csrf) = auth;
+    app.router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/libraries/{slug}/scan-runs/{run}/cancel"))
+                .header(
+                    header::COOKIE,
+                    format!("__Host-comic_session={session}; __Host-comic_csrf={csrf}"),
+                )
+                .header("X-CSRF-Token", csrf)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
+async fn library_slug(app: &TestApp, lib: Uuid) -> String {
+    entity::library::Entity::find_by_id(lib)
+        .one(&app.state().db)
+        .await
+        .unwrap()
+        .unwrap()
+        .slug
+}
+
+/// The job got there first: the run is `running` when the cancel arrives.
+/// The cancel flips it as a running scan and leaves the claim with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_after_the_job_started_keeps_the_claim() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = library_with_one_issue(&app, tmp.path()).await;
+    let state = app.state();
+    let slug = library_slug(&app, lib).await;
+
+    let a = state
+        .jobs
+        .coalesce_scan(lib, false)
+        .await
+        .unwrap()
+        .scan_id();
+    let mut am: entity::scan_run::ActiveModel = run_row(&app, a).await.into();
+    am.state = Set(ScanRunState::Running);
+    am.update(&state.db).await.unwrap();
+
+    assert_eq!(post_cancel(&app, &auth, &slug, a).await, StatusCode::OK);
+    assert_eq!(run_row(&app, a).await.state, ScanRunState::Cancelled);
+    assert_eq!(
+        state.jobs.scan_in_flight(lib).await.unwrap(),
+        Some(a),
+        "a running scan keeps its claim until it stops"
+    );
+}
+
+/// The cancel got there first: the job's start must not turn the
+/// cancelled run back into `running`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancelled_run_is_not_reopened_by_its_scan() {
+    let app = TestApp::spawn().await;
+    let auth = register_admin(&app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = library_with_one_issue(&app, tmp.path()).await;
+    let state = app.state();
+    let slug = library_slug(&app, lib).await;
+
+    let a = state
+        .jobs
+        .coalesce_scan(lib, false)
+        .await
+        .unwrap()
+        .scan_id();
+    assert_eq!(post_cancel(&app, &auth, &slug, a).await, StatusCode::OK);
+    let cancelled = run_row(&app, a).await;
+    assert_eq!(cancelled.state, ScanRunState::Cancelled);
+
+    // Drive the scanner's start for this run directly, past the job's own
+    // "already closed" check.
+    let _ = server::library::scanner::scan_library_with_run_id(&state, lib, false, Some(a)).await;
+    let row = run_row(&app, a).await;
+    assert_eq!(row.state, ScanRunState::Cancelled);
+    assert_eq!(row.error.as_deref(), Some("Cancelled by admin"));
+    assert_eq!(
+        row.started_at, cancelled.started_at,
+        "never reopened as running"
+    );
+    assert_eq!(issue_count(&app, lib).await, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

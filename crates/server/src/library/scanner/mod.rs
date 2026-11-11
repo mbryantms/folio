@@ -738,11 +738,26 @@ async fn open_scan_run(
         // it so every event/emission under the scan can carry the link.
         let batch_id = existing.batch_id;
         if existing.state == ScanRunState::Queued {
-            let mut am: ScanRunAM = existing.into();
-            am.state = Set(ScanRunState::Running);
-            am.started_at = Set(now);
-            am.error = Set(None);
-            am.update(&state.db).await?;
+            // Conditional on still being `queued`: a cancel that landed
+            // after the read above keeps the row `cancelled`, and the scan
+            // then stops at its cancel check.
+            ScanRunEntity::update_many()
+                .col_expr(
+                    entity::scan_run::Column::State,
+                    sea_orm::sea_query::Expr::value(ScanRunState::Running),
+                )
+                .col_expr(
+                    entity::scan_run::Column::StartedAt,
+                    sea_orm::sea_query::Expr::value(now),
+                )
+                .col_expr(
+                    entity::scan_run::Column::Error,
+                    sea_orm::sea_query::Expr::value(Option::<String>::None),
+                )
+                .filter(entity::scan_run::Column::Id.eq(scan_id))
+                .filter(entity::scan_run::Column::State.eq(ScanRunState::Queued))
+                .exec(&state.db)
+                .await?;
         }
         state.scan_progress.register(scan_id, batch_id);
         return Ok((scan_id, batch_id));
@@ -765,6 +780,79 @@ async fn open_scan_run(
     am.insert(&state.db).await?;
     state.scan_progress.register(scan_id, None);
     Ok((scan_id, None))
+}
+
+/// Test seam: hold a library's phase-3 folders before they start, so a test
+/// can act while a scan is certainly mid-way. Inert unless a test installed
+/// a gate (one relaxed atomic load per folder).
+#[doc(hidden)]
+pub mod folder_gate {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use uuid::Uuid;
+
+    static ANY: AtomicBool = AtomicBool::new(false);
+    static GATES: OnceLock<Mutex<HashMap<Uuid, Arc<FolderGate>>>> = OnceLock::new();
+
+    pub struct FolderGate {
+        entered: AtomicU64,
+        open: tokio::sync::watch::Sender<bool>,
+    }
+
+    impl FolderGate {
+        /// Folders that have reached the gate.
+        pub fn entered(&self) -> u64 {
+            self.entered.load(Ordering::Relaxed)
+        }
+        /// Let every held and later folder through.
+        pub fn open(&self) {
+            self.open.send_replace(true);
+        }
+    }
+
+    fn gates() -> &'static Mutex<HashMap<Uuid, Arc<FolderGate>>> {
+        GATES.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Hold `library_id`'s phase-3 folders until the gate is opened.
+    pub fn install(library_id: Uuid) -> Arc<FolderGate> {
+        let gate = Arc::new(FolderGate {
+            entered: AtomicU64::new(0),
+            open: tokio::sync::watch::channel(false).0,
+        });
+        gates()
+            .lock()
+            .expect("folder gate mutex")
+            .insert(library_id, gate.clone());
+        ANY.store(true, Ordering::Relaxed);
+        gate
+    }
+
+    /// Drop `library_id`'s gate.
+    pub fn remove(library_id: Uuid) {
+        gates()
+            .lock()
+            .expect("folder gate mutex")
+            .remove(&library_id);
+    }
+
+    pub(super) async fn pass(library_id: Uuid) {
+        if !ANY.load(Ordering::Relaxed) {
+            return;
+        }
+        let gate = gates()
+            .lock()
+            .expect("folder gate mutex")
+            .get(&library_id)
+            .cloned();
+        let Some(gate) = gate else {
+            return;
+        };
+        gate.entered.fetch_add(1, Ordering::Relaxed);
+        let mut rx = gate.open.subscribe();
+        let _ = rx.wait_for(|open| *open).await;
+    }
 }
 
 /// Why a run stopped early, for [`finalize_run`].
@@ -2382,6 +2470,7 @@ async fn run_phases(
                 // `process_planned_folder`.
                 let folder_path_str = planned.path.to_string_lossy().into_owned();
                 let work_units = 1 + planned.archives.len() as u64;
+                folder_gate::pass(lib.id).await;
                 // Cooperative cancel (D8): folders already in flight finish
                 // normally; folders not yet started no-op the moment the
                 // cancel flag is set, so the buffered stream drains fast
@@ -2604,9 +2693,10 @@ async fn run_phases(
         stats,
     )
     .await;
-    // The reconcile checks the lease between its units of work, so a run
-    // that learns mid-reconcile that another run holds the library stops
-    // removing rows at once (R-03).
+    // The reconcile checks the lease at entry, between series of its
+    // folder-missing sweep and before its final series restore (R-03); the
+    // work for the series this run scanned always completes once started.
+    let lease_stop = || lease_lost.load(Ordering::Relaxed);
     match crate::library::reconcile::reconcile_library_seen_until(
         &state.db,
         lib.id,
@@ -2618,7 +2708,7 @@ async fn run_phases(
         &unreadable_folders,
         stats,
         events,
-        Some(lease_lost),
+        Some(&lease_stop),
     )
     .await
     {

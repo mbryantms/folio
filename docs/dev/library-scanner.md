@@ -133,10 +133,17 @@ Every change to it is a single atomic command or Lua script:
   back by its run.
 - **Lost key.** If a refresh finds another run's id on the key (the key
   lapsed and another trigger claimed it), the lease flags itself lost. The
-  scanner checks that flag at every phase boundary, on its phase-3
-  heartbeat and between the reconcile's units of work, and stops through
+  scanner checks that flag at every phase boundary and on its phase-3
+  heartbeat, and the reconcile checks it at entry, between series of its
+  folder-missing sweep and before its final restore of series that hold
+  live issues. The removals, restores and empty-series marks for the
+  series the run itself scanned always finish together once started: a
+  later non-forced scan skips an unchanged folder, so a series emptied
+  there and left unmarked would stay live. A stop in the folder-missing
+  sweep still flags the series already handled, and every manifest event
+  is recorded only after its rows were written. The scan stops through
   the cooperative-cancel path: no new folders start, the reconcile is
-  skipped or stops removing rows, and the run closes as `cancelled` with
+  skipped or stops early, and the run closes as `cancelled` with
   the error "Superseded: another scan of this library is running" and a
   terminal `ScanEvent::Failed`. A job that finds the key held by another
   run before it starts scans nothing and closes its run the same way,
@@ -147,13 +154,21 @@ Every change to it is a single atomic command or Lua script:
   flag and scope) to the coalescing script once: it becomes the holder's
   queued follow-up, force OR-ed in and a full request widening a scoped
   one, or a new run when the key has become free. The follow-up is a new
-  run with a new id, so this cannot repeat for the same run.
-- **Cancel while queued.** Cancelling a `queued` library run releases its
-  claim through `release_scan` (compare-and-delete, or hand-over to a
-  follow-up recorded meanwhile), so the library can be scanned again at
-  once; the cancelled job does nothing when a worker picks it up.
-  Cancelling a `running` scan leaves the key to the scan, which releases
-  it when it stops.
+  run with a new id, so this cannot repeat for the same run. A new run
+  joins the superseded run's scan-all batch; a request folded into
+  another holder's follow-up runs unbatched, and the batch counts the
+  superseded run as cancelled.
+- **Cancel while queued.** The cancel endpoint flips a `queued` run with
+  one conditional update (`… WHERE state = 'queued'`) and, only when that
+  changed the row, releases the library run's claim through
+  `release_scan` (compare-and-delete, or hand-over to a follow-up recorded
+  meanwhile), so the library can be scanned again at once; the cancelled
+  job does nothing when a worker picks it up. If the job started first,
+  the update changes nothing and the run is cancelled as a running scan,
+  which keeps the key until it stops and releases it. The job side mirrors
+  this: `open_scan_run` moves a run to `running` only `WHERE state =
+  'queued'`, so a cancel that landed first stays `cancelled` and the scan
+  stops at its cancel check.
 - **Release.** `release_scan(library, run id)` is compare-and-delete in
   one script; when a follow-up was queued, the same script hands the key
   to a new run id and the follow-up is enqueued. A run that no longer

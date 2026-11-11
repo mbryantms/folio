@@ -295,13 +295,17 @@ impl JobRuntime {
     /// with force OR-ed and a full request widening a scoped one, or a new
     /// run when the key has become free. The superseded run itself is
     /// already closed; its id is never reused, so this happens once per run.
+    /// A new run joins the superseded run's scan-all `batch_id`; a request
+    /// folded into another holder's follow-up runs unbatched, and the batch
+    /// counts the superseded run as cancelled.
     pub async fn requeue_superseded_request(
         &self,
         library_id: Uuid,
         force: bool,
         scope: Option<Vec<String>>,
+        batch_id: Option<Uuid>,
     ) -> anyhow::Result<CoalesceOutcome> {
-        self.coalesce_scan_inner(library_id, force, None, scope)
+        self.coalesce_scan_inner(library_id, force, batch_id, scope)
             .await
     }
 
