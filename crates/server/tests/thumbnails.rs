@@ -744,6 +744,8 @@ async fn thumb_for_a_missing_or_broken_archive_answers_410() {
     let dir = tempfile::tempdir().unwrap();
     let cbz = dir.path().join("gone.cbz");
     build_cbz(&cbz, 3);
+    // Other content stays: an empty root reads as an unmounted library.
+    std::fs::write(dir.path().join("other.txt"), b"x").unwrap();
     let id = seed_issue(&app, &cbz).await;
 
     std::fs::remove_file(&cbz).unwrap();

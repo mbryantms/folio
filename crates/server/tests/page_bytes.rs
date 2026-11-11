@@ -737,6 +737,36 @@ async fn get_variant(
         .unwrap()
 }
 
+/// The one cached render of `(page, tier)` under `content_hash`
+/// (`{page}-w{tier}-{file version}.webp`; the version digest is opaque to
+/// tests, so find it by prefix).
+fn variant_cache_file(
+    app: &TestApp,
+    content_hash: &str,
+    page: usize,
+    tier: u32,
+) -> std::path::PathBuf {
+    let dir = app
+        .state()
+        .cfg()
+        .data_path
+        .join("cache")
+        .join("pages")
+        .join(content_hash);
+    let prefix = format!("{page}-w{tier}-");
+    let found: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("no variant dir {dir:?}: {e}"))
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".webp"))
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "one cached render: {found:?}");
+    found.into_iter().next().unwrap()
+}
+
 #[tokio::test]
 async fn variant_renders_webp_then_serves_from_cache() {
     let app = TestApp::spawn().await;
@@ -792,13 +822,7 @@ async fn variant_renders_webp_then_serves_from_cache() {
         .await
         .unwrap()
         .unwrap();
-    let cpath = server::library::page_variants::cache_path(
-        &app.state().cfg().data_path,
-        &row.content_hash,
-        0,
-        480,
-    );
-    assert!(cpath.exists(), "variant cached at {cpath:?}");
+    let cpath = variant_cache_file(&app, &row.content_hash, 0, 480);
 
     // Hit: overwrite the cache file with a different (valid) webp — the
     // response must serve those bytes verbatim, proving the disk hit.
@@ -1073,6 +1097,9 @@ async fn a_missing_file_answers_410_not_cacheable_without_a_path() {
     let dir = tempfile::tempdir().unwrap();
     let cbz = dir.path().join("gone.cbz");
     build_cbz(&cbz, &page_payload());
+    // The library keeps other content: only this file is gone (an empty
+    // root reads as an unmounted library, 503).
+    std::fs::write(dir.path().join("other.txt"), b"x").unwrap();
     let size = std::fs::metadata(&cbz).unwrap().len() as i64;
     let id = seed_issue(&app, &cbz, size).await;
     std::fs::remove_file(&cbz).unwrap();
@@ -1116,16 +1143,16 @@ async fn a_soft_removed_issue_with_its_file_still_serves() {
 }
 
 #[tokio::test]
-async fn a_row_marked_malformed_answers_410_without_reading_the_file() {
+async fn an_encrypted_row_answers_410_without_reading_the_file() {
     let app = TestApp::spawn().await;
     let session = register_admin(&app).await;
     let dir = tempfile::tempdir().unwrap();
-    let cbz = dir.path().join("malformed.cbz");
+    let cbz = dir.path().join("encrypted.cbz");
     build_cbz(&cbz, &page_payload());
     let size = std::fs::metadata(&cbz).unwrap().len() as i64;
     let id = seed_issue(&app, &cbz, size).await;
     set_issue(&app, &id, |am| {
-        am.state = Set(entity::issue::IssueState::Malformed)
+        am.state = Set(entity::issue::IssueState::Encrypted)
     })
     .await;
 

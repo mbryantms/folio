@@ -736,6 +736,8 @@ async fn missing_file_returns_410() {
     let dir = tempfile::tempdir().unwrap();
     let cbz = dir.path().join("gone.cbz");
     build_cbz(&cbz, &page_payload());
+    // Other content stays: an empty root reads as an unmounted library.
+    std::fs::write(dir.path().join("other.txt"), b"x").unwrap();
     let (_lib, issue_id) = seed_issue(&app, &cbz).await;
     use entity::series::Column as SCol;
     use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};

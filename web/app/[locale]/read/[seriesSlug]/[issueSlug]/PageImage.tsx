@@ -33,24 +33,33 @@ export function retryTopPx(
   return (middle - box.top) / (scale > 0 ? scale : 1);
 }
 
+/** A page failure no retry can fix (see `finalPageFailure`). */
+export type FinalPageFailure = "gone" | "needs_conversion";
+
 /**
- * Whether a page that failed to load is gone for good: the server answers
- * 410 when the issue's file is missing or no longer a readable archive
- * (`crates/server/src/api/page_source.rs`), and retrying cannot help until
- * the file is replaced. An `<img>` error carries no status, so this asks
- * once with a HEAD request. Anything else (a network failure, a 5xx, a
- * lapsed session) is not "gone" and keeps the retry.
+ * Whether a page that failed to load failed for good
+ * (`crates/server/src/api/page_source.rs`): 410 when the issue's file is
+ * missing or no longer a readable archive, 409 when it is a CBR / CB7 the
+ * server must convert to CBZ before it can show pages. Retrying cannot
+ * help until the file is replaced or converted. An `<img>` error carries
+ * no status, so this asks once with a HEAD request. Anything else (a
+ * network failure, a 5xx such as an offline library, a lapsed session) is
+ * not final and keeps the retry.
  */
-export async function pageIsGone(url: string): Promise<boolean> {
+export async function finalPageFailure(
+  url: string,
+): Promise<FinalPageFailure | null> {
   try {
     const res = await fetch(url, {
       method: "HEAD",
       credentials: "same-origin",
       cache: "no-store",
     });
-    return res.status === 410;
+    if (res.status === 410) return "gone";
+    if (res.status === 409) return "needs_conversion";
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -127,10 +136,11 @@ export function PageImage({
   // Load lifecycle (audit C3): loading → loaded | error. A failed load
   // auto-retries once silently (transient blips), then surfaces a
   // tap-to-retry state; a slow load shows a "still loading…" hint.
-  // "gone": the failure is final (410, see `pageIsGone`) — no retry.
-  const [status, setStatus] = useState<"loading" | "loaded" | "error" | "gone">(
-    "loading",
-  );
+  // "gone" / "needs_conversion": the failure is final (410 / 409, see
+  // `finalPageFailure`) — no retry.
+  const [status, setStatus] = useState<
+    "loading" | "loaded" | "error" | FinalPageFailure
+  >("loading");
   const [retry, setRetry] = useState(0);
   const [slow, setSlow] = useState(false);
   // Intrinsic aspect (w/h) once decoded — the fallback for `--page-ar`
@@ -156,8 +166,8 @@ export function PageImage({
       return;
     }
     setStatus("error");
-    void pageIsGone(effectiveSrc).then((gone) => {
-      if (gone) setStatus((s) => (s === "error" ? "gone" : s));
+    void finalPageFailure(effectiveSrc).then((final) => {
+      if (final) setStatus((s) => (s === "error" ? final : s));
     });
   };
 
@@ -282,9 +292,10 @@ export function PageImage({
           <span>Couldn&apos;t load this page. Tap to retry.</span>
         </button>
       ) : null}
-      {status === "gone" ? (
-        // Final: the issue's file is missing or damaged, so a retry would
-        // fail the same way. Same placement and attribute as the retry.
+      {status === "gone" || status === "needs_conversion" ? (
+        // Final: the issue's file is missing or damaged, or a format that
+        // must be converted first, so a retry would fail the same way.
+        // Same placement and attribute as the retry.
         <span
           role="status"
           data-page-load-error=""
@@ -292,8 +303,9 @@ export function PageImage({
         >
           <FileX aria-hidden="true" className="size-6" />
           <span>
-            This page is no longer available. The issue&apos;s file is missing
-            or damaged.
+            {status === "gone"
+              ? "This page is no longer available. The issue\u2019s file is missing or damaged."
+              : "This issue\u2019s file format can\u2019t be shown as pages until it is converted to CBZ."}
           </span>
         </span>
       ) : null}

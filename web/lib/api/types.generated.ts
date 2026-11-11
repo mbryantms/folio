@@ -23985,6 +23985,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
             410: {
                 headers: {
@@ -23999,7 +24006,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description OCR busy, or the file could not be read; carries Retry-After */
+            /** @description OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -24037,6 +24044,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description the issue's file is a CBR / CB7 that must be converted to CBZ first (`archive_needs_conversion`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description the issue's file is missing (`archive_missing`) or not a readable archive (`archive_unreadable`) */
             410: {
                 headers: {
@@ -24058,7 +24072,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description OCR busy, or the file could not be read; carries Retry-After */
+            /** @description OCR busy (`service_unavailable`), the library's folder is offline (`library_offline`), or the file could not be read; carries Retry-After */
             503: {
                 headers: {
                     [name: string]: unknown;

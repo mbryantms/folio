@@ -182,6 +182,11 @@ pub enum ArchiveError {
     Io(String),
     #[error("malformed archive: {0}")]
     Malformed(String),
+    /// The archive may be fine, but the caller has no reader for its
+    /// format for this use (the server's page cache reads only CBZ and
+    /// CBT; a CBR or CB7 must be converted first).
+    #[error("no reader for this archive format: {0}")]
+    NoPageReader(String),
 }
 
 impl ArchiveError {

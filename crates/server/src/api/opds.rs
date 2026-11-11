@@ -1578,12 +1578,15 @@ pub(crate) async fn download(
     // Never through a symbolic link, and only a regular file below the
     // library root; the response streams from this handle. A failed library
     // lookup is a server error, not not-found; a missing file is 410
-    // `archive_missing` (`api::page_source`), a refused path 404.
+    // `archive_missing`, or 503 `library_offline` when the library root
+    // itself is not there (`api::page_source`); a refused path 404.
     let f = match crate::library::no_follow::open_issue_archive(&app, &row).await {
         Ok(f) => f,
         Err(crate::library::no_follow::Refusal::Lookup(e)) => return server_error(e),
         Err(refusal) => {
-            return match super::page_source::PageUnavailable::from_refusal(&refusal) {
+            return match super::page_source::PageUnavailable::for_refusal(&app, &row, &refusal)
+                .await
+            {
                 super::page_source::PageUnavailable::NotFound => not_found(),
                 other => other.response(),
             };

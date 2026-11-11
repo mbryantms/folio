@@ -122,6 +122,21 @@ describe("PageImage for a page that is gone", () => {
     );
   });
 
+  it("a 409 says the file must be converted, without a retry", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 409 }),
+    );
+    const { img } = page();
+    fireEvent.error(img());
+    await waitFor(() => expect(img().getAttribute("src")).toBe(`${SRC}?r=1`));
+    fireEvent.error(img());
+    await waitFor(() =>
+      expect(screen.queryByText(/converted to CBZ/)).not.toBeNull(),
+    );
+    expect(retry()).toBeNull();
+    expect(gone()).toBeNull();
+  });
+
   it("any other failure keeps Tap to retry", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, { status: 503 }),

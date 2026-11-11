@@ -563,6 +563,27 @@ pub async fn library_root(
     state.library_roots.get(&state.db, library_id).await
 }
 
+/// Whether `library_id`'s root is unavailable: it cannot be opened as a
+/// folder, or it is empty. Asked only after an issue's file was found
+/// missing, to tell "the file is gone" (410) from "the share is not
+/// mounted" (503): an unmounted mount point or bind-mount source is either
+/// absent or an empty folder, while a library whose file is really gone
+/// still has its other folders. A library that no longer exists, or whose
+/// root could not be looked up, counts as available (the missing-file
+/// answer stands). Blocking work runs off the runtime.
+pub async fn library_root_offline(state: &AppState, library_id: Uuid) -> bool {
+    let Ok(Some(root)) = state.library_roots.get(&state.db, library_id).await else {
+        return false;
+    };
+    let configured = root.configured.clone();
+    tokio::task::spawn_blocking(move || match std::fs::read_dir(&configured) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(_) => true,
+    })
+    .await
+    .unwrap_or(false)
+}
+
 /// The library root of a library row the caller already loaded (writers,
 /// background jobs). No database query.
 pub async fn library_root_of(state: &AppState, lib: &entity::library::Model) -> Arc<LibraryRoot> {

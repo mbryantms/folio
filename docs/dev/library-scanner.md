@@ -269,15 +269,20 @@ five phases. Series and issue paths reuse phases 3–5 in a narrowed form.
     404 `not_found` for an unknown or hidden issue or a refused path; 410
     `archive_missing` when the row exists but its file is gone (a
     soft-removed row included; while its file is there it still serves);
-    410 `archive_unreadable` when the scanner marked the row `malformed` /
-    `encrypted` (refused right after the lookup, no I/O) or the file no
-    longer opens as an archive; 503 `service_unavailable` with
-    `Retry-After` for an I/O error. These answers are `no-store` and name
-    no path. The OPDS download uses the same 410 for a missing file. Page
+    410 `archive_unreadable` when the scanner marked the row `encrypted`
+    (refused right after the lookup, no I/O) or the file no longer opens
+    as an archive (a `malformed` row goes through the real open: the
+    scanner also uses that state for a bad ComicInfo.xml on an archive
+    whose pages are fine); 409 `archive_needs_conversion` for a CBR / CB7
+    the page reader cannot read until it is converted; 503
+    `library_offline` (`Retry-After: 30`) when the file is missing and the
+    library root itself cannot be opened or is empty (an unmounted share);
+    503 `service_unavailable` with `Retry-After` for an I/O error. These
+    answers, and the routes' 404s and 416s, are `no-store` and name no
+    path. The OPDS download uses the same missing-file answers. Page
     ETags fold in a digest of the open file's stamp, so they change the
     moment the file does, before a rescan updates `content_hash`; width
-    variants are cached on disk under `content_hash` and keep serving the
-    previous render until that rescan.
+    variants carry the same digest in their ETag and disk-cache key.
   - **Issue rescans** ("Scan issue", and the per-issue rescan writeback
     queues) check the stored path the same way before ingesting: a link
     is logged and nothing is ingested; the row is left for the next

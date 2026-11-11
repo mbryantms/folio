@@ -39,7 +39,8 @@
 //! ## Failed opens
 //!
 //! A file that does not open as an archive (malformed, truncated, a
-//! format with no page reader) is remembered for [`FAILED_OPEN_TTL`],
+//! format with no page reader) is remembered for [`FAILED_OPEN_TTL`]
+//! (I/O errors are not: they say nothing about the file and are retried),
 //! keyed on the issue and the file's stamp, in a bounded map
 //! ([`FAILED_OPEN_CAPACITY`] entries). Repeat requests inside that window
 //! get the same error without reading the file again (audit S-23: a
@@ -120,9 +121,9 @@ const OPEN_FDS: &str = "folio_zip_lru_open_fds";
 /// the byte-serving handlers need, so they never branch on format.
 ///
 /// Formats without a random-access reader (`.cbr`, `.cb7`) are not
-/// cached here: [`CachedReader::open`] returns [`ArchiveError::Malformed`]
-/// for them, which the handlers map to `archive_unreadable` exactly as
-/// before. A library that opts into `auto_convert_cbr_on_scan` /
+/// cached here: [`CachedReader::open`] returns
+/// [`ArchiveError::NoPageReader`] for them, which the handlers answer as
+/// 409 `archive_needs_conversion` (`api::page_source`). A library that opts into `auto_convert_cbr_on_scan` /
 /// `auto_convert_cb7_on_scan` gets its CBRs / CB7s rewritten to CBZ at scan
 /// time (`scanner::cbr_convert`).
 pub enum CachedReader {
@@ -149,8 +150,8 @@ impl CachedReader {
         match format.as_str() {
             "cbz" => Cbz::open_file(src, limits).map(Self::Cbz),
             "cbt" => Cbt::open_file(src, limits).map(Self::Cbt),
-            other => Err(ArchiveError::Malformed(format!(
-                "no page reader for archive format: {other:?} (extension {ext:?})"
+            other => Err(ArchiveError::NoPageReader(format!(
+                "{other:?} (extension {ext:?})"
             ))),
         }
     }
@@ -465,6 +466,10 @@ impl ZipLru {
         .and_then(|r| r);
         let entry = match entry {
             Ok(entry) => entry,
+            // Only a verdict about the file is remembered. An I/O error
+            // (a network share hiccup, EIO, a failed blocking task) says
+            // nothing about the bytes and is retried on the next request.
+            Err(error @ ArchiveError::Io(_)) => return Err(error),
             Err(error) => {
                 self.failures.lock().unwrap_or_else(|p| p.into_inner()).put(
                     issue_id.to_owned(),
@@ -662,6 +667,22 @@ mod tests {
         assert_eq!(reader.lock().unwrap().pages().len(), 2);
         assert_eq!(lru.open_attempts(), 2);
         assert_eq!(lru.opens(), 1);
+    }
+
+    /// An I/O error says nothing about the file: it is not remembered, so
+    /// the next request tries again (a share hiccup is not 10 s of 503s).
+    #[tokio::test]
+    async fn an_io_failure_is_not_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory opened as a file: every read fails with EISDIR.
+        let open = || ArchiveFile::new(std::fs::File::open(dir.path()).unwrap(), "x.cbz");
+        let lru = ZipLru::new(8, ArchiveLimits::default());
+        assert!(matches!(
+            lru.get_or_open("x", open()).await,
+            Err(ArchiveError::Io(_))
+        ));
+        assert!(lru.get_or_open("x", open()).await.is_err());
+        assert_eq!(lru.open_attempts(), 2, "each request tried again");
     }
 
     #[tokio::test]

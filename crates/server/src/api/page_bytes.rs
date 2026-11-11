@@ -13,9 +13,13 @@
 //! - When the pages cannot be served the answer follows the one mapping in
 //!   [`super::page_source`]: 404 for an unknown / hidden issue or a refused
 //!   path, 410 `archive_missing` when the issue's file is gone, 410
-//!   `archive_unreadable` when the scanner marked it malformed or encrypted
-//!   or it no longer opens as an archive, 503 with `Retry-After` for an I/O
-//!   error. Never 500 for those, and never cacheable (`no-store`).
+//!   `archive_unreadable` when the scanner marked it encrypted or it no
+//!   longer opens as an archive, 409 `archive_needs_conversion` for an
+//!   unconverted CBR / CB7, 503 with `Retry-After` for an offline library
+//!   or an I/O error. Never 500 for those, and never cacheable
+//!   (`no-store`), nor are the 404s and 416s.
+//! - Width variants (`?w=`) fold the file version into their ETag and
+//!   their disk-cache key (`library::page_variants`).
 //!
 //! The handler uses a synchronous `spawn_blocking` boundary because the
 //! archive readers use blocking file I/O.
@@ -42,7 +46,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::{ReaderStream, SyncIoBridge};
 
 use super::error;
-use super::page_source::{PageUnavailable, no_store, version_tag};
+use super::page_source::{PageUnavailable, issue_not_found, no_store, version_tag};
 use crate::auth::CurrentUser;
 use crate::library::page_variants;
 use crate::library::zip_lru::lock_reader;
@@ -76,12 +80,12 @@ pub async fn serve(
     headers: HeaderMap,
 ) -> Response {
     let Ok(Some(row)) = issue::Entity::find_by_id(id.clone()).one(&app.db).await else {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+        return issue_not_found();
     };
     if !crate::library::access::issue_visible(&app, &user, &row).await {
-        return error(StatusCode::NOT_FOUND, "not_found", "issue not found");
+        return issue_not_found();
     }
-    // A row the scanner could not open has no pages (410 before any I/O).
+    // An encrypted row has no readable pages (410 before any I/O).
     if let Err(why) = PageUnavailable::check_row(&row) {
         return why.response();
     }
@@ -95,7 +99,11 @@ pub async fn serve(
     // (`page_source`).
     let archive_file = match crate::library::no_follow::open_issue_archive(&app, &row).await {
         Ok(f) => f,
-        Err(refusal) => return PageUnavailable::from_refusal(&refusal).response(),
+        Err(refusal) => {
+            return PageUnavailable::for_refusal(&app, &row, &refusal)
+                .await
+                .response();
+        }
     };
     let file = match archive_file.file().try_clone() {
         Ok(dup) => dup,
@@ -115,7 +123,7 @@ pub async fn serve(
     // it carries a per-variant ETag, immutable caching, and no Range
     // support. Everything below stays byte-identical for bare requests.
     if let Some(w) = q.w {
-        return serve_variant(&app, &row, n as usize, w, &headers, archive_file).await;
+        return serve_variant(&app, &row, n as usize, w, &headers, archive_file, &version).await;
     }
 
     let page_index = n as usize;
@@ -409,12 +417,17 @@ async fn serve_variant(
     requested_w: u32,
     headers: &HeaderMap,
     archive_file: archive::ArchiveFile,
+    version: &str,
 ) -> Response {
     let tier = page_variants::clamp_to_tier(requested_w);
     let hash = row.content_hash.as_str();
+    // The file version is in both the ETag and the disk-cache key, so a
+    // file rewritten before its rescan never serves, or stores, a render
+    // of another version (audit R-05; `page_variants` module docs).
     let etag_value = format!(
-        "\"{}-{}-w{}\"",
+        "\"{}-{}-{}-w{}\"",
         &hash[..32.min(hash.len())],
+        version,
         page_index,
         tier
     );
@@ -452,7 +465,7 @@ async fn serve_variant(
 
     // Cache hit: stream the file; bump mtime so the LRU sweep keeps it.
     let data_path = app.cfg().data_path.clone();
-    let cpath = page_variants::cache_path(&data_path, hash, page_index, tier);
+    let cpath = page_variants::cache_path(&data_path, hash, version, page_index, tier);
     if let Ok(meta) = tokio::fs::metadata(&cpath).await
         && meta.is_file()
         && let Ok(file) = tokio::fs::File::open(&cpath).await
@@ -489,11 +502,11 @@ async fn serve_variant(
     let _permit = match app.thumb_inline_semaphore.clone().acquire_owned().await {
         Ok(p) => p,
         Err(_) => {
-            return error(
+            return no_store(error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "unavailable",
                 "variant renderer is shutting down",
-            );
+            ));
         }
     };
     let result =
@@ -704,6 +717,10 @@ fn parse_range(header: &str, total: u64) -> ParsedRange {
 }
 
 fn unsatisfiable(total: u64) -> Response {
+    no_store(unsatisfiable_inner(total))
+}
+
+fn unsatisfiable_inner(total: u64) -> Response {
     let mut hdrs = HeaderMap::new();
     hdrs.insert(
         header::CONTENT_RANGE,

@@ -20,8 +20,8 @@
 //! An issue whose pages cannot be served answers by the shared mapping in
 //! [`super::page_source`]: 410 `archive_missing` / `archive_unreadable`
 //! for a missing file or one that is not (or no longer) a readable
-//! archive, 404 for a refused path, 503 + `Retry-After` for an I/O error;
-//! never cacheable.
+//! archive, 409 for an unconverted CBR / CB7, 404 for a refused path, 503 +
+//! `Retry-After` for an offline library or an I/O error; never cacheable.
 //!
 //! Audit: on the *first* page of an issue (`n == 0`) we record one
 //! `opds.pse.access` row. That single row stands in for "this user
@@ -106,7 +106,7 @@ pub async fn stream(
         .await
     {
         Ok(Some(r)) => r,
-        Ok(None) => return error(StatusCode::NOT_FOUND, "not_found"),
+        Ok(None) => return no_store(error(StatusCode::NOT_FOUND, "not_found")),
         Err(e) => {
             tracing::warn!(error = %e, "pse: issue lookup failed");
             return error(StatusCode::INTERNAL_SERVER_ERROR, "internal");
@@ -119,20 +119,24 @@ pub async fn stream(
     if user_row.role != UserRole::Admin {
         let acl = crate::library::access::for_library_by_id(&app, u, issue_row.library_id).await;
         if !crate::library::access::issue_allowed(&app, &acl, &issue_row).await {
-            return error(StatusCode::NOT_FOUND, "not_found");
+            return no_store(error(StatusCode::NOT_FOUND, "not_found"));
         }
     }
-    // A row the scanner could not open has no pages.
+    // An encrypted row has no readable pages.
     if let Err(why) = PageUnavailable::check_row(&issue_row) {
         return why.response();
     }
     // Regular file below the library root, no symbolic link on the way
     // (`library::no_follow`); otherwise the `page_source` answer (410 for a
-    // missing file, 404 for a refused path, 500 for a failed library
-    // lookup). The pread fast path reads through this handle.
+    // missing file, 503 for an offline library, 404 for a refused path, 500
+    // for a failed library lookup). The pread fast path reads through this handle.
     let archive_file = match crate::library::no_follow::open_issue_archive(&app, &issue_row).await {
         Ok(f) => f,
-        Err(refusal) => return PageUnavailable::from_refusal(&refusal).response(),
+        Err(refusal) => {
+            return PageUnavailable::for_refusal(&app, &issue_row, &refusal)
+                .await
+                .response();
+        }
     };
     let version = archive_file
         .stamp()
@@ -555,7 +559,7 @@ fn unsatisfiable(total: u64) -> Response {
         HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
-    (StatusCode::RANGE_NOT_SATISFIABLE, hdrs, Body::empty()).into_response()
+    no_store((StatusCode::RANGE_NOT_SATISFIABLE, hdrs, Body::empty()).into_response())
 }
 
 /// 2-arg shim for the call sites in this file that reuse the code string

@@ -89,9 +89,21 @@ Error codes (envelope `{ "error": { "code", "message" } }`):
 | 415 | `decode_failed` | Page entry isn't a decodable image |
 | 429 | `rate_limited` | `ocr` bucket (60/min/IP, burst 60) on the POST; `ocr.detect` (15/min/IP, burst 10) on the GET |
 | 410 | `archive_missing` | The issue's file is gone (shared mapping in `api/page_source.rs`) |
-| 410 | `archive_unreadable` | The scanner marked the issue malformed / encrypted, or the file no longer opens as an archive |
+| 409 | `archive_needs_conversion` | The file is a CBR / CB7 the page reader cannot read until it is converted to CBZ |
+| 410 | `archive_unreadable` | The scanner marked the issue encrypted, or the file no longer opens as an archive |
 | 500 | `ocr_failed` | Detector or recognizer threw |
-| 503 | `service_unavailable` | Every OCR permit busy for 10 s (`OCR_MAX_CONCURRENT` = 2, process-wide; cache hits take none), or an I/O error reading the file; carries `Retry-After` |
+| 503 | `service_unavailable` | Every OCR permit busy for 10 s (`OCR_MAX_CONCURRENT` = 2, process-wide), or an I/O error reading the file; carries `Retry-After` |
+| 503 | `library_offline` | The file is missing and the library root itself cannot be opened or is empty (an unmounted share); `Retry-After: 30` |
+
+Order of work in both routes: visibility (a hidden issue is the
+unknown-id 404), the result cache (a hit takes no permit), the cheap
+checks (encrypted row, missing file, offline library, unreadable archive,
+page past the end; none waits for a permit), the models (a first-use
+download is waited on without holding a permit), then an OCR permit. The
+permit is moved into the blocking decode and inference tasks
+(`ocr::pipeline::blocking_with_permit`) and released when they finish, so
+a client that disconnects mid-request cannot free it early and start more
+concurrent work than there are permits.
 
 ## Pipeline stages
 
