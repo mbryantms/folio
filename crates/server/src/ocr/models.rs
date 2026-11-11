@@ -317,8 +317,20 @@ impl Pinner {
             Ok(done) => done.clone().unwrap_or(Ok(())),
             Err(_) => {
                 // The task ended without an answer (it panicked): let
-                // the next request start a fresh one.
-                self.state().entry(repo).or_default().inflight = None;
+                // the next request start a fresh one. Another waiter may
+                // already have done that, so only forget the channel
+                // this call was waiting on.
+                {
+                    let mut map = self.state();
+                    let st = map.entry(repo).or_default();
+                    if st
+                        .inflight
+                        .as_ref()
+                        .is_some_and(|stored| stored.same_channel(&rx))
+                    {
+                        st.inflight = None;
+                    }
+                }
                 Err(first.fail("the download task ended without a result"))
             }
         }
