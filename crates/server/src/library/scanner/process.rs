@@ -1292,11 +1292,20 @@ async fn reread_page_hashes(
     .await
     .ok()
     .flatten();
-    match opened {
+    // Which check refused the read, logged so a mount whose inode numbers
+    // are not stable (every second read refused, anchors keep their page
+    // number) can be told from a file that really changed.
+    let refused = match &opened {
+        None => Some("open"),
+        Some((_, fp, _)) if *fp != (size, mtime) => Some("fingerprint"),
+        Some((_, _, id)) if *id != identity => Some("identity"),
+        Some(_) => None,
+    };
+    match (opened, refused) {
         // Size and mtime alone pass a same-size replacement by rename on a
         // filesystem with coarse timestamps (FAT, SMB: 2 s); the device and
         // inode prepare hashed must match too.
-        Some((f, fp, id)) if fp == (size, mtime) && id == identity => {
+        (Some((f, _, id)), None) => {
             // No archive-work permit: this runs inside the batch
             // transaction (see `hash_all_pages_without_permit`).
             crate::reading::page_hash::hash_all_pages_without_permit(
@@ -1305,9 +1314,10 @@ async fn reread_page_hashes(
             )
             .await
         }
-        _ => {
+        (_, check) => {
             tracing::info!(
                 path = %path.display(),
+                check = check.unwrap_or("open"),
                 "scan: file changed or unreadable since prepare; anchors use the ordinal map",
             );
             None

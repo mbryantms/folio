@@ -135,8 +135,9 @@ impl AmbiguousFolder {
 }
 
 /// Walk the skipped subtree once, counting every recognized archive and
-/// keeping the first [`AMBIGUOUS_PREVIEW_LIMIT`] (by sorted relative
-/// path). A stray archive file previews as itself.
+/// keeping the first [`AMBIGUOUS_PREVIEW_LIMIT`] in [`archive_order`]
+/// (the walk's order, the one ingest uses). A stray archive file previews
+/// as itself.
 fn preview_skipped_archives(path: &Path, ignore: &IgnoreRules) -> (Vec<String>, u32) {
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file()) {
         let name = path
@@ -145,6 +146,7 @@ fn preview_skipped_archives(path: &Path, ignore: &IgnoreRules) -> (Vec<String>, 
             .unwrap_or_default();
         return (vec![name], 1);
     }
+    // Already in `archive_order`: the walk sorts.
     let mut all: Vec<String> = list_archives_with(path, ignore)
         .into_iter()
         .map(|p| {
@@ -155,7 +157,6 @@ fn preview_skipped_archives(path: &Path, ignore: &IgnoreRules) -> (Vec<String>, 
         })
         .collect();
     let total = u32::try_from(all.len()).unwrap_or(u32::MAX);
-    all.sort();
     all.truncate(AMBIGUOUS_PREVIEW_LIMIT);
     (all, total)
 }
@@ -201,9 +202,13 @@ impl ArchiveWalk {
 /// - Names compare in natural order (`Issue 2` before `Issue 10`),
 ///   ignoring case: [`natord::compare_ignore_case`], the comparator the
 ///   CBZ reader sorts pages with.
-/// - Two paths that are still equal (`issue 1.cbz` and `Issue 1.cbz`,
-///   `01` and `1`) fall back to their raw bytes, so the order is total and
-///   no two listings of the same names can disagree.
+/// - A digit run that starts with `0` is compared left-aligned, as a
+///   fraction (natord's rule): `Issue 01` sorts before `Issue 1` and
+///   `Issue 010` before `Issue 9`. A folder that mixes padded and
+///   unpadded numbers is in a stable order, but not a numeric one.
+/// - Two paths that are still equal (`issue 1.cbz` and `Issue 1.cbz`)
+///   fall back to their raw bytes, so the order is total and no two
+///   listings of the same names can disagree.
 ///
 /// Compares names already in memory: no file system call.
 pub fn archive_order(a: &Path, b: &Path) -> std::cmp::Ordering {
@@ -1745,6 +1750,21 @@ mod archive_order_tests {
         for mut v in inputs {
             sort_archives(&mut v);
             assert_eq!(names(&v, root), expected);
+        }
+        // A run that starts with zero compares left-aligned: padded
+        // before unpadded, and `010` before `9`.
+        for (lo, hi) in [
+            ("Issue 01.cbz", "Issue 1.cbz"),
+            ("Issue 010.cbz", "Issue 9.cbz"),
+            ("Issue 001.cbz", "Issue 01.cbz"),
+        ] {
+            let (lo, hi) = (root.join(lo), root.join(hi));
+            assert_eq!(archive_order(&lo, &hi), std::cmp::Ordering::Less, "{lo:?}");
+            assert_eq!(
+                archive_order(&hi, &lo),
+                std::cmp::Ordering::Greater,
+                "{hi:?}"
+            );
         }
         // `issue 1` and `Issue 1` are equal ignoring case; bytes decide
         // (`I` 0x49 < `i` 0x69), the same way in both argument orders.

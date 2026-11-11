@@ -1,6 +1,15 @@
 //! A scan's result does not depend on the order the filesystem lists a
 //! folder (`read_dir` is newest-first on tmpfs, hash order on ext4).
 //!
+//! The two-library comparison below only proves something on a filesystem
+//! whose listing follows creation order (tmpfs lists newest first, so
+//! reversing the creation order reverses the listing). ext4 lists by a
+//! per-filesystem name hash, the same for both libraries, so there the
+//! equality assertions hold with or without the sort, and the start-year
+//! assertion catches a revert only for some hash orders.
+//! `walk_lists_in_archive_order_whatever_the_creation_order` does not
+//! depend on the filesystem: it checks the walk's exact output.
+//!
 //! What this file pins:
 //!  - the same folder content, its files created in opposite orders in
 //!    two libraries, gives the same series, rows, findings and counters,
@@ -192,6 +201,63 @@ async fn run(reverse: bool) -> (Outcome, Outcome, TestApp, tempfile::TempDir, Uu
     let stats = scanner::scan_library(&state, lib).await.unwrap();
     let b = outcome(&app, lib, &root, &stats).await;
     (a, b, app, dir, lib)
+}
+
+/// The walk the scanner builds every folder's list with hands back the
+/// exact expected sequence, for names whose natural order, byte order and
+/// creation order all differ, whatever the filesystem.
+#[test]
+fn walk_lists_in_archive_order_whatever_the_creation_order() {
+    use server::library::ignore::IgnoreRules;
+    use server::library::scanner::enumerate;
+    // Created in this order; byte order would be
+    // `A 3`, `B 10`, `Specials/…`, `a 1`, `b 2`.
+    let created = [
+        "b 2.cbz",
+        "Specials/s 1.cbz",
+        "B 10.cbz",
+        "a 1.cbz",
+        "A 3.cbz",
+    ];
+    // Natural order ignoring case; the subfolder last.
+    let expected = [
+        "a 1.cbz",
+        "A 3.cbz",
+        "b 2.cbz",
+        "B 10.cbz",
+        "Specials/s 1.cbz",
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Mixed");
+    for name in created {
+        let path = folder.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"").unwrap();
+    }
+    let rel = |w: enumerate::ArchiveWalk| -> Vec<String> {
+        w.archives
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&folder)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    };
+    let ignore = IgnoreRules::default();
+    assert_eq!(
+        rel(enumerate::walk_archives_with(&folder, &ignore)),
+        expected
+    );
+    assert_eq!(
+        rel(enumerate::list_archives_changed_since(
+            &folder,
+            &ignore,
+            chrono::DateTime::<chrono::Utc>::MIN_UTC,
+        )),
+        expected
+    );
 }
 
 #[tokio::test]

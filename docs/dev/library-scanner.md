@@ -448,9 +448,18 @@ without per-library configuration.
        issue #1, never a `Specials/` file while the folder has files of
        its own — and the same file on every filesystem. Its cover year is
        still *that issue's* year, which is why the folder year and
-       series.json outrank it. Only a series that does not exist yet is
-       peeked: a known folder, or one `resolve_or_create` finds by
-       `folder_path`, keeps its row, name and slug.
+       series.json outrank it. The peek runs for every folder that
+       `known_series_by_folder` does not know, before `resolve_or_create`,
+       so it also decides where a *renamed* folder lands: its name, year
+       and volume are what step 3 below matches an existing series on
+       (or, failing that, what a new row is made from), and steps 2 and 3
+       write its ComicVine / Metron ids at the ComicInfo tier (they fill
+       or replace file-tier ids; user- and provider-set ids are kept). An
+       existing series row is never renamed, re-dated or re-slugged by
+       the peek. Since the order changed, a renamed folder whose files
+       disagree on series year or volume can re-attach to a different
+       existing row than before (the first file by name decides now,
+       rather than the first one listed).
      - folder leaf: `V<N>` fills the volume when the peek had none;
        a bare `(YYYY)` group (`parsers::filename::folder_year_token`)
        **replaces** the peeked year — the folder is named for the
@@ -484,7 +493,11 @@ without per-library configuration.
      files first, then each subfolder's, names in natural order ignoring
      case (`natord::compare_ignore_case`, the comparator the CBZ reader
      sorts pages with: `Issue 2` before `Issue 10`), raw bytes as the
-     tie-break so the order is total. It compares names already in memory
+     tie-break so the order is total. A digit run that starts with `0` is
+     compared left-aligned (natord's rule), so `Issue 01` sorts before
+     `Issue 1` and `Issue 010` before `Issue 9`: a folder that mixes
+     padded and unpadded numbers gets a stable, but not numeric, order.
+     It compares names already in memory
      (no extra stat). The candidates that miss the fast path are then
      stably reordered so files that already have a row persist before new
      files: a changed file carries its new content hash before any new
@@ -493,7 +506,9 @@ without per-library configuration.
      (as it would be one scan later) and the original keeps its row,
      markers and progress; a new file holding the changed file's *old*
      bytes is its own issue. Two new identical files: the first in
-     `archive_order` gets the row. Folders still run concurrently, so a
+     `archive_order` gets the row, except on a lazy-hash first import
+     (WP-3.2), where both are inserted as pending rows and
+     `jobs::hash_backfill` decides which one is kept. Folders still run concurrently, so a
      copy in *another* folder can meet either side first.
      Build a path → row manifest, then for each archive:
      - `file_fingerprint` (size + mtime) →
