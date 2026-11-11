@@ -500,7 +500,7 @@ feed. Another user's view is a 404 on both protocols.
 Both filter-view detail pages carry the shared `useSelection` +
 `SelectionToolbar` wiring (`web/components/saved-views/FilterViewDetail.tsx`,
 `IssueFilterViewDetail.tsx`; the latter since the 2026-11 audit, N-O4).
-Select sits before the card-size icon in the title row and in the phone
+Select sits before the cover-size icon in the title row and in the phone
 bar's View options sheet (phone-layout rule 11); the bar yields to the
 sticky toolbar while selecting. The series view's actions are
 series-shaped (every selected series expands to its issues server-side:

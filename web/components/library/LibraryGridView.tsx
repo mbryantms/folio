@@ -20,7 +20,7 @@ import {
 } from "@/components/library/BulkMarkReadDialog";
 import { AtoZJumpRail } from "@/components/library/AtoZJumpRail";
 import { AtoZScrubber } from "@/components/library/AtoZScrubber";
-import { CardSizeFields } from "@/components/library/CardSizeOptions";
+import { CoverSizeFields } from "@/components/library/CoverSizeOptions";
 import { FilterSheet } from "@/components/library/FilterSheet";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
@@ -48,7 +48,6 @@ import {
   SeriesCard,
   SeriesCardSkeleton,
 } from "@/components/library/SeriesCard";
-import { useCardSize } from "@/components/library/use-card-size";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/folio/empty-state";
 import {
@@ -67,13 +66,7 @@ import { useSelection } from "@/lib/selection/use-selection";
 import { useCoarsePointerActionsHint } from "@/lib/ui/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 import { useReducedMotion } from "@/lib/visual-effects";
-import { CARD_SIZE_KEYS, cardGridColumns } from "@/lib/library/card-size";
-
-const CARD_SIZE_MIN = 120;
-const CARD_SIZE_MAX = 280;
-const CARD_SIZE_STEP = 20;
-const CARD_SIZE_DEFAULT = 160;
-const CARD_SIZE_STORAGE_KEY = CARD_SIZE_KEYS.library;
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 
 /** Library grid: paginated series listing with metadata-driven
  *  filters in a right-side Sheet drawer. Default sort is alphabetical
@@ -173,13 +166,6 @@ export function LibraryGridView({
   const [saveViewSeed, setSaveViewSeed] = React.useState<
     Partial<FilterBuilderState> | undefined
   >(undefined);
-
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
 
   // Always call both hooks (rules of hooks), but the inactive one
   // sits idle via `enabled: false` so we never fire two fetches per
@@ -337,9 +323,6 @@ export function LibraryGridView({
   // Infinite fetch is driven from inside `VirtualizedCardGrid` (last
   // virtual row nearing the loaded end) — the windowed DOM makes a
   // bottom IntersectionObserver sentinel unreliable.
-  const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
-  };
 
   // Server populates `total` only on the first page (no cursor) so
   // subsequent pages don't pay a `COUNT(*)`. We always read off
@@ -447,15 +430,7 @@ export function LibraryGridView({
         filters={{ count: facetCount, onOpen: () => setFilterOpen(true) }}
         menu={(close) => (
           <>
-            <CardSizeFields
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-              fieldId="phone-card-size"
-            />
+            <CoverSizeFields fieldId="phone-card-size" />
             <div className="grid gap-2">
               {items.length > 0 ? (
                 <PhoneMenuAction
@@ -511,12 +486,6 @@ export function LibraryGridView({
         canSaveView={facetCount > 0}
         onSaveView={handleSaveView}
         onClearFacets={clearFacets}
-        cardSize={cardSize}
-        onCardSize={setCardSize}
-        cardSizeMin={CARD_SIZE_MIN}
-        cardSizeMax={CARD_SIZE_MAX}
-        cardSizeStep={CARD_SIZE_STEP}
-        cardSizeDefault={CARD_SIZE_DEFAULT}
         canSelect={items.length > 0}
         selectMode={selection.selectMode}
         onEnterSelect={() => selection.enter()}
@@ -692,7 +661,7 @@ export function LibraryGridView({
             }
           />
         ) : query.isLoading && !query.data ? (
-          <GridSkeleton mode={mode} style={gridStyle} />
+          <GridSkeleton mode={mode} />
         ) : items.length === 0 ? (
           <GridEmptyState
             mode={mode}
@@ -705,9 +674,7 @@ export function LibraryGridView({
         ) : (
           <div className={isSeriesMode ? "max-sm:pr-2" : undefined}>
             <VirtualizedCardGrid
-              cardSizeKey={CARD_SIZE_STORAGE_KEY}
               items={items}
-              cardSize={cardSize}
               estimateTextHeight={isSeriesMode ? SERIES_TEXT_H : ISSUE_TEXT_H}
               hasNextPage={!!query.hasNextPage && !showingStale}
               isFetchingNextPage={query.isFetchingNextPage}
@@ -804,15 +771,9 @@ export function LibraryGridView({
   );
 }
 
-function GridSkeleton({
-  mode,
-  style,
-}: {
-  mode: LibraryGridMode;
-  style: React.CSSProperties;
-}) {
+function GridSkeleton({ mode }: { mode: LibraryGridMode }) {
   return (
-    <ul role="list" className="grid gap-4" style={style}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {Array.from({ length: 12 }).map((_, i) => (
         <li key={i}>
           {mode === "series" ? (

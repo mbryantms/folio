@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
   Circle,
@@ -27,9 +21,9 @@ import {
   BULK_BACKFILL_PROMPT_THRESHOLD,
 } from "@/components/library/BulkMarkReadDialog";
 import {
-  CardSizeFields,
-  CardSizeOptions,
-} from "@/components/library/CardSizeOptions";
+  CoverSizeFields,
+  CoverSizeOptions,
+} from "@/components/library/CoverSizeOptions";
 import { IssueCard, IssueCardSkeleton } from "@/components/library/IssueCard";
 import {
   PhoneControlsBar,
@@ -39,8 +33,6 @@ import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { SelectionToolbar } from "@/components/library/SelectionToolbar";
 import { StickyToolbarRow } from "@/components/library/StickyToolbarRow";
 import { VirtualizedCardGrid } from "@/components/library/VirtualizedCardGrid";
-import { useCardSize } from "@/components/library/use-card-size";
-import { SERIES_CARD_SIZE } from "@/lib/library/series-card-size";
 import { Input } from "@/components/ui/input";
 import { shouldSkipHotkey } from "@/lib/reader/keybinds";
 import {
@@ -73,7 +65,7 @@ import { useSelection } from "@/lib/selection/use-selection";
 import type { IssueSort, SortOrder } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { SpecialsExtrasSection } from "./SpecialsExtrasSection";
-import { cardGridColumns } from "@/lib/library/card-size";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 
 // Bulk dialogs are heavy (metadata form / archive-edit + dnd) and only open
 // from the selection toolbar — lazy so they stay out of the series-page
@@ -113,16 +105,6 @@ const SORT_OPTIONS = (Object.keys(SORT_LABELS) as IssueSort[]).map((value) => ({
   label: SORT_LABELS[value] ?? value,
 }));
 
-/** Card-size bounds + storage key, shared with the Related tab (WP-7.7)
- *  so every cover on the series page follows this panel's slider. */
-const {
-  min: CARD_SIZE_MIN,
-  max: CARD_SIZE_MAX,
-  step: CARD_SIZE_STEP,
-  defaultSize: CARD_SIZE_DEFAULT,
-  storageKey: CARD_SIZE_STORAGE_KEY,
-} = SERIES_CARD_SIZE;
-
 export function IssuesPanel({
   seriesSlug,
   issueCount,
@@ -140,13 +122,6 @@ export function IssuesPanel({
   const [sort, setSort] = useState<IssueSort>("number");
   const [order, setOrder] = useState<SortOrder>("asc");
   const [debouncedQ, setDebouncedQ] = useState(initialQuery.trim());
-
-  const [cardSize, setCardSize] = useCardSize({
-    storageKey: CARD_SIZE_STORAGE_KEY,
-    min: CARD_SIZE_MIN,
-    max: CARD_SIZE_MAX,
-    defaultSize: CARD_SIZE_DEFAULT,
-  });
 
   // Debounce search to avoid hammering the endpoint while the user types.
   useEffect(() => {
@@ -432,13 +407,6 @@ export function IssuesPanel({
     wasSelectModeRef.current = selection.selectMode;
   }, [selection.selectMode]);
 
-  // CSS custom property drives the grid's `minmax`. Falling back to the
-  // default px value keeps the grid sane during initial paint before the
-  // localStorage rehydrate effect runs.
-  const gridStyle = {
-    gridTemplateColumns: cardGridColumns(CARD_SIZE_STORAGE_KEY, cardSize),
-  } as CSSProperties;
-
   // One card renderer for the main grid and every specials section, so
   // select mode / bulk actions cover annuals and one-shots too.
   const renderIssueCard = (iss: (typeof mainRunItems)[number]) => (
@@ -519,15 +487,7 @@ export function IssuesPanel({
         }}
         menu={(close) => (
           <>
-            <CardSizeFields
-              cardSize={cardSize}
-              onCardSize={setCardSize}
-              min={CARD_SIZE_MIN}
-              max={CARD_SIZE_MAX}
-              step={CARD_SIZE_STEP}
-              defaultSize={CARD_SIZE_DEFAULT}
-              fieldId="phone-issue-card-size"
-            />
+            <CoverSizeFields fieldId="phone-issue-card-size" />
             <PhoneMenuAction
               icon={<ListChecks className="size-4" />}
               onClick={() => {
@@ -579,14 +539,7 @@ export function IssuesPanel({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <CardSizeOptions
-          cardSize={cardSize}
-          onCardSize={setCardSize}
-          min={CARD_SIZE_MIN}
-          max={CARD_SIZE_MAX}
-          step={CARD_SIZE_STEP}
-          defaultSize={CARD_SIZE_DEFAULT}
-        />
+        <CoverSizeOptions />
         <SelectModeButton
           ref={selectButtonRef}
           active={selection.selectMode}
@@ -727,7 +680,7 @@ export function IssuesPanel({
       />
 
       {query.isLoading ? (
-        <IssueGridSkeleton style={gridStyle} />
+        <IssueGridSkeleton />
       ) : listFailed ? (
         <RailError message="Couldn't load issues." onRetry={retryList} />
       ) : items.length === 0 ? (
@@ -753,7 +706,6 @@ export function IssuesPanel({
         // only windows (hasNextPage false).
         <VirtualizedCardGrid
           items={mainRunItems}
-          cardSize={cardSize}
           estimateTextHeight={ISSUE_TEXT_H}
           hasNextPage={false}
           isFetchingNextPage={false}
@@ -797,7 +749,6 @@ export function IssuesPanel({
       {!searching && specialItems.length > 0 && (
         <SpecialsExtrasSection
           items={specialItems}
-          gridStyle={gridStyle}
           renderCard={renderIssueCard}
         />
       )}
@@ -805,9 +756,9 @@ export function IssuesPanel({
   );
 }
 
-function IssueGridSkeleton({ style }: { style: CSSProperties }) {
+function IssueGridSkeleton() {
   return (
-    <ul role="list" className="grid gap-4" style={style}>
+    <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
       {Array.from({ length: 12 }).map((_, i) => (
         <li key={i}>
           <IssueCardSkeleton />

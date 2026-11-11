@@ -3,14 +3,15 @@
 /**
  * "Smooth card-size changes" (folio-flair-1.0, standard).
  *
- * When a card-size slider moves, every card on screen glides from its old
+ * When a size slider moves, every card on screen glides from its old
  * size and position to the new one instead of the grid or rail snapping.
- * It works for every surface that sizes cards through `useCardSize`
- * (library grid, home rails, saved views, search, series issues, ...):
+ * It works for every surface sized by the app-wide cover size
+ * (`use-cover-size.ts`: library grid, home rails, saved views, search,
+ * series issues, ...) and for the bookmarks' own slider (`useCardSize`):
  *
- * 1. `captureCardLayout()` runs in the slider's setter, before React
+ * 1. `captureCardLayout()` runs in the size setter, before React
  *    re-renders, and records where each card is.
- * 2. `playCardFlip()` runs from `useCardSize`'s layout effect after the
+ * 2. `playCardFlip()` runs from the size hook's layout effect after the
  *    commit (before paint) and animates each card from old to new.
  *
  * Cards are found by `[data-card]` (the card's outer element) and matched

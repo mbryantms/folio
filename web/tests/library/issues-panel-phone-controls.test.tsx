@@ -2,7 +2,7 @@
 /**
  * Series page `<IssuesPanel>` on phones: one `<PhoneControlsBar>`
  * carries the "Issues" h2 in its leading slot plus search / sort / View
- * options, instead of the desktop input + Sort + card-size + Select
+ * options, instead of the desktop input + Sort + cover-size + Select
  * cluster, which lives in a `StickyToolbarRow` (`max-sm:hidden`). The
  * bar is sticky (phone-layout rule 3: rows with search or sort pin at
  * every width; mid-page it engages once scrolled to) and goes away in
@@ -96,7 +96,7 @@ describe("IssuesPanel phone controls", () => {
     expect(
       screen.getByRole("button", { name: "Sort: Issue number" }),
     ).toBeTruthy();
-    // Scoped: the desktop card-size popover trigger shares the name.
+    // Scoped: the desktop cover-size popover trigger shares the name.
     expect(
       within(bar!).getByRole("button", { name: "View options" }),
     ).toBeTruthy();
@@ -131,8 +131,13 @@ describe("IssuesPanel phone controls", () => {
     const bar = container.querySelector<HTMLElement>("[data-phone-controls]")!;
     fireEvent.click(within(bar).getByRole("button", { name: "View options" }));
     const sheet = screen.getByRole("dialog", { name: "View options" });
-    // Card size lives in the sheet too.
-    expect(within(sheet).getByText("Card size")).toBeTruthy();
+    // The app-wide cover size lives in the sheet too, as the same
+    // covers-per-row slider the desktop popover holds.
+    expect(within(sheet).getByText("Cover size")).toBeTruthy();
+    expect(
+      within(sheet).getByRole("slider", { name: "Cover size" }),
+    ).toBeTruthy();
+    expect(within(sheet).queryByText("Card size")).toBeNull();
     fireEvent.click(within(sheet).getByRole("button", { name: "Select" }));
 
     expect(container.querySelector("[data-phone-controls]")).toBeNull();
