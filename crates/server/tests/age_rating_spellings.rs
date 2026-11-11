@@ -479,3 +479,89 @@ async fn a_saved_view_on_unranked_text_keeps_matching_it_as_written() {
         w.issue_ids(&["Unknown"])
     );
 }
+
+// ───── a rating declared in series.json ─────
+
+fn write_cbz(path: &std::path::Path, marker: u32, series: &str) {
+    use std::io::Write;
+    let f = std::fs::File::create(path).unwrap();
+    let mut zw = zip::ZipWriter::new(f);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for i in 0..2u32 {
+        let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&marker.to_le_bytes());
+        png.extend_from_slice(&i.to_le_bytes());
+        png.extend(std::iter::repeat_n(0u8, 32));
+        zw.start_file(format!("page-{i:03}.png"), opts).unwrap();
+        zw.write_all(&png).unwrap();
+    }
+    zw.start_file("ComicInfo.xml", opts).unwrap();
+    zw.write_all(
+        format!(
+            r#"<?xml version="1.0"?><ComicInfo><Series>{series}</Series><Number>1</Number></ComicInfo>"#
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    zw.finish().unwrap();
+}
+
+/// A reader capped at `Teen` does not see a series whose `series.json`
+/// declares `17+` (Mylar's spelling, read as `Mature 17+`), and still
+/// sees one declaring `12+` (read as `Teen`) and one declaring text the
+/// normaliser cannot read (unrated, shown by default).
+#[tokio::test]
+async fn a_capped_reader_does_not_see_a_series_declared_above_the_cap() {
+    let app = TestApp::spawn().await;
+    let admin = register(&app, "admin@declared.test").await;
+    let reader = register(&app, "reader@declared.test").await;
+    let db = Database::connect(&app.db_url).await.unwrap();
+    let root = app._data_dir.path().join("declared-lib");
+    let declared = [
+        ("Seventeen", "17+"),
+        ("Twelve", "12+"),
+        ("Words", "Sixteen and up"),
+    ];
+    for (n, (name, rating)) in declared.iter().enumerate() {
+        let folder = root.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        write_cbz(&folder.join(format!("{name} 001.cbz")), n as u32 + 1, name);
+        std::fs::write(
+            folder.join("series.json"),
+            format!(r#"{{"metadata": {{"name": "{name}", "age_rating": "{rating}"}}}}"#),
+        )
+        .unwrap();
+    }
+    let lib = seed_library(&db, &root).await;
+    server::library::scanner::scan_library(&app.state(), lib)
+        .await
+        .unwrap();
+
+    let reader_id: Uuid = {
+        let row = db
+            .query_one_raw(Statement::from_string(
+                db.get_database_backend(),
+                "SELECT id FROM users WHERE email = 'reader@declared.test'",
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        row.try_get("", "id").unwrap()
+    };
+    db.execute_raw(Statement::from_sql_and_values(
+        db.get_database_backend(),
+        "INSERT INTO library_user_access \
+           (user_id, library_id, age_rating_max, hide_unrated, created_at, updated_at) \
+         VALUES ($1, $2, 'Teen', false, now(), now())",
+        [Value::from(reader_id), Value::from(lib)],
+    ))
+    .await
+    .unwrap();
+
+    let uri = format!("/api/series?library={lib}");
+    let all = strings(&get(&app, &uri, &admin).await, Some("name"));
+    assert_eq!(all, set(&["Seventeen", "Twelve", "Words"]));
+    let seen = strings(&get(&app, &uri, &reader).await, Some("name"));
+    assert_eq!(seen, set(&["Twelve", "Words"]));
+}

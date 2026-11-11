@@ -309,9 +309,17 @@ as it is:
 
 The vocabularies that reach `age_rating`: ComicInfo uses the ladder;
 MetronInfo and the Metron API use the words above; the GCD provider maps
-its ratings onto ladder words; ComicVine carries no rating; `series.json`
-is free text and ranks only when it uses a ladder word or an alias. An
-alias is not a valid cap.
+its ratings onto ladder words; ComicVine carries no rating. The rating a
+`series.json` declares is free text (Mylar writes it from an operator
+menu of `All Ages`, `9+`, `12+`, `15+`, `17+`, `Adult`, and submits
+`All Ages` as `All`); it is read through
+`age_rating::declared_rung`, which accepts ladder words and aliases, `All`,
+bare minimum ages (`17+`, `Ages 12+`, mapped to the nearest rung that is
+not milder: up to 6 → `Everyone`, 7–10 → `Everyone 10+`, 11–13 → `Teen`,
+14–15 → `MA15+`, 16–17 → `Mature 17+`, 18 and up → `Adults Only 18+`) and
+the publisher wording the GCD normaliser knows (`All Ages`, `Rated T+`,
+`Mature Readers`, ...). Text it cannot read ranks nowhere. Issue ratings
+are not read this way. An alias is not a valid cap.
 
 Edits validate the value: the issue PATCH, the bulk-metadata PATCH and
 the series PATCH accept a ladder rung, an alias, or blank / `null`

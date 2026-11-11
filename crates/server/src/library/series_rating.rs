@@ -14,7 +14,9 @@
 //! `declared_age_rating` is written by the scanner
 //! ([`apply_declared_age_rating`]) from every scan that reads the
 //! folder's `series.json`; a sidecar that is gone or carries no rating
-//! clears it. The upgrade migration seeds a provisional value (a stored
+//! clears it. The declared text is free (Mylar writes `17+`, `All`, ...):
+//! a spelling only [`age_rating::declared_rung`] understands is stored as
+//! its rung so it ranks here ([`stored_declared_rating`]). The upgrade migration seeds a provisional value (a stored
 //! rating ranking above every issue) that the first scan replaces.
 //!
 //! The derived value is file tier. A series whose `age_rating` field has
@@ -119,15 +121,19 @@ fn recompute_sql() -> String {
 /// recompute) lasts at most until the next scan reads the folder. Blank
 /// text is stored as NULL. Returns `true` when `series.age_rating`
 /// changed.
+///
+/// What is stored is [`stored_declared_rating`]: the text as written
+/// (trimmed) when it already ranks or names nothing the normaliser
+/// knows, and the rung [`age_rating::declared_rung`] reads it as
+/// otherwise (`17+` is stored as `Mature 17+`), so the SQL derivation can
+/// rank it. The file keeps the text as written and every scan that reads
+/// it re-derives the stored value.
 pub async fn apply_declared_age_rating<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     series_id: Uuid,
     declared: Option<&str>,
 ) -> Result<bool, DbErr> {
-    let declared = declared
-        .map(|d| d.trim_matches(age_rating::RATING_TRIM))
-        .filter(|d| !d.is_empty())
-        .map(str::to_owned);
+    let declared = declared.and_then(stored_declared_rating);
     db.execute_raw(Statement::from_sql_and_values(
         db.get_database_backend(),
         "UPDATE series SET declared_age_rating = $2 \
@@ -136,6 +142,26 @@ pub async fn apply_declared_age_rating<C: ConnectionTrait + TransactionTrait>(
     ))
     .await?;
     recompute_series_age_rating(db, series_id).await
+}
+
+/// The `series.declared_age_rating` value for a rating a `series.json`
+/// declares: `None` for blank text; the text as written (trimmed) when it
+/// already ranks on the ladder (rung or alias) or the declared-rating
+/// normaliser cannot read it (it then ranks nowhere, as before); the
+/// rung's canonical spelling when only the normaliser reads it.
+pub fn stored_declared_rating(declared: &str) -> Option<String> {
+    let trimmed = declared.trim_matches(age_rating::RATING_TRIM);
+    if trimmed.is_empty() {
+        return None;
+    }
+    if age_rating::rank(trimmed).is_some() {
+        return Some(trimmed.to_owned());
+    }
+    Some(
+        age_rating::declared_rung(trimmed)
+            .map(str::to_owned)
+            .unwrap_or_else(|| trimmed.to_owned()),
+    )
 }
 
 /// Re-derive `series.age_rating` for one series. Returns `true` when the
@@ -221,6 +247,26 @@ mod tests {
         assert_eq!(
             sql.matches("), (").count(),
             LADDER.len() + age_rating::ALIASES.len() - 1
+        );
+    }
+
+    #[test]
+    fn declared_text_is_stored_as_written_unless_only_the_normaliser_reads_it() {
+        assert_eq!(stored_declared_rating("  "), None);
+        assert_eq!(
+            stored_declared_rating(" Mature ").as_deref(),
+            Some("Mature")
+        );
+        assert_eq!(stored_declared_rating("teen").as_deref(), Some("teen"));
+        assert_eq!(stored_declared_rating("17+").as_deref(), Some("Mature 17+"));
+        assert_eq!(stored_declared_rating("All").as_deref(), Some("Everyone"));
+        assert_eq!(
+            stored_declared_rating("Sixteen and up").as_deref(),
+            Some("Sixteen and up")
+        );
+        assert_eq!(
+            stored_declared_rating("Unknown").as_deref(),
+            Some("Unknown")
         );
     }
 }

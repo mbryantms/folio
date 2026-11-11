@@ -26,8 +26,10 @@
 //! Aliases are recognised at comparison time only (here and in every SQL
 //! list built from [`spellings`]); stored text is never rewritten. GCD
 //! ratings are mapped onto ladder words by the provider; ComicVine has
-//! no rating; `series.json` is free text and ranks only when it uses a
-//! ladder word or an alias.
+//! no rating. A rating declared in `series.json` is free text and is
+//! read through [`declared_rung`] (bare ages such as `17+`, Mylar's
+//! `All`, and the publisher wording [`from_publisher_text`] knows) before
+//! it is stored as the series' floor; issue ratings are not.
 //!
 //! Comparisons are case-insensitive and ignore surrounding ASCII
 //! whitespace ([`RATING_TRIM`], the same set the SQL [`sql_norm`] strips)
@@ -275,6 +277,154 @@ pub fn filter_match<S: AsRef<str>>(rating: SimpleExpr, values: &[S]) -> Option<S
     parts.into_iter().reduce(|a, b| a.or(b))
 }
 
+/// Publisher free-text rating → the ComicInfo `AgeRating` vocabulary
+/// (GCD's `rating` field; also [`declared_rung`]'s fallback).
+/// Publisher ratings (`"Rated T+"`, `"Parental Advisory"`, `"Mature
+/// Readers"`, `"All Ages"`, `"Ages 12+"`, `"PSR"`) normalise; Comics-Code
+/// approval text, `"[none]"` and anything unrecognised → `None` (better
+/// empty than junk in the sidecar — the CCA seal isn't an age rating).
+pub fn from_publisher_text(raw: &str) -> Option<String> {
+    let r = raw.to_lowercase();
+    let words: Vec<&str> = r
+        .split(|c: char| !(c.is_alphanumeric() || c == '+'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let has = |w: &str| words.contains(&w);
+    let phrase = |p: &str| r.contains(p);
+    if phrase("rating pending") {
+        return Some("Rating Pending".to_owned());
+    }
+    if phrase("comics code") || phrase("code authority") || words.is_empty() {
+        return None;
+    }
+    // A publisher letter code counts only as the whole value ("T+") or
+    // right after "rated" ("Rated M") — a bare "a"/"e" in prose is not
+    // a rating.
+    let code: Option<&str> = if words.len() == 1 {
+        Some(words[0])
+    } else {
+        words.windows(2).find(|w| w[0] == "rated").map(|w| w[1])
+    };
+    // An explicit minimum age wins ("Ages 12+", "16+", "18+").
+    let min_age = words.iter().find_map(|w| {
+        w.strip_suffix('+')
+            .and_then(|n| n.parse::<u32>().ok())
+            .filter(|n| (3..=21).contains(n))
+    });
+    let label = if has("explicit")
+        || has("adult")
+        || has("adults")
+        || code.is_some_and(|c| matches!(c, "x" | "x18+" | "ao" | "max" | "r18+"))
+    {
+        "Adults Only 18+"
+    } else if let Some(age) = min_age {
+        match age {
+            18.. => "Adults Only 18+",
+            17 => "Mature 17+",
+            13..=16 => "Teen",
+            10..=12 => "Everyone 10+",
+            _ => "Everyone",
+        }
+    } else if has("mature") || code.is_some_and(|c| matches!(c, "m" | "ma" | "17+")) {
+        "Mature 17+"
+    } else if has("teen")
+        || has("psr")
+        || has("psr+")
+        || phrase("parental advisory")
+        || phrase("parental supervision")
+        || code.is_some_and(|c| matches!(c, "t" | "t+" | "pg" | "psr" | "psr+" | "pa"))
+    {
+        "Teen"
+    } else if phrase("early childhood") {
+        "Early Childhood"
+    } else if phrase("all ages")
+        || has("everyone")
+        || has("kids")
+        || code.is_some_and(|c| matches!(c, "e" | "a" | "g"))
+    {
+        "Everyone"
+    } else {
+        return None;
+    };
+    Some(label.to_owned())
+}
+
+/// The rung a rating declared in a `series.json` ranks as, in its
+/// canonical ladder spelling; `None` when it names no rating.
+///
+/// Mylar writes `metadata.age_rating` as free text: only an operator sets
+/// it, from a menu of `All Ages`, `9+`, `12+`, `15+`, `17+` and `Adult`
+/// (the menu's unquoted HTML values submit `All Ages` as `All`). In order:
+///
+/// 1. a ladder rung or alias ranks as itself ([`rank`]);
+/// 2. `Unknown` / `Rating Pending` / blank name nothing;
+/// 3. `All` is `Everyone`;
+/// 4. a bare minimum age (`17+`, `17`, `Ages 12+`, `12+ and up`) maps to
+///    the nearest rung that is not milder than it ([`minimum_age_rung`]);
+/// 5. anything else goes through [`from_publisher_text`] (GCD's publisher
+///    wording: `All Ages`, `Rated T+`, `Mature Readers`, `PSR`, ...) and
+///    counts only when that names a rung.
+///
+/// Only the declared series rating is read this way; issue ratings from
+/// ComicInfo / MetronInfo still rank only as ladder words or aliases.
+pub fn declared_rung(raw: &str) -> Option<&'static str> {
+    if let Some(r) = rank(raw) {
+        return Some(LADDER[r as usize]);
+    }
+    let needle = raw.trim_matches(RATING_TRIM).to_lowercase();
+    if needle.is_empty() || UNRATED.contains(&needle.as_str()) {
+        return None;
+    }
+    if needle == "all" {
+        return Some("Everyone");
+    }
+    if let Some(age) = bare_minimum_age(&needle) {
+        return Some(minimum_age_rung(age));
+    }
+    from_publisher_text(&needle)
+        .and_then(|w| rank(&w))
+        .map(|r| LADDER[r as usize])
+}
+
+/// `17+`, `17`, `ages 17+`, `age 17`, `17+ and up` (lowercased) → 17.
+/// Ages above 21 are not read as ages.
+fn bare_minimum_age(needle: &str) -> Option<u32> {
+    let mut s = needle.trim();
+    for prefix in ["ages", "age"] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            s = rest.trim_start_matches([' ', ':']);
+            break;
+        }
+    }
+    for suffix in ["and up", "and over", "and older"] {
+        if let Some(rest) = s.strip_suffix(suffix) {
+            s = rest.trim_end();
+            break;
+        }
+    }
+    let digits = s.strip_suffix('+').unwrap_or(s).trim_end();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) || digits.len() > 2 {
+        return None;
+    }
+    digits.parse::<u32>().ok().filter(|n| *n <= 21)
+}
+
+/// The rung for "ages `age` and up": the youngest-ranked rung whose own
+/// minimum age is at least `age`, never a milder one. `Everyone` stands
+/// for every age up to 6 (ESRB's E), `Everyone 10+` for 10, `Teen` for
+/// 13, `MA15+` for 15, `Mature 17+` for 17 and `Adults Only 18+` for 18
+/// (the stricter of the two 18+ rungs, as GCD maps `18+`).
+pub fn minimum_age_rung(age: u32) -> &'static str {
+    match age {
+        0..=6 => "Everyone",
+        7..=10 => "Everyone 10+",
+        11..=13 => "Teen",
+        14..=15 => "MA15+",
+        16..=17 => "Mature 17+",
+        _ => "Adults Only 18+",
+    }
+}
+
 /// True iff `cap` names a rung on the ladder (what the admin API accepts
 /// for `age_rating_max`). Aliases are not caps: a cap is a ladder word.
 pub fn is_valid_cap(cap: &str) -> bool {
@@ -479,6 +629,70 @@ mod tests {
         assert!(sql.contains("OR \"age_rating\" IN ('Unknown')"), "{sql}");
         assert!(!render(&["Teen"]).contains(" OR "));
         assert!(filter_match::<&str>(Expr::val(1), &[]).is_none());
+    }
+
+    #[test]
+    fn declared_ratings_read_mylar_bare_ages_and_publisher_wording() {
+        let cases: &[(&str, Option<&str>)] = &[
+            // Ladder words and aliases rank as themselves.
+            ("Mature 17+", Some("Mature 17+")),
+            (" teen ", Some("Teen")),
+            ("Adult", Some("Adults Only 18+")),
+            ("Teen Plus", Some("MA15+")),
+            ("M", Some("M")),
+            ("PG", Some("PG")),
+            ("Kids to Adults", Some("Kids to Adults")),
+            // Mylar's menu (`All Ages` submits as `All`).
+            ("All", Some("Everyone")),
+            ("All Ages", Some("Everyone")),
+            ("9+", Some("Everyone 10+")),
+            ("12+", Some("Teen")),
+            ("15+", Some("MA15+")),
+            ("17+", Some("Mature 17+")),
+            // Other bare ages: never a milder rung.
+            ("3+", Some("Everyone")),
+            ("6+", Some("Everyone")),
+            ("7+", Some("Everyone 10+")),
+            ("10+", Some("Everyone 10+")),
+            ("13+", Some("Teen")),
+            ("14+", Some("MA15+")),
+            ("16+", Some("Mature 17+")),
+            ("17", Some("Mature 17+")),
+            ("18+", Some("Adults Only 18+")),
+            ("21+", Some("Adults Only 18+")),
+            ("Ages 12+", Some("Teen")),
+            ("ages 9 and up", Some("Everyone 10+")),
+            // Publisher wording through the GCD normaliser.
+            ("Rated T+", Some("Teen")),
+            ("T+", Some("Teen")),
+            ("Parental Advisory", Some("Teen")),
+            ("PSR", Some("Teen")),
+            ("Suggested for Mature Readers", Some("Mature 17+")),
+            ("Rated M", Some("Mature 17+")),
+            ("Explicit Content", Some("Adults Only 18+")),
+            ("MAX", Some("Adults Only 18+")),
+            ("Rated E", Some("Everyone")),
+            // Nothing.
+            ("Unknown", None),
+            ("Rating Pending", None),
+            ("", None),
+            ("Sixteen and up", None),
+            ("99+", None),
+            ("Approved by the Comics Code Authority", None),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(declared_rung(raw), *want, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn minimum_age_rungs_are_never_milder_and_climb_the_ladder() {
+        let mut last = 0;
+        for age in 0..=21 {
+            let r = rank(minimum_age_rung(age)).unwrap();
+            assert!(r >= last, "{age}");
+            last = r;
+        }
     }
 
     #[test]

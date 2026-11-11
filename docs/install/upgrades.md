@@ -191,6 +191,23 @@ docker compose -f compose.prod.yml up -d --no-deps app
   not see before. **To hold a rating**, an admin sets it on the series
   (series edit): a rating set that way is never replaced by the derived
   one. Clearing it there returns the series to its derived rating.
+- **A rating declared in `series.json` is read in its common
+  spellings.** Mylar writes the series rating as free text, and only a
+  ladder word or one of Metron's words used to count; anything else left
+  the series unrated. These now count as the floor for the series'
+  rating (each mapped to the nearest rating that is not milder):
+  `All` and `All Ages` → `Everyone`; a bare minimum age, alone or as
+  `Ages N+` / `N+ and up`: up to `6+` → `Everyone`, `7+` to `10+` (Mylar's
+  `9+`) → `Everyone 10+`, `11+` to `13+` (Mylar's `12+`) → `Teen`, `14+`
+  and `15+` → `MA15+`, `16+` and `17+` → `Mature 17+`, `18+` to `21+` →
+  `Adults Only 18+`; and publisher wording such as `Rated T+`, `T+`,
+  `PSR`, `Parental Advisory` → `Teen`, `Rated M` or `Mature Readers` →
+  `Mature 17+`, `Explicit`, `MAX`, `Adults` → `Adults Only 18+`, `Rated E`
+  → `Everyone`. Other text still rates nothing. A reader with an
+  age-rating cap may therefore no longer see a series whose `series.json`
+  says, for example, `17+`. Like the rest of the declared floor, this
+  takes effect at the next scan that reads each folder; no migration is
+  needed.
 - **Age-rating edits are validated.** The issue edit, bulk metadata edit
   and series edit accept a ladder rating, one of Metron's words above,
   or blank; anything else answers 422 ("not a recognised age rating").
