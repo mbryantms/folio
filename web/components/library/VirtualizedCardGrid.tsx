@@ -12,15 +12,16 @@ import {
   estimateRowHeight,
   rowItemRange,
 } from "@/lib/library/grid-window";
+import { useCoverTarget } from "@/components/library/use-cover-size";
+import { COVER_GRID_STYLE } from "@/lib/library/cover-size";
 import { useGridScrollRestore } from "@/lib/library/use-grid-scroll-restore";
 import { useContainerWidth } from "@/lib/use-container-width";
-import { cardGridColumns } from "@/lib/library/card-size";
 
 /**
  * Window-virtualized responsive card grid (audit G1). Reproduces the
- * `cardGridColumns` look but only mounts the
- * rows in (and near) the viewport, so a 10k-item library no longer
- * mounts 10k cards.
+ * `COVER_GRID_COLUMNS` look (the app-wide cover size, columns stretched
+ * to fill the row) but only mounts the rows in (and near) the viewport,
+ * so a 10k-item library no longer mounts 10k cards.
  *
  * Render-agnostic: it windows over a flat `{ id }[]` and calls
  * `renderCard` per item, so the same machinery serves the Series and
@@ -36,8 +37,6 @@ import { cardGridColumns } from "@/lib/library/card-size";
  */
 export function VirtualizedCardGrid({
   items,
-  cardSize,
-  cardSizeKey,
   estimateTextHeight,
   hasNextPage,
   isFetchingNextPage,
@@ -46,9 +45,6 @@ export function VirtualizedCardGrid({
   enableScrollRestore = false,
 }: {
   items: ReadonlyArray<{ id: string }>;
-  cardSize: number;
-  /** The surface's card-size key, for the pre-measure grid. */
-  cardSizeKey?: string;
   /** Approximate fixed height (px) of the card's text block below the
    *  cover — used only for the initial row-height estimate. */
   estimateTextHeight: number;
@@ -59,14 +55,12 @@ export function VirtualizedCardGrid({
   /** Persist + restore window scroll across back-nav (audit B15). */
   enableScrollRestore?: boolean;
 }) {
+  const target = useCoverTarget();
   const [containerRef, containerWidth] = useContainerWidth<HTMLDivElement>();
-  const columnsPerRow = computeColumnsPerRow(containerWidth, cardSize);
+  const columnsPerRow = computeColumnsPerRow(containerWidth, target);
   const rowCount = computeRowCount(items.length, columnsPerRow);
-  const columnWidth = computeColumnWidth(
-    containerWidth,
-    columnsPerRow,
-    cardSize,
-  );
+  // Only feeds the row-height estimate: the rows size their own tracks.
+  const columnWidth = computeColumnWidth(containerWidth, columnsPerRow);
   const estRowHeight = estimateRowHeight(columnWidth, estimateTextHeight);
 
   const listRef = React.useRef<HTMLDivElement | null>(null);
@@ -92,8 +86,8 @@ export function VirtualizedCardGrid({
     },
   });
 
-  // The estimate depends on cardSize/width; recompute total size when
-  // either changes so the scrollbar + row offsets stay correct.
+  // The estimate depends on the cover size and the width; recompute total
+  // size when either changes so the scrollbar + row offsets stay correct.
   React.useEffect(() => {
     virtualizer.measure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,13 +122,7 @@ export function VirtualizedCardGrid({
   if (containerWidth <= 0) {
     return (
       <div ref={containerRef}>
-        <ul
-          role="list"
-          className="grid gap-4"
-          style={{
-            gridTemplateColumns: cardGridColumns(cardSizeKey, cardSize),
-          }}
-        >
+        <ul role="list" className="grid gap-4" style={COVER_GRID_STYLE}>
           {Array.from({ length: 24 }).map((_, i) => (
             <li key={i}>
               <CoverSkeleton />
@@ -174,9 +162,9 @@ export function VirtualizedCardGrid({
                 left: 0,
                 width: "100%",
                 transform: `translateY(${vr.start - virtualizer.options.scrollMargin}px)`,
-                // Fixed-width tracks, same as `cardGridColumns`: the card
-                // size is the cover width, not a minimum to stretch from.
-                gridTemplateColumns: `repeat(${columnsPerRow}, ${columnWidth}px)`,
+                // Fill-the-row tracks, same as `COVER_GRID_COLUMNS`: the
+                // count comes from the target, the row shares what is left.
+                gridTemplateColumns: `repeat(${columnsPerRow}, minmax(0, 1fr))`,
                 gap: `${GRID_GAP_PX}px`,
                 paddingBottom: `${GRID_GAP_PX}px`,
               }}

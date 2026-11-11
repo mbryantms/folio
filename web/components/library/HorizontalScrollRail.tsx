@@ -5,6 +5,7 @@ import { ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
+import { COVER_ITEM_STYLE } from "@/lib/library/cover-size";
 import { cn } from "@/lib/utils";
 
 /** Width of the left / right edge-fade gradients in pixels. The inline
@@ -47,14 +48,16 @@ const DEFAULT_GAP_PX = 12;
  * For rails that have more items than the preview window can show, set
  * `viewAllHref` so the rail ends with an outline "View all" tile that
  * matches the affordance used by the issue page's "More in series"
- * carousel. Pass `itemWidthPx` (the per-card pixel width set by the
- * density slider) so the tile aligns visually with its siblings.
+ * carousel. Pass `coverSized` when the rail's cards are cover-sized
+ * (`COVER_WIDTH`), or `itemWidthPx` for a rail with its own measured
+ * width, so the tile aligns visually with its siblings.
  */
 export function HorizontalScrollRail({
   children,
   viewAllHref,
   viewAllLabel = "View all",
   itemWidthPx,
+  coverSized = false,
   initialScrollIndex,
   anchorAlign = "start",
   className,
@@ -69,6 +72,9 @@ export function HorizontalScrollRail({
   /** Per-card pixel width (so the trailing tile vertically aligns with
    *  siblings). Optional; the tile uses an intrinsic width when omitted. */
   itemWidthPx?: number;
+  /** The cards are the app-wide cover size (`COVER_WIDTH`): the trailing
+   *  tile takes the same width. Ignored when `itemWidthPx` is set. */
+  coverSized?: boolean;
   /** When set, on mount the rail is scrolled so the child at this index
    *  sits at the left edge of the visible viewport. Used by the CBL
    *  reading window to anchor on the user's next-to-read entry instead
@@ -264,7 +270,13 @@ export function HorizontalScrollRail({
           {viewAllHref && (
             <ViewAllWrap
               className="flex shrink-0 items-center"
-              style={itemWidthPx ? { width: `${itemWidthPx}px` } : undefined}
+              style={
+                itemWidthPx
+                  ? { width: `${itemWidthPx}px` }
+                  : coverSized
+                    ? COVER_ITEM_STYLE
+                    : undefined
+              }
             >
               <Button asChild variant="outline" size="sm" className="shrink-0">
                 <Link href={viewAllHref} aria-label={viewAllLabel}>

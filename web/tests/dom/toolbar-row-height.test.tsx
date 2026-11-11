@@ -7,6 +7,8 @@
  * box and the card-size trigger beside them, and /log with Add widget /
  * Export CSV / Reset shorter than the 38px range selector. The shared
  * controls below bake the height in so no call site has to remember it.
+ * Both View options triggers are covered: bookmarks' own
+ * `CardSizeOptions` and the app-wide `CoverSizeOptions`.
  */
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -17,6 +19,7 @@ vi.mock("@/lib/api/mutations", () => ({
 
 import { ActivityRangeSelector } from "@/components/activity/ActivityRangeSelector";
 import { CardSizeOptions } from "@/components/library/CardSizeOptions";
+import { CoverSizeOptions } from "@/components/library/CoverSizeOptions";
 import { SelectModeButton } from "@/components/library/SelectModeButton";
 import { NotesExportMenu } from "@/components/markers/NotesExportMenu";
 import { Input } from "@/components/ui/input";
@@ -58,6 +61,20 @@ describe("toolbar row height", () => {
       expect(cls).toMatch(/\btext-sm\b/);
       expect(cls).not.toMatch(XS);
     }
+  });
+
+  it("the app-wide cover-size trigger is the same h-9 control", () => {
+    render(
+      <>
+        <Input aria-label="Search" />
+        <CoverSizeOptions />
+      </>,
+    );
+    const cls = screen.getByRole("button", { name: "View options" }).className;
+    expect(screen.getByLabelText("Search").className).toMatch(H9);
+    expect(cls).toMatch(H9);
+    expect(cls).toMatch(/\btext-sm\b/);
+    expect(cls).not.toMatch(XS);
   });
 
   it("keeps h-9 when a call site passes its own classes", () => {
