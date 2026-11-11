@@ -478,13 +478,13 @@
             }
           },
           "400": {
-            "description": "malformed scan_id or cursor"
+            "description": "malformed cursor"
           },
           "403": {
             "description": "admin only"
           },
           "422": {
-            "description": "invalid filter value"
+            "description": "invalid filter value, including a scan_id or library_id that is not a UUID"
           }
         }
       }

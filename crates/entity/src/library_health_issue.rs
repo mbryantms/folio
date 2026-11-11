@@ -67,7 +67,7 @@ pub enum HealthIssueKind {
     MalformedArchive,
     /// An archive refused by a protective limit (entry count, entry or
     /// total size, compression ratio, decoder memory) or an unsafe entry
-    /// name. Says nothing about damage: the file may be intact.
+    /// name. Not a verdict on damage either way.
     #[sea_orm(string_value = "ArchiveSafetyRefusal")]
     ArchiveSafetyRefusal,
     /// A password-protected archive.

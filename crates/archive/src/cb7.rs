@@ -36,7 +36,7 @@
 //!     front, and PPMd its model; all three sizes come from attacker-
 //!     controlled coder properties and `sevenz-rust2` applies no limit. Open
 //!     refuses any block whose decoder would need more than
-//!     [`MAX_DECODER_MEMORY_BYTES`] (`CapExceeded("7z decoder memory")`).
+//!     [`MAX_DECODER_MEMORY_BYTES`] (`CapExceeded` with `SafetyCheck::DecoderMemory`).
 //!     Residual risk: an *encoded* (compressed) archive header is decoded
 //!     inside `sevenz-rust2`'s own `Archive::read` before we can inspect it;
 //!     7-Zip writes headers with LZMA, whose dictionary the decoder clamps
@@ -135,11 +135,17 @@ impl Cb7 {
             }
             let size = file.size;
             if size > limits.max_entry_bytes {
-                return Err(ArchiveError::CapExceeded("entry size"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntrySize,
+                    "entry size",
+                )));
             }
             total_bytes = total_bytes.saturating_add(size);
             if total_bytes > limits.max_total_bytes {
-                return Err(ArchiveError::CapExceeded("total bytes"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::TotalSize,
+                    "total bytes",
+                )));
             }
             entries.push(ArchiveEntry {
                 index: entries.len(),
@@ -150,7 +156,10 @@ impl Cb7 {
             });
             file_index.push(fi);
             if entries.len() as u64 > limits.max_entries {
-                return Err(ArchiveError::CapExceeded("entry count"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::EntryCount,
+                    "entry count",
+                )));
             }
         }
 
@@ -364,7 +373,10 @@ impl Cb7 {
             .lookup(name)
             .ok_or_else(|| ArchiveError::Malformed(format!("entry not found: {name}")))?;
         if self.entries[idx].uncompressed_size > self.limits.max_entry_bytes {
-            return Err(ArchiveError::CapExceeded("entry size"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::EntrySize,
+                "entry size",
+            )));
         }
         let cap = usize::try_from(max_bytes).unwrap_or(usize::MAX);
         if let Some(bytes) = self.cache.get(&idx) {
@@ -441,7 +453,10 @@ fn preflight_blocks(archive: &Archive, limits: ArchiveLimits) -> Result<(), Arch
                 block.get_unpack_size_for_coder(coder),
             )?;
             if needs > MAX_DECODER_MEMORY_BYTES {
-                return Err(ArchiveError::CapExceeded("7z decoder memory"));
+                return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                    crate::SafetyCheck::DecoderMemory,
+                    "7z decoder memory",
+                )));
             }
         }
     }
@@ -458,11 +473,17 @@ fn preflight_blocks(archive: &Archive, limits: ArchiveLimits) -> Result<(), Arch
         .fold(0u64, u64::saturating_add);
     if unpacked > 0 {
         if unpacked > limits.max_total_bytes {
-            return Err(ArchiveError::CapExceeded("total bytes"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::TotalSize,
+                "total bytes",
+            )));
         }
         let ratio_cap = u64::from(limits.max_compression_ratio);
         if packed == 0 || unpacked / packed > ratio_cap {
-            return Err(ArchiveError::CapExceeded("compression ratio"));
+            return Err(ArchiveError::CapExceeded(crate::Cap::new(
+                crate::SafetyCheck::CompressionRatio,
+                "compression ratio",
+            )));
         }
     }
     Ok(())

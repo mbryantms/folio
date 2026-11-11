@@ -169,6 +169,21 @@ docker compose -f compose.prod.yml up -d --no-deps app
   expire with the access cookie, which made the silent refresh fail once
   the access cookie had expired).
 
+### Unreleased — archives refused by a safety limit get their own finding
+
+- A comic the archive reader refuses on a protective limit (entry count,
+  entry or total size, compression ratio, 7z decoder memory) or on an
+  unsafe or non-portable entry name is now reported as **Archive refused
+  by a safety limit**, naming the check, instead of as a malformed
+  archive. That includes RAR and 7z files refused while a library
+  converts them to CBZ, which were reported as an unsupported format.
+  Files already flagged keep their old finding until they are read
+  again: an ordinary scan skips a file that has not changed, so run a
+  **Content verify** scan (the library's *Scan* menu, or *Scan all* with
+  *Content-verify scan* ticked) to re-word them. Migration
+  `m20271111_000002_health_issue_scan_idx` adds an index used to count
+  each scan run's findings.
+
 ### Unreleased — multi-part RAR comics are no longer read
 
 - Comics stored as a multi-part RAR set (`.part1.rar`, `.r00`, …) are

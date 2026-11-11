@@ -169,3 +169,45 @@ async fn scan_leaves_encrypted_cb7_untouched() {
     assert!(!cb7_path.with_extension("cb7.bak").exists());
     assert_eq!(unsupported_issues(&app, lib_id).await.len(), 1);
 }
+
+/// A CB7 the conversion refuses on a protective limit is an
+/// `ArchiveSafetyRefusal` naming the check, not an unsupported format, and
+/// the source file is left as it was.
+#[tokio::test]
+async fn conversion_refused_by_a_limit_is_a_safety_refusal() {
+    let app = TestApp::spawn().await;
+    let state = app.state();
+    // The fixture holds three pages; one is the limit.
+    let mut cfg = (*state.cfg()).clone();
+    cfg.archive_max_entries = 1;
+    state.replace_cfg(cfg);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let cb7_path = stage(tmp.path(), "synthetic-3page.cb7");
+    let original = std::fs::read(&cb7_path).unwrap();
+
+    let lib_id = LibrarySeed::new(tmp.path())
+        .with_auto_convert_cb7_on_scan()
+        .insert(&state.db)
+        .await;
+    let stats = scanner::scan_library(&state, lib_id).await.expect("scan");
+    assert_eq!(stats.files_converted, 0, "{stats:?}");
+    assert_eq!(stats.files_added, 0, "{stats:?}");
+
+    assert_eq!(
+        std::fs::read(&cb7_path).unwrap(),
+        original,
+        "file untouched"
+    );
+    assert!(!cb7_path.with_extension("cbz").exists(), "no .cbz written");
+
+    let rows = HealthEntity::find()
+        .filter(entity::library_health_issue::Column::LibraryId.eq(lib_id))
+        .filter(entity::library_health_issue::Column::ResolvedAt.is_null())
+        .all(&state.db)
+        .await
+        .unwrap();
+    let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+    assert_eq!(kinds, ["ArchiveSafetyRefusal"], "{kinds:?}");
+    assert_eq!(rows[0].payload["data"]["check"], "entry_count");
+}

@@ -2335,7 +2335,7 @@ fn png_page(marker: u32, len: usize) -> Vec<u8> {
 
 /// An archive refused by a protective limit or an unsafe entry name is a
 /// `ArchiveSafetyRefusal` naming the check, not a `MalformedArchive`: the
-/// file may be intact. A genuinely corrupt file keeps `MalformedArchive`,
+/// refusal is not a verdict on damage. A genuinely corrupt file keeps `MalformedArchive`,
 /// and a file within the limits ingests normally.
 #[tokio::test]
 async fn safety_refusals_are_not_reported_as_malformed() {

@@ -64,9 +64,9 @@ const KIND_COPY: Record<string, KindCopy> = {
     hint: "Folio could not open the file as a ZIP, TAR, RAR or 7z; the error says why. Replace a damaged file from a good copy.",
   },
   ArchiveSafetyRefusal: {
-    // Not a damage report: the limits refuse intact files too.
+    // Not a verdict either way: intact and damaged files can trip a limit.
     label: "Archive refused by a safety limit",
-    hint: "Folio refused to open this archive because it trips a protective limit; the file may be intact. The limits keep one archive from using unbounded memory or disk while it is read.",
+    hint: "Folio stopped reading this archive because it trips a protective limit. The refusal does not say whether the file is damaged. The limits keep one archive from using unbounded memory or disk while it is read.",
   },
   EncryptedArchive: {
     label: "Password-protected archive",
@@ -165,21 +165,27 @@ const SAFETY_CHECK_COPY: Record<string, { limit: string; env?: string }> = {
     limit: "its 7z compression needs more decoder memory than Folio allows",
   },
   unsafe_entry_name: {
-    limit: "a file inside it has a path that points outside the archive",
+    limit:
+      'a file inside it has an unsafe or non-portable name (empty, absolute, climbing out with "..", or containing a backslash or a NUL byte)',
   },
 };
+
+/** What re-reads a refused file once the limit is raised: an ordinary
+ *  scan skips a file whose size and modification time are unchanged. */
+const RESCAN_UNCHANGED =
+  "run a Content verify scan from the library's Scan menu (an ordinary scan skips a file that has not changed)";
 
 /** Fix hint for one `ArchiveSafetyRefusal` check, or `undefined` for a
  *  check this build does not know. */
 export function safetyRefusalHint(check: string): string | undefined {
   const copy = SAFETY_CHECK_COPY[check];
   if (!copy) return undefined;
-  const why = `Folio refused to open this archive because ${copy.limit}. The file may be intact; the limit keeps one archive from using unbounded memory or disk while it is read.`;
+  const why = `Folio stopped reading this archive because ${copy.limit}. The refusal does not say whether the file is damaged: a damaged archive can trip the same check. The limits keep one archive from using unbounded memory or disk while it is read.`;
   if (copy.env)
-    return `${why} If you trust the file, raise ${copy.env} in the server environment and restart, then rescan; otherwise repack it.`;
+    return `${why} If you trust the file, raise ${copy.env} in the server environment and restart, then ${RESCAN_UNCHANGED}. Otherwise repack or replace the file; a changed file is picked up by the next scan.`;
   if (check === "unsafe_entry_name")
-    return `${why} This check is fixed. Repack the archive with plain relative file names, then rescan.`;
-  return `${why} This limit is fixed. Repack the archive as CBZ, then rescan.`;
+    return `${why} This check is fixed. Repack the archive with plain relative file names; the next scan picks up the changed file.`;
+  return `${why} This limit is fixed. Repack the archive as CBZ; the next scan picks up the changed file.`;
 }
 
 /**

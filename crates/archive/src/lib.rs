@@ -175,7 +175,7 @@ pub enum ArchiveError {
     #[error("archive entry rejected (zip-slip / invalid path): {0}")]
     UnsafeEntry(String),
     #[error("archive cap exceeded: {0}")]
-    CapExceeded(&'static str),
+    CapExceeded(Cap),
     #[error("archive encrypted")]
     Encrypted,
     #[error("io: {0}")]
@@ -198,11 +198,12 @@ impl From<std::io::Error> for ArchiveError {
     }
 }
 
-/// The protective check that refused an archive. A refusal says nothing
-/// about whether the file is damaged: an intact archive that is larger,
-/// or holds more entries, than the configured limits is refused the same
-/// way. Callers report it apart from [`ArchiveError::Malformed`] so an
-/// operator is not sent to replace a file that may be fine.
+/// The protective check that refused an archive. A refusal does not say
+/// the file is damaged, nor that it is intact: a large intact archive is
+/// refused the same way as one whose damaged directory claims absurd
+/// sizes or counts. Callers report it apart from
+/// [`ArchiveError::Malformed`] so an operator is not sent straight to
+/// replace a file that may be fine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SafetyCheck {
     /// More entries than [`ArchiveLimits::max_entries`].
@@ -216,8 +217,11 @@ pub enum SafetyCheck {
     CompressionRatio,
     /// A 7z decoder that would need more memory than the fixed cap.
     DecoderMemory,
-    /// An entry name that is absolute, contains `..` past the root, a
-    /// backslash or a NUL byte.
+    /// An entry name that is empty, absolute, climbs past the root with
+    /// `..`, has an empty or `.` component, or contains a backslash or a
+    /// NUL byte (`entry_name::validate`). A backslash name is common and
+    /// harmless in archives made on Windows; it is still refused because
+    /// the name is not portable.
     UnsafeEntryName,
 }
 
@@ -234,24 +238,26 @@ impl SafetyCheck {
             Self::UnsafeEntryName => "unsafe_entry_name",
         }
     }
+}
 
-    /// Classify a [`ArchiveError::CapExceeded`] label. Every label the
-    /// readers and writers use is covered by a unit test below; an
-    /// unknown label falls back to the per-entry size check, the most
-    /// common cap.
-    fn from_cap(label: &str) -> Self {
-        let l = label.to_ascii_lowercase();
-        if l.contains("entry count") || l.contains("max_entries") {
-            Self::EntryCount
-        } else if l.contains("decoder memory") {
-            Self::DecoderMemory
-        } else if l.contains("ratio") {
-            Self::CompressionRatio
-        } else if l.contains("total") {
-            Self::TotalSize
-        } else {
-            Self::EntrySize
-        }
+/// The payload of [`ArchiveError::CapExceeded`]: which check fired and a
+/// short human label for the message. The check is chosen where the cap
+/// is raised, so a new cap cannot be built without naming its check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cap {
+    pub check: SafetyCheck,
+    pub what: &'static str,
+}
+
+impl Cap {
+    pub const fn new(check: SafetyCheck, what: &'static str) -> Self {
+        Self { check, what }
+    }
+}
+
+impl std::fmt::Display for Cap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.what)
     }
 }
 
@@ -261,7 +267,7 @@ impl ArchiveError {
     pub fn safety_check(&self) -> Option<SafetyCheck> {
         match self {
             Self::UnsafeEntry(_) => Some(SafetyCheck::UnsafeEntryName),
-            Self::CapExceeded(label) => Some(SafetyCheck::from_cap(label)),
+            Self::CapExceeded(cap) => Some(cap.check),
             Self::Encrypted | Self::Io(_) | Self::Malformed(_) => None,
         }
     }
@@ -327,43 +333,11 @@ pub mod recovery {
 mod safety_check_tests {
     use super::{ArchiveError, SafetyCheck};
 
-    /// Every `CapExceeded` label the readers and writers raise maps onto
-    /// the limit it names.
     #[test]
-    fn every_cap_label_classifies() {
-        let cases = [
-            ("entry count", SafetyCheck::EntryCount),
-            (
-                "rebuild output exceeded max_entries",
-                SafetyCheck::EntryCount,
-            ),
-            ("entry size", SafetyCheck::EntrySize),
-            ("single entry uncompressed bytes", SafetyCheck::EntrySize),
-            ("range exceeds entry cap", SafetyCheck::EntrySize),
-            (
-                "entry exceeded max_entry_bytes during read",
-                SafetyCheck::EntrySize,
-            ),
-            (
-                "entry exceeded max_entry_bytes during stream",
-                SafetyCheck::EntrySize,
-            ),
-            ("total bytes", SafetyCheck::TotalSize),
-            ("total uncompressed bytes", SafetyCheck::TotalSize),
-            (
-                "rebuild output exceeded max_total_bytes",
-                SafetyCheck::TotalSize,
-            ),
-            ("compression ratio", SafetyCheck::CompressionRatio),
-            ("7z decoder memory", SafetyCheck::DecoderMemory),
-        ];
-        for (label, want) in cases {
-            assert_eq!(
-                ArchiveError::CapExceeded(label).safety_check(),
-                Some(want),
-                "{label}"
-            );
-        }
+    fn a_cap_reports_the_check_it_was_raised_with() {
+        let err = ArchiveError::CapExceeded(crate::Cap::new(SafetyCheck::TotalSize, "total bytes"));
+        assert_eq!(err.safety_check(), Some(SafetyCheck::TotalSize));
+        assert_eq!(err.to_string(), "archive cap exceeded: total bytes");
     }
 
     #[test]

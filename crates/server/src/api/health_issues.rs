@@ -6,7 +6,7 @@
 
 use axum::{
     Extension, Json,
-    extract::{Path as AxPath, Query, State},
+    extract::{Path as AxPath, Query, State, rejection::QueryRejection},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -540,7 +540,7 @@ pub struct AdminListQuery {
     pub include_dismissed: Option<bool>,
     /// Restrict to the findings whose latest sighting was this scan run
     /// (the rows a scan-run row's `health_issue_count` counts). Typed: a
-    /// value that is not a UUID is rejected before the handler runs.
+    /// value that is not a UUID is a 422, like a malformed `library_id`.
     #[serde(default)]
     pub scan_id: Option<Uuid>,
     #[serde(default)]
@@ -564,17 +564,30 @@ pub struct AdminListQuery {
     ),
     responses(
         (status = 200, body = shared::pagination::CursorPage<CrossLibHealthIssueView>),
-        (status = 400, description = "malformed scan_id or cursor"),
+        (status = 400, description = "malformed cursor"),
         (status = 403, description = "admin only"),
-        (status = 422, description = "invalid filter value"),
+        (status = 422, description = "invalid filter value, including a scan_id or library_id that is not a UUID"),
     )
 )]
 #[handler]
 pub async fn admin_list(
     State(app): State<AppState>,
     _admin: RequireAdmin,
-    Query(q): Query<AdminListQuery>,
+    query: Result<Query<AdminListQuery>, QueryRejection>,
 ) -> impl IntoResponse {
+    // axum's own rejection is plain text; answer it (a `scan_id` that is
+    // not a UUID, usually) with the canonical envelope instead, at the
+    // same status as the hand-parsed `library_id` below.
+    let q = match query {
+        Ok(Query(q)) => q,
+        Err(rej) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation",
+                &format!("invalid query: {}", rej.body_text()),
+            );
+        }
+    };
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     // Severity filter is bounded — reject unknown values rather than

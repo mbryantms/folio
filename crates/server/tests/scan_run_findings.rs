@@ -268,11 +268,89 @@ async fn health_issue_scan_filter_paginates_with_a_scoped_total() {
 async fn malformed_scan_id_is_rejected() {
     let app = TestApp::spawn().await;
     let session = register_admin(&app).await;
-    let (status, _) = get(
+    let (status, body) = get(
         &app,
         &session,
         "/api/admin/health-issues?scan_id=not-a-uuid",
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Same status and envelope as a malformed `library_id`.
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "validation", "{body}");
+    let (status, body) = get(
+        &app,
+        &session,
+        "/api/admin/health-issues?library_id=not-a-uuid",
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "validation.library_id", "{body}");
+}
+
+/// A finding on a file the next scan skips as unchanged still moves to that
+/// scan: the run's count and the `scan_id` filter follow the latest
+/// sighting whether the file was re-read or skipped.
+#[tokio::test]
+async fn a_finding_on_an_unchanged_file_moves_to_the_rescan() {
+    use common::seed::LibrarySeed;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+
+    let app = TestApp::spawn().await;
+    let session = register_admin(&app).await;
+    let state = app.state();
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("Broken (2020)");
+    std::fs::create_dir_all(&folder).unwrap();
+    // Not a ZIP at all: a `MalformedArchive` finding on every read.
+    std::fs::write(folder.join("Broken 001.cbz"), b"not an archive").unwrap();
+    let lib = LibrarySeed::new(tmp.path()).insert(&state.db).await;
+
+    let open_findings = || async {
+        library_health_issue::Entity::find()
+            .filter(library_health_issue::Column::LibraryId.eq(lib))
+            .filter(library_health_issue::Column::ResolvedAt.is_null())
+            .all(&state.db)
+            .await
+            .unwrap()
+    };
+    let runs = || async {
+        scan_run::Entity::find()
+            .filter(scan_run::Column::LibraryId.eq(lib))
+            .order_by_asc(scan_run::Column::StartedAt)
+            .all(&state.db)
+            .await
+            .unwrap()
+    };
+
+    server::library::scanner::scan_library(&state, lib)
+        .await
+        .expect("scan");
+    let first = open_findings().await;
+    assert_eq!(first.len(), 1, "{first:?}");
+    let run1 = runs().await[0].id;
+    assert_eq!(first[0].scan_id, Some(run1));
+
+    let stats = server::library::scanner::scan_library(&state, lib)
+        .await
+        .expect("rescan");
+    // Not re-read: the unchanged folder (or file) was skipped, so the
+    // finding is carried by the touch-on-skip update, not re-emitted.
+    assert_eq!(stats.files_malformed, 0, "not re-read: {stats:?}");
+    assert!(
+        stats.series_skipped_unchanged + stats.files_unchanged >= 1,
+        "skipped as unchanged: {stats:?}"
+    );
+    let all_runs = runs().await;
+    assert_eq!(all_runs.len(), 2);
+    let run2 = all_runs[1].id;
+    let second = open_findings().await;
+    assert_eq!(second.len(), 1, "still open: {second:?}");
+    assert_eq!(second[0].id, first[0].id, "same row");
+    assert_eq!(second[0].scan_id, Some(run2), "moved to the rescan");
+
+    let (status, body) = get(&app, &session, &format!("/api/libraries/{lib}/scan-runs")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let counts = counts_by_id(body["items"].as_array().unwrap());
+    assert_eq!(counts.get(&run2.to_string()), Some(&1), "{counts:?}");
+    assert_eq!(counts.get(&run1.to_string()), Some(&0), "{counts:?}");
 }

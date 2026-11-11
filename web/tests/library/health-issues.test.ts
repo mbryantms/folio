@@ -254,8 +254,11 @@ describe("ArchiveSafetyRefusal", () => {
   ])("names where the %s limit is configured", (check, env) => {
     const hint = healthPayloadHint("ArchiveSafetyRefusal", payload(check));
     expect(hint).toContain(env);
-    expect(hint).toMatch(/may be intact/);
-    expect(hint).not.toMatch(/good copy/);
+    // Neither "damaged" nor "intact": a damaged file can trip a limit too.
+    expect(hint).toMatch(/does not say whether the file is damaged/);
+    expect(hint).not.toMatch(/may be intact|good copy/);
+    // An unchanged file needs the scan that re-reads it.
+    expect(hint).toMatch(/Content verify scan/);
   });
 
   it.each(["decoder_memory", "unsafe_entry_name"])(
@@ -266,6 +269,16 @@ describe("ArchiveSafetyRefusal", () => {
       expect(hint).not.toMatch(/COMIC_ARCHIVE_MAX/);
     },
   );
+
+  it("lists the unsafe or non-portable name cases", () => {
+    const hint = healthPayloadHint(
+      "ArchiveSafetyRefusal",
+      payload("unsafe_entry_name"),
+    );
+    expect(hint).toMatch(/unsafe or non-portable/);
+    for (const word of ["empty", "absolute", '".."', "backslash", "NUL"])
+      expect(hint).toContain(word);
+  });
 
   it("falls back to the kind hint for an unknown check", () => {
     expect(healthPayloadHint("ArchiveSafetyRefusal", payload("future"))).toBe(

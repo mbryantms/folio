@@ -70,14 +70,15 @@ pub enum IssueKind {
         path: PathBuf,
         error: String,
     },
-    /// The archive was refused by a protective limit or an unsafe entry
-    /// name before anything was decoded (`archive::SafetyCheck`): more
-    /// entries, a larger entry or a larger total than the configured
+    /// The archive reader refused the archive on a protective limit or an
+    /// unsafe entry name (`archive::SafetyCheck`), when the scanner opened
+    /// it or while scan-time CBR / CB7 conversion read it: more entries, a
+    /// larger entry or a larger total than the configured
     /// `COMIC_ARCHIVE_MAX_*` limits, a 7z expansion past the ratio cap or
-    /// past the fixed decoder-memory cap, or an entry path that is
-    /// absolute or climbs out of the archive. Distinct from
-    /// [`Self::MalformedArchive`] because the file may be intact: the fix
-    /// is to raise the limit for a file you trust, or repack it, not to
+    /// past the fixed decoder-memory cap, or an unsafe or non-portable
+    /// entry name. Distinct from [`Self::MalformedArchive`] because the
+    /// refusal is not a verdict on damage: the fix is to raise the limit
+    /// for a file you trust, or repack it, not necessarily to
     /// replace it. `check` is `SafetyCheck::as_str`.
     ArchiveSafetyRefusal {
         path: PathBuf,
@@ -830,8 +831,16 @@ impl HealthCollector {
                 .map(|r| r.id)
                 .collect();
             if !to_touch.is_empty() {
+                // `scan_id` moves too: a touched row was sighted by this run
+                // just as an emitted one was, so "the findings of this run"
+                // (`scan_id` filter, `health_issue_count`) means the same
+                // thing whether the file was re-opened or skipped.
                 library_health_issue::Entity::update_many()
                     .col_expr(library_health_issue::Column::LastSeenAt, Expr::value(now))
+                    .col_expr(
+                        library_health_issue::Column::ScanId,
+                        Expr::value(Some(self.scan_id)),
+                    )
                     .filter(library_health_issue::Column::Id.is_in(to_touch))
                     .exec(db)
                     .await?;

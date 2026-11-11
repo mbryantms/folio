@@ -17086,7 +17086,7 @@ export interface operations {
                     "application/json": components["schemas"]["CursorPage_CrossLibHealthIssueView"];
                 };
             };
-            /** @description malformed scan_id or cursor */
+            /** @description malformed cursor */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -17100,7 +17100,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description invalid filter value */
+            /** @description invalid filter value, including a scan_id or library_id that is not a UUID */
             422: {
                 headers: {
                     [name: string]: unknown;
