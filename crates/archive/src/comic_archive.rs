@@ -19,7 +19,9 @@ use crate::{ArchiveEntry, ArchiveError, SkippedEntry};
 use std::path::Path;
 
 /// Common surface for the scan pipeline. Any format we recognize implements
-/// this; [`crate::open`] dispatches to the right reader on extension.
+/// this; [`crate::open_file`] dispatches to the right reader on the sniffed
+/// container. Every reader reads through the handle it was opened from
+/// ([`crate::source`]).
 pub trait ComicArchive: Send {
     fn entries(&self) -> &[ArchiveEntry];
     /// Image entries in natural-sort order. Caller treats this as the page
